@@ -6,7 +6,8 @@ is not a correct change. These rules are mandatory.
 ## Commit gate
 
 Every commit must be atomic, buildable, bootable, reviewable, and reversible.
-Before creating a commit, run `make verify`. Before pushing it, run `make smoke`.
+Before creating a commit, run `make verify`. Before pushing an interrupt or CPU
+state change, run `make qemu-tests`; other changes must run at least `make smoke`.
 Enable the repository hooks once with `make hooks`; disabling or bypassing them
 is grounds to reject the change.
 

@@ -4,8 +4,12 @@
 
 #include <zenith/boot.h>
 #include <zenith/console.h>
+#include <zenith/cpu.h>
+#include <zenith/interrupts.h>
 #include <zenith/memory.h>
+#include <zenith/pit.h>
 #include <zenith/self_test.h>
+#include <zenith/test.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
 
@@ -126,9 +130,26 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     struct frame_allocator_stats stats;
     enum boot_status boot_status;
     enum frame_status frame_status;
+    enum interrupt_status interrupt_status;
+    enum kernel_test_scenario test_scenario;
+    enum pit_status pit_status;
 
     console_initialize();
+    interrupt_status = interrupts_initialize();
+
+    if (interrupt_status != INTERRUPT_STATUS_OK) {
+        if (interrupt_status == INTERRUPT_STATUS_CPU_TABLE_FAILURE) {
+            console_write("Zenith OS: CPU table detail: ");
+            console_write(cpu_status_string(cpu_tables_validate()));
+            console_putc('\n');
+        }
+
+        console_panic(interrupt_status_string(interrupt_status));
+    }
+
     console_write("Zenith OS: kernel online\n");
+    console_write("Zenith OS: descriptor tables verified\n");
+    console_write("Zenith OS: interrupt foundation online\n");
 
     if (!boot_parser_self_test()) {
         console_panic("Multiboot2 parser self-test failed");
@@ -161,5 +182,47 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     console_write("Zenith OS: day one passed\n");
     console_write("Zenith OS: memory foundation passed\n");
+    test_scenario = kernel_test_select(&context);
+    kernel_test_run(test_scenario);
+
+    if (!interrupt_breakpoint_self_test()) {
+        console_panic("breakpoint register self-test failed");
+    }
+
+    if (!interrupt_ist_self_test()) {
+        console_panic("IST routing self-test failed");
+    }
+
+    if (!interrupt_pic_spurious_self_test()) {
+        console_panic("PIC spurious interrupt self-test failed");
+    }
+
+    pit_status = pit_start(UINT32_C(100));
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_wait_for_ticks(UINT64_C(8));
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    console_write("Zenith OS: exception probes passed\n");
+    console_write("Zenith OS: PIC spurious paths passed\n");
+    console_write("Zenith OS: PIT delivered eight interrupts\n");
+    console_write("Zenith OS: never triple fault milestone passed\n");
+
+    if (test_scenario == KERNEL_TEST_NORMAL) {
+        kernel_test_complete_normal();
+    }
+
     console_halt();
 }

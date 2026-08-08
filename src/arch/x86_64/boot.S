@@ -145,8 +145,9 @@ long_mode_start:
 .balign 8
 gdt64:
     .quad 0x0000000000000000
-    .quad 0x00AF9A000000FFFF
-    .quad 0x00CF92000000FFFF
+    /* Accessed bits start set so descriptor loads never need to write here. */
+    .quad 0x00AF9B000000FFFF
+    .quad 0x00CF93000000FFFF
 gdt64_end:
 gdt64_pointer:
     .word gdt64_end - gdt64 - 1

@@ -38,9 +38,10 @@ phase.
 ## Ordered next work
 
 1. Replace broad identity mapping with explicit kernel and device mappings.
-2. Define exception-entry assembly, an IDT, and fatal exception diagnostics.
-3. Add a monotonic timer and interrupt-controller abstraction.
-4. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
+2. ~~Define exception-entry assembly, an IDT, and fatal exception diagnostics.~~
+3. ~~Add a monotonic timer and interrupt-controller abstraction.~~
+4. Replace the legacy PIC/PIT proof with ACPI-discovered APIC hardware.
+5. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
 is explicitly out of scope until the kernel can isolate processes, survive
