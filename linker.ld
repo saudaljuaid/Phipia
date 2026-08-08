@@ -64,4 +64,6 @@ SECTIONS
            "Multiboot2 header is outside the first 32 KiB")
     ASSERT(__kernel_end < 0x40000000,
            "Day-one identity map no longer covers the kernel")
+    ASSERT(interrupt_vector_table_end - interrupt_vector_table == 256 * 8,
+           "Interrupt vector table must contain exactly 256 addresses")
 }

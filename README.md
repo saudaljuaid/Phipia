@@ -10,7 +10,7 @@ Zenith OS is a new, independent operating system built from first principles. It
 is not a Linux distribution and it does not currently promise application or
 hardware compatibility with an existing operating system.
 
-The repository is at **day one**. Today it contains a deliberately small
+The repository is at its foundation stage. It contains a deliberately small
 x86_64 kernel seed—not a finished operating system and not a simulation.
 
 ## What boots today
@@ -20,13 +20,16 @@ then validates the handoff and CPU, identity-maps the first 4 GiB, enables long
 mode, installs a known GDT and stack, and transfers control to freestanding C.
 The C kernel defensively validates every Multiboot2 tag, constructs a bounded
 physical-frame allocator from the firmware memory map, proves allocation and
-release, and reports the result through both VGA and COM1 before halting safely.
+release, installs a complete IDT and production GDT/TSS, routes fatal CPU
+exceptions through deterministic diagnostics, and proves recoverable interrupt
+entry plus PIT delivery before halting safely.
 
 The day-one success contract is the serial line:
 
 ```text
 Zenith OS: day one passed
 Zenith OS: memory foundation passed
+Zenith OS: never triple fault milestone passed
 ```
 
 ## Build and prove it
@@ -41,7 +44,8 @@ Then run:
 
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make smoke    # build the ISO and prove the success line appears in QEMU
+make smoke      # run the strict normal-boot QEMU protocol
+make qemu-tests # run eight deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -49,18 +53,21 @@ make hooks    # enforce verification in this local clone
 ## Repository map
 
 - `src/arch/x86_64/boot.S` — Multiboot2 header and 32-to-64-bit transition.
-- `src/kernel/kernel.c` — freestanding C entry, VGA console, and serial output.
+- `src/arch/x86_64/interrupts.S` — normalized interrupt entry and fatal probes.
+- `src/kernel/interrupts.c` — IDT ownership, dispatch, and fault diagnostics.
+- `src/kernel/cpu.c` — permanent GDT, TSS, and emergency IST stacks.
+- `src/kernel/pic.c` and `pit.c` — legacy IRQ routing and timer proof.
 - `src/kernel/multiboot2.c` — bounded parser for the boot information contract.
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
-- `grub/grub.cfg` — deterministic boot menu.
-- `docs/DAY_ONE.md` — boot invariants, acceptance criteria, and next steps.
+- `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-There are no interrupts, virtual-memory manager, heap, scheduler, userspace,
-filesystem, networking, graphics, or hardware drivers yet. Those arrive only
-after the previous layer has an executable acceptance test.
+Zenith now has a deliberately narrow single-core interrupt foundation, but no
+APIC, virtual-memory manager, heap, scheduler, userspace, filesystem, networking,
+graphics, or general hardware drivers. Those arrive only after the previous
+layer has an executable acceptance test.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.
