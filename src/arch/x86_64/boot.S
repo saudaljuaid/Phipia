@@ -60,20 +60,28 @@ _start:
     testl $(1 << 29), %edx
     jz .no_long_mode
 
-    /* Zero and connect a PML4, PDPT, and 512-entry 2 MiB page directory. */
+    /* Zero a PML4, PDPT, and four 512-entry 2 MiB page directories. */
     movl $pml4_table, %edi
     xorl %eax, %eax
-    movl $(3 * 4096 / 4), %ecx
+    movl $(6 * 4096 / 4), %ecx
     rep stosl
     movl $pdpt_table, %eax
     orl $(PAGE_PRESENT | PAGE_WRITABLE), %eax
     movl %eax, pml4_table
-    movl $pd_table, %eax
+    movl $pd_tables, %edi
+    movl $pdpt_table, %esi
+    movl $4, %ecx
+.link_directory:
+    movl %edi, %eax
     orl $(PAGE_PRESENT | PAGE_WRITABLE), %eax
-    movl %eax, pdpt_table
-    movl $pd_table, %edi
+    movl %eax, (%esi)
+    movl $0, 4(%esi)
+    addl $4096, %edi
+    addl $8, %esi
+    loop .link_directory
+    movl $pd_tables, %edi
     movl $(PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE), %eax
-    movl $512, %ecx
+    movl $2048, %ecx
 .map_page:
     movl %eax, (%edi)
     movl $0, 4(%edi)
@@ -151,7 +159,7 @@ boot_info:  .skip 4
 .balign 4096
 pml4_table: .skip 4096
 pdpt_table: .skip 4096
-pd_table:   .skip 4096
+pd_tables:  .skip (4 * 4096)
 .balign 16
 stack_bottom: .skip 16384
 stack_top:
