@@ -16,6 +16,7 @@ PHDRS
 SECTIONS
 {
     . = KERNEL_BASE;
+    __kernel_start = .;
 
     .multiboot ALIGN(8) :
     {

@@ -13,7 +13,7 @@ first code Zenith owns rather than on disk formats and firmware edge cases.
 2. Interrupts and the direction flag are cleared before Zenith touches its own
    state.
 3. The processor must expose CPUID and the extended long-mode feature bit.
-4. Three page-table pages identity-map the first 1 GiB with 2 MiB writable pages.
+4. Six page-table pages identity-map the first 4 GiB with 2 MiB writable pages.
 5. CR3, CR4.PAE, EFER.LME, and CR0.PG are established in that order.
 6. A private GDT and 16 KiB, 16-byte-aligned stack exist before C executes.
 7. The C entry obeys the x86_64 System V calling convention and uses no red zone,
@@ -22,7 +22,8 @@ first code Zenith owns rather than on disk formats and firmware edge cases.
    continuing in an unknown state.
 
 The identity map is intentionally broad but temporary. It is not a security
-boundary. Page permissions and a higher-half layout belong to the memory phase.
+boundary. Page permissions and a higher-half layout belong to the virtual-memory
+phase.
 
 ## Acceptance criteria
 
@@ -36,12 +37,10 @@ boundary. Page permissions and a higher-half layout belong to the memory phase.
 
 ## Ordered next work
 
-1. Parse and validate Multiboot2 tags without trusting lengths or alignment.
-2. Build a physical frame allocator from the validated memory map.
-3. Replace broad identity mapping with explicit kernel and device mappings.
-4. Define exception-entry assembly, an IDT, and fatal exception diagnostics.
-5. Add a monotonic timer and interrupt-controller abstraction.
-6. Only then introduce allocation, scheduling, userspace, storage, or graphics.
+1. Replace broad identity mapping with explicit kernel and device mappings.
+2. Define exception-entry assembly, an IDT, and fatal exception diagnostics.
+3. Add a monotonic timer and interrupt-controller abstraction.
+4. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
 is explicitly out of scope until the kernel can isolate processes, survive
