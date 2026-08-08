@@ -1,0 +1,32 @@
+name: verify
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: verify-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build-and-boot:
+        name: build-and-boot
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install build tools
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+            - name: Verify the kernel artifact
+              run: make verify
+            - name: Prove the kernel reaches C in QEMU
+              run: make smoke
