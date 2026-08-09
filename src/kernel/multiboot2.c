@@ -5,6 +5,9 @@
 
 #include <zenith/boot.h>
 
+#define ACPI_RSDP_V1_SIZE 20U
+#define ACPI_RSDP_V2_SIZE 36U
+
 static bool range_fits(size_t offset, size_t length, size_t total)
 {
     return offset <= total && length <= total - offset;
@@ -22,6 +25,8 @@ static void boot_context_reset(struct boot_context *context)
     context->information_start = 0;
     context->information_end = 0;
     context->memory_map = NULL;
+    context->acpi_old = NULL;
+    context->acpi_new = NULL;
     context->boot_loader_name = NULL;
     context->command_line = NULL;
     context->boot_loader_name_length = 0;
@@ -228,6 +233,27 @@ enum boot_status boot_context_parse(
         } else if (tag->type == MULTIBOOT2_TAG_MODULE) {
             /* Modules need explicit lifetime ownership before they are safe. */
             return BOOT_STATUS_UNSUPPORTED_MODULE;
+        } else if (tag->type == MULTIBOOT2_TAG_ACPI_OLD ||
+                   tag->type == MULTIBOOT2_TAG_ACPI_NEW) {
+            const struct multiboot2_acpi_tag *acpi_tag =
+                (const struct multiboot2_acpi_tag *)(const void *)tag;
+            const size_t minimum_payload = tag->type == MULTIBOOT2_TAG_ACPI_NEW
+                ? ACPI_RSDP_V2_SIZE
+                : ACPI_RSDP_V1_SIZE;
+            const struct multiboot2_acpi_tag **destination =
+                tag->type == MULTIBOOT2_TAG_ACPI_NEW
+                    ? &context->acpi_new
+                    : &context->acpi_old;
+
+            if (tag->size < sizeof(*acpi_tag) + minimum_payload) {
+                return BOOT_STATUS_ACPI_TAG_TOO_SMALL;
+            }
+
+            if (*destination != NULL) {
+                return BOOT_STATUS_DUPLICATE_ACPI_TAG;
+            }
+
+            *destination = acpi_tag;
         } else if (tag->type == MULTIBOOT2_TAG_BOOT_LOADER_NAME ||
                    tag->type == MULTIBOOT2_TAG_COMMAND_LINE) {
             const struct multiboot2_string_tag *string_tag =
@@ -336,6 +362,10 @@ const char *boot_status_string(enum boot_status status)
         return "Multiboot2 modules are not supported yet";
     case BOOT_STATUS_STRING_NOT_TERMINATED:
         return "Multiboot2 string is not terminated";
+    case BOOT_STATUS_ACPI_TAG_TOO_SMALL:
+        return "Multiboot2 ACPI tag is too small";
+    case BOOT_STATUS_DUPLICATE_ACPI_TAG:
+        return "duplicate Multiboot2 ACPI tag";
     case BOOT_STATUS_BAD_END_TAG:
         return "invalid Multiboot2 end tag";
     case BOOT_STATUS_MISSING_END_TAG:

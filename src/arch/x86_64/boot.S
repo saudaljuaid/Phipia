@@ -18,6 +18,12 @@ multiboot_header:
     .long MB2_ARCH_I386
     .long multiboot_header_end - multiboot_header
     .long -(MB2_HEADER_MAGIC + MB2_ARCH_I386 + (multiboot_header_end - multiboot_header))
+    /* Ask for both ACPI RSDP forms without making either one mandatory alone. */
+    .short 1
+    .short 1
+    .long 16
+    .long 14
+    .long 15
     .short 0
     .short 0
     .long 8
