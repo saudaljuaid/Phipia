@@ -81,6 +81,25 @@ static void report_acpi_root(const struct acpi_root *root)
     console_putc('\n');
 }
 
+static void report_acpi_madt(const struct acpi_madt *madt)
+{
+    console_write("Zenith OS: ACPI MADT at ");
+    console_write_hex(madt->physical_address);
+    console_write(" local APIC ");
+    console_write_hex(madt->local_apic_address);
+    console_write(" flags ");
+    console_write_hex(madt->flags);
+    console_putc('\n');
+
+    console_write("Zenith OS: ACPI root entries: ");
+    console_write_u64(madt->root_entry_count);
+    console_write(" MADT OEM ");
+    console_write_n(madt->oem_id, 6U);
+    console_putc(' ');
+    console_write_n(madt->oem_table_id, 8U);
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -138,6 +157,7 @@ static void prove_frame_lifecycle(void)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
+    struct acpi_madt acpi_madt;
     struct acpi_root acpi_root;
     struct boot_context context;
     struct frame_allocator_stats stats;
@@ -173,6 +193,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI RSDP rejection self-test failed");
     }
 
+    if (!acpi_tables_self_test()) {
+        console_panic("ACPI table rejection self-test failed");
+    }
+
     console_write("Zenith OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -187,9 +211,17 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(acpi_status_string(acpi_status));
     }
 
+    acpi_status = acpi_madt_discover(&acpi_root, &acpi_madt);
+
+    if (acpi_status != ACPI_STATUS_OK) {
+        console_panic(acpi_status_string(acpi_status));
+    }
+
     report_boot_context(&context);
     report_acpi_root(&acpi_root);
+    report_acpi_madt(&acpi_madt);
     console_write("Zenith OS: ACPI root verified\n");
+    console_write("Zenith OS: ACPI MADT verified\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {

@@ -41,7 +41,8 @@ phase.
 2. ~~Define exception-entry assembly, an IDT, and fatal exception diagnostics.~~
 3. ~~Add a monotonic timer and interrupt-controller abstraction.~~
 4. Validate the ACPI root, then replace the legacy PIC/PIT proof with discovered
-   APIC hardware. *(Root discovery complete; table walking remains.)*
+   APIC hardware. *(Root and MADT discovery complete; topology parsing and APIC
+   activation remain.)*
 5. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
