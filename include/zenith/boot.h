@@ -66,6 +66,8 @@ enum boot_status {
     BOOT_STATUS_MEMORY_REGION_OVERFLOW,
     BOOT_STATUS_UNSUPPORTED_MODULE,
     BOOT_STATUS_STRING_NOT_TERMINATED,
+    BOOT_STATUS_ACPI_TAG_TOO_SMALL,
+    BOOT_STATUS_DUPLICATE_ACPI_TAG,
     BOOT_STATUS_BAD_END_TAG,
     BOOT_STATUS_MISSING_END_TAG,
     BOOT_STATUS_MISSING_MEMORY_MAP
@@ -100,6 +102,11 @@ struct multiboot2_memory_map_entry {
     uint32_t reserved;
 } __attribute__((packed));
 
+struct multiboot2_acpi_tag {
+    struct multiboot2_tag tag;
+    uint8_t rsdp[];
+} __attribute__((packed));
+
 struct boot_memory_region {
     uint64_t base_address;
     uint64_t length;
@@ -110,6 +117,8 @@ struct boot_context {
     uintptr_t information_start;
     uintptr_t information_end;
     const struct multiboot2_memory_map_tag *memory_map;
+    const struct multiboot2_acpi_tag *acpi_old;
+    const struct multiboot2_acpi_tag *acpi_new;
     const char *boot_loader_name;
     const char *command_line;
     size_t boot_loader_name_length;

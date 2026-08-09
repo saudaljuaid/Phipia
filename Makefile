@@ -126,7 +126,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; then \
+		{ ! grep -Fq 'Zenith OS: ACPI root verified' "$$log" || \
+		  ! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \

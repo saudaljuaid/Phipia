@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zenith/acpi.h>
 #include <zenith/boot.h>
 #include <zenith/console.h>
 #include <zenith/cpu.h>
@@ -69,6 +70,17 @@ static void report_allocator(const struct frame_allocator_stats *stats)
     console_putc('\n');
 }
 
+static void report_acpi_root(const struct acpi_root *root)
+{
+    console_write("Zenith OS: ACPI ");
+    console_write(acpi_root_kind_string(root->kind));
+    console_write(" at ");
+    console_write_hex(root->physical_address);
+    console_write(" OEM ");
+    console_write_n(root->oem_id, 6U);
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -126,9 +138,11 @@ static void prove_frame_lifecycle(void)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
+    struct acpi_root acpi_root;
     struct boot_context context;
     struct frame_allocator_stats stats;
     enum boot_status boot_status;
+    enum acpi_status acpi_status;
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
@@ -155,6 +169,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("Multiboot2 parser self-test failed");
     }
 
+    if (!acpi_self_test()) {
+        console_panic("ACPI RSDP rejection self-test failed");
+    }
+
     console_write("Zenith OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -163,7 +181,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(boot_status_string(boot_status));
     }
 
+    acpi_status = acpi_root_discover(&context, &acpi_root);
+
+    if (acpi_status != ACPI_STATUS_OK) {
+        console_panic(acpi_status_string(acpi_status));
+    }
+
     report_boot_context(&context);
+    report_acpi_root(&acpi_root);
+    console_write("Zenith OS: ACPI root verified\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {
