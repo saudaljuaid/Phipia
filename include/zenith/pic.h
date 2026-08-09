@@ -22,6 +22,7 @@ enum pic_status pic_set_mask(uint8_t irq, bool masked);
 bool pic_irq_is_real(uint8_t irq);
 void pic_send_eoi(uint8_t irq);
 bool pic_is_initialized(void);
+bool pic_all_masked(void);
 uint16_t pic_mask_snapshot(void);
 const char *pic_status_string(enum pic_status status);
 

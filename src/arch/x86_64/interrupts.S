@@ -300,6 +300,13 @@ interrupt_trigger_unexpected:
     jmp .unexpected_returned
 .size interrupt_trigger_unexpected, . - interrupt_trigger_unexpected
 
+.global interrupt_trigger_apic_spurious
+.type interrupt_trigger_apic_spurious, @function
+interrupt_trigger_apic_spurious:
+    int $0xFF
+    ret
+.size interrupt_trigger_apic_spurious, . - interrupt_trigger_apic_spurious
+
 .section .rodata, "a"
 double_fault_message:
     .asciz "Zenith OS DOUBLE FAULT - HALTED\n"

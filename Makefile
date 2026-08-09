@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/zenith.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault write-protect nx \
-	ist pit unexpected double-fault
+	ist pit apic unexpected double-fault
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -107,6 +107,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		nx) expected=51 ;; \
 		ist) expected=41 ;; \
 		pit) expected=43 ;; \
+		apic) expected=53 ;; \
 		unexpected) expected=45 ;; \
 		double-fault) expected=47 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
@@ -133,6 +134,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		  ! grep -Fq 'Zenith OS: ACPI MADT verified' "$$log" || \
 		  ! grep -Fq 'Zenith OS: ACPI MADT topology verified' "$$log" || \
 		  ! grep -Fq 'Zenith OS: virtual memory foundation passed' "$$log" || \
+		  ! grep -Fq 'Zenith OS: APIC interrupt routing verified' "$$log" || \
 		  ! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -159,6 +161,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
 			grep -Fq 'Zenith OS DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+		apic) \
+			grep -Fq 'Zenith OS: APIC interrupt routing verified' "$$log" && \
+			grep -Fq 'Zenith OS: legacy PIC permanently masked' "$$log" || \
+				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

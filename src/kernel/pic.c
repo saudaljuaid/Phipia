@@ -168,6 +168,14 @@ bool pic_is_initialized(void)
     return initialized;
 }
 
+bool pic_all_masked(void)
+{
+    return initialized && master_mask == UINT8_MAX &&
+        slave_mask == UINT8_MAX &&
+        cpu_in8(PIC_MASTER_DATA) == UINT8_MAX &&
+        cpu_in8(PIC_SLAVE_DATA) == UINT8_MAX;
+}
+
 uint16_t pic_mask_snapshot(void)
 {
     return (uint16_t)master_mask | ((uint16_t)slave_mask << 8U);

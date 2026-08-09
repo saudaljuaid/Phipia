@@ -3,9 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zenith/apic.h>
 #include <zenith/console.h>
 #include <zenith/cpu.h>
 #include <zenith/interrupts.h>
+#include <zenith/pic.h>
 #include <zenith/pit.h>
 #include <zenith/test.h>
 
@@ -117,6 +119,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_NX;
     }
 
+    if (token_equals(value, length, "apic")) {
+        return KERNEL_TEST_APIC;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -143,6 +149,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x18);
     case KERNEL_TEST_NX:
         return UINT8_C(0x19);
+    case KERNEL_TEST_APIC:
+        return UINT8_C(0x1A);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -155,6 +163,40 @@ static void test_marker(const char *kind, enum kernel_test_scenario scenario)
     console_putc(' ');
     console_write(kernel_test_scenario_name(scenario));
     console_putc('\n');
+}
+
+static void apic_timer_proof(void)
+{
+    const uint64_t eoi_before = apic_eoi_count();
+    enum pit_status pit_status;
+
+    pit_status = pit_start(PIT_TEST_FREQUENCY);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_wait_for_ticks(PIT_TEST_TICKS);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < PIT_TEST_TICKS) {
+        kernel_test_fail("APIC-routed PIT delivered too few ticks");
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (apic_eoi_count() < eoi_before + PIT_TEST_TICKS ||
+        !apic_timer_is_masked() || !pic_all_masked() ||
+        apic_validate() != APIC_STATUS_OK) {
+        kernel_test_fail("APIC timer delivery contract failed validation");
+    }
 }
 
 static _Noreturn void kernel_test_pass(void)
@@ -227,8 +269,6 @@ enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
 
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
-    enum pit_status pit_status;
-
     if (scenario == KERNEL_TEST_NONE) {
         return;
     }
@@ -258,28 +298,7 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         }
         kernel_test_pass();
     case KERNEL_TEST_PIT:
-        pit_status = pit_start(PIT_TEST_FREQUENCY);
-
-        if (pit_status != PIT_STATUS_OK) {
-            kernel_test_fail(pit_status_string(pit_status));
-        }
-
-        pit_status = pit_wait_for_ticks(PIT_TEST_TICKS);
-
-        if (pit_status != PIT_STATUS_OK) {
-            kernel_test_fail(pit_status_string(pit_status));
-        }
-
-        if (pit_ticks() < PIT_TEST_TICKS) {
-            kernel_test_fail("PIT delivered too few ticks");
-        }
-
-        pit_status = pit_stop();
-
-        if (pit_status != PIT_STATUS_OK) {
-            kernel_test_fail(pit_status_string(pit_status));
-        }
-
+        apic_timer_proof();
         kernel_test_pass();
     case KERNEL_TEST_UNEXPECTED:
         interrupt_trigger_unexpected();
@@ -291,6 +310,13 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         interrupt_trigger_write_protect();
     case KERNEL_TEST_NX:
         interrupt_trigger_nx();
+    case KERNEL_TEST_APIC:
+        if (!apic_spurious_self_test()) {
+            kernel_test_fail("APIC spurious-vector proof failed");
+        }
+
+        apic_timer_proof();
+        kernel_test_pass();
     case KERNEL_TEST_INVALID:
         kernel_test_fail("invalid or duplicate zenith.test argument");
     case KERNEL_TEST_NONE:
@@ -384,6 +410,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "write-protect";
     case KERNEL_TEST_NX:
         return "nx";
+    case KERNEL_TEST_APIC:
+        return "apic";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

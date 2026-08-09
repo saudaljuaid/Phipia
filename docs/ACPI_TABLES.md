@@ -92,8 +92,8 @@ Zenith OS: ACPI MADT topology verified
 ## Deferred work
 
 Zenith now gives every discovered controller an explicit UC, writable, NX page
-in its high device window. Before activating this topology, it must still verify
-processor APIC capability, inspect each I/O APIC's version and redirection-entry
-count, and prove that GSI ranges cover the selected timer route without overlap.
-Only then may it mask the legacy PIC permanently, route a timer through
-discovered APIC hardware, and retire the PIT proof.
+in its high device window. The following APIC-routing milestone verifies CPU
+capability, controller identity and version, non-overlapping GSI ranges, and the
+resolved IRQ0 route before it masks the legacy PIC and activates that path.
+Local APIC timer calibration, Local APIC NMI records, x2APIC, SMP startup, PCI
+routes, and MSI/MSI-X remain deferred.

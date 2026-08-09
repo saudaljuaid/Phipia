@@ -3,17 +3,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zenith/apic.h>
 #include <zenith/cpu.h>
 #include <zenith/interrupts.h>
-#include <zenith/pic.h>
 #include <zenith/pit.h>
 
 #define PIT_INPUT_FREQUENCY UINT32_C(1193182)
 #define PIT_CHANNEL_ZERO UINT16_C(0x40)
 #define PIT_COMMAND UINT16_C(0x43)
 #define PIT_CHANNEL_ZERO_MODE_THREE UINT8_C(0x36)
-#define PIT_IRQ 0U
-#define PIT_VECTOR INTERRUPT_PIC_MASTER_BASE
+#define PIT_VECTOR APIC_TIMER_VECTOR
 
 static volatile uint64_t tick_counter __attribute__((aligned(8)));
 static uint32_t configured_frequency;
@@ -29,8 +28,8 @@ static void pit_interrupt_handler(struct interrupt_frame *frame, void *context)
 enum pit_status pit_start(uint32_t frequency_hz)
 {
     uint32_t divisor;
+    enum apic_status apic_status;
     enum interrupt_status interrupt_status;
-    enum pic_status pic_status;
 
     if (running) {
         return PIT_STATUS_ALREADY_RUNNING;
@@ -67,13 +66,14 @@ enum pit_status pit_start(uint32_t frequency_hz)
     tick_counter = 0U;
     configured_frequency = PIT_INPUT_FREQUENCY / divisor;
     running = true;
-    pic_status = pic_set_mask(PIT_IRQ, false);
+    apic_status = apic_timer_set_mask(false);
 
-    if (pic_status != PIC_STATUS_OK) {
+    if (apic_status != APIC_STATUS_OK) {
+        (void)apic_timer_set_mask(true);
         running = false;
         configured_frequency = 0U;
         (void)interrupt_unregister_handler((uint8_t)PIT_VECTOR);
-        return PIT_STATUS_PIC_FAILURE;
+        return PIT_STATUS_APIC_FAILURE;
     }
 
     return PIT_STATUS_OK;
@@ -81,7 +81,7 @@ enum pit_status pit_start(uint32_t frequency_hz)
 
 enum pit_status pit_stop(void)
 {
-    enum pic_status pic_status;
+    enum apic_status apic_status;
     enum interrupt_status interrupt_status;
 
     if (!running) {
@@ -92,10 +92,10 @@ enum pit_status pit_stop(void)
         return PIT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    pic_status = pic_set_mask(PIT_IRQ, true);
+    apic_status = apic_timer_set_mask(true);
 
-    if (pic_status != PIC_STATUS_OK) {
-        return PIT_STATUS_PIC_FAILURE;
+    if (apic_status != APIC_STATUS_OK) {
+        return PIT_STATUS_APIC_FAILURE;
     }
 
     interrupt_status = interrupt_unregister_handler((uint8_t)PIT_VECTOR);
@@ -169,8 +169,8 @@ const char *pit_status_string(enum pit_status status)
         return "PIT frequency cannot be represented";
     case PIT_STATUS_INTERRUPT_FAILURE:
         return "PIT interrupt handler operation failed";
-    case PIT_STATUS_PIC_FAILURE:
-        return "PIT could not update the PIC mask";
+    case PIT_STATUS_APIC_FAILURE:
+        return "PIT could not update the I/O APIC route";
     default:
         return "unknown PIT status";
     }

@@ -12,7 +12,7 @@ enum pit_status {
     PIT_STATUS_INTERRUPTS_ENABLED,
     PIT_STATUS_BAD_FREQUENCY,
     PIT_STATUS_INTERRUPT_FAILURE,
-    PIT_STATUS_PIC_FAILURE
+    PIT_STATUS_APIC_FAILURE
 };
 
 enum pit_status pit_start(uint32_t frequency_hz);

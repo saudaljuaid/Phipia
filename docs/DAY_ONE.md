@@ -43,11 +43,12 @@ layout and process address spaces remain future virtual-memory work.
 1. ~~Replace broad identity mapping with explicit kernel and device mappings.~~
 2. ~~Define exception-entry assembly, an IDT, and fatal exception diagnostics.~~
 3. ~~Add a monotonic timer and interrupt-controller abstraction.~~
-4. Validate the ACPI root, then replace the legacy PIC/PIT proof with discovered
-   APIC hardware. *(Root, MADT, and bounded interrupt-controller topology
-   discovery and cache-correct MMIO mapping complete; APIC capability probing
-   and activation remain.)*
-5. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
+4. ~~Validate the ACPI root, probe the discovered xAPIC hardware, permanently
+   mask the legacy PIC, and route the temporary PIT clock through the I/O APIC
+   and Local APIC.~~
+5. Calibrate a Local APIC or architectural timer against a trusted source and
+   expose a monotonic kernel timebase.
+6. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
 is explicitly out of scope until the kernel can isolate processes, survive

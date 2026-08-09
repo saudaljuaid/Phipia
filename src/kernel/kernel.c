@@ -2,12 +2,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zenith/apic.h>
 #include <zenith/acpi.h>
 #include <zenith/boot.h>
 #include <zenith/console.h>
 #include <zenith/cpu.h>
 #include <zenith/interrupts.h>
 #include <zenith/memory.h>
+#include <zenith/pic.h>
 #include <zenith/pit.h>
 #include <zenith/self_test.h>
 #include <zenith/test.h>
@@ -18,6 +20,7 @@
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
 static struct acpi_topology acpi_topology;
+static struct apic_configuration apic_configuration;
 static struct virtual_memory_layout virtual_memory_layout;
 
 static void report_boot_context(const struct boot_context *context)
@@ -147,6 +150,27 @@ static void report_virtual_memory(
     console_putc('\n');
 }
 
+static void report_apic(const struct apic_configuration *configuration)
+{
+    console_write("Zenith OS: Local APIC ID ");
+    console_write_u64(configuration->local_apic_id);
+    console_write(" version ");
+    console_write_hex(configuration->local_apic_version);
+    console_putc('\n');
+
+    console_write("Zenith OS: I/O APIC controllers ");
+    console_write_u64(configuration->io_apic_count);
+    console_write(" timer GSI ");
+    console_write_u64(configuration->timer_global_interrupt);
+    console_write(" input ");
+    console_write_u64(configuration->timer_input);
+    console_write(configuration->timer_active_low ?
+        " active-low" : " active-high");
+    console_write(configuration->timer_level_triggered ?
+        " level" : " edge");
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -210,10 +234,12 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     struct frame_allocator_stats stats;
     enum boot_status boot_status;
     enum acpi_status acpi_status;
+    enum apic_status apic_status;
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
     enum pit_status pit_status;
+    uint64_t eoi_before;
     enum virtual_memory_status virtual_memory_status;
 
     console_initialize();
@@ -251,6 +277,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!virtual_memory_self_test()) {
         console_panic("virtual-memory rejection self-test failed");
+    }
+
+    if (!apic_self_test()) {
+        console_panic("APIC topology rejection self-test failed");
     }
 
     console_write("Zenith OS: parser rejection tests passed\n");
@@ -319,6 +349,29 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     report_virtual_memory(&virtual_memory_layout);
     console_write("Zenith OS: virtual memory foundation passed\n");
 
+    if (!interrupt_pic_spurious_self_test()) {
+        console_panic("PIC spurious interrupt self-test failed");
+    }
+
+    apic_status = apic_initialize(
+        &acpi_topology,
+        &virtual_memory_layout,
+        &apic_configuration
+    );
+
+    if (apic_status != APIC_STATUS_OK) {
+        console_panic(apic_status_string(apic_status));
+    }
+
+    if (apic_validate() != APIC_STATUS_OK ||
+        !apic_spurious_self_test()) {
+        console_panic("active APIC validation failed");
+    }
+
+    report_apic(&apic_configuration);
+    console_write("Zenith OS: legacy PIC permanently masked\n");
+    console_write("Zenith OS: APIC interrupt routing verified\n");
+
     console_write("Zenith OS: day one passed\n");
     console_write("Zenith OS: memory foundation passed\n");
     kernel_test_run(test_scenario);
@@ -331,10 +384,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("IST routing self-test failed");
     }
 
-    if (!interrupt_pic_spurious_self_test()) {
-        console_panic("PIC spurious interrupt self-test failed");
-    }
-
+    eoi_before = apic_eoi_count();
     pit_status = pit_start(UINT32_C(100));
 
     if (pit_status != PIT_STATUS_OK) {
@@ -353,9 +403,16 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(pit_status_string(pit_status));
     }
 
+    if (pit_ticks() < UINT64_C(8) ||
+        apic_eoi_count() < eoi_before + UINT64_C(8) ||
+        !apic_timer_is_masked() || !pic_all_masked() ||
+        apic_validate() != APIC_STATUS_OK) {
+        console_panic("APIC-routed timer validation failed");
+    }
+
     console_write("Zenith OS: exception probes passed\n");
-    console_write("Zenith OS: PIC spurious paths passed\n");
-    console_write("Zenith OS: PIT delivered eight interrupts\n");
+    console_write("Zenith OS: legacy PIC spurious paths passed\n");
+    console_write("Zenith OS: APIC-routed PIT delivered eight interrupts\n");
     console_write("Zenith OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

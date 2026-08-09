@@ -43,9 +43,14 @@ unmapped gaps. Guard-page stack layout remains future virtual-memory work.
 ## Interrupt-controller invariants
 
 Both 8259 PICs are masked before descriptor work. Initialization remaps them to
-vectors `0x20-0x2F` and leaves every IRQ masked. The PIT registers its handler
-and completes its state before IRQ0 is unmasked. IRQ handlers run with nesting
-disabled and the dispatcher sends the EOI after the handler returns.
+vectors `0x20-0x2F` and leaves every IRQ masked. Their synthetic spurious IRQ
+paths remain a regression test, but the PICs are then permanently masked and
+read back before Zenith activates its discovered xAPIC hardware.
+
+The PIT registers its handler and completes its state before the ACPI-resolved
+I/O APIC route is unmasked. IRQ handlers run with nesting disabled and the
+dispatcher writes the Local APIC EOI register after the handler returns. The
+Local APIC spurious vector has a registered no-op observer and requires no EOI.
 
 Spurious IRQ7 receives no EOI. Spurious IRQ15 receives an EOI only on the master
 PIC. Genuine slave interrupts receive slave then master EOIs.
@@ -60,7 +65,7 @@ milestone exists to prevent.
 
 ## Executable proof
 
-`make qemu-tests` boots one kernel under ten Multiboot command-line scenarios:
+`make qemu-tests` boots one kernel under eleven Multiboot command-line scenarios:
 
 1. normal descriptor and frame validation;
 2. breakpoint return with every GPR and the direction flag restored;
@@ -69,10 +74,12 @@ milestone exists to prevent.
 5. present write fault against the read-only kernel image;
 6. present instruction-fetch fault against NX kernel data;
 7. recoverable entry through the double-fault IST stack;
-8. synthetic spurious IRQ7/IRQ15 paths and eight PIT interrupts, which also
-   prove repeated genuine EOIs;
-9. deterministic handling of an unregistered vector;
-10. a genuine double fault created by making page-fault delivery fail.
+8. synthetic spurious IRQ7/IRQ15 paths and eight PIT interrupts delivered
+   through the I/O APIC, which also prove repeated Local APIC EOIs;
+9. complete APIC register readback, a no-EOI spurious vector, permanent PIC
+   masks, and a dedicated APIC-routed timer proof;
+10. deterministic handling of an unregistered vector;
+11. a genuine double fault created by making page-fault delivery fail.
 
 Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
 `ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
@@ -84,6 +91,7 @@ cannot be mistaken for success.
 ## Deferred work
 
 This remains a single-core, ring-zero foundation. It intentionally has no
-`swapgs`, userspace frame, nested interrupts, local APIC, I/O APIC, SMP state,
-preemption, guard pages, or interrupt-safe console lock. Those mechanisms must
-arrive with their own changed ABI and executable proofs.
+`swapgs`, userspace frame, nested interrupts, SMP state, preemption, Local APIC
+timer calibration, dynamic vector allocation, guard pages, or interrupt-safe
+console lock. Those mechanisms must arrive with their own changed ABI and
+executable proofs.

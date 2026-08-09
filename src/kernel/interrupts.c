@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zenith/apic.h>
 #include <zenith/console.h>
 #include <zenith/cpu.h>
 #include <zenith/interrupts.h>
@@ -411,6 +412,17 @@ void interrupt_dispatch(struct interrupt_frame *frame)
     vector = (uint8_t)frame->vector;
     slot = &handlers[vector];
 
+    if (apic_vector_requires_eoi(vector)) {
+        if (slot->handler == NULL) {
+            apic_send_eoi();
+            fatal_interrupt(frame);
+        }
+
+        slot->handler(frame, slot->context);
+        apic_send_eoi();
+        return;
+    }
+
     if (vector >= INTERRUPT_PIC_MASTER_BASE && vector < INTERRUPT_PIC_LIMIT) {
         const uint8_t irq = vector - INTERRUPT_PIC_MASTER_BASE;
 
@@ -475,6 +487,10 @@ const char *interrupt_exception_name(uint8_t vector)
     }
 
     if (vector < INTERRUPT_PIC_LIMIT) {
+        if (apic_vector_requires_eoi(vector)) {
+            return "APIC external interrupt";
+        }
+
         return "legacy PIC interrupt";
     }
 

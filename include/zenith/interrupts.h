@@ -81,6 +81,7 @@ bool interrupt_trigger_register_probe(void);
 void interrupt_trigger_ist_probe(void);
 void interrupt_trigger_spurious_irq7(void);
 void interrupt_trigger_spurious_irq15(void);
+void interrupt_trigger_apic_spurious(void);
 _Noreturn void interrupt_trigger_invalid_opcode(void);
 _Noreturn void interrupt_trigger_page_fault(void);
 _Noreturn void interrupt_trigger_write_protect(void);

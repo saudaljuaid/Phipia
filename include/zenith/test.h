@@ -20,6 +20,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_DOUBLE_FAULT,
     KERNEL_TEST_WRITE_PROTECT,
     KERNEL_TEST_NX,
+    KERNEL_TEST_APIC,
     KERNEL_TEST_INVALID
 };
 

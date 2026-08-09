@@ -30,7 +30,9 @@ APIC address-override topology.
 After consuming firmware data, Zenith replaces the bootstrap map with explicit
 4 KiB kernel, VGA, Local APIC, and I/O APIC mappings. Hardware-enforced W^X, NX,
 supervisor write protection, and UC device cache policy are validated before
-fault and interrupt tests continue.
+fault and interrupt tests continue. Zenith then probes the mapped controllers,
+validates their GSI ranges, permanently masks the legacy PIC, and routes PIT
+IRQ0 through the discovered I/O APIC to the bootstrap processor's Local APIC.
 
 The day-one success contract is the serial line:
 
@@ -42,6 +44,7 @@ Zenith OS: ACPI root verified
 Zenith OS: ACPI MADT verified
 Zenith OS: ACPI MADT topology verified
 Zenith OS: virtual memory foundation passed
+Zenith OS: APIC interrupt routing verified
 ```
 
 ## Build and prove it
@@ -57,7 +60,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run ten deterministic fault, paging, and interrupt scenarios
+make qemu-tests # run eleven deterministic fault, paging, and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -75,19 +78,21 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
 - `src/kernel/acpi_topology.c` — bounded MADT record parsing and topology.
 - `src/kernel/virtual_memory.c` — bounded permanent mapping construction.
+- `src/kernel/apic.c` — xAPIC capability checks and I/O APIC timer routing.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
+- `docs/APIC_ROUTING.md` — controller activation, GSI, and EOI invariants.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Zenith now gives discovered APIC pages explicit cache-correct virtual mappings
-but does not read or program the controllers. Its permanent boot map is static,
-not yet a general virtual-memory manager. Zenith still has a deliberately narrow
-single-core interrupt foundation, but no heap, scheduler, userspace, filesystem,
-networking, graphics, or general hardware drivers. Those arrive only after the
-previous layer has an executable acceptance test.
+Zenith now owns the discovered xAPIC interrupt path, but still uses the PIT as a
+temporary clock source and has no Local APIC timer calibration, SMP, or dynamic
+interrupt-vector allocation. Its permanent boot map is static, not yet a general
+virtual-memory manager. Zenith still has no heap, scheduler, userspace,
+filesystem, networking, graphics, or general hardware drivers. Those arrive
+only after the previous layer has an executable acceptance test.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.
