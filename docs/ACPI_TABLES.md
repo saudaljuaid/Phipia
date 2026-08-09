@@ -91,9 +91,7 @@ Zenith OS: ACPI MADT topology verified
 
 ## Deferred work
 
-Zenith now gives every discovered controller an explicit UC, writable, NX page
-in its high device window. The following APIC-routing milestone verifies CPU
-capability, controller identity and version, non-overlapping GSI ranges, and the
-resolved IRQ0 route before it masks the legacy PIC and activates that path.
-Local APIC timer calibration, Local APIC NMI records, x2APIC, SMP startup, PCI
-routes, and MSI/MSI-X remain deferred.
+Zenith gives every discovered controller an explicit UC, writable, NX page in
+its high device window. The APIC-routing and Local APIC timer milestones now
+consume that topology. Local APIC NMI records, x2APIC, SMP startup, PCI routes,
+and MSI/MSI-X remain deferred.

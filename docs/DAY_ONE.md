@@ -46,8 +46,8 @@ layout and process address spaces remain future virtual-memory work.
 4. ~~Validate the ACPI root, probe the discovered xAPIC hardware, permanently
    mask the legacy PIC, and route the temporary PIT clock through the I/O APIC
    and Local APIC.~~
-5. Calibrate a Local APIC or architectural timer against a trusted source and
-   expose a monotonic kernel timebase.
+5. ~~Calibrate the Local APIC timer against the APIC-routed PIT and expose a
+   monotonic kernel timebase.~~
 6. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI

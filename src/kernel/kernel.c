@@ -13,9 +13,12 @@
 #include <zenith/pit.h>
 #include <zenith/self_test.h>
 #include <zenith/test.h>
+#include <zenith/time.h>
 #include <zenith/virtual_memory.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
+#define KERNEL_TIMER_FREQUENCY_HZ UINT32_C(1000)
+#define KERNEL_TIMER_PROOF_TICKS UINT64_C(8)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -171,6 +174,15 @@ static void report_apic(const struct apic_configuration *configuration)
     console_putc('\n');
 }
 
+static void report_monotonic_time(void)
+{
+    console_write("Zenith OS: Local APIC periodic frequency ");
+    console_write_u64(kernel_time_frequency_hz());
+    console_write(" Hz period ");
+    console_write_u64(kernel_time_period_nanoseconds());
+    console_write(" ns\n");
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -239,6 +251,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
     enum pit_status pit_status;
+    enum kernel_time_status time_status;
+    uint64_t monotonic_before;
+    uint64_t monotonic_after;
+    uint64_t nanoseconds_before;
+    uint64_t nanoseconds_after;
     uint64_t eoi_before;
     enum virtual_memory_status virtual_memory_status;
 
@@ -281,6 +298,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!apic_self_test()) {
         console_panic("APIC topology rejection self-test failed");
+    }
+
+    if (!apic_local_timer_self_test()) {
+        console_panic("Local APIC timer arithmetic self-test failed");
+    }
+
+    if (!kernel_time_self_test()) {
+        console_panic("monotonic-time arithmetic self-test failed");
     }
 
     console_write("Zenith OS: parser rejection tests passed\n");
@@ -414,6 +439,52 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Zenith OS: legacy PIC spurious paths passed\n");
     console_write("Zenith OS: APIC-routed PIT delivered eight interrupts\n");
     console_write("Zenith OS: never triple fault milestone passed\n");
+
+    time_status = kernel_time_initialize(KERNEL_TIMER_FREQUENCY_HZ);
+
+    if (time_status != KERNEL_TIME_STATUS_OK) {
+        console_panic(kernel_time_status_string(time_status));
+    }
+
+    monotonic_before = kernel_time_monotonic_ticks();
+    time_status = kernel_time_monotonic_nanoseconds(&nanoseconds_before);
+
+    if (time_status != KERNEL_TIME_STATUS_OK) {
+        console_panic(kernel_time_status_string(time_status));
+    }
+
+    eoi_before = apic_eoi_count();
+    time_status = kernel_time_wait_for_ticks(KERNEL_TIMER_PROOF_TICKS);
+
+    if (time_status != KERNEL_TIME_STATUS_OK) {
+        console_panic(kernel_time_status_string(time_status));
+    }
+
+    monotonic_after = kernel_time_monotonic_ticks();
+    time_status = kernel_time_monotonic_nanoseconds(&nanoseconds_after);
+
+    if (time_status != KERNEL_TIME_STATUS_OK) {
+        console_panic(kernel_time_status_string(time_status));
+    }
+
+    if (monotonic_after < monotonic_before + KERNEL_TIMER_PROOF_TICKS ||
+        nanoseconds_after <= nanoseconds_before ||
+        nanoseconds_after - nanoseconds_before <
+            KERNEL_TIMER_PROOF_TICKS *
+                kernel_time_period_nanoseconds() ||
+        apic_eoi_count() < eoi_before + KERNEL_TIMER_PROOF_TICKS ||
+        pit_is_running() || !apic_timer_is_masked() ||
+        !apic_local_timer_active() ||
+        kernel_time_validate() != KERNEL_TIME_STATUS_OK) {
+        console_panic("Local APIC monotonic timer validation failed");
+    }
+
+    report_monotonic_time();
+    console_write("Zenith OS: Local APIC timer and monotonic clock verified\n");
+
+    if (test_scenario == KERNEL_TEST_LAPIC_TIMER) {
+        kernel_test_complete_lapic_timer();
+    }
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
         kernel_test_complete_normal();

@@ -7,10 +7,13 @@
 #include <stdint.h>
 
 #include <zenith/acpi.h>
+#include <zenith/interrupts.h>
 #include <zenith/virtual_memory.h>
 
 #define APIC_TIMER_VECTOR UINT8_C(0x20)
+#define APIC_LOCAL_TIMER_VECTOR UINT8_C(0x30)
 #define APIC_SPURIOUS_VECTOR UINT8_C(0xFF)
+#define APIC_TIMER_CALIBRATION_SAMPLE_COUNT 5U
 
 enum apic_status {
     APIC_STATUS_OK = 0,
@@ -36,7 +39,14 @@ enum apic_status {
     APIC_STATUS_BAD_TIMER_OVERRIDE,
     APIC_STATUS_TIMER_GSI_UNROUTABLE,
     APIC_STATUS_PIC_NOT_MASKED,
-    APIC_STATUS_REGISTER_MISMATCH
+    APIC_STATUS_REGISTER_MISMATCH,
+    APIC_STATUS_LOCAL_TIMER_ALREADY_ACTIVE,
+    APIC_STATUS_LOCAL_TIMER_NOT_ACTIVE,
+    APIC_STATUS_PIT_FAILURE,
+    APIC_STATUS_BAD_TIMER_DIVIDE,
+    APIC_STATUS_BAD_TIMER_FREQUENCY,
+    APIC_STATUS_BAD_TIMER_SAMPLE,
+    APIC_STATUS_TIMER_TIMEOUT
 };
 
 struct apic_io_controller {
@@ -62,7 +72,20 @@ struct apic_configuration {
     bool timer_level_triggered;
 };
 
+struct apic_local_timer_configuration {
+    uint32_t divide_configuration;
+    uint32_t divisor;
+    uint32_t calibrated_frequency_hz;
+    uint32_t periodic_initial_count;
+    uint32_t requested_frequency_hz;
+    uint32_t periodic_frequency_hz;
+    uint32_t minimum_sample_hz;
+    uint32_t maximum_sample_hz;
+    uint64_t period_nanoseconds;
+};
+
 bool apic_self_test(void);
+bool apic_local_timer_self_test(void);
 enum apic_status apic_initialize(
     const struct acpi_topology *topology,
     const struct virtual_memory_layout *layout,
@@ -71,6 +94,14 @@ enum apic_status apic_initialize(
 enum apic_status apic_validate(void);
 enum apic_status apic_timer_set_mask(bool masked);
 bool apic_timer_is_masked(void);
+enum apic_status apic_local_timer_calibrate_and_start(
+    uint32_t periodic_frequency_hz,
+    interrupt_handler_t handler,
+    void *context,
+    struct apic_local_timer_configuration *configuration
+);
+enum apic_status apic_local_timer_validate(void);
+bool apic_local_timer_active(void);
 bool apic_vector_requires_eoi(uint8_t vector);
 void apic_send_eoi(void);
 uint64_t apic_eoi_count(void);

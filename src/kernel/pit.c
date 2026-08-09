@@ -8,21 +8,24 @@
 #include <zenith/interrupts.h>
 #include <zenith/pit.h>
 
-#define PIT_INPUT_FREQUENCY UINT32_C(1193182)
 #define PIT_CHANNEL_ZERO UINT16_C(0x40)
 #define PIT_COMMAND UINT16_C(0x43)
 #define PIT_CHANNEL_ZERO_MODE_THREE UINT8_C(0x36)
 #define PIT_VECTOR APIC_TIMER_VECTOR
+#define PIT_WAIT_ATTEMPT_LIMIT UINT64_C(100000000)
 
 static volatile uint64_t tick_counter __attribute__((aligned(8)));
 static uint32_t configured_frequency;
+static uint32_t configured_divisor;
 static bool running;
 
 static void pit_interrupt_handler(struct interrupt_frame *frame, void *context)
 {
     (void)frame;
     (void)context;
-    ++tick_counter;
+    if (tick_counter != UINT64_MAX) {
+        ++tick_counter;
+    }
 }
 
 enum pit_status pit_start(uint32_t frequency_hz)
@@ -39,11 +42,12 @@ enum pit_status pit_start(uint32_t frequency_hz)
         return PIT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    if (frequency_hz == 0U || frequency_hz > PIT_INPUT_FREQUENCY) {
+    if (frequency_hz == 0U || frequency_hz > PIT_INPUT_FREQUENCY_HZ) {
         return PIT_STATUS_BAD_FREQUENCY;
     }
 
-    divisor = (PIT_INPUT_FREQUENCY + frequency_hz / 2U) / frequency_hz;
+    divisor = (PIT_INPUT_FREQUENCY_HZ + frequency_hz / 2U) /
+        frequency_hz;
 
     if (divisor == 0U || divisor > UINT16_MAX) {
         return PIT_STATUS_BAD_FREQUENCY;
@@ -64,7 +68,8 @@ enum pit_status pit_start(uint32_t frequency_hz)
     cpu_out8(PIT_CHANNEL_ZERO, (uint8_t)((divisor >> 8U) & UINT32_C(0xFF)));
 
     tick_counter = 0U;
-    configured_frequency = PIT_INPUT_FREQUENCY / divisor;
+    configured_frequency = PIT_INPUT_FREQUENCY_HZ / divisor;
+    configured_divisor = divisor;
     running = true;
     apic_status = apic_timer_set_mask(false);
 
@@ -72,6 +77,7 @@ enum pit_status pit_start(uint32_t frequency_hz)
         (void)apic_timer_set_mask(true);
         running = false;
         configured_frequency = 0U;
+        configured_divisor = 0U;
         (void)interrupt_unregister_handler((uint8_t)PIT_VECTOR);
         return PIT_STATUS_APIC_FAILURE;
     }
@@ -106,6 +112,7 @@ enum pit_status pit_stop(void)
 
     running = false;
     configured_frequency = 0U;
+    configured_divisor = 0U;
     return PIT_STATUS_OK;
 }
 
@@ -117,6 +124,11 @@ uint64_t pit_ticks(void)
 uint32_t pit_frequency(void)
 {
     return configured_frequency;
+}
+
+uint32_t pit_divisor(void)
+{
+    return configured_divisor;
 }
 
 bool pit_is_running(void)
@@ -141,17 +153,25 @@ enum pit_status pit_wait_for_ticks(uint64_t tick_count)
     }
 
     if (tick_count > UINT64_MAX - tick_counter) {
-        target = UINT64_MAX;
-    } else {
-        target = tick_counter + tick_count;
+        return PIT_STATUS_TICK_OVERFLOW;
     }
 
-    while (tick_counter < target) {
-        cpu_enable_and_halt();
+    target = tick_counter + tick_count;
+    cpu_interrupt_enable();
+
+    for (uint64_t attempt = 0U;
+         attempt < PIT_WAIT_ATTEMPT_LIMIT;
+         ++attempt) {
+        if (tick_counter >= target) {
+            cpu_interrupt_disable();
+            return PIT_STATUS_OK;
+        }
+
+        __asm__ volatile ("pause" : : : "memory");
     }
 
     cpu_interrupt_disable();
-    return PIT_STATUS_OK;
+    return PIT_STATUS_TIMEOUT;
 }
 
 const char *pit_status_string(enum pit_status status)
@@ -171,6 +191,10 @@ const char *pit_status_string(enum pit_status status)
         return "PIT interrupt handler operation failed";
     case PIT_STATUS_APIC_FAILURE:
         return "PIT could not update the I/O APIC route";
+    case PIT_STATUS_TICK_OVERFLOW:
+        return "PIT tick target overflows";
+    case PIT_STATUS_TIMEOUT:
+        return "PIT interrupt wait exceeded its bounded attempt limit";
     default:
         return "unknown PIT status";
     }

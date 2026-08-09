@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/zenith.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault write-protect nx \
-	ist pit apic unexpected double-fault
+	ist pit apic lapic-timer unexpected double-fault
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -94,7 +94,7 @@ $(TEST_BUILD_DIR)/%/zenith.iso: $(KERNEL) Makefile
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
-qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
+$(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
@@ -108,6 +108,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		ist) expected=41 ;; \
 		pit) expected=43 ;; \
 		apic) expected=53 ;; \
+		lapic-timer) expected=55 ;; \
 		unexpected) expected=45 ;; \
 		double-fault) expected=47 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
@@ -130,12 +131,13 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		{ ! grep -Fq 'Zenith OS: ACPI root verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: ACPI MADT verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: ACPI MADT topology verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: virtual memory foundation passed' "$$log" || \
-		  ! grep -Fq 'Zenith OS: APIC interrupt routing verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
+		{ ! grep -Fqx 'Zenith OS: ACPI root verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: ACPI MADT verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: ACPI MADT topology verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: virtual memory foundation passed' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: APIC interrupt routing verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: Local APIC timer and monotonic clock verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \
@@ -164,6 +166,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		apic) \
 			grep -Fq 'Zenith OS: APIC interrupt routing verified' "$$log" && \
 			grep -Fq 'Zenith OS: legacy PIC permanently masked' "$$log" || \
+				diagnostics_ok=false ;; \
+		lapic-timer) \
+			grep -Fqx 'Zenith OS: Local APIC timer and monotonic clock verified' "$$log" && \
+			grep -Fqx 'Zenith OS: APIC-routed PIT delivered eight interrupts' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

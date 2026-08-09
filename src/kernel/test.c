@@ -123,6 +123,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_APIC;
     }
 
+    if (token_equals(value, length, "lapic-timer")) {
+        return KERNEL_TEST_LAPIC_TIMER;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -151,6 +155,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x19);
     case KERNEL_TEST_APIC:
         return UINT8_C(0x1A);
+    case KERNEL_TEST_LAPIC_TIMER:
+        return UINT8_C(0x1B);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -317,6 +323,8 @@ void kernel_test_run(enum kernel_test_scenario scenario)
 
         apic_timer_proof();
         kernel_test_pass();
+    case KERNEL_TEST_LAPIC_TIMER:
+        return;
     case KERNEL_TEST_INVALID:
         kernel_test_fail("invalid or duplicate zenith.test argument");
     case KERNEL_TEST_NONE:
@@ -329,6 +337,17 @@ _Noreturn void kernel_test_complete_normal(void)
 {
     if (active_scenario != KERNEL_TEST_NORMAL) {
         kernel_test_fail("normal completion used outside the normal scenario");
+    }
+
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_lapic_timer(void)
+{
+    if (active_scenario != KERNEL_TEST_LAPIC_TIMER) {
+        kernel_test_fail(
+            "Local APIC timer completion used outside its scenario"
+        );
     }
 
     kernel_test_pass();
@@ -412,6 +431,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "nx";
     case KERNEL_TEST_APIC:
         return "apic";
+    case KERNEL_TEST_LAPIC_TIMER:
+        return "lapic-timer";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

@@ -486,11 +486,11 @@ const char *interrupt_exception_name(uint8_t vector)
         return exception_names[vector];
     }
 
-    if (vector < INTERRUPT_PIC_LIMIT) {
-        if (apic_vector_requires_eoi(vector)) {
-            return "APIC external interrupt";
-        }
+    if (apic_vector_requires_eoi(vector)) {
+        return "APIC interrupt";
+    }
 
+    if (vector < INTERRUPT_PIC_LIMIT) {
         return "legacy PIC interrupt";
     }
 

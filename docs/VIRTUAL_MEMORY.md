@@ -80,6 +80,6 @@ Zenith OS: virtual memory foundation passed
 This is a permanent boot-time map, not a general virtual-memory manager. It has
 no dynamic table allocation, unmapping, temporary physical-map window, guard
 pages, higher-half kernel relocation, process address spaces, copy-on-write,
-TLB shootdown, or SMP synchronization. The following APIC-routing milestone
-consumes the device mappings; their ownership and cache policy remain part of
-this virtual-memory contract.
+TLB shootdown, or SMP synchronization. The APIC-routing and Local APIC timer
+milestones consume the device mappings; their ownership and cache policy remain
+part of this virtual-memory contract.

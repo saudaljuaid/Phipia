@@ -33,6 +33,9 @@ supervisor write protection, and UC device cache policy are validated before
 fault and interrupt tests continue. Zenith then probes the mapped controllers,
 validates their GSI ranges, permanently masks the legacy PIC, and routes PIT
 IRQ0 through the discovered I/O APIC to the bootstrap processor's Local APIC.
+Zenith then calibrates the Local APIC timer against five bounded samples of
+that route, masks the PIT route, starts a dedicated periodic Local APIC vector,
+and exposes a checked single-core monotonic timebase.
 
 The day-one success contract is the serial line:
 
@@ -45,6 +48,7 @@ Zenith OS: ACPI MADT verified
 Zenith OS: ACPI MADT topology verified
 Zenith OS: virtual memory foundation passed
 Zenith OS: APIC interrupt routing verified
+Zenith OS: Local APIC timer and monotonic clock verified
 ```
 
 ## Build and prove it
@@ -60,7 +64,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run eleven deterministic fault, paging, and interrupt scenarios
+make qemu-tests # run twelve deterministic fault, paging, and timer scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -71,28 +75,31 @@ make hooks    # enforce verification in this local clone
 - `src/arch/x86_64/interrupts.S` — normalized interrupt entry and fatal probes.
 - `src/kernel/interrupts.c` — IDT ownership, dispatch, and fault diagnostics.
 - `src/kernel/cpu.c` — permanent GDT, TSS, and emergency IST stacks.
-- `src/kernel/pic.c` and `pit.c` — legacy IRQ routing and timer proof.
+- `src/kernel/pic.c` and `pit.c` — legacy IRQ routing and calibration reference.
 - `src/kernel/multiboot2.c` — bounded parser for the boot information contract.
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
 - `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
 - `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
 - `src/kernel/acpi_topology.c` — bounded MADT record parsing and topology.
 - `src/kernel/virtual_memory.c` — bounded permanent mapping construction.
-- `src/kernel/apic.c` — xAPIC capability checks and I/O APIC timer routing.
+- `src/kernel/apic.c` — xAPIC routing and calibrated Local APIC timer control.
+- `src/kernel/time.c` — saturating monotonic ticks and checked time conversion.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
 - `docs/APIC_ROUTING.md` — controller activation, GSI, and EOI invariants.
+- `docs/LOCAL_APIC_TIMER.md` — calibration, timer, and timebase invariants.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Zenith now owns the discovered xAPIC interrupt path, but still uses the PIT as a
-temporary clock source and has no Local APIC timer calibration, SMP, or dynamic
-interrupt-vector allocation. Its permanent boot map is static, not yet a general
-virtual-memory manager. Zenith still has no heap, scheduler, userspace,
-filesystem, networking, graphics, or general hardware drivers. Those arrive
-only after the previous layer has an executable acceptance test.
+Zenith now owns the discovered xAPIC interrupt path and uses a calibrated Local
+APIC timer for a single-core monotonic clock. The PIT remains only as the boot
+calibration reference. There is no post-boot drift correction, SMP, dynamic
+interrupt-vector allocation, scheduler, or preemption. Its permanent boot map
+is static, not yet a general virtual-memory manager. Zenith still has no heap,
+userspace, filesystem, networking, graphics, or general hardware drivers.
+Those arrive only after the previous layer has an executable acceptance test.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.

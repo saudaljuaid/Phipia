@@ -7,7 +7,7 @@ spurious-IRQ regression proof. Before external interrupts are enabled, both PIC
 masks are set to `0xFF`, every I/O APIC redirection entry is masked, and exactly
 one timer route is installed.
 
-The PIT remains a temporary clock source. Its IRQ0 signal now enters the I/O
+The PIT is the temporary calibration source. Its IRQ0 signal enters the I/O
 APIC selected by the ACPI interrupt-source override, reaches vector `0x20` on
 the bootstrap processor's Local APIC, and completes through the Local APIC EOI
 register. No interrupt is delivered through the legacy PIC after activation.
@@ -57,7 +57,9 @@ Starting the PIT installs its vector handler before unmasking the single I/O
 APIC route. Stopping it masks and verifies the route before unregistering the
 handler. The interrupt dispatcher issues one Local APIC EOI after every handled
 timer interrupt. A spurious Local APIC vector deliberately receives no EOI.
-All other I/O APIC inputs remain masked.
+All other I/O APIC inputs remain masked. The following timer milestone uses
+this exact route for bounded calibration, then masks it before activating the
+dedicated Local APIC timer vector described in `LOCAL_APIC_TIMER.md`.
 
 ## Executable proof
 
@@ -81,9 +83,8 @@ Zenith OS: APIC-routed PIT delivered eight interrupts
 
 ## Deferred work
 
-This is still a single-core xAPIC milestone. Zenith does not yet calibrate or
-run the Local APIC timer, start application processors, parse Local APIC NMI
-records, use x2APIC, allocate interrupt vectors dynamically, route PCI
-interrupts, enable MSI/MSI-X, support interrupt remapping, or synchronize
-controller changes across CPUs. The PIT remains only until Zenith has a tested
-calibration source and a monotonic Local APIC or architectural timer.
+This remains a single-core xAPIC foundation. The Local APIC timer milestone now
+consumes the PIT route as a bounded calibration reference and masks it before
+periodic activation. Starting application processors, parsing Local APIC NMI
+records, x2APIC, dynamic vector allocation, PCI routing, MSI/MSI-X, interrupt
+remapping, and cross-CPU controller synchronization remain deferred.
