@@ -266,12 +266,25 @@ const char *acpi_status_string(enum acpi_status status)
         "invalid ACPI RSDP length",
         "invalid ACPI extended checksum",
         "ACPI root table address is null",
-        "ACPI root table is outside the early map"
+        "ACPI root table is outside the early map",
+        "ACPI root table signature does not match the RSDP",
+        "invalid ACPI root table length",
+        "ACPI root table has a partial entry",
+        "ACPI root table exceeds the early entry limit",
+        "invalid ACPI root table checksum",
+        "ACPI root table contains a null table address",
+        "ACPI table is outside the early map",
+        "invalid ACPI table length",
+        "invalid ACPI table checksum",
+        "ACPI root table does not contain a MADT",
+        "ACPI root table contains duplicate MADTs",
+        "ACPI MADT is shorter than its fixed header",
+        "ACPI MADT contains nonzero reserved flags"
     };
 
     _Static_assert(
         sizeof(messages) / sizeof(messages[0]) ==
-            (size_t)ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP + 1U,
+            (size_t)ACPI_STATUS_BAD_MADT_FLAGS + 1U,
         "ACPI status messages are out of sync"
     );
 
