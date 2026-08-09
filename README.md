@@ -21,8 +21,9 @@ mode, installs a known GDT and stack, and transfers control to freestanding C.
 The C kernel defensively validates every Multiboot2 tag, constructs a bounded
 physical-frame allocator from the firmware memory map, proves allocation and
 release, installs a complete IDT and production GDT/TSS, routes fatal CPU
-exceptions through deterministic diagnostics, and proves recoverable interrupt
-entry plus PIT delivery before halting safely.
+exceptions through deterministic diagnostics, proves recoverable interrupt
+entry plus PIT delivery, and validates the firmware ACPI root before halting
+safely.
 
 The day-one success contract is the serial line:
 
@@ -30,6 +31,7 @@ The day-one success contract is the serial line:
 Zenith OS: day one passed
 Zenith OS: memory foundation passed
 Zenith OS: never triple fault milestone passed
+Zenith OS: ACPI root verified
 ```
 
 ## Build and prove it
@@ -59,6 +61,7 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/pic.c` and `pit.c` — legacy IRQ routing and timer proof.
 - `src/kernel/multiboot2.c` — bounded parser for the boot information contract.
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
+- `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
