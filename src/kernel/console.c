@@ -14,6 +14,7 @@
 
 static size_t console_row;
 static size_t console_column;
+static bool panic_active;
 
 static inline void outb(uint16_t port, uint8_t value)
 {
@@ -170,6 +171,11 @@ void console_write_u64(uint64_t value)
     }
 }
 
+bool console_panic_active(void)
+{
+    return panic_active;
+}
+
 _Noreturn void console_halt(void)
 {
     for (;;) {
@@ -179,6 +185,7 @@ _Noreturn void console_halt(void)
 
 _Noreturn void console_panic(const char *message)
 {
+    panic_active = true;
     console_write("Zenith OS PANIC: ");
     console_write(message);
     console_putc('\n');

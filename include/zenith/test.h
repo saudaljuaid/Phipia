@@ -3,6 +3,7 @@
 #define ZENITH_TEST_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zenith/boot.h>
@@ -22,6 +23,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_NX,
     KERNEL_TEST_APIC,
     KERNEL_TEST_LAPIC_TIMER,
+    KERNEL_TEST_HEAP,
     KERNEL_TEST_INVALID
 };
 
@@ -29,9 +31,15 @@ enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
 void kernel_test_run(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_complete_normal(void);
 _Noreturn void kernel_test_complete_lapic_timer(void);
+_Noreturn void kernel_test_complete_heap(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);
+
+bool frame_test_fail_allocate_after(size_t successful_allocations);
+bool apic_test_discard_calibration_attempts(size_t attempt_count);
+bool virtual_memory_test_fail_heap_map_after(size_t successful_maps);
+bool virtual_memory_test_report_uncertain_heap_map_once(void);
 
 extern volatile uint8_t kernel_test_double_fault_armed;
 

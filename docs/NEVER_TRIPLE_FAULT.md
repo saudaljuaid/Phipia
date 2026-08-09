@@ -65,7 +65,7 @@ milestone exists to prevent.
 
 ## Executable proof
 
-`make qemu-tests` boots one kernel under twelve Multiboot command-line scenarios:
+`make qemu-tests` boots one kernel under thirteen Multiboot command-line scenarios:
 
 1. normal descriptor and frame validation;
 2. breakpoint return with every GPR and the direction flag restored;
@@ -80,8 +80,10 @@ milestone exists to prevent.
    masks, and a dedicated APIC-routed timer proof;
 10. bounded PIT calibration, periodic Local APIC timer delivery, repeated Local
     APIC EOIs, a masked PIT route, and advancing monotonic nanoseconds;
-11. deterministic handling of an unregistered vector;
-12. a genuine double fault created by making page-fault delivery fail.
+11. transactional kernel-heap growth, rejection, rollback, exhaustion, and
+    continued Local APIC timer delivery;
+12. deterministic handling of an unregistered vector;
+13. a genuine double fault created by making page-fault delivery fail.
 
 Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
 `ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
@@ -94,6 +96,6 @@ cannot be mistaken for success.
 
 This remains a single-core, ring-zero foundation. It intentionally has no
 `swapgs`, userspace frame, nested interrupts, SMP state, preemption, dynamic
-vector allocation, guard pages, or interrupt-safe console lock. The calibrated
+vector allocation, guarded interrupt stacks, or interrupt-safe console lock. The calibrated
 timer supplies time only; it does not introduce scheduling. Those mechanisms
 must arrive with their own changed ABI and executable proofs.

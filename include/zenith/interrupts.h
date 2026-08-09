@@ -62,6 +62,7 @@ enum interrupt_status {
 enum interrupt_status interrupts_initialize(void);
 enum interrupt_status interrupts_validate(void);
 bool interrupts_ready(void);
+bool interrupt_context_active(void);
 enum interrupt_status interrupt_register_handler(
     uint8_t vector,
     interrupt_handler_t handler,

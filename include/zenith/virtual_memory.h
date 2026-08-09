@@ -9,6 +9,12 @@
 #include <zenith/acpi.h>
 
 #define VIRTUAL_MEMORY_DEVICE_WINDOW_BASE UINT64_C(0xFFFF800000000000)
+#define VIRTUAL_MEMORY_HEAP_BASE UINT64_C(0xFFFF900000000000)
+#define VIRTUAL_MEMORY_HEAP_SIZE (UINT64_C(16) * 1024U * 1024U)
+#define VIRTUAL_MEMORY_HEAP_GUARD_BELOW \
+    (VIRTUAL_MEMORY_HEAP_BASE - UINT64_C(4096))
+#define VIRTUAL_MEMORY_HEAP_GUARD_ABOVE \
+    (VIRTUAL_MEMORY_HEAP_BASE + VIRTUAL_MEMORY_HEAP_SIZE)
 
 enum virtual_memory_status {
     VIRTUAL_MEMORY_STATUS_OK = 0,
@@ -27,6 +33,10 @@ enum virtual_memory_status {
     VIRTUAL_MEMORY_STATUS_TABLE_LIMIT,
     VIRTUAL_MEMORY_STATUS_MAPPING_CONFLICT,
     VIRTUAL_MEMORY_STATUS_NOT_MAPPED,
+    VIRTUAL_MEMORY_STATUS_OUTSIDE_HEAP_WINDOW,
+    VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH,
+    VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE,
+    VIRTUAL_MEMORY_STATUS_TEST_FAILURE,
     VIRTUAL_MEMORY_STATUS_BAD_DEVICE_ADDRESS,
     VIRTUAL_MEMORY_STATUS_TOO_MANY_DEVICES,
     VIRTUAL_MEMORY_STATUS_PAT_FAILURE,
@@ -53,6 +63,13 @@ struct virtual_memory_layout {
     size_t table_page_count;
 };
 
+struct virtual_memory_runtime_stats {
+    size_t heap_window_pages;
+    size_t heap_mapped_pages;
+    size_t table_pages_used;
+    size_t table_pages_capacity;
+};
+
 bool virtual_memory_self_test(void);
 enum virtual_memory_status virtual_memory_initialize(
     const struct acpi_topology *topology,
@@ -62,6 +79,17 @@ enum virtual_memory_status virtual_memory_validate(void);
 enum virtual_memory_status virtual_memory_query(
     uint64_t virtual_address,
     struct virtual_memory_mapping *mapping
+);
+enum virtual_memory_status virtual_memory_map_heap_page(
+    uint64_t virtual_address,
+    uintptr_t physical_address
+);
+enum virtual_memory_status virtual_memory_unmap_heap_page(
+    uint64_t virtual_address,
+    uintptr_t expected_physical_address
+);
+enum virtual_memory_status virtual_memory_runtime_get_stats(
+    struct virtual_memory_runtime_stats *stats
 );
 bool virtual_memory_ready(void);
 const char *virtual_memory_status_string(enum virtual_memory_status status);

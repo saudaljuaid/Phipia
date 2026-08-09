@@ -2,6 +2,7 @@
 #ifndef ZENITH_CONSOLE_H
 #define ZENITH_CONSOLE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,6 +12,7 @@ void console_write(const char *text);
 void console_write_n(const char *text, size_t length);
 void console_write_hex(uint64_t value);
 void console_write_u64(uint64_t value);
+bool console_panic_active(void);
 _Noreturn void console_halt(void);
 _Noreturn void console_panic(const char *message);
 

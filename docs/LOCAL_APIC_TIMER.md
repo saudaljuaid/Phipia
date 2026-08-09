@@ -37,14 +37,25 @@ input. The lower interrupt rate and longer sample window keep the reference
 observable under emulation load. Its programmed 16-bit divisor, rather than a
 truncated nominal frequency, is used in all frequency arithmetic.
 
-Zenith collects exactly five samples. Each sample first synchronizes to a PIT
-delivery, programs the masked Local APIC timer as a one-shot down-counter from
+Zenith collects exactly five accepted samples. Each attempt first synchronizes
+to a PIT delivery, programs the masked Local APIC timer as a one-shot down-counter from
 `UINT32_MAX` at divide-by-16, and observes 32 further PIT deliveries. Thus, a
 nominal sample spans 1.6 seconds rather than depending on a short high-rate
 burst. The actual PIT tick delta is retained so additional deliveries cannot
 bias the result. A sample is rejected if either counter fails to advance, the
 Local APIC counter expires, the PIT delta exceeds 64, a register readback
 differs, or the derived frequency is outside the 32-bit policy range.
+
+Counter non-advance, expiry, a PIT delta above 64, or an out-of-policy derived
+frequency discards that attempt instead of publishing suspect data. Candidates
+are kept in frequency order; as soon as a five-sample window satisfies the
+existing 5% median-spread rule, exactly that coherent window is accepted.
+Collection remains bounded to seven total attempts. Register, PIT, or wait
+failures still abort immediately, and exhausting the two spare attempts without
+a coherent window returns the existing bad-sample status. No per-wait ceiling,
+frequency tolerance, or scenario timeout is increased. This absorbs up to two
+short emulator deschedules while still failing deterministically under
+persistent timing distortion.
 
 Each sample frequency is calculated with checked 64-bit integer arithmetic:
 
@@ -102,9 +113,13 @@ integrated proof and emits:
 Zenith OS: Local APIC timer and monotonic clock verified
 ```
 
-The host protocol now contains twelve scenarios. Each still requires one exact
-`ZT BEGIN <scenario>` and one exact `ZT PASS <scenario>`, its scenario-specific
-exit status, and no failure or panic marker.
+The host protocol now contains thirteen scenarios. The `heap` scenario also
+forces one valid calibration attempt to be discarded, requires the bounded
+retry diagnostic, and then proves periodic ticks and EOIs advance across
+page-backed allocation, rollback, and exhaustion while the PIT route remains
+masked. Each scenario requires one
+exact `ZT BEGIN <scenario>` and one exact `ZT PASS <scenario>`, its
+scenario-specific exit status, and no failure or panic marker.
 
 ## Deferred work
 

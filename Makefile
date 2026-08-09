@@ -6,14 +6,18 @@ KERNEL := $(BUILD_DIR)/zenith.elf
 ISO := $(BUILD_DIR)/zenith.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
+HOST_TEST_DIR := $(BUILD_DIR)/host-tests
+HOST_HEAP_RUNNER := $(HOST_TEST_DIR)/heap-core-runner
+QEMU_RAM ?= 128M
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault write-protect nx \
-	ist pit apic lapic-timer unexpected double-fault
+	ist pit apic lapic-timer heap unexpected double-fault
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
 LD := ld
 NM := nm
 OBJDUMP := objdump
+HOST_CC ?= cc
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -32,7 +36,8 @@ ASM_OBJECTS := $(patsubst src/arch/x86_64/%.S,$(BUILD_DIR)/arch_%.o,$(ASM_SOURCE
 OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
-.PHONY: all clean hooks iso kernel lint qemu-tests run smoke toolchain verify \
+.PHONY: all clean hooks host-tests iso kernel lint qemu-tests run smoke \
+	toolchain verify \
 	$(TEST_TARGETS)
 
 all: kernel
@@ -52,7 +57,7 @@ $(KERNEL): $(OBJECTS) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 toolchain:
-	@for tool in gcc ld grub-file readelf nm objdump; do \
+	@for tool in gcc ld grub-file readelf nm objdump python3; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
 
@@ -61,7 +66,19 @@ lint:
 		echo "trailing whitespace is forbidden"; exit 1; \
 	fi
 
-verify: toolchain lint
+$(HOST_TEST_DIR):
+	mkdir -p $@
+
+$(HOST_HEAP_RUNNER): tests/heap_core_runner.c src/kernel/heap_core.c \
+		src/kernel/heap_core.h include/zenith/heap.h | $(HOST_TEST_DIR)
+	$(HOST_CC) -Iinclude -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+		-Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		tests/heap_core_runner.c src/kernel/heap_core.c -o $@
+
+host-tests: $(HOST_HEAP_RUNNER)
+	python3 tests/heap_oracle.py $(HOST_HEAP_RUNNER) --cases 100000
+
+verify: toolchain lint host-tests
 	$(MAKE) clean
 	$(MAKE) kernel
 	grub-file --is-x86-multiboot2 $(KERNEL)
@@ -109,6 +126,7 @@ $(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		pit) expected=43 ;; \
 		apic) expected=53 ;; \
 		lapic-timer) expected=55 ;; \
+		heap) expected=57 ;; \
 		unexpected) expected=45 ;; \
 		double-fault) expected=47 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
@@ -117,14 +135,17 @@ $(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 	rm -f "$$log"; \
 	set +e; \
 	timeout 15s qemu-system-x86_64 \
-		-machine accel=tcg -m 128M -smp 1 \
+		-machine accel=tcg -m '$(QEMU_RAM)' -smp 1 \
 		-cdrom '$<' -display none -monitor none -serial stdio \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-no-reboot >"$$log" 2>&1; result=$$?; \
 	set -e; \
 	begin_count=$$(grep -Fxc 'ZT BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ZT PASS $*' "$$log" || true); \
+	all_begin_count=$$(grep -Ec '^ZT BEGIN ' "$$log" || true); \
+	all_pass_count=$$(grep -Ec '^ZT PASS ' "$$log" || true); \
 	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
+		test "$$all_begin_count" -ne 1 -o "$$all_pass_count" -ne 1 || \
 		grep -Fq 'ZT FAIL' "$$log" || grep -Fq 'Zenith OS PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
@@ -137,6 +158,7 @@ $(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		  ! grep -Fqx 'Zenith OS: virtual memory foundation passed' "$$log" || \
 		  ! grep -Fqx 'Zenith OS: APIC interrupt routing verified' "$$log" || \
 		  ! grep -Fqx 'Zenith OS: Local APIC timer and monotonic clock verified' "$$log" || \
+		  ! grep -Fqx 'Zenith OS: bounded kernel heap verified' "$$log" || \
 		  ! grep -Fqx 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -170,6 +192,12 @@ $(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		lapic-timer) \
 			grep -Fqx 'Zenith OS: Local APIC timer and monotonic clock verified' "$$log" && \
 			grep -Fqx 'Zenith OS: APIC-routed PIT delivered eight interrupts' "$$log" || \
+				diagnostics_ok=false ;; \
+		heap) \
+			grep -Fqx 'Zenith OS: bounded kernel heap verified' "$$log" && \
+			grep -Fqx 'Zenith OS: APIC calibration retry verified' "$$log" && \
+			grep -Fqx 'Zenith OS: Local APIC timer and monotonic clock verified' "$$log" && \
+			grep -Fqx 'Zenith OS: legacy PIC permanently masked' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

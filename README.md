@@ -33,9 +33,14 @@ supervisor write protection, and UC device cache policy are validated before
 fault and interrupt tests continue. Zenith then probes the mapped controllers,
 validates their GSI ranges, permanently masks the legacy PIC, and routes PIT
 IRQ0 through the discovered I/O APIC to the bootstrap processor's Local APIC.
-Zenith then calibrates the Local APIC timer against five bounded samples of
-that route, masks the PIT route, starts a dedicated periodic Local APIC vector,
-and exposes a checked single-core monotonic timebase.
+Zenith then calibrates the Local APIC timer against five accepted samples from
+at most seven bounded attempts on that route, masks the PIT route, starts a
+dedicated periodic Local APIC vector, and exposes a checked single-core
+monotonic timebase. Normal boot then
+initializes a fixed 16 MiB kernel-heap window. Heap growth obtains frames from
+the existing allocator, maps supervisor RW+NX write-back leaves through the
+permanent hierarchy, zeroes them before publication, and uses fixed external
+metadata for bounded first-fit splitting and coalescing.
 
 The day-one success contract is the serial line:
 
@@ -49,6 +54,7 @@ Zenith OS: ACPI MADT topology verified
 Zenith OS: virtual memory foundation passed
 Zenith OS: APIC interrupt routing verified
 Zenith OS: Local APIC timer and monotonic clock verified
+Zenith OS: bounded kernel heap verified
 ```
 
 ## Build and prove it
@@ -62,12 +68,19 @@ sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools qemu-syste
 Then run:
 
 ```sh
-make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
+make verify     # clean build, host oracle, ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run twelve deterministic fault, paging, and timer scenarios
+make qemu-tests # run thirteen deterministic fault, paging, timer, and heap scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
+
+The default QEMU matrix uses 128 MiB. `QEMU_RAM=19M make qemu-tests` is the
+lowest whole-MiB configuration supported by the complete thirteen-scenario
+protocol: the heap scenario must simultaneously back the full 16 MiB payload
+window. At 18 MiB QEMU exposes only 4045 allocatable frames in the current
+linked layout, so that scenario correctly reaches physical out-of-memory before
+the required window-exhaustion proof and is not a supported full-matrix setup.
 
 ## Repository map
 
@@ -84,22 +97,27 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/virtual_memory.c` — bounded permanent mapping construction.
 - `src/kernel/apic.c` — xAPIC routing and calibrated Local APIC timer control.
 - `src/kernel/time.c` — saturating monotonic ticks and checked time conversion.
+- `src/kernel/heap.c` — transactional page-backed heap ownership and API.
+- `src/kernel/heap_core.c` — fixed-descriptor split/coalesce allocator core.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
 - `docs/APIC_ROUTING.md` — controller activation, GSI, and EOI invariants.
 - `docs/LOCAL_APIC_TIMER.md` — calibration, timer, and timebase invariants.
+- `docs/KERNEL_HEAP.md` — heap window, transactions, failure, and test protocol.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Zenith now owns the discovered xAPIC interrupt path and uses a calibrated Local
-APIC timer for a single-core monotonic clock. The PIT remains only as the boot
-calibration reference. There is no post-boot drift correction, SMP, dynamic
-interrupt-vector allocation, scheduler, or preemption. Its permanent boot map
-is static, not yet a general virtual-memory manager. Zenith still has no heap,
-userspace, filesystem, networking, graphics, or general hardware drivers.
-Those arrive only after the previous layer has an executable acceptance test.
+Zenith now owns the discovered xAPIC interrupt path, uses a calibrated Local
+APIC timer for a single-core monotonic clock, and has one bounded page-backed
+kernel heap. The PIT remains only as the boot calibration reference. Free heap
+space is reusable, but committed pages do not shrink back to the frame
+allocator. The heap-only leaf mapper is not a general virtual-memory manager.
+There is no post-boot drift correction, SMP, dynamic interrupt-vector
+allocation, scheduler, preemption, userspace, filesystem, networking, graphics,
+or general hardware-driver framework. Those require separate executable
+acceptance contracts.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.

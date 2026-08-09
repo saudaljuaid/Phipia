@@ -7,6 +7,7 @@
 #include <zenith/boot.h>
 #include <zenith/console.h>
 #include <zenith/cpu.h>
+#include <zenith/heap.h>
 #include <zenith/interrupts.h>
 #include <zenith/memory.h>
 #include <zenith/pic.h>
@@ -187,6 +188,9 @@ static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
     uintptr_t second_frame;
+    uintptr_t heap_frame;
+    uintptr_t rejected_frame = UINTPTR_MAX;
+    enum frame_owner owner;
     enum frame_status status;
 
     status = frame_allocate(&first_frame);
@@ -203,8 +207,48 @@ static void prove_frame_lifecycle(void)
 
     if (first_frame == second_frame ||
         (first_frame & (ZENITH_PAGE_SIZE - 1U)) != 0U ||
-        (second_frame & (ZENITH_PAGE_SIZE - 1U)) != 0U) {
+        (second_frame & (ZENITH_PAGE_SIZE - 1U)) != 0U ||
+        frame_query_owner(first_frame, &owner) != FRAME_STATUS_OK ||
+        owner != FRAME_OWNER_GENERIC ||
+        frame_query_owner(second_frame, &owner) != FRAME_STATUS_OK ||
+        owner != FRAME_OWNER_GENERIC) {
         console_panic("frame allocator returned an invalid address");
+    }
+
+    if (frame_allocate_owned(FRAME_OWNER_NONE, &rejected_frame) !=
+            FRAME_STATUS_INVALID_OWNER ||
+        rejected_frame != UINTPTR_MAX ||
+        frame_query_owner(first_frame, NULL) != FRAME_STATUS_NULL_ARGUMENT ||
+        frame_query_owner(1U, &owner) != FRAME_STATUS_UNALIGNED_ADDRESS ||
+        frame_query_owner(0U, &owner) !=
+            FRAME_STATUS_FRAME_NOT_ALLOCATABLE) {
+        console_panic("frame allocator failed owner rejection checks");
+    }
+
+    if (frame_allocate_owned(
+            FRAME_OWNER_KERNEL_HEAP,
+            &heap_frame
+        ) != FRAME_STATUS_OK ||
+        heap_frame == first_frame || heap_frame == second_frame ||
+        frame_query_owner(heap_frame, &owner) != FRAME_STATUS_OK ||
+        owner != FRAME_OWNER_KERNEL_HEAP ||
+        frame_release(heap_frame) != FRAME_STATUS_OWNER_MISMATCH ||
+        frame_release_owned(
+            heap_frame,
+            FRAME_OWNER_KERNEL_HEAP
+        ) != FRAME_STATUS_OK) {
+        console_panic("frame allocator failed heap owner lifecycle");
+    }
+
+    if (frame_release_owned(
+            second_frame,
+            FRAME_OWNER_KERNEL_HEAP
+        ) != FRAME_STATUS_OWNER_MISMATCH ||
+        frame_release_owned(
+            second_frame,
+            FRAME_OWNER_NONE
+        ) != FRAME_STATUS_INVALID_OWNER) {
+        console_panic("frame allocator failed owner release rejection");
     }
 
     console_write("Zenith OS: frame probe: ");
@@ -229,12 +273,52 @@ static void prove_frame_lifecycle(void)
         console_panic("frame allocator failed to reject a double free");
     }
 
+    if (frame_query_owner(first_frame, &owner) != FRAME_STATUS_OK ||
+        owner != FRAME_OWNER_NONE) {
+        console_panic("released frame retained an owner");
+    }
+
     if (frame_release(1U) != FRAME_STATUS_UNALIGNED_ADDRESS) {
         console_panic("frame allocator failed to reject an unaligned release");
     }
 
     if (frame_release(0U) != FRAME_STATUS_FRAME_NOT_ALLOCATABLE) {
         console_panic("frame allocator released permanently reserved memory");
+    }
+}
+
+static void prove_heap_lifecycle(void)
+{
+    volatile uint8_t *allocation;
+    void *raw_allocation;
+    struct heap_stats stats;
+    enum heap_status status = heap_allocate(257U, 64U, &raw_allocation);
+
+    if (status != HEAP_STATUS_OK || raw_allocation == NULL ||
+        ((uintptr_t)raw_allocation & UINT64_C(63)) != 0U) {
+        console_panic("normal heap allocation proof failed");
+    }
+
+    allocation = (volatile uint8_t *)raw_allocation;
+
+    for (size_t index = 0U; index < 257U; ++index) {
+        allocation[index] = (uint8_t)(UINT8_C(0xA7) ^ (uint8_t)index);
+    }
+
+    for (size_t index = 0U; index < 257U; ++index) {
+        if (allocation[index] !=
+            (uint8_t)(UINT8_C(0xA7) ^ (uint8_t)index)) {
+            console_panic("normal heap payload proof failed");
+        }
+    }
+
+    status = heap_deallocate(raw_allocation);
+
+    if (status != HEAP_STATUS_OK || heap_validate() != HEAP_STATUS_OK ||
+        heap_get_stats(&stats) != HEAP_STATUS_OK ||
+        stats.live_allocations != 0U || stats.reusable_bytes == 0U ||
+        stats.mapped_pages != 1U) {
+        console_panic("normal heap reuse proof failed");
     }
 }
 
@@ -296,6 +380,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("virtual-memory rejection self-test failed");
     }
 
+    if (!heap_self_test()) {
+        console_panic("bounded-heap rejection self-test failed");
+    }
+
     if (!apic_self_test()) {
         console_panic("APIC topology rejection self-test failed");
     }
@@ -353,7 +441,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     stats = frame_allocator_get_stats();
 
-    if (stats.allocated_frames != 0U) {
+    if (stats.allocated_frames != 0U ||
+        stats.generic_allocated_frames != 0U ||
+        stats.heap_allocated_frames != 0U ||
+        frame_allocator_validate() != FRAME_STATUS_OK) {
         console_panic("frame lifecycle leaked a physical frame");
     }
 
@@ -440,10 +531,21 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Zenith OS: APIC-routed PIT delivered eight interrupts\n");
     console_write("Zenith OS: never triple fault milestone passed\n");
 
+    if (test_scenario == KERNEL_TEST_HEAP &&
+        (apic_test_discard_calibration_attempts(0U) ||
+         apic_test_discard_calibration_attempts(3U) ||
+         !apic_test_discard_calibration_attempts(1U))) {
+        console_panic("bounded APIC calibration retry contract failed");
+    }
+
     time_status = kernel_time_initialize(KERNEL_TIMER_FREQUENCY_HZ);
 
     if (time_status != KERNEL_TIME_STATUS_OK) {
         console_panic(kernel_time_status_string(time_status));
+    }
+
+    if (test_scenario == KERNEL_TEST_HEAP) {
+        console_write("Zenith OS: APIC calibration retry verified\n");
     }
 
     monotonic_before = kernel_time_monotonic_ticks();
@@ -481,6 +583,23 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     report_monotonic_time();
     console_write("Zenith OS: Local APIC timer and monotonic clock verified\n");
+
+    if (test_scenario == KERNEL_TEST_NONE ||
+        test_scenario == KERNEL_TEST_NORMAL ||
+        test_scenario == KERNEL_TEST_HEAP) {
+        enum heap_status heap_status = heap_initialize();
+
+        if (heap_status != HEAP_STATUS_OK) {
+            console_panic(heap_status_string(heap_status));
+        }
+
+        if (test_scenario == KERNEL_TEST_HEAP) {
+            kernel_test_complete_heap();
+        }
+
+        prove_heap_lifecycle();
+        console_write("Zenith OS: bounded kernel heap verified\n");
+    }
 
     if (test_scenario == KERNEL_TEST_LAPIC_TIMER) {
         kernel_test_complete_lapic_timer();

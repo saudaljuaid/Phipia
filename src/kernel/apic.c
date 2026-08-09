@@ -8,6 +8,7 @@
 #include <zenith/interrupts.h>
 #include <zenith/pic.h>
 #include <zenith/pit.h>
+#include <zenith/test.h>
 
 /* Intel SDM Vol. 3, Local APIC and I/O APIC chapters. */
 #define APIC_CPUID_FEATURE UINT32_C(1)
@@ -71,6 +72,7 @@
 #define APIC_TIMER_REFERENCE_FREQUENCY_HZ UINT32_C(20)
 #define APIC_TIMER_REFERENCE_TICKS UINT32_C(32)
 #define APIC_TIMER_MAX_REFERENCE_TICKS UINT32_C(64)
+#define APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT 7U
 #define APIC_TIMER_MIN_PERIODIC_FREQUENCY_HZ UINT32_C(10)
 #define APIC_TIMER_MAX_PERIODIC_FREQUENCY_HZ UINT32_C(10000)
 #define APIC_TIMER_MIN_DIVIDED_FREQUENCY_HZ UINT32_C(100000)
@@ -90,11 +92,17 @@ struct apic_timer_sample {
     uint32_t pit_ticks;
 };
 
+struct apic_timer_candidate {
+    struct apic_timer_sample sample;
+    uint32_t frequency_hz;
+};
+
 static struct apic_configuration active_configuration;
 static struct apic_local_timer_configuration active_timer_configuration;
 static uint64_t active_local_apic_virtual_address;
 static volatile uint64_t end_of_interrupt_count;
 static volatile uint64_t spurious_interrupt_count;
+static size_t test_calibration_discards_remaining;
 static bool pit_route_masked;
 static bool local_timer_active;
 static bool initialized;
@@ -109,6 +117,9 @@ _Static_assert(APIC_LOCAL_TIMER_VECTOR != APIC_SPURIOUS_VECTOR,
                "Local APIC timer vector overlaps the spurious vector");
 _Static_assert(APIC_TIMER_CALIBRATION_SAMPLE_COUNT % 2U == 1U,
                "calibration requires an odd sample count");
+_Static_assert(APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT >=
+                   APIC_TIMER_CALIBRATION_SAMPLE_COUNT,
+               "calibration attempts must cover every required sample");
 
 static void bytes_zero(void *destination, size_t size)
 {
@@ -223,6 +234,77 @@ static enum apic_status timer_sample_frequency(
     return APIC_STATUS_OK;
 }
 
+static bool frequency_is_within_sample_spread(
+    uint32_t frequency,
+    uint32_t median_frequency
+)
+{
+    const uint32_t difference = frequency > median_frequency
+        ? frequency - median_frequency
+        : median_frequency - frequency;
+
+    return (uint64_t)difference * UINT32_C(100) <=
+        (uint64_t)median_frequency * APIC_TIMER_MAX_SAMPLE_SPREAD_PERCENT;
+}
+
+static bool calibration_select_samples(
+    const struct apic_timer_candidate *candidates,
+    size_t candidate_count,
+    struct apic_timer_sample samples[APIC_TIMER_CALIBRATION_SAMPLE_COUNT]
+)
+{
+    size_t best_start = SIZE_MAX;
+    uint32_t best_spread = UINT32_MAX;
+
+    if (candidates == NULL || samples == NULL ||
+        candidate_count < APIC_TIMER_CALIBRATION_SAMPLE_COUNT ||
+        candidate_count > APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT) {
+        return false;
+    }
+
+    for (size_t start = 0U;
+         start <= candidate_count - APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
+         ++start) {
+        const size_t median_index = start +
+            APIC_TIMER_CALIBRATION_SAMPLE_COUNT / 2U;
+        const uint32_t median_frequency =
+            candidates[median_index].frequency_hz;
+        const uint32_t spread = candidates[
+                start + APIC_TIMER_CALIBRATION_SAMPLE_COUNT - 1U
+            ].frequency_hz - candidates[start].frequency_hz;
+        bool coherent = true;
+
+        for (size_t index = start;
+             index < start + APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
+             ++index) {
+            if (!frequency_is_within_sample_spread(
+                    candidates[index].frequency_hz,
+                    median_frequency
+                )) {
+                coherent = false;
+                break;
+            }
+        }
+
+        if (coherent && (best_start == SIZE_MAX || spread < best_spread)) {
+            best_start = start;
+            best_spread = spread;
+        }
+    }
+
+    if (best_start == SIZE_MAX) {
+        return false;
+    }
+
+    for (size_t index = 0U;
+         index < APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
+         ++index) {
+        samples[index] = candidates[best_start + index].sample;
+    }
+
+    return true;
+}
+
 static enum apic_status timer_configuration_build(
     const struct apic_timer_sample *samples,
     size_t sample_count,
@@ -288,14 +370,10 @@ static enum apic_status timer_configuration_build(
     calibrated_frequency = frequencies[sample_count / 2U];
 
     for (size_t index = 0U; index < sample_count; ++index) {
-        const uint32_t difference = frequencies[index] >
+        if (!frequency_is_within_sample_spread(
+                frequencies[index],
                 calibrated_frequency
-            ? frequencies[index] - calibrated_frequency
-            : calibrated_frequency - frequencies[index];
-
-        if ((uint64_t)difference * UINT32_C(100) >
-            (uint64_t)calibrated_frequency *
-                APIC_TIMER_MAX_SAMPLE_SPREAD_PERCENT) {
+            )) {
             return APIC_STATUS_BAD_TIMER_SAMPLE;
         }
     }
@@ -543,7 +621,7 @@ static enum apic_status configuration_build(
     struct apic_configuration *configuration
 )
 {
-    uint64_t range_ends[ACPI_MAX_IO_APICS];
+    uint64_t range_ends[ACPI_MAX_IO_APICS] = {0};
     uint32_t timer_gsi;
     bool timer_active_low;
     bool timer_level_triggered;
@@ -1212,6 +1290,67 @@ bool apic_self_test(void)
     ) == APIC_STATUS_BAD_IO_APIC_ADDRESS;
 }
 
+static bool calibration_selection_self_test(void)
+{
+    static const uint32_t recoverable_frequencies[] = {
+        UINT32_C(900000), UINT32_C(950000), UINT32_C(999000),
+        UINT32_C(1000000), UINT32_C(1001000), UINT32_C(1050000)
+    };
+    static const uint32_t outside_frequencies[] = {
+        UINT32_C(949999), UINT32_C(999000), UINT32_C(1000000),
+        UINT32_C(1001000), UINT32_C(1050000)
+    };
+    struct apic_timer_candidate candidates[APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT];
+    struct apic_timer_sample samples[APIC_TIMER_CALIBRATION_SAMPLE_COUNT];
+
+    bytes_zero(candidates, sizeof(candidates));
+    bytes_zero(samples, sizeof(samples));
+
+    for (size_t index = 0U;
+         index < sizeof(recoverable_frequencies) /
+             sizeof(recoverable_frequencies[0]);
+         ++index) {
+        candidates[index].sample.elapsed_count = (uint32_t)index + 1U;
+        candidates[index].sample.pit_ticks = APIC_TIMER_REFERENCE_TICKS;
+        candidates[index].frequency_hz = recoverable_frequencies[index];
+    }
+
+    if (calibration_select_samples(NULL, 6U, samples) ||
+        calibration_select_samples(candidates, 4U, samples) ||
+        calibration_select_samples(
+            candidates,
+            APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT + 1U,
+            samples
+        ) ||
+        !calibration_select_samples(candidates, 6U, samples) ||
+        samples[0].elapsed_count != 2U ||
+        samples[APIC_TIMER_CALIBRATION_SAMPLE_COUNT - 1U].elapsed_count != 6U) {
+        return false;
+    }
+
+    for (size_t index = 0U;
+         index < APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
+         ++index) {
+        candidates[index].sample.elapsed_count = (uint32_t)index + 1U;
+        candidates[index].frequency_hz = outside_frequencies[index];
+    }
+
+    if (calibration_select_samples(
+            candidates,
+            APIC_TIMER_CALIBRATION_SAMPLE_COUNT,
+            samples
+        )) {
+        return false;
+    }
+
+    candidates[0].frequency_hz = UINT32_C(950000);
+    return calibration_select_samples(
+        candidates,
+        APIC_TIMER_CALIBRATION_SAMPLE_COUNT,
+        samples
+    );
+}
+
 bool apic_local_timer_self_test(void)
 {
     static const uint32_t divide_configurations[] = {
@@ -1225,7 +1364,8 @@ bool apic_local_timer_self_test(void)
     struct apic_local_timer_configuration configuration;
     uint32_t divisor;
 
-    if (initialized || local_timer_active) {
+    if (initialized || local_timer_active ||
+        !calibration_selection_self_test()) {
         return false;
     }
 
@@ -1599,6 +1739,7 @@ enum apic_status apic_initialize(
     configuration_copy(&active_configuration, &candidate);
     pit_route_masked = true;
     local_timer_active = false;
+    test_calibration_discards_remaining = 0U;
     timer_configuration_reset(&active_timer_configuration);
     end_of_interrupt_count = 0U;
     initialized = true;
@@ -1751,8 +1892,13 @@ static enum apic_status calibration_collect(
     uint32_t *pit_divisor_value
 )
 {
+    struct apic_timer_candidate candidates[APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT];
     enum apic_status status = APIC_STATUS_OK;
     enum pit_status pit_status;
+    size_t candidate_count = 0U;
+    bool samples_selected = false;
+
+    bytes_zero(candidates, sizeof(candidates));
 
     pit_status = pit_start(APIC_TIMER_REFERENCE_FREQUENCY_HZ);
 
@@ -1766,13 +1912,16 @@ static enum apic_status calibration_collect(
         status = APIC_STATUS_PIT_FAILURE;
     }
 
-    for (size_t index = 0U;
+    for (size_t attempt = 0U;
          status == APIC_STATUS_OK &&
-            index < APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
-         ++index) {
+            !samples_selected &&
+            attempt < APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT;
+         ++attempt) {
+        struct apic_timer_sample candidate;
         uint64_t pit_start_tick;
         uint64_t pit_end_tick;
         uint64_t elapsed_pit_ticks;
+        uint32_t candidate_frequency;
         uint32_t timer_lvt;
         uint32_t divide_configuration;
         uint32_t initial_count;
@@ -1850,23 +1999,57 @@ static enum apic_status calibration_collect(
         }
 
         if (pit_end_tick <= pit_start_tick || current_count == 0U) {
-            status = APIC_STATUS_BAD_TIMER_SAMPLE;
-            break;
+            continue;
         }
 
         elapsed_pit_ticks = pit_end_tick - pit_start_tick;
 
         if (elapsed_pit_ticks > APIC_TIMER_MAX_REFERENCE_TICKS) {
-            status = APIC_STATUS_BAD_TIMER_SAMPLE;
-            break;
+            continue;
         }
 
-        samples[index].elapsed_count = UINT32_MAX - current_count;
-        samples[index].pit_ticks = (uint32_t)elapsed_pit_ticks;
+        candidate.elapsed_count = UINT32_MAX - current_count;
+        candidate.pit_ticks = (uint32_t)elapsed_pit_ticks;
 
-        if (samples[index].elapsed_count == 0U) {
-            status = APIC_STATUS_BAD_TIMER_SAMPLE;
+        if (candidate.elapsed_count == 0U ||
+            timer_sample_frequency(
+                &candidate,
+                *pit_divisor_value,
+                &candidate_frequency
+            ) != APIC_STATUS_OK) {
+            continue;
         }
+
+        if (test_calibration_discards_remaining != 0U) {
+            --test_calibration_discards_remaining;
+            continue;
+        }
+
+        {
+            size_t position = candidate_count;
+
+            while (position != 0U &&
+                candidates[position - 1U].frequency_hz > candidate_frequency) {
+                candidates[position] = candidates[position - 1U];
+                --position;
+            }
+
+            candidates[position].sample = candidate;
+            candidates[position].frequency_hz = candidate_frequency;
+            ++candidate_count;
+        }
+
+        if (candidate_count >= APIC_TIMER_CALIBRATION_SAMPLE_COUNT) {
+            samples_selected = calibration_select_samples(
+                candidates,
+                candidate_count,
+                samples
+            );
+        }
+    }
+
+    if (status == APIC_STATUS_OK && !samples_selected) {
+        status = APIC_STATUS_BAD_TIMER_SAMPLE;
     }
 
     pit_status = pit_stop();
@@ -1883,6 +2066,22 @@ static enum apic_status calibration_collect(
     }
 
     return status;
+}
+
+bool apic_test_discard_calibration_attempts(size_t attempt_count)
+{
+    const size_t spare_attempts = APIC_TIMER_CALIBRATION_ATTEMPT_LIMIT -
+        APIC_TIMER_CALIBRATION_SAMPLE_COUNT;
+
+    if (!initialized || local_timer_active || pit_is_running() ||
+        cpu_interrupts_enabled() ||
+        test_calibration_discards_remaining != 0U ||
+        attempt_count == 0U || attempt_count > spare_attempts) {
+        return false;
+    }
+
+    test_calibration_discards_remaining = attempt_count;
+    return true;
 }
 
 enum apic_status apic_local_timer_calibrate_and_start(
@@ -2005,6 +2204,7 @@ enum apic_status apic_local_timer_validate(void)
     }
 
     if (pit_is_running() || !pit_route_masked ||
+        test_calibration_discards_remaining != 0U ||
         timer_divisor_decode(
             active_timer_configuration.divide_configuration,
             &decoded_divisor

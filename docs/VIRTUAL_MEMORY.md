@@ -37,6 +37,14 @@ The live hierarchy contains only these mappings:
 | `0xB8000` VGA page | identity | writable, NX, UC |
 | `0xFFFF800000000000` | discovered Local APIC page | writable, NX, UC |
 | following device-window pages | discovered I/O APIC pages | writable, NX, UC |
+| `0xFFFF900000000000` through `0xFFFF900000FFFFFF` | heap-owned frames on demand | writable, NX, WB |
+
+The heap payload has one absent guard page on each side. Its hierarchy parents
+and eight leaf tables are prepared during boot, but all 4096 payload leaves
+begin absent. Runtime heap growth may map and roll back individual leaves with
+exact physical-frame provenance and `invlpg`; it cannot allocate another table
+or select arbitrary permissions. The permanent arena remains 64 pages (256 KiB
+of BSS), and the heap hierarchy consumes ten of those pages in this layout.
 
 Page zero, the remainder of low memory, boot information, ACPI tables, free
 physical frames, and the 4 GiB fault probe are absent after the transition.
@@ -58,7 +66,9 @@ translation plus rejection of null arenas, zero capacity, alignment errors,
 noncanonical virtual addresses, over-width physical addresses, W+X and bad
 device permissions, duplicate mappings, range overflow, excessive ranges,
 table exhaustion, huge-page conflicts, null or malformed device addresses, and
-excess device counts.
+excess device counts. Heap-specific rejection also proves the exact table
+limit, absent guards, mapping conflict, missing mapping, physical-width checks,
+and transactional runtime map/unmap behavior.
 
 Every prior QEMU scenario runs after the permanent transition. Two additional
 assembly-only scenarios prove the hardware permission boundary without invoking
@@ -77,9 +87,11 @@ Zenith OS: virtual memory foundation passed
 
 ## Deferred work
 
-This is a permanent boot-time map, not a general virtual-memory manager. It has
-no dynamic table allocation, unmapping, temporary physical-map window, guard
-pages, higher-half kernel relocation, process address spaces, copy-on-write,
-TLB shootdown, or SMP synchronization. The APIC-routing and Local APIC timer
+This remains a permanent hierarchy with a small heap-only runtime leaf
+extension, not a general virtual-memory manager. It has no dynamic table
+allocation, general unmapping, temporary physical-map window, higher-half
+kernel relocation, process address spaces, copy-on-write, cross-CPU TLB
+shootdown, or SMP synchronization. The APIC-routing and Local APIC timer
 milestones consume the device mappings; their ownership and cache policy remain
-part of this virtual-memory contract.
+part of this virtual-memory contract. Heap ownership and rollback are specified
+in `docs/KERNEL_HEAP.md`.

@@ -112,6 +112,13 @@ cpu_write_cr3:
     ret
 .size cpu_write_cr3, . - cpu_write_cr3
 
+.global cpu_invalidate_page
+.type cpu_invalidate_page, @function
+cpu_invalidate_page:
+    invlpg (%rdi)
+    ret
+.size cpu_invalidate_page, . - cpu_invalidate_page
+
 .global cpu_read_msr
 .type cpu_read_msr, @function
 cpu_read_msr:

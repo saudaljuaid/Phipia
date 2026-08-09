@@ -66,6 +66,7 @@ static struct handler_slot handlers[INTERRUPT_VECTOR_COUNT];
 static struct descriptor_table_pointer idt_pointer;
 static bool initialized;
 static volatile unsigned int fatal_depth;
+static volatile unsigned int dispatch_depth;
 
 static const char *const exception_names[INTERRUPT_EXCEPTION_COUNT] = {
     "divide error",
@@ -339,6 +340,11 @@ bool interrupts_ready(void)
     return initialized;
 }
 
+bool interrupt_context_active(void)
+{
+    return dispatch_depth != 0U;
+}
+
 enum interrupt_status interrupt_register_handler(
     uint8_t vector,
     interrupt_handler_t handler,
@@ -411,6 +417,7 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
     vector = (uint8_t)frame->vector;
     slot = &handlers[vector];
+    ++dispatch_depth;
 
     if (apic_vector_requires_eoi(vector)) {
         if (slot->handler == NULL) {
@@ -420,6 +427,7 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         apic_send_eoi();
+        --dispatch_depth;
         return;
     }
 
@@ -427,6 +435,7 @@ void interrupt_dispatch(struct interrupt_frame *frame)
         const uint8_t irq = vector - INTERRUPT_PIC_MASTER_BASE;
 
         if (!pic_irq_is_real(irq)) {
+            --dispatch_depth;
             return;
         }
 
@@ -437,11 +446,13 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         pic_send_eoi(irq);
+        --dispatch_depth;
         return;
     }
 
     if (slot->handler != NULL) {
         slot->handler(frame, slot->context);
+        --dispatch_depth;
         return;
     }
 

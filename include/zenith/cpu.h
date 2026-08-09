@@ -60,6 +60,7 @@ uint64_t cpu_read_cr0(void);
 uintptr_t cpu_read_cr3(void);
 void cpu_write_cr0(uint64_t value);
 void cpu_write_cr3(uintptr_t physical_address);
+void cpu_invalidate_page(uintptr_t virtual_address);
 uint64_t cpu_read_msr(uint32_t msr);
 void cpu_write_msr(uint32_t msr, uint64_t value);
 void cpu_cpuid(
