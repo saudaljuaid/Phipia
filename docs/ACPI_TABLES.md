@@ -9,7 +9,7 @@ changing interrupt-controller state.
 Zenith follows the RSDT only for an ACPI 1.0 root and otherwise follows the
 XSDT selected during RSDP validation. The root signature must agree with that
 selection. Its declared length must include the 36-byte ACPI description header,
-fit within Zenith's current first-4-GiB identity map, and contain a whole number
+fit within Zenith's bootstrap first-4-GiB identity map, and contain a whole number
 of 32-bit RSDT or 64-bit XSDT entries. The complete table checksum must be zero.
 
 Firmware controls every length and pointer in this path. Early discovery
@@ -91,8 +91,9 @@ Zenith OS: ACPI MADT topology verified
 
 ## Deferred work
 
-Before activating this topology, Zenith must establish explicit cache-correct
-MMIO mappings, verify processor APIC capability, inspect each I/O APIC's version
-and redirection-entry count, and prove that GSI ranges cover the selected timer
-route without overlap. Only then may it mask the legacy PIC permanently, route
-a timer through discovered APIC hardware, and retire the PIT proof.
+Zenith now gives every discovered controller an explicit UC, writable, NX page
+in its high device window. Before activating this topology, it must still verify
+processor APIC capability, inspect each I/O APIC's version and redirection-entry
+count, and prove that GSI ranges cover the selected timer route without overlap.
+Only then may it mask the legacy PIC permanently, route a timer through
+discovered APIC hardware, and retire the PIT proof.

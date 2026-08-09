@@ -83,11 +83,16 @@ void interrupt_trigger_spurious_irq7(void);
 void interrupt_trigger_spurious_irq15(void);
 _Noreturn void interrupt_trigger_invalid_opcode(void);
 _Noreturn void interrupt_trigger_page_fault(void);
+_Noreturn void interrupt_trigger_write_protect(void);
+_Noreturn void interrupt_trigger_nx(void);
 _Noreturn void interrupt_trigger_unexpected(void);
 
 extern const uintptr_t interrupt_vector_table[INTERRUPT_VECTOR_COUNT];
 extern const uint8_t interrupt_vector_table_end[];
 extern const uint8_t interrupt_invalid_opcode_site[];
 extern const uint8_t interrupt_page_fault_site[];
+extern const uint8_t interrupt_write_protect_site[];
+extern const uint8_t interrupt_write_protect_target[];
+extern const uint8_t interrupt_non_executable_target[];
 
 #endif

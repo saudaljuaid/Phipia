@@ -84,6 +84,78 @@ cpu_read_cr2:
     ret
 .size cpu_read_cr2, . - cpu_read_cr2
 
+.global cpu_read_cr0
+.type cpu_read_cr0, @function
+cpu_read_cr0:
+    movq %cr0, %rax
+    ret
+.size cpu_read_cr0, . - cpu_read_cr0
+
+.global cpu_read_cr3
+.type cpu_read_cr3, @function
+cpu_read_cr3:
+    movq %cr3, %rax
+    ret
+.size cpu_read_cr3, . - cpu_read_cr3
+
+.global cpu_write_cr0
+.type cpu_write_cr0, @function
+cpu_write_cr0:
+    movq %rdi, %cr0
+    ret
+.size cpu_write_cr0, . - cpu_write_cr0
+
+.global cpu_write_cr3
+.type cpu_write_cr3, @function
+cpu_write_cr3:
+    movq %rdi, %cr3
+    ret
+.size cpu_write_cr3, . - cpu_write_cr3
+
+.global cpu_read_msr
+.type cpu_read_msr, @function
+cpu_read_msr:
+    movl %edi, %ecx
+    rdmsr
+    shlq $32, %rdx
+    orq %rdx, %rax
+    ret
+.size cpu_read_msr, . - cpu_read_msr
+
+.global cpu_write_msr
+.type cpu_write_msr, @function
+cpu_write_msr:
+    movl %edi, %ecx
+    movl %esi, %eax
+    movq %rsi, %rdx
+    shrq $32, %rdx
+    wrmsr
+    ret
+.size cpu_write_msr, . - cpu_write_msr
+
+.global cpu_cpuid
+.type cpu_cpuid, @function
+cpu_cpuid:
+    pushq %rbx
+    movq %rdx, %r8
+    movl %edi, %eax
+    movl %esi, %ecx
+    cpuid
+    movl %eax, 0(%r8)
+    movl %ebx, 4(%r8)
+    movl %ecx, 8(%r8)
+    movl %edx, 12(%r8)
+    popq %rbx
+    ret
+.size cpu_cpuid, . - cpu_cpuid
+
+.global cpu_write_back_and_invalidate
+.type cpu_write_back_and_invalidate, @function
+cpu_write_back_and_invalidate:
+    wbinvd
+    ret
+.size cpu_write_back_and_invalidate, . - cpu_write_back_and_invalidate
+
 .global cpu_read_cs
 .type cpu_read_cs, @function
 cpu_read_cs:

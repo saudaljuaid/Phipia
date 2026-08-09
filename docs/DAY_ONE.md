@@ -12,18 +12,21 @@ first code Zenith owns rather than on disk formats and firmware edge cases.
    EBX while running in 32-bit protected mode.
 2. Interrupts and the direction flag are cleared before Zenith touches its own
    state.
-3. The processor must expose CPUID and the extended long-mode feature bit.
-4. Six page-table pages identity-map the first 4 GiB with 2 MiB writable pages.
-5. CR3, CR4.PAE, EFER.LME, and CR0.PG are established in that order.
+3. The processor must expose CPUID, MSRs, PAT, long mode, and NX.
+4. Six bootstrap page-table pages temporarily identity-map the first 4 GiB with
+   2 MiB writable pages.
+5. Four-level CR3, CR4.PAE, EFER.LME/NXE, and CR0.PG/WP are established in that
+   order; CR4.LA57 is cleared explicitly.
 6. A private GDT and 16 KiB, 16-byte-aligned stack exist before C executes.
 7. The C entry obeys the x86_64 System V calling convention and uses no red zone,
    host library, stack protector, floating point, MMX, or SSE.
 8. Successful execution is observable on COM1 and VGA; failure halts instead of
    continuing in an unknown state.
 
-The identity map is intentionally broad but temporary. It is not a security
-boundary. Page permissions and a higher-half layout belong to the virtual-memory
-phase.
+The identity map is intentionally broad but temporary. After firmware discovery
+and frame ownership are complete, Zenith replaces it with explicit 4 KiB kernel,
+VGA, and APIC mappings that enforce W^X and device cache policy. A higher-half
+layout and process address spaces remain future virtual-memory work.
 
 ## Acceptance criteria
 
@@ -37,12 +40,13 @@ phase.
 
 ## Ordered next work
 
-1. Replace broad identity mapping with explicit kernel and device mappings.
+1. ~~Replace broad identity mapping with explicit kernel and device mappings.~~
 2. ~~Define exception-entry assembly, an IDT, and fatal exception diagnostics.~~
 3. ~~Add a monotonic timer and interrupt-controller abstraction.~~
 4. Validate the ACPI root, then replace the legacy PIC/PIT proof with discovered
    APIC hardware. *(Root, MADT, and bounded interrupt-controller topology
-   discovery complete; cache-correct MMIO mapping and APIC activation remain.)*
+   discovery and cache-correct MMIO mapping complete; APIC capability probing
+   and activation remain.)*
 5. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI

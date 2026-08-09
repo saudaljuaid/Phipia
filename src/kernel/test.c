@@ -12,6 +12,9 @@
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
 #define PAGE_FAULT_TEST_ADDRESS UINT64_C(0x0000000100000000)
+#define PAGE_FAULT_PRESENT UINT64_C(1)
+#define PAGE_FAULT_WRITE UINT64_C(2)
+#define PAGE_FAULT_INSTRUCTION UINT64_C(16)
 #define PIT_TEST_FREQUENCY UINT32_C(100)
 #define PIT_TEST_TICKS UINT64_C(8)
 
@@ -106,6 +109,14 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_DOUBLE_FAULT;
     }
 
+    if (token_equals(value, length, "write-protect")) {
+        return KERNEL_TEST_WRITE_PROTECT;
+    }
+
+    if (token_equals(value, length, "nx")) {
+        return KERNEL_TEST_NX;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -128,6 +139,10 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x16);
     case KERNEL_TEST_DOUBLE_FAULT:
         return UINT8_C(0x17);
+    case KERNEL_TEST_WRITE_PROTECT:
+        return UINT8_C(0x18);
+    case KERNEL_TEST_NX:
+        return UINT8_C(0x19);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -272,6 +287,10 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
         interrupt_trigger_page_fault();
+    case KERNEL_TEST_WRITE_PROTECT:
+        interrupt_trigger_write_protect();
+    case KERNEL_TEST_NX:
+        interrupt_trigger_nx();
     case KERNEL_TEST_INVALID:
         kernel_test_fail("invalid or duplicate zenith.test argument");
     case KERNEL_TEST_NONE:
@@ -312,6 +331,23 @@ bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
     case KERNEL_TEST_UNEXPECTED:
         matches = frame->vector == UINT64_C(0x80) && frame->error_code == 0U;
         break;
+    case KERNEL_TEST_WRITE_PROTECT:
+        matches = frame->vector == 14U &&
+            frame->error_code == (PAGE_FAULT_PRESENT | PAGE_FAULT_WRITE) &&
+            frame->cr2 == (uintptr_t)(const void *)
+                interrupt_write_protect_target &&
+            frame->rip == (uintptr_t)(const void *)
+                interrupt_write_protect_site;
+        break;
+    case KERNEL_TEST_NX:
+        matches = frame->vector == 14U &&
+            frame->error_code ==
+                (PAGE_FAULT_PRESENT | PAGE_FAULT_INSTRUCTION) &&
+            frame->cr2 == (uintptr_t)(const void *)
+                interrupt_non_executable_target &&
+            frame->rip == (uintptr_t)(const void *)
+                interrupt_non_executable_target;
+        break;
     default:
         return false;
     }
@@ -344,6 +380,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "unexpected";
     case KERNEL_TEST_DOUBLE_FAULT:
         return "double-fault";
+    case KERNEL_TEST_WRITE_PROTECT:
+        return "write-protect";
+    case KERNEL_TEST_NX:
+        return "nx";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

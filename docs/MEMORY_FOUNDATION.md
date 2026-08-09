@@ -47,6 +47,8 @@ increment only after COM1 emits:
 Zenith OS: memory foundation passed
 ```
 
-This is still an early single-core allocator. Interrupt safety, synchronization,
-NUMA policy, memory above 4 GiB, page-table ownership, and virtual mappings are
-explicitly deferred.
+This is still an early single-core allocator. Interrupt safety, NUMA policy,
+dynamic page-table allocation, memory above 4 GiB, process address spaces, and
+SMP synchronization are explicitly deferred. The permanent boot hierarchy now
+owns static tables inside the kernel image and maps only the kernel, VGA, and
+discovered APIC device pages.

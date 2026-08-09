@@ -16,8 +16,9 @@ x86_64 kernel seed—not a finished operating system and not a simulation.
 ## What boots today
 
 GRUB loads a Multiboot2-compliant ELF kernel in 32-bit protected mode. Zenith
-then validates the handoff and CPU, identity-maps the first 4 GiB, enables long
-mode, installs a known GDT and stack, and transfers control to freestanding C.
+then validates the handoff and CPU, temporarily identity-maps the first 4 GiB,
+enables long mode, installs a known GDT and stack, and transfers control to
+freestanding C.
 The C kernel defensively validates every Multiboot2 tag, constructs a bounded
 physical-frame allocator from the firmware memory map, proves allocation and
 release, installs a complete IDT and production GDT/TSS, routes fatal CPU
@@ -25,7 +26,11 @@ exceptions through deterministic diagnostics, proves recoverable interrupt
 entry plus PIT delivery, validates the firmware ACPI root, and walks the
 checksummed system-description tables to the MADT. It then validates and records
 bounded Local APIC/x2APIC processor, I/O APIC, ISA interrupt-override, and Local
-APIC address-override topology before halting safely.
+APIC address-override topology.
+After consuming firmware data, Zenith replaces the bootstrap map with explicit
+4 KiB kernel, VGA, Local APIC, and I/O APIC mappings. Hardware-enforced W^X, NX,
+supervisor write protection, and UC device cache policy are validated before
+fault and interrupt tests continue.
 
 The day-one success contract is the serial line:
 
@@ -36,6 +41,7 @@ Zenith OS: never triple fault milestone passed
 Zenith OS: ACPI root verified
 Zenith OS: ACPI MADT verified
 Zenith OS: ACPI MADT topology verified
+Zenith OS: virtual memory foundation passed
 ```
 
 ## Build and prove it
@@ -51,7 +57,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run eight deterministic fault and interrupt scenarios
+make qemu-tests # run ten deterministic fault, paging, and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -68,18 +74,20 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
 - `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
 - `src/kernel/acpi_topology.c` — bounded MADT record parsing and topology.
+- `src/kernel/virtual_memory.c` — bounded permanent mapping construction.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
+- `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Zenith now discovers APIC hardware topology but does not program it. The current
-identity map also does not provide the cache-correct MMIO mappings required for
-safe controller activation. Zenith still has a deliberately narrow single-core
-interrupt foundation, but no virtual-memory manager, heap, scheduler, userspace,
-filesystem, networking, graphics, or general hardware drivers. Those arrive
-only after the previous layer has an executable acceptance test.
+Zenith now gives discovered APIC pages explicit cache-correct virtual mappings
+but does not read or program the controllers. Its permanent boot map is static,
+not yet a general virtual-memory manager. Zenith still has a deliberately narrow
+single-core interrupt foundation, but no heap, scheduler, userspace, filesystem,
+networking, graphics, or general hardware drivers. Those arrive only after the
+previous layer has an executable acceptance test.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.

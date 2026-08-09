@@ -11,12 +11,14 @@
 #include <zenith/pit.h>
 #include <zenith/self_test.h>
 #include <zenith/test.h>
+#include <zenith/virtual_memory.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
 static struct acpi_topology acpi_topology;
+static struct virtual_memory_layout virtual_memory_layout;
 
 static void report_boot_context(const struct boot_context *context)
 {
@@ -128,6 +130,23 @@ static void report_acpi_topology(const struct acpi_topology *topology)
     console_putc('\n');
 }
 
+static void report_virtual_memory(
+    const struct virtual_memory_layout *layout
+)
+{
+    console_write("Zenith OS: permanent CR3: ");
+    console_write_hex(layout->root_table_address);
+    console_write(" table pages ");
+    console_write_u64(layout->table_page_count);
+    console_putc('\n');
+
+    console_write("Zenith OS: local APIC device window: ");
+    console_write_hex(layout->local_apic_virtual_address);
+    console_write(" I/O APIC mappings ");
+    console_write_u64(layout->io_apic_count);
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -195,6 +214,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
     enum pit_status pit_status;
+    enum virtual_memory_status virtual_memory_status;
 
     console_initialize();
     interrupt_status = interrupts_initialize();
@@ -227,6 +247,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!acpi_topology_self_test()) {
         console_panic("ACPI MADT topology rejection self-test failed");
+    }
+
+    if (!virtual_memory_self_test()) {
+        console_panic("virtual-memory rejection self-test failed");
     }
 
     console_write("Zenith OS: parser rejection tests passed\n");
@@ -278,9 +302,25 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("frame lifecycle leaked a physical frame");
     }
 
+    test_scenario = kernel_test_select(&context);
+    virtual_memory_status = virtual_memory_initialize(
+        &acpi_topology,
+        &virtual_memory_layout
+    );
+
+    if (virtual_memory_status != VIRTUAL_MEMORY_STATUS_OK) {
+        console_panic(virtual_memory_status_string(virtual_memory_status));
+    }
+
+    if (virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK) {
+        console_panic("permanent virtual-memory validation failed");
+    }
+
+    report_virtual_memory(&virtual_memory_layout);
+    console_write("Zenith OS: virtual memory foundation passed\n");
+
     console_write("Zenith OS: day one passed\n");
     console_write("Zenith OS: memory foundation passed\n");
-    test_scenario = kernel_test_select(&context);
     kernel_test_run(test_scenario);
 
     if (!interrupt_breakpoint_self_test()) {

@@ -27,18 +27,27 @@ SECTIONS
 
     .text ALIGN(4K) :
     {
+        __text_start = .;
         *(.boot.text)
         *(.text .text.*)
+        . = ALIGN(4K);
+        __text_end = .;
     } :text
 
     .rodata ALIGN(4K) :
     {
+        __rodata_start = .;
         *(.rodata .rodata.*)
+        . = ALIGN(4K);
+        __rodata_end = .;
     } :rodata
 
     .data ALIGN(4K) :
     {
+        __data_start = .;
         *(.data .data.*)
+        . = ALIGN(4K);
+        __data_end = .;
     } :data
 
     .bss ALIGN(4K) (NOLOAD) :
@@ -46,6 +55,7 @@ SECTIONS
         __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(4K);
         __bss_end = .;
     } :data
 
@@ -64,6 +74,8 @@ SECTIONS
            "Multiboot2 header is outside the first 32 KiB")
     ASSERT(__kernel_end < 0x40000000,
            "Day-one identity map no longer covers the kernel")
+    ASSERT(__kernel_end - __kernel_start <= 64M,
+           "Permanent page-table policy supports a kernel up to 64 MiB")
     ASSERT(interrupt_vector_table_end - interrupt_vector_table == 256 * 8,
            "Interrupt vector table must contain exactly 256 addresses")
 }

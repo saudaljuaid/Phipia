@@ -7,8 +7,11 @@
 .set PAGE_WRITABLE,    1 << 1
 .set PAGE_HUGE,        1 << 7
 .set CR4_PAE,          1 << 5
+.set CR4_CLEAR_LA57,   0xFFFFEFFF
 .set EFER_MSR,         0xC0000080
 .set EFER_LME,         1 << 8
+.set EFER_NXE,         1 << 11
+.set CR0_WRITE_PROTECT, 1 << 16
 .set CR0_PAGING,       1 << 31
 
 .section .multiboot, "a"
@@ -57,6 +60,14 @@ _start:
     xorl %ecx, %eax
     jz .no_cpuid
 
+    /* Permanent mappings require PAT-selected UC pages and NX enforcement. */
+    movl $1, %eax
+    cpuid
+    testl $(1 << 5), %edx
+    jz .no_pat
+    testl $(1 << 16), %edx
+    jz .no_pat
+
     movl $0x80000000, %eax
     cpuid
     cmpl $0x80000001, %eax
@@ -65,6 +76,8 @@ _start:
     cpuid
     testl $(1 << 29), %edx
     jz .no_long_mode
+    testl $(1 << 20), %edx
+    jz .no_nx
 
     /* Zero a PML4, PDPT, and four 512-entry 2 MiB page directories. */
     movl $pml4_table, %edi
@@ -99,14 +112,15 @@ _start:
     movl $pml4_table, %eax
     mov %eax, %cr3
     mov %cr4, %eax
+    andl $CR4_CLEAR_LA57, %eax
     orl $CR4_PAE, %eax
     mov %eax, %cr4
     movl $EFER_MSR, %ecx
     rdmsr
-    orl $EFER_LME, %eax
+    orl $(EFER_LME | EFER_NXE), %eax
     wrmsr
     mov %cr0, %eax
-    orl $CR0_PAGING, %eax
+    orl $(CR0_PAGING | CR0_WRITE_PROTECT), %eax
     mov %eax, %cr0
     lgdt gdt64_pointer
     ljmp $0x08, $long_mode_start
@@ -119,6 +133,12 @@ _start:
     jmp .boot_failure
 .no_long_mode:
     movb $'L', %al
+    jmp .boot_failure
+.no_pat:
+    movb $'P', %al
+    jmp .boot_failure
+.no_nx:
+    movb $'N', %al
 .boot_failure:
     movb %al, 0xB8000
     movb $0x4F, 0xB8001

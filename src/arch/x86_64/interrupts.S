@@ -267,6 +267,29 @@ interrupt_page_fault_site:
     jmp .page_fault_returned
 .size interrupt_trigger_page_fault, . - interrupt_trigger_page_fault
 
+.global interrupt_trigger_write_protect
+.type interrupt_trigger_write_protect, @function
+interrupt_trigger_write_protect:
+.global interrupt_write_protect_site
+interrupt_write_protect_site:
+    movb $0, interrupt_write_protect_target(%rip)
+    cli
+.write_protect_returned:
+    hlt
+    jmp .write_protect_returned
+.size interrupt_trigger_write_protect, . - interrupt_trigger_write_protect
+
+.global interrupt_trigger_nx
+.type interrupt_trigger_nx, @function
+interrupt_trigger_nx:
+    leaq interrupt_non_executable_target(%rip), %rax
+    jmp *%rax
+    cli
+.nx_returned:
+    hlt
+    jmp .nx_returned
+.size interrupt_trigger_nx, . - interrupt_trigger_nx
+
 .global interrupt_trigger_unexpected
 .type interrupt_trigger_unexpected, @function
 interrupt_trigger_unexpected:
@@ -284,6 +307,11 @@ double_fault_test_message:
     .asciz "Zenith OS DOUBLE FAULT - HALTED\nZT PASS double-fault\n"
 
 .balign 8
+.global interrupt_write_protect_target
+interrupt_write_protect_target:
+    .byte 0xA5
+
+.balign 8
 .global interrupt_vector_table
 interrupt_vector_table:
 .macro INTERRUPT_TABLE_ENTRY number
@@ -298,6 +326,13 @@ interrupt_vector_table:
 .noaltmacro
 .global interrupt_vector_table_end
 interrupt_vector_table_end:
+
+.section .data, "aw"
+.balign 8
+.global interrupt_non_executable_target
+interrupt_non_executable_target:
+    /* If NX enforcement fails, UD2 turns the silent escape into test failure. */
+    .byte 0x0F, 0x0B
 
 .section .bss, "aw", @nobits
 .balign 8

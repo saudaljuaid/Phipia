@@ -19,6 +19,13 @@ struct descriptor_table_pointer {
     uintptr_t base;
 } __attribute__((packed));
 
+struct cpu_cpuid_result {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+};
+
 enum cpu_status {
     CPU_STATUS_OK = 0,
     CPU_STATUS_ALREADY_PREPARED,
@@ -49,6 +56,18 @@ void cpu_out8(uint16_t port, uint8_t value);
 void cpu_out32(uint16_t port, uint32_t value);
 void cpu_io_wait(void);
 uint64_t cpu_read_cr2(void);
+uint64_t cpu_read_cr0(void);
+uintptr_t cpu_read_cr3(void);
+void cpu_write_cr0(uint64_t value);
+void cpu_write_cr3(uintptr_t physical_address);
+uint64_t cpu_read_msr(uint32_t msr);
+void cpu_write_msr(uint32_t msr, uint64_t value);
+void cpu_cpuid(
+    uint32_t leaf,
+    uint32_t subleaf,
+    struct cpu_cpuid_result *result
+);
+void cpu_write_back_and_invalidate(void);
 uint16_t cpu_read_cs(void);
 uint16_t cpu_read_task_register(void);
 uintptr_t cpu_read_stack_pointer(void);

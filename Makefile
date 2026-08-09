@@ -6,7 +6,8 @@ KERNEL := $(BUILD_DIR)/zenith.elf
 ISO := $(BUILD_DIR)/zenith.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
-TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected double-fault
+TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault write-protect nx \
+	ist pit unexpected double-fault
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -102,6 +103,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		breakpoint) expected=35 ;; \
 		invalid-opcode) expected=37 ;; \
 		page-fault) expected=39 ;; \
+		write-protect) expected=49 ;; \
+		nx) expected=51 ;; \
 		ist) expected=41 ;; \
 		pit) expected=43 ;; \
 		unexpected) expected=45 ;; \
@@ -129,6 +132,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		{ ! grep -Fq 'Zenith OS: ACPI root verified' "$$log" || \
 		  ! grep -Fq 'Zenith OS: ACPI MADT verified' "$$log" || \
 		  ! grep -Fq 'Zenith OS: ACPI MADT topology verified' "$$log" || \
+		  ! grep -Fq 'Zenith OS: virtual memory foundation passed' "$$log" || \
 		  ! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -142,6 +146,14 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000100000000' "$$log" && \
 			grep -Fq '  page-fault bits: P=0 W=0 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
+		write-protect) \
+			grep -Fq '  vector=14 name=page fault' "$$log" && \
+			grep -Fq '  page-fault bits: P=1 W=1 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
+		nx) \
+			grep -Fq '  vector=14 name=page fault' "$$log" && \
+			grep -Fq '  page-fault bits: P=1 W=0 U=0 RSVD=0 I=1' "$$log" || \
 				diagnostics_ok=false ;; \
 		unexpected) \
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \

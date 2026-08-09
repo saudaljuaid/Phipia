@@ -36,9 +36,9 @@ permanent GDT and task register, patches the live IDT with IST selectors, and
 validates GDTR, IDTR, TR, all 256 gates, the TSS, and stack canaries before the
 boot parser, memory allocator, or any `sti`.
 
-Canaries detect some downward overflow but are not guard pages. The early 2 MiB
-identity map cannot provide real guard pages; that belongs to the virtual-memory
-milestone.
+Canaries detect some downward overflow but are not guard pages. The permanent
+map gives stack storage writable, NX pages, but the linked arrays do not yet have
+unmapped gaps. Guard-page stack layout remains future virtual-memory work.
 
 ## Interrupt-controller invariants
 
@@ -60,17 +60,19 @@ milestone exists to prevent.
 
 ## Executable proof
 
-`make qemu-tests` boots one kernel under eight Multiboot command-line scenarios:
+`make qemu-tests` boots one kernel under ten Multiboot command-line scenarios:
 
 1. normal descriptor and frame validation;
 2. breakpoint return with every GPR and the direction flag restored;
 3. fatal invalid opcode with an exact fault RIP;
 4. non-present page fault at 4 GiB with exact CR2 and decoded error bits;
-5. recoverable entry through the double-fault IST stack;
-6. synthetic spurious IRQ7/IRQ15 paths and eight PIT interrupts, which also
+5. present write fault against the read-only kernel image;
+6. present instruction-fetch fault against NX kernel data;
+7. recoverable entry through the double-fault IST stack;
+8. synthetic spurious IRQ7/IRQ15 paths and eight PIT interrupts, which also
    prove repeated genuine EOIs;
-7. deterministic handling of an unregistered vector;
-8. a genuine double fault created by making page-fault delivery fail.
+9. deterministic handling of an unregistered vector;
+10. a genuine double fault created by making page-fault delivery fail.
 
 Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
 `ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
