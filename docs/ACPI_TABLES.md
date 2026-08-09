@@ -34,6 +34,39 @@ structures or touch local APIC, I/O APIC, PIC, or PIT registers.
 The frame allocator continues to treat ACPI reclaimable and NVS memory as
 reserved, so the discovered table cannot be recycled after discovery.
 
+## Interrupt-controller topology invariant
+
+Zenith walks the variable-length MADT payload only after the complete table has
+passed its signature, length, early-map, and checksum checks. Every record must
+contain its two-byte header, declare at least that size, fit completely inside
+the MADT, and advance the cursor. A separate policy limit of 1,024 records keeps
+the walk finite even if firmware fills the maximum one-MiB table with minimum-
+length records. Unsupported types are counted and skipped only after these
+bounds have been proven.
+
+The x86 topology parser consumes the ACPI 6.6 Processor Local APIC, I/O APIC,
+Interrupt Source Override, Local APIC Address Override, and Processor Local
+x2APIC structures. Their multibyte fields are decoded from little-endian bytes;
+the parser never relies on packed or unaligned C accesses. Supported records
+must have the exact specification length and every reserved field or flag must
+be zero.
+
+Usable processors have either `Enabled` or `Online Capable`, never both. Records
+with both bits clear are counted but ignored as ACPI requires. Zenith accepts at
+most 256 usable processors and rejects duplicate ACPI processor UIDs or APIC
+IDs. At least one usable processor must remain.
+
+Zenith accepts at most 16 I/O APICs. Their IDs, nonzero MMIO addresses, and
+global-system-interrupt bases must be unique. It accepts at most 16 ISA source
+overrides: the bus must be zero, the source must be IRQ0-15, polarity and trigger
+encodings must be defined, and both source and target GSI must be unique. At most
+one Local APIC Address Override may replace the fixed MADT address, and the
+effective address must be nonzero. At least one I/O APIC must be present.
+
+This milestone records topology only. It does not read APIC MMIO registers,
+change the APIC base MSR, alter redirection entries, unmask an APIC timer, or
+change the legacy PIC/PIT state.
+
 ## Executable proof
 
 The in-kernel rejection suite constructs valid RSDT and XSDT graphs and then
@@ -42,15 +75,24 @@ entries, bad root and child checksums, null and out-of-map table addresses,
 short child tables, a missing or duplicate MADT, a short MADT, and nonzero
 reserved MADT flags.
 
+A second rejection suite constructs MADTs containing Local APIC and x2APIC
+processors, I/O APICs, ISA overrides, an address override, and an unknown record.
+It proves bounded progress, exact supported lengths, legal flags and reserved
+fields, capacity limits, unique controller and interrupt identities, required
+topology, checksum preservation, and correct handling of unusable processors
+and unknown records.
+
 The normal QEMU scenario must also walk SeaBIOS's real ACPI tables and emit:
 
 ```text
 Zenith OS: ACPI MADT verified
+Zenith OS: ACPI MADT topology verified
 ```
 
 ## Deferred work
 
-The next ACPI increment must parse the MADT's variable-length records with the
-same bounded discipline. Only after Zenith has proved local APIC, I/O APIC, and
-interrupt-source-override topology may it mask the legacy PIC permanently,
-route a timer through discovered APIC hardware, and retire the PIT proof.
+Before activating this topology, Zenith must establish explicit cache-correct
+MMIO mappings, verify processor APIC capability, inspect each I/O APIC's version
+and redirection-entry count, and prove that GSI ranges cover the selected timer
+route without overlap. Only then may it mask the legacy PIC permanently, route
+a timer through discovered APIC hardware, and retire the PIT proof.

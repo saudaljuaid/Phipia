@@ -23,7 +23,9 @@ physical-frame allocator from the firmware memory map, proves allocation and
 release, installs a complete IDT and production GDT/TSS, routes fatal CPU
 exceptions through deterministic diagnostics, proves recoverable interrupt
 entry plus PIT delivery, validates the firmware ACPI root, and walks the
-checksummed system-description tables to the MADT before halting safely.
+checksummed system-description tables to the MADT. It then validates and records
+bounded Local APIC/x2APIC processor, I/O APIC, ISA interrupt-override, and Local
+APIC address-override topology before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -33,6 +35,7 @@ Zenith OS: memory foundation passed
 Zenith OS: never triple fault milestone passed
 Zenith OS: ACPI root verified
 Zenith OS: ACPI MADT verified
+Zenith OS: ACPI MADT topology verified
 ```
 
 ## Build and prove it
@@ -64,6 +67,7 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
 - `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
 - `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
+- `src/kernel/acpi_topology.c` — bounded MADT record parsing and topology.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
@@ -71,10 +75,11 @@ make hooks    # enforce verification in this local clone
 
 ## Current boundaries
 
-Zenith now discovers but does not program APIC hardware. It still has a
-deliberately narrow single-core interrupt foundation, but no virtual-memory
-manager, heap, scheduler, userspace, filesystem, networking, graphics, or
-general hardware drivers. Those arrive only after the previous layer has an
-executable acceptance test.
+Zenith now discovers APIC hardware topology but does not program it. The current
+identity map also does not provide the cache-correct MMIO mappings required for
+safe controller activation. Zenith still has a deliberately narrow single-core
+interrupt foundation, but no virtual-memory manager, heap, scheduler, userspace,
+filesystem, networking, graphics, or general hardware drivers. Those arrive
+only after the previous layer has an executable acceptance test.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.

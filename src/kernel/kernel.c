@@ -16,6 +16,8 @@
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
+static struct acpi_topology acpi_topology;
+
 static void report_boot_context(const struct boot_context *context)
 {
     console_write("Zenith OS: boot loader: ");
@@ -97,6 +99,32 @@ static void report_acpi_madt(const struct acpi_madt *madt)
     console_write_n(madt->oem_id, 6U);
     console_putc(' ');
     console_write_n(madt->oem_table_id, 8U);
+    console_putc('\n');
+}
+
+static void report_acpi_topology(const struct acpi_topology *topology)
+{
+    console_write("Zenith OS: ACPI usable processors: ");
+    console_write_u64(topology->processor_count);
+    console_write(" enabled ");
+    console_write_u64(topology->enabled_processor_count);
+    console_write(" online-capable ");
+    console_write_u64(topology->online_capable_processor_count);
+    console_putc('\n');
+
+    console_write("Zenith OS: ACPI I/O APICs: ");
+    console_write_u64(topology->io_apic_count);
+    console_write(" interrupt overrides ");
+    console_write_u64(topology->interrupt_override_count);
+    console_putc('\n');
+
+    console_write("Zenith OS: ACPI effective local APIC: ");
+    console_write_hex(topology->local_apic_address);
+
+    if (topology->local_apic_address_overridden) {
+        console_write(" (overridden)");
+    }
+
     console_putc('\n');
 }
 
@@ -197,6 +225,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI table rejection self-test failed");
     }
 
+    if (!acpi_topology_self_test()) {
+        console_panic("ACPI MADT topology rejection self-test failed");
+    }
+
     console_write("Zenith OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -217,11 +249,19 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(acpi_status_string(acpi_status));
     }
 
+    acpi_status = acpi_topology_discover(&acpi_madt, &acpi_topology);
+
+    if (acpi_status != ACPI_STATUS_OK) {
+        console_panic(acpi_status_string(acpi_status));
+    }
+
     report_boot_context(&context);
     report_acpi_root(&acpi_root);
     report_acpi_madt(&acpi_madt);
+    report_acpi_topology(&acpi_topology);
     console_write("Zenith OS: ACPI root verified\n");
     console_write("Zenith OS: ACPI MADT verified\n");
+    console_write("Zenith OS: ACPI MADT topology verified\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {

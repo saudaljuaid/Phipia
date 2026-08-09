@@ -8,6 +8,14 @@
 
 #include <zenith/boot.h>
 
+#define ACPI_MAX_MADT_ENTRIES 1024U
+#define ACPI_MAX_PROCESSORS 256U
+#define ACPI_MAX_IO_APICS 16U
+#define ACPI_MAX_INTERRUPT_OVERRIDES 16U
+
+#define ACPI_PROCESSOR_ENABLED UINT32_C(1)
+#define ACPI_PROCESSOR_ONLINE_CAPABLE UINT32_C(2)
+
 enum acpi_root_kind {
     ACPI_ROOT_NONE = 0,
     ACPI_ROOT_RSDT,
@@ -38,7 +46,49 @@ enum acpi_status {
     ACPI_STATUS_MISSING_MADT,
     ACPI_STATUS_DUPLICATE_MADT,
     ACPI_STATUS_BAD_MADT_LENGTH,
-    ACPI_STATUS_BAD_MADT_FLAGS
+    ACPI_STATUS_BAD_MADT_FLAGS,
+    ACPI_STATUS_BAD_MADT_ENTRY_HEADER,
+    ACPI_STATUS_BAD_MADT_ENTRY_LENGTH,
+    ACPI_STATUS_TOO_MANY_MADT_ENTRIES,
+    ACPI_STATUS_BAD_PROCESSOR_FLAGS,
+    ACPI_STATUS_BAD_PROCESSOR_RESERVED,
+    ACPI_STATUS_TOO_MANY_PROCESSORS,
+    ACPI_STATUS_DUPLICATE_PROCESSOR_UID,
+    ACPI_STATUS_DUPLICATE_APIC_ID,
+    ACPI_STATUS_BAD_IO_APIC_RESERVED,
+    ACPI_STATUS_NULL_IO_APIC_ADDRESS,
+    ACPI_STATUS_TOO_MANY_IO_APICS,
+    ACPI_STATUS_DUPLICATE_IO_APIC_ID,
+    ACPI_STATUS_DUPLICATE_IO_APIC_ADDRESS,
+    ACPI_STATUS_DUPLICATE_GSI_BASE,
+    ACPI_STATUS_BAD_INTERRUPT_OVERRIDE_BUS,
+    ACPI_STATUS_BAD_INTERRUPT_OVERRIDE_SOURCE,
+    ACPI_STATUS_BAD_INTERRUPT_FLAGS,
+    ACPI_STATUS_TOO_MANY_INTERRUPT_OVERRIDES,
+    ACPI_STATUS_DUPLICATE_INTERRUPT_SOURCE,
+    ACPI_STATUS_DUPLICATE_INTERRUPT_GSI,
+    ACPI_STATUS_BAD_LOCAL_APIC_OVERRIDE_RESERVED,
+    ACPI_STATUS_NULL_LOCAL_APIC_ADDRESS,
+    ACPI_STATUS_DUPLICATE_LOCAL_APIC_OVERRIDE,
+    ACPI_STATUS_MISSING_USABLE_PROCESSOR,
+    ACPI_STATUS_MISSING_IO_APIC
+};
+
+enum acpi_processor_kind {
+    ACPI_PROCESSOR_LOCAL_APIC = 0,
+    ACPI_PROCESSOR_LOCAL_X2APIC
+};
+
+enum acpi_interrupt_polarity {
+    ACPI_POLARITY_CONFORMS = 0,
+    ACPI_POLARITY_ACTIVE_HIGH = 1,
+    ACPI_POLARITY_ACTIVE_LOW = 3
+};
+
+enum acpi_interrupt_trigger {
+    ACPI_TRIGGER_CONFORMS = 0,
+    ACPI_TRIGGER_EDGE = 1,
+    ACPI_TRIGGER_LEVEL = 3
 };
 
 struct acpi_root {
@@ -59,6 +109,43 @@ struct acpi_madt {
     char oem_table_id[9];
 };
 
+struct acpi_processor {
+    enum acpi_processor_kind kind;
+    uint32_t acpi_uid;
+    uint32_t apic_id;
+    uint32_t flags;
+};
+
+struct acpi_io_apic {
+    uint32_t id;
+    uint32_t physical_address;
+    uint32_t global_interrupt_base;
+};
+
+struct acpi_interrupt_override {
+    uint32_t source;
+    uint32_t global_interrupt;
+    enum acpi_interrupt_polarity polarity;
+    enum acpi_interrupt_trigger trigger;
+};
+
+struct acpi_topology {
+    uint64_t local_apic_address;
+    size_t madt_entry_count;
+    size_t ignored_entry_count;
+    size_t ignored_processor_count;
+    size_t processor_count;
+    size_t enabled_processor_count;
+    size_t online_capable_processor_count;
+    size_t io_apic_count;
+    size_t interrupt_override_count;
+    bool local_apic_address_overridden;
+    struct acpi_processor processors[ACPI_MAX_PROCESSORS];
+    struct acpi_io_apic io_apics[ACPI_MAX_IO_APICS];
+    struct acpi_interrupt_override
+        interrupt_overrides[ACPI_MAX_INTERRUPT_OVERRIDES];
+};
+
 enum acpi_status acpi_root_discover(
     const struct boot_context *context,
     struct acpi_root *root
@@ -67,8 +154,13 @@ enum acpi_status acpi_madt_discover(
     const struct acpi_root *root,
     struct acpi_madt *madt
 );
+enum acpi_status acpi_topology_discover(
+    const struct acpi_madt *madt,
+    struct acpi_topology *topology
+);
 bool acpi_self_test(void);
 bool acpi_tables_self_test(void);
+bool acpi_topology_self_test(void);
 const char *acpi_root_kind_string(enum acpi_root_kind kind);
 const char *acpi_status_string(enum acpi_status status);
 
