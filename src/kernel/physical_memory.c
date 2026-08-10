@@ -10,6 +10,9 @@
 #define FRAME_COUNT ((size_t)(ZENITH_EARLY_PHYSICAL_LIMIT / ZENITH_PAGE_SIZE))
 #define BITMAP_BYTE_COUNT ((FRAME_COUNT + 7U) / 8U)
 
+_Static_assert(FRAME_COUNT % 8U == 0U,
+               "the early frame limit must fill complete bitmap bytes");
+
 extern uint8_t __kernel_start[];
 extern uint8_t __kernel_end[];
 
@@ -48,6 +51,29 @@ static void bitmap_fill(uint8_t *bitmap, uint8_t value)
     for (size_t index = 0; index < BITMAP_BYTE_COUNT; ++index) {
         bitmap[index] = value;
     }
+}
+
+static size_t bitmap_byte_population(uint8_t value)
+{
+    value = (uint8_t)(value - ((value >> 1U) & UINT8_C(0x55)));
+    value = (uint8_t)(
+        (value & UINT8_C(0x33)) +
+        ((value >> 2U) & UINT8_C(0x33))
+    );
+    return (size_t)((value + (value >> 4U)) & UINT8_C(0x0F));
+}
+
+static size_t bitmap_byte_highest_set_bit(uint8_t value)
+{
+    for (size_t past_bit = 8U; past_bit > 0U; --past_bit) {
+        const size_t bit = past_bit - 1U;
+
+        if ((value & (uint8_t)(UINT8_C(1) << bit)) != 0U) {
+            return bit;
+        }
+    }
+
+    return 0U;
 }
 
 static bool checked_range_end(uint64_t base, uint64_t length, uint64_t *end)
@@ -655,6 +681,8 @@ enum frame_status frame_allocator_validate(void)
         .reserved_frames = 0U,
         .highest_allocatable_address = 0U
     };
+    size_t highest_eligible_byte = 0U;
+    uint8_t highest_eligible_value = 0U;
 
     if (!allocator_initialized) {
         return FRAME_STATUS_NOT_INITIALIZED;
@@ -664,47 +692,51 @@ enum frame_status frame_allocator_validate(void)
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
-    for (size_t frame = 0U; frame < FRAME_COUNT; ++frame) {
-        const bool eligible = bitmap_get(eligible_bitmap, frame);
-        const bool used = bitmap_get(used_bitmap, frame);
-        const bool heap_owned = bitmap_get(heap_owner_bitmap, frame);
-        const bool task_stack_owned =
-            bitmap_get(task_stack_owner_bitmap, frame);
+    for (size_t byte_index = 0U;
+         byte_index < BITMAP_BYTE_COUNT;
+         ++byte_index) {
+        const uint8_t eligible = eligible_bitmap[byte_index];
+        const uint8_t used = used_bitmap[byte_index];
+        const uint8_t heap_owned = heap_owner_bitmap[byte_index];
+        const uint8_t task_stack_owned =
+            task_stack_owner_bitmap[byte_index];
+        const uint8_t owners = (uint8_t)(heap_owned | task_stack_owned);
+        const uint8_t ineligible = (uint8_t)~eligible;
+        const uint8_t allocated = (uint8_t)(eligible & used);
 
-        if (!eligible) {
-            if (!used || heap_owned || task_stack_owned) {
-                return FRAME_STATUS_VALIDATION_FAILURE;
-            }
-
-            ++observed.reserved_frames;
-            continue;
+        if ((ineligible & (uint8_t)~used) != 0U ||
+            (owners & ineligible) != 0U ||
+            (owners & (uint8_t)~used) != 0U ||
+            (heap_owned & task_stack_owned) != 0U) {
+            return FRAME_STATUS_VALIDATION_FAILURE;
         }
 
-        ++observed.allocatable_frames;
+        observed.allocatable_frames += bitmap_byte_population(eligible);
+        observed.reserved_frames += bitmap_byte_population(ineligible);
+        observed.allocated_frames += bitmap_byte_population(allocated);
+        observed.free_frames += bitmap_byte_population(
+            (uint8_t)(eligible & (uint8_t)~used)
+        );
+        observed.heap_allocated_frames +=
+            bitmap_byte_population(heap_owned);
+        observed.task_stack_allocated_frames +=
+            bitmap_byte_population(task_stack_owned);
+        observed.generic_allocated_frames += bitmap_byte_population(
+            (uint8_t)(allocated & (uint8_t)~owners)
+        );
+
+        if (eligible != 0U) {
+            highest_eligible_byte = byte_index;
+            highest_eligible_value = eligible;
+        }
+    }
+
+    if (highest_eligible_value != 0U) {
+        const size_t highest_frame = highest_eligible_byte * 8U +
+            bitmap_byte_highest_set_bit(highest_eligible_value);
+
         observed.highest_allocatable_address =
-            ((uint64_t)frame + 1U) * ZENITH_PAGE_SIZE;
-
-        if (used) {
-            if (heap_owned && task_stack_owned) {
-                return FRAME_STATUS_VALIDATION_FAILURE;
-            }
-
-            ++observed.allocated_frames;
-
-            if (heap_owned) {
-                ++observed.heap_allocated_frames;
-            } else if (task_stack_owned) {
-                ++observed.task_stack_allocated_frames;
-            } else {
-                ++observed.generic_allocated_frames;
-            }
-        } else {
-            if (heap_owned || task_stack_owned) {
-                return FRAME_STATUS_VALIDATION_FAILURE;
-            }
-
-            ++observed.free_frames;
-        }
+            ((uint64_t)highest_frame + 1U) * ZENITH_PAGE_SIZE;
     }
 
     if (observed.addressable_frames != allocator_stats.addressable_frames ||
