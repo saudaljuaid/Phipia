@@ -202,11 +202,10 @@ been consumed and the Local APIC timer has passed full activation validation.
 
 The default host matrix uses 128 MiB of guest RAM. Nineteen MiB remains the
 lowest supported whole-MiB configuration for the complete protocol after the
-guarded-stack milestone; the exact allocatable counts are recalculated from the
-final linked image during milestone verification. Eighteen MiB still exposes
-fewer than the 4096 simultaneous heap frames the scenario deliberately requires
-and therefore exercises physical OOM rather than the required virtual-window
-boundary.
+guarded-stack milestone. The canonical GCC/BIOS build reports 4,266 allocatable
+frames there. Eighteen MiB exposes 4,010, fewer than the 4,096 simultaneous heap
+frames the scenario deliberately requires, and therefore exercises physical OOM
+rather than the required virtual-window boundary.
 
 ## Residual risk and deferred work
 

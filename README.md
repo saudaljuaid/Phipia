@@ -87,10 +87,11 @@ make hooks    # enforce verification in this local clone
 The default QEMU matrix uses 128 MiB. `QEMU_RAM=19M make qemu-tests` is the
 lowest whole-MiB configuration supported by the complete fifteen-scenario
 protocol: the heap scenario must simultaneously back the full 16 MiB payload
-window. At 18 MiB the final linked kernel exposes fewer than the 4096
-simultaneous heap frames that proof requires, so the scenario deterministically
-reaches physical out-of-memory before the required window-exhaustion boundary
-and is not a supported full-matrix setup.
+window. The canonical GCC/BIOS run reports 4,266 allocatable frames at 19 MiB.
+At 18 MiB it reports 4,010, fewer than the 4,096 simultaneous heap frames that
+proof requires, so the scenario deterministically reaches physical
+out-of-memory before the required window-exhaustion boundary and is not a
+supported full-matrix setup.
 
 ## Repository map
 

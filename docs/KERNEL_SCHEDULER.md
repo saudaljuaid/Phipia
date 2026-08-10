@@ -137,13 +137,18 @@ context may target only the assembly continuation, with its saved C return
 address validated inside the exact owned payload. The bootstrap saved RSP is
 validated separately inside the linker-owned boot-stack bounds.
 
-The 64 KiB payload leaves headroom for the measured scheduler, heap, VM,
-interrupt-dispatch, and scenario call chains plus the normalized 184-byte
-interrupt frame. Compiler stack-usage output is part of the verification gate.
-This is a bound, not overflow recovery: x86 ring-zero interrupts arriving near
-the bottom of a task payload do not automatically switch to a general guard
-stack. The adjacent absent guard makes an overrun fault when the next access
-crosses the page boundary, but cannot make arbitrary prior corruption safe.
+The canonical GCC stack-usage pass inspected 258 functions. Its largest static
+frame was `apic_validate.part.0` at 5,616 bytes, below the enforced 8,192-byte
+per-function ceiling. All seven required paths were present: `interrupt_dispatch`
+32 bytes, `kernel_main` 432, `scheduler_task_create` 272,
+`scheduler_task_first_entry_c` 32, `scheduler_task_reap` 384,
+`scheduler_worker_task` 1,088, and `scheduler_yield` 80. The 64 KiB payload
+leaves substantial headroom beyond that ceiling for nested scheduler, heap, VM,
+and test calls plus the normalized 184-byte interrupt frame. This is a bound,
+not overflow recovery: x86 ring-zero interrupts arriving near the bottom of a
+task payload do not automatically switch to a general guard stack. The adjacent
+absent guard makes an overrun fault when the next access crosses the page
+boundary, but cannot make arbitrary prior corruption safe.
 
 ## Interrupt state and timer interaction
 
