@@ -10,9 +10,11 @@ import subprocess
 
 
 INSTRUCTION = re.compile(
-    r"^\s*[0-9a-f]+:\s+(?:[0-9a-f]{2}\s+)+([a-zA-Z0-9_.]+)(?:\s+(.*))?$"
+    r"^\s*[0-9a-f]+:\s+([a-zA-Z][a-zA-Z0-9_.]*)(?:\s+(.*))?$"
 )
-VECTOR_REGISTER = re.compile(r"%(?:xmm|ymm|zmm|mm)[0-9]+|%st(?:\([0-7]\))?")
+VECTOR_REGISTER = re.compile(
+    r"%?(?:xmm|ymm|zmm|mm)[0-9]+\b|%?st(?:\([0-7]\))?\b"
+)
 STANDALONE_VECTOR = {
     "emms",
     "femms",
@@ -42,7 +44,7 @@ def main() -> int:
     parser.add_argument("elf")
     arguments = parser.parse_args()
     completed = subprocess.run(
-        [arguments.objdump, "-d", arguments.elf],
+        [arguments.objdump, "-d", "--no-show-raw-insn", arguments.elf],
         text=True,
         capture_output=True,
         check=False,

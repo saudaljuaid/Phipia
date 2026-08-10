@@ -305,7 +305,7 @@ $(TEST_TARGETS): qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 				diagnostics_ok=false ;; \
 		scheduler-guard) \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
-			grep -Fq '  cr2=0xffffa00000000000' "$$log" && \
+			grep -Fiq '  cr2=0xffffa00000000000' "$$log" && \
 			grep -Fq '  page-fault bits: P=0 W=0 U=0 RSVD=0 I=0' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \

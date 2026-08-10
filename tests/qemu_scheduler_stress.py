@@ -19,33 +19,44 @@ class Scenario:
 
 
 def run_guest(qemu: str, ram: str, scenario: Scenario, instance: int) -> str:
-    completed = subprocess.run(
-        [
-            qemu,
-            "-machine",
-            "accel=tcg",
-            "-m",
-            ram,
-            "-smp",
-            "1",
-            "-cdrom",
-            str(scenario.iso),
-            "-display",
-            "none",
-            "-monitor",
-            "none",
-            "-serial",
-            "stdio",
-            "-device",
-            "isa-debug-exit,iobase=0xf4,iosize=0x04",
-            "-no-reboot",
-        ],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-        timeout=15,
-    )
+    command = [
+        qemu,
+        "-machine",
+        "accel=tcg",
+        "-icount",
+        "shift=7,sleep=off",
+        "-m",
+        ram,
+        "-smp",
+        "1",
+        "-cdrom",
+        str(scenario.iso),
+        "-display",
+        "none",
+        "-monitor",
+        "none",
+        "-serial",
+        "stdio",
+        "-device",
+        "isa-debug-exit,iobase=0xf4,iosize=0x04",
+        "-no-reboot",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        raise RuntimeError(
+            f"{scenario.name} instance {instance} timed out\n{output}"
+        ) from error
     lines = completed.stdout.splitlines()
     begin = f"ZT BEGIN {scenario.name}"
     passed = f"ZT PASS {scenario.name}"
@@ -59,7 +70,7 @@ def run_guest(qemu: str, ram: str, scenario: Scenario, instance: int) -> str:
     )
     if scenario.name == "scheduler-guard":
         valid = valid and any(
-            "cr2=0xffffa00000000000" in line for line in lines
+            "cr2=0xffffa00000000000" in line.lower() for line in lines
         ) and any(
             "page-fault bits: P=0 W=0 U=0 RSVD=0 I=0" in line
             for line in lines
