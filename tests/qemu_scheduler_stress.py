@@ -24,7 +24,7 @@ def run_guest(qemu: str, ram: str, scenario: Scenario, instance: int) -> str:
         "-machine",
         "accel=tcg",
         "-icount",
-        "shift=7,sleep=off",
+        "shift=9,sleep=off",
         "-m",
         ram,
         "-smp",

@@ -13,7 +13,8 @@ INSTRUCTION = re.compile(
     r"^\s*[0-9a-f]+:\s+([a-zA-Z][a-zA-Z0-9_.]*)(?:\s+(.*))?$"
 )
 VECTOR_REGISTER = re.compile(
-    r"%?(?:xmm|ymm|zmm|mm)[0-9]+\b|%?st(?:\([0-7]\))?\b"
+    r"(?<![a-zA-Z0-9_])%?(?:xmm|ymm|zmm|mm)[0-9]+(?![a-zA-Z0-9_])"
+    r"|(?<![a-zA-Z0-9_])%?st(?:\([0-7]\))?(?![a-zA-Z0-9_])"
 )
 STANDALONE_VECTOR = {
     "emms",
@@ -43,6 +44,12 @@ def main() -> int:
     parser.add_argument("objdump")
     parser.add_argument("elf")
     arguments = parser.parse_args()
+    if (
+        VECTOR_REGISTER.search("jne <scheduler_self_test>") is not None
+        or VECTOR_REGISTER.search("mov %xmm4,%rax") is None
+        or VECTOR_REGISTER.search("fstp st(3)") is None
+    ):
+        parser.error("internal vector-register recognition self-test failed")
     completed = subprocess.run(
         [arguments.objdump, "-d", "--no-show-raw-insn", arguments.elf],
         text=True,
