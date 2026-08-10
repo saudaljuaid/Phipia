@@ -359,7 +359,7 @@ qemu-stress: $(TEST_BUILD_DIR)/scheduler/zenith.iso \
 		--qemu qemu-system-x86_64 --ram $(QEMU_RAM) \
 		--scheduler-iso $(TEST_BUILD_DIR)/scheduler/zenith.iso \
 		--guard-iso $(TEST_BUILD_DIR)/scheduler-guard/zenith.iso \
-		--scheduler-runs 20 --guard-runs 8 --batch-size 4
+		--scheduler-runs 20 --guard-runs 20 --batch-size 4
 
 smoke: qemu-test-normal
 	@echo "strict boot smoke test passed"

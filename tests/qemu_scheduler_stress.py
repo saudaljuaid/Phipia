@@ -97,6 +97,10 @@ def main() -> int:
         parser.error("stress bounds are below the milestone requirement")
     if arguments.batch_size < 2:
         parser.error("batch size must create competing TCG load")
+    if arguments.batch_size % 2 != 0:
+        parser.error("batch size must permit balanced scenario contention")
+    if arguments.guard_runs < arguments.scheduler_runs:
+        parser.error("every scheduler guest requires a guard competitor")
 
     scheduler = Scenario("scheduler", arguments.scheduler_iso, 59)
     guard = Scenario("scheduler-guard", arguments.guard_iso, 61)
@@ -110,10 +114,6 @@ def main() -> int:
         if guard_index < arguments.guard_runs:
             jobs.append((guard, guard_index))
             guard_index += 1
-        for _ in range(2):
-            if scheduler_index < arguments.scheduler_runs:
-                jobs.append((scheduler, scheduler_index))
-                scheduler_index += 1
 
     for start in range(0, len(jobs), arguments.batch_size):
         batch = jobs[start : start + arguments.batch_size]
