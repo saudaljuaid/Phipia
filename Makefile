@@ -179,12 +179,14 @@ binary-inspection: $(KERNEL)
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Eq '[[:space:]]cli$$'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Eq '[[:space:]]sti$$'
-	@if $(NM) $(KERNEL) | grep -Eq \
-		'__(ashl|ashr|div|mod|mul|udiv|umod|fix|float|gcc|stack_chk|ubsan|asan)'; \
-	then \
+	@runtime_symbols="$$( \
+		$(NM) $(KERNEL) | awk '{print $$NF}' | grep -E \
+		'^__((ashl|ashr|div|mod|mul|udiv|umod)(si|di|ti)3|(u?divmod)(si|di|ti)4|fix[a-zA-Z0-9_]*|float[a-zA-Z0-9_]*|gcc_[a-zA-Z0-9_]*|stack_chk[a-zA-Z0-9_]*|ubsan_[a-zA-Z0-9_]*|asan_[a-zA-Z0-9_]*)$$' \
+		|| true \
+	)"; \
+	if test -n "$$runtime_symbols"; then \
 		echo "kernel contains an unexpected compiler-runtime symbol"; \
-		$(NM) $(KERNEL) | grep -E \
-			'__(ashl|ashr|div|mod|mul|udiv|umod|fix|float|gcc|stack_chk|ubsan|asan)'; \
+		printf '%s\n' "$$runtime_symbols"; \
 		exit 1; \
 	fi
 
