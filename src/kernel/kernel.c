@@ -12,6 +12,7 @@
 #include <zenith/memory.h>
 #include <zenith/pic.h>
 #include <zenith/pit.h>
+#include <zenith/scheduler.h>
 #include <zenith/self_test.h>
 #include <zenith/test.h>
 #include <zenith/time.h>
@@ -189,6 +190,7 @@ static void prove_frame_lifecycle(void)
     uintptr_t first_frame;
     uintptr_t second_frame;
     uintptr_t heap_frame;
+    uintptr_t task_stack_frame;
     uintptr_t rejected_frame = UINTPTR_MAX;
     enum frame_owner owner;
     enum frame_status status;
@@ -249,6 +251,25 @@ static void prove_frame_lifecycle(void)
             FRAME_OWNER_NONE
         ) != FRAME_STATUS_INVALID_OWNER) {
         console_panic("frame allocator failed owner release rejection");
+    }
+
+    if (frame_allocate_owned(
+            FRAME_OWNER_TASK_STACK,
+            &task_stack_frame
+        ) != FRAME_STATUS_OK ||
+        task_stack_frame == first_frame || task_stack_frame == second_frame ||
+        frame_query_owner(task_stack_frame, &owner) != FRAME_STATUS_OK ||
+        owner != FRAME_OWNER_TASK_STACK ||
+        frame_release(task_stack_frame) != FRAME_STATUS_OWNER_MISMATCH ||
+        frame_release_owned(
+            task_stack_frame,
+            FRAME_OWNER_KERNEL_HEAP
+        ) != FRAME_STATUS_OWNER_MISMATCH ||
+        frame_release_owned(
+            task_stack_frame,
+            FRAME_OWNER_TASK_STACK
+        ) != FRAME_STATUS_OK) {
+        console_panic("frame allocator failed task-stack owner lifecycle");
     }
 
     console_write("Zenith OS: frame probe: ");
@@ -384,6 +405,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("bounded-heap rejection self-test failed");
     }
 
+    if (!scheduler_self_test()) {
+        console_panic("cooperative-scheduler rejection self-test failed");
+    }
+
     if (!apic_self_test()) {
         console_panic("APIC topology rejection self-test failed");
     }
@@ -444,6 +469,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     if (stats.allocated_frames != 0U ||
         stats.generic_allocated_frames != 0U ||
         stats.heap_allocated_frames != 0U ||
+        stats.task_stack_allocated_frames != 0U ||
         frame_allocator_validate() != FRAME_STATUS_OK) {
         console_panic("frame lifecycle leaked a physical frame");
     }
@@ -586,8 +612,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (test_scenario == KERNEL_TEST_NONE ||
         test_scenario == KERNEL_TEST_NORMAL ||
-        test_scenario == KERNEL_TEST_HEAP) {
+        test_scenario == KERNEL_TEST_HEAP ||
+        test_scenario == KERNEL_TEST_SCHEDULER ||
+        test_scenario == KERNEL_TEST_SCHEDULER_GUARD) {
         enum heap_status heap_status = heap_initialize();
+        enum scheduler_status scheduler_status;
 
         if (heap_status != HEAP_STATUS_OK) {
             console_panic(heap_status_string(heap_status));
@@ -599,6 +628,25 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
         prove_heap_lifecycle();
         console_write("Zenith OS: bounded kernel heap verified\n");
+
+        scheduler_status = scheduler_initialize();
+
+        if (scheduler_status != SCHEDULER_STATUS_OK) {
+            console_panic(scheduler_status_string(scheduler_status));
+        }
+
+        if (test_scenario == KERNEL_TEST_SCHEDULER) {
+            kernel_test_complete_scheduler();
+        }
+
+        if (test_scenario == KERNEL_TEST_SCHEDULER_GUARD) {
+            kernel_test_complete_scheduler_guard();
+        }
+
+        kernel_test_scheduler_normal_proof();
+        console_write(
+            "Zenith OS: bounded cooperative scheduler verified\n"
+        );
     }
 
     if (test_scenario == KERNEL_TEST_LAPIC_TIMER) {

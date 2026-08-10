@@ -43,6 +43,9 @@
 
 #define VM_HEAP_PAGE_COUNT \
     ((size_t)(VIRTUAL_MEMORY_HEAP_SIZE / ZENITH_PAGE_SIZE))
+#define VM_TASK_STACK_PAGE_COUNT \
+    (VIRTUAL_MEMORY_TASK_STACK_LIMIT * \
+        VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES)
 
 struct vm_table_arena {
     uint64_t (*pages)[VM_TABLE_ENTRIES];
@@ -74,9 +77,13 @@ static struct virtual_memory_layout active_layout;
 static uint64_t active_local_apic_physical;
 static uint64_t active_io_apic_physical[ACPI_MAX_IO_APICS];
 static size_t active_heap_mapped_pages;
+static size_t active_task_stack_mapped_pages;
 static size_t test_heap_map_successes_remaining;
 static bool test_heap_map_failure_enabled;
 static bool test_heap_map_uncertain_failure_enabled;
+static size_t test_task_stack_map_successes_remaining;
+static bool test_task_stack_map_failure_enabled;
+static bool test_task_stack_map_uncertain_failure_enabled;
 static bool virtual_memory_initialized;
 
 _Static_assert(sizeof(permanent_table_pages[0]) == ZENITH_PAGE_SIZE,
@@ -93,6 +100,17 @@ _Static_assert(
 _Static_assert(
     VIRTUAL_MEMORY_HEAP_SIZE != 0U,
     "heap window must not be empty"
+);
+_Static_assert(
+    VIRTUAL_MEMORY_TASK_STACK_BASE % ZENITH_PAGE_SIZE == 0U &&
+        VIRTUAL_MEMORY_TASK_STACK_SLOT_SIZE % ZENITH_PAGE_SIZE == 0U &&
+        VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE % ZENITH_PAGE_SIZE == 0U,
+    "task-stack window must contain whole aligned pages"
+);
+_Static_assert(
+    VIRTUAL_MEMORY_TASK_STACK_LIMIT == 16U &&
+        VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES == 16U,
+    "scheduler and virtual-memory task-stack limits disagree"
 );
 
 static void bytes_zero(void *destination, size_t size)
@@ -134,6 +152,52 @@ static bool address_is_in_heap_window(uint64_t address)
 {
     return address >= VIRTUAL_MEMORY_HEAP_BASE &&
         address - VIRTUAL_MEMORY_HEAP_BASE < VIRTUAL_MEMORY_HEAP_SIZE;
+}
+
+static enum virtual_memory_status task_stack_page_address(
+    size_t slot_index,
+    size_t page_index,
+    uint64_t *address
+)
+{
+    uint64_t slot_offset;
+    uint64_t page_offset;
+
+    if (address == NULL) {
+        return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
+    }
+
+    *address = 0U;
+
+    if (slot_index >= VIRTUAL_MEMORY_TASK_STACK_LIMIT) {
+        return VIRTUAL_MEMORY_STATUS_BAD_STACK_SLOT;
+    }
+
+    if (page_index >= VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES) {
+        return VIRTUAL_MEMORY_STATUS_BAD_STACK_PAGE;
+    }
+
+    slot_offset = (uint64_t)slot_index *
+        VIRTUAL_MEMORY_TASK_STACK_SLOT_SIZE;
+    page_offset = ((uint64_t)page_index + 1U) * ZENITH_PAGE_SIZE;
+
+    if (slot_offset > UINT64_MAX - VIRTUAL_MEMORY_TASK_STACK_BASE ||
+        page_offset > UINT64_MAX -
+            (VIRTUAL_MEMORY_TASK_STACK_BASE + slot_offset)) {
+        return VIRTUAL_MEMORY_STATUS_RANGE_OVERFLOW;
+    }
+
+    *address = VIRTUAL_MEMORY_TASK_STACK_BASE + slot_offset + page_offset;
+
+    if (!address_is_page_aligned(*address) ||
+        !address_is_canonical(*address) ||
+        *address < VIRTUAL_MEMORY_TASK_STACK_BASE ||
+        *address >= VIRTUAL_MEMORY_TASK_STACK_WINDOW_END) {
+        *address = 0U;
+        return VIRTUAL_MEMORY_STATUS_OUTSIDE_TASK_STACK_WINDOW;
+    }
+
+    return VIRTUAL_MEMORY_STATUS_OK;
 }
 
 static bool address_fits_mask(uint64_t address, uint64_t physical_mask)
@@ -379,6 +443,38 @@ static enum virtual_memory_status prepare_heap_window(
 
         if (status != VIRTUAL_MEMORY_STATUS_OK) {
             return status;
+        }
+    }
+
+    return VIRTUAL_MEMORY_STATUS_OK;
+}
+
+static enum virtual_memory_status prepare_task_stack_window(
+    struct vm_table_arena *arena
+)
+{
+    for (size_t slot = 0U;
+         slot < VIRTUAL_MEMORY_TASK_STACK_LIMIT;
+         ++slot) {
+        for (size_t page = 0U;
+             page < VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES;
+             ++page) {
+            uint64_t address;
+            enum virtual_memory_status status = task_stack_page_address(
+                slot,
+                page,
+                &address
+            );
+
+            if (status != VIRTUAL_MEMORY_STATUS_OK) {
+                return status;
+            }
+
+            status = prepare_leaf_table(arena, address);
+
+            if (status != VIRTUAL_MEMORY_STATUS_OK) {
+                return status;
+            }
         }
     }
 
@@ -676,6 +772,95 @@ static bool heap_window_layout_is_valid(void)
         );
 }
 
+static bool task_stack_window_layout_is_valid(void)
+{
+    const uint64_t kernel_start = linker_address(__kernel_start);
+    const uint64_t kernel_end = linker_address(__kernel_end);
+    const uint64_t heap_reserved_start = VIRTUAL_MEMORY_HEAP_GUARD_BELOW;
+    const uint64_t heap_reserved_end = VIRTUAL_MEMORY_HEAP_GUARD_ABOVE +
+        ZENITH_PAGE_SIZE;
+    uint64_t device_end;
+
+    if (VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE == 0U ||
+        VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE >
+            UINT64_MAX - VIRTUAL_MEMORY_TASK_STACK_BASE ||
+        VIRTUAL_MEMORY_TASK_STACK_WINDOW_END !=
+            VIRTUAL_MEMORY_TASK_STACK_BASE +
+                VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE ||
+        (ACPI_MAX_IO_APICS + 1U) >
+            (UINT64_MAX - VIRTUAL_MEMORY_DEVICE_WINDOW_BASE) /
+                ZENITH_PAGE_SIZE) {
+        return false;
+    }
+
+    device_end = VIRTUAL_MEMORY_DEVICE_WINDOW_BASE +
+        (ACPI_MAX_IO_APICS + 1U) * ZENITH_PAGE_SIZE;
+
+    if (!address_is_page_aligned(VIRTUAL_MEMORY_TASK_STACK_BASE) ||
+        !address_is_page_aligned(VIRTUAL_MEMORY_TASK_STACK_WINDOW_END) ||
+        !address_is_canonical(VIRTUAL_MEMORY_TASK_STACK_BASE) ||
+        !address_is_canonical(VIRTUAL_MEMORY_TASK_STACK_WINDOW_END - 1U) ||
+        ranges_overlap(
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END,
+            kernel_start,
+            kernel_end
+        ) ||
+        ranges_overlap(
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END,
+            VM_VGA_ADDRESS,
+            VM_VGA_ADDRESS + ZENITH_PAGE_SIZE
+        ) ||
+        ranges_overlap(
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END,
+            VM_UNMAPPED_PROBE,
+            VM_UNMAPPED_PROBE + ZENITH_PAGE_SIZE
+        ) ||
+        ranges_overlap(
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END,
+            VIRTUAL_MEMORY_DEVICE_WINDOW_BASE,
+            device_end
+        ) ||
+        ranges_overlap(
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END,
+            heap_reserved_start,
+            heap_reserved_end
+        )) {
+        return false;
+    }
+
+    for (size_t slot = 0U;
+         slot < VIRTUAL_MEMORY_TASK_STACK_LIMIT;
+         ++slot) {
+        uint64_t lower;
+        uint64_t payload_start;
+        uint64_t payload_end;
+        uint64_t upper;
+
+        if (virtual_memory_task_stack_bounds(
+                slot,
+                &lower,
+                &payload_start,
+                &payload_end,
+                &upper
+            ) != VIRTUAL_MEMORY_STATUS_OK ||
+            lower + ZENITH_PAGE_SIZE != payload_start ||
+            payload_end != upper ||
+            upper + ZENITH_PAGE_SIZE >
+                VIRTUAL_MEMORY_TASK_STACK_WINDOW_END ||
+            payload_end - payload_start !=
+                VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES * ZENITH_PAGE_SIZE) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool kernel_layout_is_valid(void)
 {
     const uint64_t kernel_start = linker_address(__kernel_start);
@@ -690,6 +875,7 @@ static bool kernel_layout_is_valid(void)
     const uint64_t bss_end = linker_address(__bss_end);
 
     return heap_window_layout_is_valid() &&
+        task_stack_window_layout_is_valid() &&
         address_is_page_aligned(kernel_start) &&
         address_is_page_aligned(kernel_end) &&
         address_is_page_aligned(text_start) &&
@@ -1069,6 +1255,82 @@ static bool heap_window_matches(const struct vm_table_arena *arena)
     return mapped_pages == active_heap_mapped_pages;
 }
 
+static bool task_stack_window_matches(const struct vm_table_arena *arena)
+{
+    struct virtual_memory_mapping ignored;
+    size_t mapped_pages = 0U;
+    const uint64_t allowed_leaf_bits = VM_ENTRY_ADDRESS_MASK |
+        VM_ENTRY_PRESENT | VM_ENTRY_WRITABLE | VM_ENTRY_ACCESSED |
+        VM_ENTRY_DIRTY | VM_ENTRY_NO_EXECUTE;
+
+    if (!task_stack_window_layout_is_valid()) {
+        return false;
+    }
+
+    for (size_t slot = 0U;
+         slot < VIRTUAL_MEMORY_TASK_STACK_LIMIT;
+         ++slot) {
+        uint64_t lower;
+        uint64_t payload_start;
+        uint64_t payload_end;
+        uint64_t upper;
+
+        if (virtual_memory_task_stack_bounds(
+                slot,
+                &lower,
+                &payload_start,
+                &payload_end,
+                &upper
+            ) != VIRTUAL_MEMORY_STATUS_OK ||
+            query_arena(arena, lower, &ignored) !=
+                VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
+            query_arena(arena, upper, &ignored) !=
+                VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
+            return false;
+        }
+
+        for (size_t page = 0U;
+             page < VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES;
+             ++page) {
+            uint64_t address;
+            uint64_t *leaf_entry;
+            uint64_t entry;
+
+            if (task_stack_page_address(slot, page, &address) !=
+                    VIRTUAL_MEMORY_STATUS_OK ||
+                address < payload_start || address >= payload_end ||
+                locate_leaf_entry(arena, address, &leaf_entry) !=
+                    VIRTUAL_MEMORY_STATUS_OK) {
+                return false;
+            }
+
+            entry = *leaf_entry;
+
+            if ((entry & VM_ENTRY_PRESENT) == 0U) {
+                if (entry != 0U) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if ((entry & ~allowed_leaf_bits) != 0U ||
+                (entry & (VM_ENTRY_WRITABLE | VM_ENTRY_NO_EXECUTE)) !=
+                    (VM_ENTRY_WRITABLE | VM_ENTRY_NO_EXECUTE) ||
+                !address_fits_mask(
+                    entry & VM_ENTRY_ADDRESS_MASK,
+                    arena->physical_mask
+                )) {
+                return false;
+            }
+
+            ++mapped_pages;
+        }
+    }
+
+    return mapped_pages == active_task_stack_mapped_pages;
+}
+
 static bool layout_matches_topology(
     const struct vm_table_arena *arena,
     const struct acpi_topology *topology,
@@ -1077,6 +1339,7 @@ static bool layout_matches_topology(
 {
     if (!layout_core_matches(arena, layout, topology->io_apic_count) ||
         !heap_window_matches(arena) ||
+        !task_stack_window_matches(arena) ||
         !mapping_matches(
             arena,
             layout->local_apic_virtual_address,
@@ -1108,6 +1371,7 @@ static bool active_layout_matches(void)
             active_layout.io_apic_count
         ) ||
         !heap_window_matches(&permanent_arena) ||
+        !task_stack_window_matches(&permanent_arena) ||
         !mapping_matches(
             &permanent_arena,
             active_layout.local_apic_virtual_address,
@@ -1158,12 +1422,15 @@ static bool runtime_foundation_matches(void)
         active_layout.local_apic_virtual_address !=
             VIRTUAL_MEMORY_DEVICE_WINDOW_BASE ||
         active_heap_mapped_pages > VM_HEAP_PAGE_COUNT ||
+        active_task_stack_mapped_pages > VM_TASK_STACK_PAGE_COUNT ||
         (cpu_read_cr3() & VM_ENTRY_ADDRESS_MASK) !=
             active_layout.root_table_address ||
         (cpu_read_cr0() & VM_CR0_WRITE_PROTECT) == 0U ||
         (cpu_read_msr(VM_EFER_MSR) & VM_EFER_NXE) == 0U ||
         cpu_read_msr(VM_PAT_MSR) != VM_PAT_ARCHITECTURAL_DEFAULT ||
         !heap_window_layout_is_valid() ||
+        !task_stack_window_layout_is_valid() ||
+        !task_stack_window_matches(&permanent_arena) ||
         query_arena(
             &permanent_arena,
             VIRTUAL_MEMORY_HEAP_GUARD_BELOW,
@@ -1228,9 +1495,13 @@ static void active_state_reset(void)
     bytes_zero(active_io_apic_physical, sizeof(active_io_apic_physical));
     active_local_apic_physical = 0U;
     active_heap_mapped_pages = 0U;
+    active_task_stack_mapped_pages = 0U;
     test_heap_map_successes_remaining = 0U;
     test_heap_map_failure_enabled = false;
     test_heap_map_uncertain_failure_enabled = false;
+    test_task_stack_map_successes_remaining = 0U;
+    test_task_stack_map_failure_enabled = false;
+    test_task_stack_map_uncertain_failure_enabled = false;
     virtual_memory_initialized = false;
 }
 
@@ -1414,8 +1685,37 @@ static bool builder_self_test(void)
     }
 
     arena.pages[0][0] = VM_ENTRY_PRESENT | VM_ENTRY_WRITABLE | VM_ENTRY_HUGE;
-    return map_page(&arena, UINT64_C(0x1000), UINT64_C(0x1000),
-        VIRTUAL_MEMORY_READ_ONLY) == VIRTUAL_MEMORY_STATUS_MAPPING_CONFLICT;
+
+    if (map_page(&arena, UINT64_C(0x1000), UINT64_C(0x1000),
+            VIRTUAL_MEMORY_READ_ONLY) !=
+            VIRTUAL_MEMORY_STATUS_MAPPING_CONFLICT ||
+        arena_initialize(&arena, test_table_pages, 3U,
+            maximum_physical_mask) != VIRTUAL_MEMORY_STATUS_OK ||
+        prepare_task_stack_window(&arena) !=
+            VIRTUAL_MEMORY_STATUS_TABLE_LIMIT ||
+        arena_initialize(&arena, test_table_pages, 4U,
+            maximum_physical_mask) != VIRTUAL_MEMORY_STATUS_OK ||
+        prepare_task_stack_window(&arena) != VIRTUAL_MEMORY_STATUS_OK ||
+        arena.used != 4U ||
+        query_arena(
+            &arena,
+            VIRTUAL_MEMORY_TASK_STACK_BASE,
+            &mapping
+        ) != VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
+        query_arena(
+            &arena,
+            VIRTUAL_MEMORY_TASK_STACK_BASE + ZENITH_PAGE_SIZE,
+            &mapping
+        ) != VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
+        query_arena(
+            &arena,
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END - ZENITH_PAGE_SIZE,
+            &mapping
+        ) != VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
+        return false;
+    }
+
+    return true;
 }
 
 static bool device_policy_self_test(void)
@@ -1554,9 +1854,13 @@ enum virtual_memory_status virtual_memory_initialize(
 
     layout_reset(&candidate);
     active_heap_mapped_pages = 0U;
+    active_task_stack_mapped_pages = 0U;
     test_heap_map_successes_remaining = 0U;
     test_heap_map_failure_enabled = false;
     test_heap_map_uncertain_failure_enabled = false;
+    test_task_stack_map_successes_remaining = 0U;
+    test_task_stack_map_failure_enabled = false;
+    test_task_stack_map_uncertain_failure_enabled = false;
     candidate.root_table_address = permanent_arena.root_address;
     status = map_kernel();
 
@@ -1575,6 +1879,10 @@ enum virtual_memory_status virtual_memory_initialize(
 
     if (status == VIRTUAL_MEMORY_STATUS_OK) {
         status = prepare_heap_window(&permanent_arena);
+    }
+
+    if (status == VIRTUAL_MEMORY_STATUS_OK) {
+        status = prepare_task_stack_window(&permanent_arena);
     }
 
     candidate.table_page_count = permanent_arena.used;
@@ -1659,6 +1967,308 @@ enum virtual_memory_status virtual_memory_query(
     }
 
     return query_arena(&permanent_arena, virtual_address, mapping);
+}
+
+enum virtual_memory_status virtual_memory_task_stack_bounds(
+    size_t slot_index,
+    uint64_t *lower_guard,
+    uint64_t *payload_start,
+    uint64_t *payload_end,
+    uint64_t *upper_guard
+)
+{
+    uint64_t slot_offset;
+
+    if (lower_guard == NULL || payload_start == NULL ||
+        payload_end == NULL || upper_guard == NULL) {
+        return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
+    }
+
+    *lower_guard = 0U;
+    *payload_start = 0U;
+    *payload_end = 0U;
+    *upper_guard = 0U;
+
+    if (slot_index >= VIRTUAL_MEMORY_TASK_STACK_LIMIT) {
+        return VIRTUAL_MEMORY_STATUS_BAD_STACK_SLOT;
+    }
+
+    slot_offset = (uint64_t)slot_index *
+        VIRTUAL_MEMORY_TASK_STACK_SLOT_SIZE;
+
+    if (slot_offset > UINT64_MAX - VIRTUAL_MEMORY_TASK_STACK_BASE) {
+        return VIRTUAL_MEMORY_STATUS_RANGE_OVERFLOW;
+    }
+
+    *lower_guard = VIRTUAL_MEMORY_TASK_STACK_BASE + slot_offset;
+
+    if (*lower_guard > UINT64_MAX - ZENITH_PAGE_SIZE) {
+        *lower_guard = 0U;
+        return VIRTUAL_MEMORY_STATUS_RANGE_OVERFLOW;
+    }
+
+    *payload_start = *lower_guard + ZENITH_PAGE_SIZE;
+
+    if (*payload_start > UINT64_MAX -
+            VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES * ZENITH_PAGE_SIZE) {
+        *lower_guard = 0U;
+        *payload_start = 0U;
+        return VIRTUAL_MEMORY_STATUS_RANGE_OVERFLOW;
+    }
+
+    *payload_end = *payload_start +
+        VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES * ZENITH_PAGE_SIZE;
+    *upper_guard = *payload_end;
+
+    if (*upper_guard > UINT64_MAX - ZENITH_PAGE_SIZE) {
+        *lower_guard = 0U;
+        *payload_start = 0U;
+        *payload_end = 0U;
+        *upper_guard = 0U;
+        return VIRTUAL_MEMORY_STATUS_RANGE_OVERFLOW;
+    }
+
+    if (!address_is_page_aligned(*lower_guard) ||
+        !address_is_page_aligned(*payload_start) ||
+        !address_is_page_aligned(*payload_end) ||
+        !address_is_page_aligned(*upper_guard) ||
+        !address_is_canonical(*lower_guard) ||
+        !address_is_canonical(*upper_guard + ZENITH_PAGE_SIZE - 1U) ||
+        *lower_guard < VIRTUAL_MEMORY_TASK_STACK_BASE ||
+        *upper_guard + ZENITH_PAGE_SIZE >
+            VIRTUAL_MEMORY_TASK_STACK_WINDOW_END) {
+        *lower_guard = 0U;
+        *payload_start = 0U;
+        *payload_end = 0U;
+        *upper_guard = 0U;
+        return VIRTUAL_MEMORY_STATUS_OUTSIDE_TASK_STACK_WINDOW;
+    }
+
+    return VIRTUAL_MEMORY_STATUS_OK;
+}
+
+enum virtual_memory_status virtual_memory_query_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    struct virtual_memory_mapping *mapping
+)
+{
+    uint64_t virtual_address;
+    enum virtual_memory_status status;
+
+    if (mapping == NULL) {
+        return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
+    }
+
+    status = task_stack_page_address(slot_index, page_index, &virtual_address);
+
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    return virtual_memory_query(virtual_address, mapping);
+}
+
+enum virtual_memory_status virtual_memory_map_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    uintptr_t physical_address
+)
+{
+    struct virtual_memory_mapping mapping;
+    uint64_t virtual_address;
+    uint64_t *leaf_entry;
+    uint64_t entry;
+    enum virtual_memory_status status;
+
+    if (!virtual_memory_initialized) {
+        return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    status = task_stack_page_address(slot_index, page_index, &virtual_address);
+
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    if (!address_is_page_aligned((uint64_t)physical_address)) {
+        return VIRTUAL_MEMORY_STATUS_BAD_ALIGNMENT;
+    }
+
+    if (!address_fits_mask(
+            (uint64_t)physical_address,
+            permanent_arena.physical_mask
+        )) {
+        return VIRTUAL_MEMORY_STATUS_PHYSICAL_ADDRESS_TOO_WIDE;
+    }
+
+    if (!runtime_foundation_matches()) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    status = locate_leaf_entry(
+        &permanent_arena,
+        virtual_address,
+        &leaf_entry
+    );
+
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    if ((*leaf_entry & VM_ENTRY_PRESENT) != 0U) {
+        return VIRTUAL_MEMORY_STATUS_MAPPING_CONFLICT;
+    }
+
+    if (*leaf_entry != 0U) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    if (test_task_stack_map_failure_enabled &&
+        test_task_stack_map_successes_remaining == 0U) {
+        test_task_stack_map_failure_enabled = false;
+        return VIRTUAL_MEMORY_STATUS_TEST_FAILURE;
+    }
+
+    entry = (uint64_t)physical_address | VM_ENTRY_PRESENT |
+        VM_ENTRY_WRITABLE | VM_ENTRY_NO_EXECUTE;
+    *leaf_entry = entry;
+    __asm__ volatile ("" : : : "memory");
+    cpu_invalidate_page((uintptr_t)virtual_address);
+    ++active_task_stack_mapped_pages;
+
+    if (test_task_stack_map_uncertain_failure_enabled) {
+        test_task_stack_map_uncertain_failure_enabled = false;
+        return VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE;
+    }
+
+    if (query_arena(&permanent_arena, virtual_address, &mapping) !=
+            VIRTUAL_MEMORY_STATUS_OK ||
+        mapping.physical_address != (uint64_t)physical_address ||
+        mapping.permissions != VIRTUAL_MEMORY_WRITABLE ||
+        !runtime_foundation_matches()) {
+        *leaf_entry = 0U;
+        __asm__ volatile ("" : : : "memory");
+        cpu_invalidate_page((uintptr_t)virtual_address);
+        --active_task_stack_mapped_pages;
+
+        if (query_arena(&permanent_arena, virtual_address, &mapping) !=
+                VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
+            !runtime_foundation_matches()) {
+            return VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE;
+        }
+
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    if (test_task_stack_map_failure_enabled) {
+        --test_task_stack_map_successes_remaining;
+    }
+
+    return VIRTUAL_MEMORY_STATUS_OK;
+}
+
+enum virtual_memory_status virtual_memory_unmap_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    uintptr_t expected_physical_address
+)
+{
+    struct virtual_memory_mapping mapping;
+    uint64_t virtual_address;
+    uint64_t *leaf_entry;
+    uint64_t saved_entry;
+    enum virtual_memory_status status;
+
+    if (!virtual_memory_initialized) {
+        return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    status = task_stack_page_address(slot_index, page_index, &virtual_address);
+
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    if (!address_is_page_aligned((uint64_t)expected_physical_address)) {
+        return VIRTUAL_MEMORY_STATUS_BAD_ALIGNMENT;
+    }
+
+    if (!address_fits_mask(
+            (uint64_t)expected_physical_address,
+            permanent_arena.physical_mask
+        )) {
+        return VIRTUAL_MEMORY_STATUS_PHYSICAL_ADDRESS_TOO_WIDE;
+    }
+
+    if (!runtime_foundation_matches()) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    status = locate_leaf_entry(
+        &permanent_arena,
+        virtual_address,
+        &leaf_entry
+    );
+
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    saved_entry = *leaf_entry;
+
+    if ((saved_entry & VM_ENTRY_PRESENT) == 0U) {
+        return saved_entry == 0U
+            ? VIRTUAL_MEMORY_STATUS_NOT_MAPPED
+            : VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    if (active_task_stack_mapped_pages == 0U) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    if ((saved_entry & VM_ENTRY_ADDRESS_MASK) !=
+            (uint64_t)expected_physical_address ||
+        query_arena(&permanent_arena, virtual_address, &mapping) !=
+            VIRTUAL_MEMORY_STATUS_OK ||
+        mapping.physical_address != (uint64_t)expected_physical_address ||
+        mapping.permissions != VIRTUAL_MEMORY_WRITABLE) {
+        return VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH;
+    }
+
+    *leaf_entry = 0U;
+    __asm__ volatile ("" : : : "memory");
+    cpu_invalidate_page((uintptr_t)virtual_address);
+    --active_task_stack_mapped_pages;
+
+    if (query_arena(&permanent_arena, virtual_address, &mapping) ==
+            VIRTUAL_MEMORY_STATUS_NOT_MAPPED &&
+        runtime_foundation_matches()) {
+        return VIRTUAL_MEMORY_STATUS_OK;
+    }
+
+    *leaf_entry = saved_entry;
+    __asm__ volatile ("" : : : "memory");
+    cpu_invalidate_page((uintptr_t)virtual_address);
+    ++active_task_stack_mapped_pages;
+
+    if (query_arena(&permanent_arena, virtual_address, &mapping) !=
+            VIRTUAL_MEMORY_STATUS_OK ||
+        mapping.physical_address != (uint64_t)expected_physical_address ||
+        mapping.permissions != VIRTUAL_MEMORY_WRITABLE ||
+        !runtime_foundation_matches()) {
+        return VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE;
+    }
+
+    return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
 }
 
 enum virtual_memory_status virtual_memory_map_heap_page(
@@ -1883,6 +2493,8 @@ enum virtual_memory_status virtual_memory_runtime_get_stats(
 
     stats->heap_window_pages = VM_HEAP_PAGE_COUNT;
     stats->heap_mapped_pages = active_heap_mapped_pages;
+    stats->task_stack_payload_pages = VM_TASK_STACK_PAGE_COUNT;
+    stats->task_stack_mapped_pages = active_task_stack_mapped_pages;
     stats->table_pages_used = permanent_arena.used;
     stats->table_pages_capacity = permanent_arena.capacity;
     return VIRTUAL_MEMORY_STATUS_OK;
@@ -1892,7 +2504,9 @@ bool virtual_memory_test_fail_heap_map_after(size_t successful_maps)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_heap_map_failure_enabled ||
-        test_heap_map_uncertain_failure_enabled) {
+        test_heap_map_uncertain_failure_enabled ||
+        test_task_stack_map_failure_enabled ||
+        test_task_stack_map_uncertain_failure_enabled) {
         return false;
     }
 
@@ -1905,11 +2519,42 @@ bool virtual_memory_test_report_uncertain_heap_map_once(void)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_heap_map_failure_enabled ||
-        test_heap_map_uncertain_failure_enabled) {
+        test_heap_map_uncertain_failure_enabled ||
+        test_task_stack_map_failure_enabled ||
+        test_task_stack_map_uncertain_failure_enabled) {
         return false;
     }
 
     test_heap_map_uncertain_failure_enabled = true;
+    return true;
+}
+
+bool virtual_memory_test_fail_task_stack_map_after(size_t successful_maps)
+{
+    if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
+        test_task_stack_map_failure_enabled ||
+        test_task_stack_map_uncertain_failure_enabled ||
+        test_heap_map_failure_enabled ||
+        test_heap_map_uncertain_failure_enabled) {
+        return false;
+    }
+
+    test_task_stack_map_successes_remaining = successful_maps;
+    test_task_stack_map_failure_enabled = true;
+    return true;
+}
+
+bool virtual_memory_test_report_uncertain_task_stack_map_once(void)
+{
+    if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
+        test_task_stack_map_failure_enabled ||
+        test_task_stack_map_uncertain_failure_enabled ||
+        test_heap_map_failure_enabled ||
+        test_heap_map_uncertain_failure_enabled) {
+        return false;
+    }
+
+    test_task_stack_map_uncertain_failure_enabled = true;
     return true;
 }
 
@@ -1955,6 +2600,12 @@ const char *virtual_memory_status_string(enum virtual_memory_status status)
         return "virtual address is not mapped";
     case VIRTUAL_MEMORY_STATUS_OUTSIDE_HEAP_WINDOW:
         return "runtime mapping is outside the bounded heap window";
+    case VIRTUAL_MEMORY_STATUS_OUTSIDE_TASK_STACK_WINDOW:
+        return "runtime mapping is outside the bounded task-stack window";
+    case VIRTUAL_MEMORY_STATUS_BAD_STACK_SLOT:
+        return "task-stack slot index is outside the fixed limit";
+    case VIRTUAL_MEMORY_STATUS_BAD_STACK_PAGE:
+        return "task-stack page index is outside the payload";
     case VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH:
         return "runtime mapping does not match its expected frame";
     case VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE:

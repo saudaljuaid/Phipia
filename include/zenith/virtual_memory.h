@@ -15,6 +15,18 @@
     (VIRTUAL_MEMORY_HEAP_BASE - UINT64_C(4096))
 #define VIRTUAL_MEMORY_HEAP_GUARD_ABOVE \
     (VIRTUAL_MEMORY_HEAP_BASE + VIRTUAL_MEMORY_HEAP_SIZE)
+#define VIRTUAL_MEMORY_TASK_STACK_BASE UINT64_C(0xFFFFA00000000000)
+#define VIRTUAL_MEMORY_TASK_STACK_LIMIT ((size_t)16U)
+#define VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES ((size_t)16U)
+#define VIRTUAL_MEMORY_TASK_STACK_SLOT_PAGES \
+    (VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES + (size_t)2U)
+#define VIRTUAL_MEMORY_TASK_STACK_SLOT_SIZE \
+    ((uint64_t)VIRTUAL_MEMORY_TASK_STACK_SLOT_PAGES * UINT64_C(4096))
+#define VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE \
+    ((uint64_t)VIRTUAL_MEMORY_TASK_STACK_LIMIT * \
+        VIRTUAL_MEMORY_TASK_STACK_SLOT_SIZE)
+#define VIRTUAL_MEMORY_TASK_STACK_WINDOW_END \
+    (VIRTUAL_MEMORY_TASK_STACK_BASE + VIRTUAL_MEMORY_TASK_STACK_WINDOW_SIZE)
 
 enum virtual_memory_status {
     VIRTUAL_MEMORY_STATUS_OK = 0,
@@ -34,6 +46,9 @@ enum virtual_memory_status {
     VIRTUAL_MEMORY_STATUS_MAPPING_CONFLICT,
     VIRTUAL_MEMORY_STATUS_NOT_MAPPED,
     VIRTUAL_MEMORY_STATUS_OUTSIDE_HEAP_WINDOW,
+    VIRTUAL_MEMORY_STATUS_OUTSIDE_TASK_STACK_WINDOW,
+    VIRTUAL_MEMORY_STATUS_BAD_STACK_SLOT,
+    VIRTUAL_MEMORY_STATUS_BAD_STACK_PAGE,
     VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH,
     VIRTUAL_MEMORY_STATUS_ROLLBACK_FAILURE,
     VIRTUAL_MEMORY_STATUS_TEST_FAILURE,
@@ -66,6 +81,8 @@ struct virtual_memory_layout {
 struct virtual_memory_runtime_stats {
     size_t heap_window_pages;
     size_t heap_mapped_pages;
+    size_t task_stack_payload_pages;
+    size_t task_stack_mapped_pages;
     size_t table_pages_used;
     size_t table_pages_capacity;
 };
@@ -86,6 +103,28 @@ enum virtual_memory_status virtual_memory_map_heap_page(
 );
 enum virtual_memory_status virtual_memory_unmap_heap_page(
     uint64_t virtual_address,
+    uintptr_t expected_physical_address
+);
+enum virtual_memory_status virtual_memory_task_stack_bounds(
+    size_t slot_index,
+    uint64_t *lower_guard,
+    uint64_t *payload_start,
+    uint64_t *payload_end,
+    uint64_t *upper_guard
+);
+enum virtual_memory_status virtual_memory_query_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    struct virtual_memory_mapping *mapping
+);
+enum virtual_memory_status virtual_memory_map_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    uintptr_t physical_address
+);
+enum virtual_memory_status virtual_memory_unmap_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
     uintptr_t expected_physical_address
 );
 enum virtual_memory_status virtual_memory_runtime_get_stats(

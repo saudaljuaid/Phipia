@@ -188,7 +188,11 @@ pml4_table: .skip 4096
 pdpt_table: .skip 4096
 pd_tables:  .skip (4 * 4096)
 .balign 16
+.global bootstrap_stack_bottom
+bootstrap_stack_bottom:
 stack_bottom: .skip 16384
+.global bootstrap_stack_top
+bootstrap_stack_top:
 stack_top:
 
 .section .note.GNU-stack, "", @progbits

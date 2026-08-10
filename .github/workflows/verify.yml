@@ -4,7 +4,7 @@ on:
     push:
         branches: [main]
     pull_request:
-        branches: [main]
+        branches: [main, agent/bounded-kernel-heap]
 
 permissions:
     contents: read
@@ -14,8 +14,8 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    build-and-boot:
-        name: build-and-boot
+    build-and-inspect:
+        name: build, analyze, sanitize, inspect
         runs-on: ubuntu-24.04
         timeout-minutes: 10
         steps:
@@ -25,8 +25,78 @@ jobs:
               run: |
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils gcc grub-common grub-pc-bin make mtools python3 qemu-system-x86 xorriso
-            - name: Verify the kernel artifact
+                      binutils clang gcc grub-common lld make python3
+            - name: Verify with GCC and host oracles
               run: make verify
-            - name: Prove faults and interrupts in QEMU
+            - name: Run GCC analysis and stack-usage gates
+              run: |
+                  make analyze
+                  make stack-usage
+            - name: Run host sanitizers
+              run: make host-sanitizers
+            - name: Build and inspect independently with Clang
+              run: |
+                  make clean
+                  make CC=clang LD=ld.lld kernel
+                  make CC=clang LD=ld.lld binary-inspection
+            - name: Emit focused disassembly for review
+              run: |
+                  for symbol in \
+                      scheduler_context_switch \
+                      scheduler_task_first_entry \
+                      scheduler_task_return_trampoline \
+                      interrupt_common_entry \
+                      virtual_memory_map_task_stack_page \
+                      virtual_memory_unmap_task_stack_page \
+                      scheduler_yield \
+                      cpu_interrupt_disable \
+                      cpu_interrupt_enable; do
+                      objdump -d --disassemble="$symbol" build/zenith.elf
+                  done
+                  readelf -W -S build/zenith.elf
+                  readelf -W -l build/zenith.elf
+
+    qemu-default:
+        name: QEMU 15-scenario default RAM
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install build and QEMU tools
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools python3 qemu-system-x86 xorriso
+            - name: Prove all scenarios at 128 MiB
               run: make qemu-tests
+
+    qemu-minimum:
+        name: QEMU 19 MiB floor and 18 MiB OOM
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install build and QEMU tools
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools python3 qemu-system-x86 xorriso
+            - name: Prove the whole-MiB boundary
+              run: make qemu-minimum-tests
+
+    qemu-scheduler-stress:
+        name: QEMU scheduler competing-load repetitions
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install build and QEMU tools
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools python3 qemu-system-x86 xorriso
+            - name: Run scheduler and guard under competing TCG load
+              run: make qemu-stress

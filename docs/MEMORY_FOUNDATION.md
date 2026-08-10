@@ -21,27 +21,28 @@ layout is still under construction.
 ## Frame ownership
 
 The frame allocator tracks 4 KiB frames below 4 GiB with fixed eligibility,
-use, and heap-owner bitmaps. Each bitmap costs 128 KiB of BSS. A frame becomes
-eligible only when the firmware map calls the entire page available. A second
-pass lets every reserved or bad region override an overlapping available
-entry.
+use, heap-owner, and task-stack-owner bitmaps. Each bitmap costs 128 KiB of
+BSS. A frame becomes eligible only when the firmware map calls the entire page
+available. A second pass lets every reserved or bad region override an
+overlapping available entry.
 
 Zenith permanently removes these ranges from allocation:
 
 - the first 1 MiB, including firmware data and VGA memory;
-- the complete linked kernel image, including all three allocator bitmaps;
+- the complete linked kernel image, including all four allocator bitmaps;
 - the live Multiboot2 information block;
 - every non-available or unreported physical range.
 
 Allocation is deterministic first-fit with a rotating search hint. Every live
-allocatable frame has exactly one explicit owner: generic kernel or kernel heap.
-Release requires the matching owner and rejects unaligned addresses, addresses
-beyond the early map, permanent ranges, owner mismatches, and double frees.
+allocatable frame has exactly one explicit owner: generic kernel, kernel heap,
+or task stack. Release requires the matching owner and rejects unaligned
+addresses, addresses beyond the early map, permanent ranges, owner mismatches,
+and double frees.
 Allocate, release, and reserve reject impossible cached counters before any
 bitmap or statistic mutation. Range reservation refuses to steal an allocated
 frame. A bounded validation
-pass independently reconstructs generic, heap, total, free, and reserved counts;
-it also rejects an owner bit on any free or ineligible frame.
+pass independently reconstructs generic, heap, task-stack, total, free, and
+reserved counts; it also rejects an owner bit on any free or ineligible frame.
 
 The kernel heap is the first owned runtime consumer. Heap growth requests the
 heap identity, records one exact frame for each committed virtual page, and
@@ -57,8 +58,10 @@ committed heap pages.
 During every QEMU boot the kernel parses the real GRUB memory map, initializes
 the allocator, obtains two distinct aligned generic frames, rejects a
 heap-owner release, completes one explicit heap-owner allocate/query/release
-lifecycle, releases the generic frames in reverse order, and proves both owner
-counts returned to zero. CI accepts the increment only after COM1 emits:
+lifecycle, completes the equivalent task-stack-owner lifecycle with generic and
+heap cross-release rejection, releases the generic frames in reverse order, and
+proves all three owner counts returned to zero. CI accepts the increment only
+after COM1 emits:
 
 ```text
 Zenith OS: memory foundation passed
@@ -69,4 +72,5 @@ interrupt, exception, NMI, and panic context, and runtime PTE changes preserve
 the caller's IF state. NUMA policy, dynamic page-table allocation, memory above
 4 GiB, process address spaces, and SMP synchronization are explicitly deferred.
 The permanent hierarchy owns static tables inside the kernel image and adds
-only a bounded heap-specific runtime leaf mapping surface.
+only bounded heap-specific and task-stack-specific runtime leaf mapping
+surfaces.

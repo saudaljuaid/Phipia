@@ -37,8 +37,10 @@ validates GDTR, IDTR, TR, all 256 gates, the TSS, and stack canaries before the
 boot parser, memory allocator, or any `sti`.
 
 Canaries detect some downward overflow but are not guard pages. The permanent
-map gives stack storage writable, NX pages, but the linked arrays do not yet have
-unmapped gaps. Guard-page stack layout remains future virtual-memory work.
+map gives the bootstrap and IST storage writable, NX pages, but those linked
+arrays do not have unmapped gaps. Guarded bootstrap and interrupt stacks remain
+future virtual-memory work; the scheduler's separate dynamic task stacks do
+have absent per-slot guards.
 
 ## Interrupt-controller invariants
 
@@ -65,7 +67,7 @@ milestone exists to prevent.
 
 ## Executable proof
 
-`make qemu-tests` boots one kernel under thirteen Multiboot command-line scenarios:
+`make qemu-tests` boots one kernel under fifteen Multiboot command-line scenarios:
 
 1. normal descriptor and frame validation;
 2. breakpoint return with every GPR and the direction flag restored;
@@ -83,7 +85,10 @@ milestone exists to prevent.
 11. transactional kernel-heap growth, rejection, rollback, exhaustion, and
     continued Local APIC timer delivery;
 12. deterministic handling of an unregistered vector;
-13. a genuine double fault created by making page-fault delivery fail.
+13. a genuine double fault created by making page-fault delivery fail;
+14. cooperative scheduler creation, switching, exit, reaping, rollback, and
+    continued timer/EOI delivery;
+15. a genuine non-present page fault on an exact task-stack guard address.
 
 Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
 `ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
@@ -96,6 +101,7 @@ cannot be mistaken for success.
 
 This remains a single-core, ring-zero foundation. It intentionally has no
 `swapgs`, userspace frame, nested interrupts, SMP state, preemption, dynamic
-vector allocation, guarded interrupt stacks, or interrupt-safe console lock. The calibrated
-timer supplies time only; it does not introduce scheduling. Those mechanisms
+vector allocation, guarded interrupt stacks, or interrupt-safe console lock.
+The cooperative scheduler never changes an interrupt frame; the calibrated
+timer supplies time only and does not introduce preemption. Those mechanisms
 must arrive with their own changed ABI and executable proofs.

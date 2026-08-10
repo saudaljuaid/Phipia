@@ -16,10 +16,12 @@ extern uint8_t __kernel_end[];
 static uint8_t eligible_bitmap[BITMAP_BYTE_COUNT];
 static uint8_t used_bitmap[BITMAP_BYTE_COUNT];
 static uint8_t heap_owner_bitmap[BITMAP_BYTE_COUNT];
+static uint8_t task_stack_owner_bitmap[BITMAP_BYTE_COUNT];
 static struct frame_allocator_stats allocator_stats;
 static size_t next_search_index;
 static size_t test_allocation_successes_remaining;
 static bool test_allocation_failure_enabled;
+static bool test_allocation_reports_out_of_memory;
 static bool allocator_initialized;
 
 static bool bitmap_get(const uint8_t *bitmap, size_t frame_index)
@@ -139,6 +141,7 @@ static void mark_available_frames(size_t first_frame, size_t past_last_frame)
         bitmap_set(eligible_bitmap, frame, true);
         bitmap_set(used_bitmap, frame, false);
         bitmap_set(heap_owner_bitmap, frame, false);
+        bitmap_set(task_stack_owner_bitmap, frame, false);
     }
 }
 
@@ -148,13 +151,15 @@ static void mark_reserved_frames(size_t first_frame, size_t past_last_frame)
         bitmap_set(eligible_bitmap, frame, false);
         bitmap_set(used_bitmap, frame, true);
         bitmap_set(heap_owner_bitmap, frame, false);
+        bitmap_set(task_stack_owner_bitmap, frame, false);
     }
 }
 
 static bool owner_is_allocatable(enum frame_owner owner)
 {
     return owner == FRAME_OWNER_GENERIC ||
-        owner == FRAME_OWNER_KERNEL_HEAP;
+        owner == FRAME_OWNER_KERNEL_HEAP ||
+        owner == FRAME_OWNER_TASK_STACK;
 }
 
 static bool allocator_stats_are_locally_valid(void)
@@ -172,8 +177,11 @@ static bool allocator_stats_are_locally_valid(void)
             allocator_stats.allocated_frames &&
         allocator_stats.heap_allocated_frames <=
             allocator_stats.allocated_frames &&
+        allocator_stats.task_stack_allocated_frames <=
+            allocator_stats.allocated_frames &&
         allocator_stats.generic_allocated_frames +
-                allocator_stats.heap_allocated_frames ==
+                allocator_stats.heap_allocated_frames +
+                allocator_stats.task_stack_allocated_frames ==
             allocator_stats.allocated_frames &&
         allocator_stats.highest_allocatable_address <=
             ZENITH_EARLY_PHYSICAL_LIMIT &&
@@ -210,6 +218,7 @@ static void recompute_stats(void)
         .allocated_frames = 0,
         .generic_allocated_frames = 0,
         .heap_allocated_frames = 0,
+        .task_stack_allocated_frames = 0,
         .reserved_frames = 0,
         .highest_allocatable_address = 0
     };
@@ -229,6 +238,8 @@ static void recompute_stats(void)
 
             if (bitmap_get(heap_owner_bitmap, frame)) {
                 ++stats.heap_allocated_frames;
+            } else if (bitmap_get(task_stack_owner_bitmap, frame)) {
+                ++stats.task_stack_allocated_frames;
             } else {
                 ++stats.generic_allocated_frames;
             }
@@ -309,9 +320,11 @@ enum frame_status frame_allocator_initialize(const struct boot_context *context)
     next_search_index = 0;
     test_allocation_successes_remaining = 0U;
     test_allocation_failure_enabled = false;
+    test_allocation_reports_out_of_memory = false;
     bitmap_fill(eligible_bitmap, 0U);
     bitmap_fill(used_bitmap, UINT8_MAX);
     bitmap_fill(heap_owner_bitmap, 0U);
+    bitmap_fill(task_stack_owner_bitmap, 0U);
 
     status = apply_memory_map(context);
 
@@ -391,7 +404,9 @@ enum frame_status frame_allocate_owned(
     if (test_allocation_failure_enabled &&
         test_allocation_successes_remaining == 0U) {
         test_allocation_failure_enabled = false;
-        return FRAME_STATUS_TEST_FAILURE;
+        return test_allocation_reports_out_of_memory
+            ? FRAME_STATUS_OUT_OF_MEMORY
+            : FRAME_STATUS_TEST_FAILURE;
     }
 
     for (size_t step = 0; step < FRAME_COUNT; ++step) {
@@ -408,11 +423,18 @@ enum frame_status frame_allocate_owned(
                 frame,
                 owner == FRAME_OWNER_KERNEL_HEAP
             );
+            bitmap_set(
+                task_stack_owner_bitmap,
+                frame,
+                owner == FRAME_OWNER_TASK_STACK
+            );
             --allocator_stats.free_frames;
             ++allocator_stats.allocated_frames;
 
             if (owner == FRAME_OWNER_KERNEL_HEAP) {
                 ++allocator_stats.heap_allocated_frames;
+            } else if (owner == FRAME_OWNER_TASK_STACK) {
+                ++allocator_stats.task_stack_allocated_frames;
             } else {
                 ++allocator_stats.generic_allocated_frames;
             }
@@ -474,7 +496,9 @@ enum frame_status frame_release_owned(
     }
 
     if (bitmap_get(heap_owner_bitmap, frame) !=
-        (owner == FRAME_OWNER_KERNEL_HEAP)) {
+            (owner == FRAME_OWNER_KERNEL_HEAP) ||
+        bitmap_get(task_stack_owner_bitmap, frame) !=
+            (owner == FRAME_OWNER_TASK_STACK)) {
         return FRAME_STATUS_OWNER_MISMATCH;
     }
 
@@ -484,11 +508,14 @@ enum frame_status frame_release_owned(
 
     bitmap_set(used_bitmap, frame, false);
     bitmap_set(heap_owner_bitmap, frame, false);
+    bitmap_set(task_stack_owner_bitmap, frame, false);
     ++allocator_stats.free_frames;
     --allocator_stats.allocated_frames;
 
     if (owner == FRAME_OWNER_KERNEL_HEAP) {
         --allocator_stats.heap_allocated_frames;
+    } else if (owner == FRAME_OWNER_TASK_STACK) {
+        --allocator_stats.task_stack_allocated_frames;
     } else {
         --allocator_stats.generic_allocated_frames;
     }
@@ -567,9 +594,13 @@ enum frame_status frame_query_owner(
     }
 
     if (bitmap_get(used_bitmap, frame)) {
-        *owner = bitmap_get(heap_owner_bitmap, frame)
-            ? FRAME_OWNER_KERNEL_HEAP
-            : FRAME_OWNER_GENERIC;
+        if (bitmap_get(heap_owner_bitmap, frame)) {
+            *owner = FRAME_OWNER_KERNEL_HEAP;
+        } else if (bitmap_get(task_stack_owner_bitmap, frame)) {
+            *owner = FRAME_OWNER_TASK_STACK;
+        } else {
+            *owner = FRAME_OWNER_GENERIC;
+        }
     }
 
     return FRAME_STATUS_OK;
@@ -620,6 +651,7 @@ enum frame_status frame_allocator_validate(void)
         .allocated_frames = 0U,
         .generic_allocated_frames = 0U,
         .heap_allocated_frames = 0U,
+        .task_stack_allocated_frames = 0U,
         .reserved_frames = 0U,
         .highest_allocatable_address = 0U
     };
@@ -636,9 +668,11 @@ enum frame_status frame_allocator_validate(void)
         const bool eligible = bitmap_get(eligible_bitmap, frame);
         const bool used = bitmap_get(used_bitmap, frame);
         const bool heap_owned = bitmap_get(heap_owner_bitmap, frame);
+        const bool task_stack_owned =
+            bitmap_get(task_stack_owner_bitmap, frame);
 
         if (!eligible) {
-            if (!used || heap_owned) {
+            if (!used || heap_owned || task_stack_owned) {
                 return FRAME_STATUS_VALIDATION_FAILURE;
             }
 
@@ -651,15 +685,21 @@ enum frame_status frame_allocator_validate(void)
             ((uint64_t)frame + 1U) * ZENITH_PAGE_SIZE;
 
         if (used) {
+            if (heap_owned && task_stack_owned) {
+                return FRAME_STATUS_VALIDATION_FAILURE;
+            }
+
             ++observed.allocated_frames;
 
             if (heap_owned) {
                 ++observed.heap_allocated_frames;
+            } else if (task_stack_owned) {
+                ++observed.task_stack_allocated_frames;
             } else {
                 ++observed.generic_allocated_frames;
             }
         } else {
-            if (heap_owned) {
+            if (heap_owned || task_stack_owned) {
                 return FRAME_STATUS_VALIDATION_FAILURE;
             }
 
@@ -675,13 +715,16 @@ enum frame_status frame_allocator_validate(void)
             allocator_stats.generic_allocated_frames ||
         observed.heap_allocated_frames !=
             allocator_stats.heap_allocated_frames ||
+        observed.task_stack_allocated_frames !=
+            allocator_stats.task_stack_allocated_frames ||
         observed.reserved_frames != allocator_stats.reserved_frames ||
         observed.highest_allocatable_address !=
             allocator_stats.highest_allocatable_address ||
         observed.allocatable_frames + observed.reserved_frames != FRAME_COUNT ||
         observed.free_frames + observed.allocated_frames !=
             observed.allocatable_frames ||
-        observed.generic_allocated_frames + observed.heap_allocated_frames !=
+        observed.generic_allocated_frames + observed.heap_allocated_frames +
+                observed.task_stack_allocated_frames !=
             observed.allocated_frames) {
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
@@ -697,6 +740,19 @@ bool frame_test_fail_allocate_after(size_t successful_allocations)
 
     test_allocation_successes_remaining = successful_allocations;
     test_allocation_failure_enabled = true;
+    test_allocation_reports_out_of_memory = false;
+    return true;
+}
+
+bool frame_test_report_out_of_memory_after(size_t successful_allocations)
+{
+    if (!allocator_initialized || test_allocation_failure_enabled) {
+        return false;
+    }
+
+    test_allocation_successes_remaining = successful_allocations;
+    test_allocation_failure_enabled = true;
+    test_allocation_reports_out_of_memory = true;
     return true;
 }
 

@@ -4,8 +4,9 @@ This milestone extends Zenith's active xAPIC subsystem with one calibrated,
 periodic Local APIC timer on the bootstrap processor. The PIT is retained only
 as a bounded calibration reference. After calibration, its I/O APIC
 redirection entry is masked and vector `0x30` is the only active kernel timer
-vector. The implementation remains single-core and does not imply scheduling
-or preemption.
+vector. The implementation remains single-core. The cooperative scheduler may
+be interrupted by this timer, but vector `0x30` never selects or switches a
+task and does not imply preemption.
 
 ## Timer invariants
 
@@ -113,13 +114,16 @@ integrated proof and emits:
 Zenith OS: Local APIC timer and monotonic clock verified
 ```
 
-The host protocol now contains thirteen scenarios. The `heap` scenario also
+The host protocol now contains fifteen scenarios. The `heap` scenario also
 forces one valid calibration attempt to be discarded, requires the bounded
 retry diagnostic, and then proves periodic ticks and EOIs advance across
 page-backed allocation, rollback, and exhaustion while the PIT route remains
 masked. Each scenario requires one
 exact `ZT BEGIN <scenario>` and one exact `ZT PASS <scenario>`, its
-scenario-specific exit status, and no failure or panic marker.
+scenario-specific exit status, and no failure or panic marker. The scheduler
+scenario additionally proves timer ticks and EOIs advance across cooperative
+switches while ticks observed before the first yield never change the current
+task.
 
 ## Deferred work
 

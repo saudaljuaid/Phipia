@@ -56,10 +56,10 @@ images (active, transactional candidate, and pure-test state), two 4096-entry
 frame arrays, and one mapping-state array add about 152.3 KiB of fixed BSS.
 There is no metadata allocation and therefore no heap recursion.
 
-The physical allocator separately spends one fixed 128 KiB owner bitmap for
-the complete below-4-GiB frame domain. This gives every allocated frame an
-explicit generic or kernel-heap identity. The heap neither duplicates that
-state nor infers ownership from global allocation counts.
+The physical allocator separately spends fixed 128 KiB owner bitmaps for the
+complete below-4-GiB frame domain. The heap bitmap gives every heap frame an
+identity distinct from generic and task-stack ownership. The heap neither
+duplicates that state nor infers ownership from global allocation counts.
 
 The active state contains at most 512 descriptors. Its linked descriptors must
 cover `[0, committed_bytes)` exactly once, in ascending order, without gaps,
@@ -129,8 +129,9 @@ reclamation.
 
 ## Interrupt-state contract
 
-The kernel is single-core and has no scheduler or preemption, but its periodic
-Local APIC timer remains active. Heap entry is forbidden while the C interrupt
+The kernel is single-core and cooperatively scheduled without preemption; its
+periodic Local APIC timer remains active but never selects a task. Heap entry is
+allowed from ordinary task context and forbidden while the C interrupt
 dispatcher is active, including exception and NMI handlers, and after panic has
 started. Heap functions must not be called from assembly-only interrupt entry,
 panic, or other emergency paths either.
@@ -168,7 +169,7 @@ physical-width rejection, and metadata corruption. The host runner is compared
 with an independent Python list-model oracle for 100,000 deterministic
 randomized operations.
 
-The thirteenth QEMU scenario is `heap`. It must emit exactly:
+The heap scenario remains the thirteenth QEMU scenario. It must emit exactly:
 
 ```text
 ZT BEGIN heap
@@ -199,12 +200,13 @@ The heap scenario additionally emits
 `Zenith OS: APIC calibration retry verified` after the injected discard has
 been consumed and the Local APIC timer has passed full activation validation.
 
-The default host matrix uses 128 MiB of guest RAM. Nineteen MiB is the lowest
-whole-MiB QEMU configuration supported by the full protocol with this linked
-image; it exposes 4301 allocatable frames and passes the full-window proof.
-Eighteen MiB exposes 4045, fewer than the 4096 simultaneous heap frames the
-scenario deliberately requires, and therefore exercises physical OOM rather
-than the required virtual-window boundary.
+The default host matrix uses 128 MiB of guest RAM. Nineteen MiB remains the
+lowest supported whole-MiB configuration for the complete protocol after the
+guarded-stack milestone; the exact allocatable counts are recalculated from the
+final linked image during milestone verification. Eighteen MiB still exposes
+fewer than the 4096 simultaneous heap frames the scenario deliberately requires
+and therefore exercises physical OOM rather than the required virtual-window
+boundary.
 
 ## Residual risk and deferred work
 
@@ -218,6 +220,8 @@ and its validation inputs. First-fit can fragment, free pages do not shrink, and
 the 512-descriptor ceiling is intentionally small. There is no sanitizing red
 zone inside the payload window, use-after-free detector, SMP coordination,
 lock, per-CPU heap, interrupt-context pool, general mapping consumer, dynamic
-page-table allocation, process address space, userspace, scheduler, storage,
-networking, or driver framework. Those remain separate milestones with their
-own ownership and executable acceptance contracts.
+page-table allocation, process address space, userspace, preemption, blocking
+synchronization, storage, networking, or driver framework. The cooperative
+scheduler's separate ownership contract is documented in
+`docs/KERNEL_SCHEDULER.md`. The remaining features require their own ownership
+and executable acceptance contracts.

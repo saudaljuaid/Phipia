@@ -32,7 +32,8 @@ enum frame_status {
 enum frame_owner {
     FRAME_OWNER_NONE = 0,
     FRAME_OWNER_GENERIC,
-    FRAME_OWNER_KERNEL_HEAP
+    FRAME_OWNER_KERNEL_HEAP,
+    FRAME_OWNER_TASK_STACK
 };
 
 struct frame_allocator_stats {
@@ -42,6 +43,7 @@ struct frame_allocator_stats {
     size_t allocated_frames;
     size_t generic_allocated_frames;
     size_t heap_allocated_frames;
+    size_t task_stack_allocated_frames;
     size_t reserved_frames;
     uint64_t highest_allocatable_address;
 };

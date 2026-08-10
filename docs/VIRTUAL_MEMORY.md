@@ -38,6 +38,7 @@ The live hierarchy contains only these mappings:
 | `0xFFFF800000000000` | discovered Local APIC page | writable, NX, UC |
 | following device-window pages | discovered I/O APIC pages | writable, NX, UC |
 | `0xFFFF900000000000` through `0xFFFF900000FFFFFF` | heap-owned frames on demand | writable, NX, WB |
+| `0xFFFFA00000000000` through `0xFFFFA0000011FFFF` | task-owned frames in fixed guarded slots | writable, NX, WB |
 
 The heap payload has one absent guard page on each side. Its hierarchy parents
 and eight leaf tables are prepared during boot, but all 4096 payload leaves
@@ -45,6 +46,15 @@ begin absent. Runtime heap growth may map and roll back individual leaves with
 exact physical-frame provenance and `invlpg`; it cannot allocate another table
 or select arbitrary permissions. The permanent arena remains 64 pages (256 KiB
 of BSS), and the heap hierarchy consumes ten of those pages in this layout.
+
+The task-stack window contains sixteen deterministic 72 KiB slots. Each slot
+has one absent lower guard, sixteen payload leaves, and one absent upper guard.
+The window consumes exactly three more arena pages: one PDPT, one page directory,
+and one leaf table. All parents are prepared before CR3 publication; all 256
+payload leaves begin absent. The task-specific runtime surface accepts only a
+slot and payload-page index, fixes the leaf policy to supervisor RW+NX WB and
+non-global, requires exact task-frame provenance on unmap, and uses `invlpg`.
+The 64-page arena is unchanged.
 
 Page zero, the remainder of low memory, boot information, ACPI tables, free
 physical frames, and the 4 GiB fault probe are absent after the transition.
@@ -69,6 +79,10 @@ table exhaustion, huge-page conflicts, null or malformed device addresses, and
 excess device counts. Heap-specific rejection also proves the exact table
 limit, absent guards, mapping conflict, missing mapping, physical-width checks,
 and transactional runtime map/unmap behavior.
+Task-stack rejection proves its root-plus-three table boundary, first and last
+slot arithmetic, page and slot limits, mapping conflicts, physical-width and
+permission checks, absent guards, exact-frame unmap, injected uncertain writes,
+and exact mapping-count restoration.
 
 Every prior QEMU scenario runs after the permanent transition. Two additional
 assembly-only scenarios prove the hardware permission boundary without invoking
@@ -87,11 +101,12 @@ Zenith OS: virtual memory foundation passed
 
 ## Deferred work
 
-This remains a permanent hierarchy with a small heap-only runtime leaf
-extension, not a general virtual-memory manager. It has no dynamic table
+This remains a permanent hierarchy with narrow heap and task-stack runtime leaf
+extensions, not a general virtual-memory manager. It has no dynamic table
 allocation, general unmapping, temporary physical-map window, higher-half
 kernel relocation, process address spaces, copy-on-write, cross-CPU TLB
 shootdown, or SMP synchronization. The APIC-routing and Local APIC timer
 milestones consume the device mappings; their ownership and cache policy remain
 part of this virtual-memory contract. Heap ownership and rollback are specified
-in `docs/KERNEL_HEAP.md`.
+in `docs/KERNEL_HEAP.md`; guarded task-stack ownership is specified in
+`docs/KERNEL_SCHEDULER.md`.

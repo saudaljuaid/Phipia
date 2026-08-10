@@ -268,7 +268,8 @@ static enum heap_status validate_candidate(
     if (frame_stats.heap_allocated_frames != total_pages ||
         frame_stats.allocated_frames !=
             frame_stats.generic_allocated_frames +
-                frame_stats.heap_allocated_frames) {
+                frame_stats.heap_allocated_frames +
+                frame_stats.task_stack_allocated_frames) {
         return HEAP_STATUS_STATS_INVALID;
     }
 
@@ -372,7 +373,8 @@ static enum heap_status rollback_transaction(
         frame_stats.heap_allocated_frames != old_page_count ||
         frame_stats.allocated_frames !=
             frame_stats.generic_allocated_frames +
-                frame_stats.heap_allocated_frames) {
+                frame_stats.heap_allocated_frames +
+                frame_stats.task_stack_allocated_frames) {
         heap_poisoned = true;
         return HEAP_STATUS_ROLLBACK_FAILURE;
     }
@@ -511,7 +513,8 @@ static enum heap_status validate_active(void)
         frame_stats.heap_allocated_frames != mapped_pages ||
         frame_stats.allocated_frames !=
             frame_stats.generic_allocated_frames +
-                frame_stats.heap_allocated_frames) {
+                frame_stats.heap_allocated_frames +
+                frame_stats.task_stack_allocated_frames) {
         return HEAP_STATUS_STATS_INVALID;
     }
 
@@ -717,6 +720,7 @@ enum heap_status heap_initialize(void)
     frame_stats = frame_allocator_get_stats();
 
     if (frame_stats.heap_allocated_frames != 0U ||
+        frame_stats.task_stack_allocated_frames != 0U ||
         frame_stats.generic_allocated_frames != frame_stats.allocated_frames) {
         return HEAP_STATUS_VALIDATION_FAILURE;
     }

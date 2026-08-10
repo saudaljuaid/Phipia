@@ -41,6 +41,14 @@ initializes a fixed 16 MiB kernel-heap window. Heap growth obtains frames from
 the existing allocator, maps supervisor RW+NX write-back leaves through the
 permanent hierarchy, zeroes them before publication, and uses fixed external
 metadata for bounded first-fit splitting and coalescing.
+After the heap is valid, Zenith initializes a fixed single-core cooperative
+scheduler. It represents the bootstrap task separately and supports at most 16
+dynamic ring-zero tasks. Each dynamic task receives one fixed 64 KiB
+page-backed RW+NX stack payload between genuinely absent guard pages. A
+freestanding AMD64 switch preserves the System V callee-saved registers, and
+generation handles plus two-phase exit/reap ownership prevent a task stack from
+being reclaimed while it is running. The Local APIC timer remains a time source
+only; it does not preempt or select tasks.
 
 The day-one success contract is the serial line:
 
@@ -55,6 +63,7 @@ Zenith OS: virtual memory foundation passed
 Zenith OS: APIC interrupt routing verified
 Zenith OS: Local APIC timer and monotonic clock verified
 Zenith OS: bounded kernel heap verified
+Zenith OS: bounded cooperative scheduler verified
 ```
 
 ## Build and prove it
@@ -70,17 +79,18 @@ Then run:
 ```sh
 make verify     # clean build, host oracle, ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run thirteen deterministic fault, paging, timer, and heap scenarios
+make qemu-tests # run fifteen deterministic fault, memory, timer, heap, and scheduler scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
 
 The default QEMU matrix uses 128 MiB. `QEMU_RAM=19M make qemu-tests` is the
-lowest whole-MiB configuration supported by the complete thirteen-scenario
+lowest whole-MiB configuration supported by the complete fifteen-scenario
 protocol: the heap scenario must simultaneously back the full 16 MiB payload
-window. At 18 MiB QEMU exposes only 4045 allocatable frames in the current
-linked layout, so that scenario correctly reaches physical out-of-memory before
-the required window-exhaustion proof and is not a supported full-matrix setup.
+window. At 18 MiB the final linked kernel exposes fewer than the 4096
+simultaneous heap frames that proof requires, so the scenario deterministically
+reaches physical out-of-memory before the required window-exhaustion boundary
+and is not a supported full-matrix setup.
 
 ## Repository map
 
@@ -99,12 +109,16 @@ the required window-exhaustion proof and is not a supported full-matrix setup.
 - `src/kernel/time.c` — saturating monotonic ticks and checked time conversion.
 - `src/kernel/heap.c` — transactional page-backed heap ownership and API.
 - `src/kernel/heap_core.c` — fixed-descriptor split/coalesce allocator core.
+- `src/kernel/scheduler.c` — task-stack transactions, lifecycle, and API.
+- `src/kernel/scheduler_core.c` — pure bounded task and ready-ring state machine.
+- `src/arch/x86_64/scheduler.S` — cooperative AMD64 context switching.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
 - `docs/APIC_ROUTING.md` — controller activation, GSI, and EOI invariants.
 - `docs/LOCAL_APIC_TIMER.md` — calibration, timer, and timebase invariants.
 - `docs/KERNEL_HEAP.md` — heap window, transactions, failure, and test protocol.
+- `docs/KERNEL_SCHEDULER.md` — task states, guarded stacks, switch ABI, and reaping.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
@@ -112,12 +126,14 @@ the required window-exhaustion proof and is not a supported full-matrix setup.
 
 Zenith now owns the discovered xAPIC interrupt path, uses a calibrated Local
 APIC timer for a single-core monotonic clock, and has one bounded page-backed
-kernel heap. The PIT remains only as the boot calibration reference. Free heap
+kernel heap plus one bounded cooperative ring-zero scheduler. The PIT remains
+only as the boot calibration reference. Free heap
 space is reusable, but committed pages do not shrink back to the frame
 allocator. The heap-only leaf mapper is not a general virtual-memory manager.
-There is no post-boot drift correction, SMP, dynamic interrupt-vector
-allocation, scheduler, preemption, userspace, filesystem, networking, graphics,
-or general hardware-driver framework. Those require separate executable
-acceptance contracts.
+There is no post-boot drift correction, timer-driven preemption, SMP, dynamic
+interrupt-vector allocation, userspace, process or syscall ABI, blocking or
+sleeping, filesystem, networking, graphics, or general hardware-driver
+framework. A task that never yields retains the CPU. Those capabilities require
+separate executable acceptance contracts.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.
