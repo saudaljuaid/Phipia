@@ -221,7 +221,7 @@ IF behavior, assembly register preservation, stack patterns, heap use, timer
 progress, rollback at every page, and descriptor exhaustion.
 
 CI also runs 20 scheduler guests and 20 guard guests in balanced competing
-four-way TCG batches. Only that contention pass uses QEMU's fixed
+two-way TCG batches. Only that contention pass uses QEMU's fixed
 instruction-count clock so the inherited multi-sample APIC calibration remains
 inside the unchanged 15-second guest timeout; the default- and minimum-RAM
 matrices use real-time TCG. Every stress guest still requires the exact marker
