@@ -70,6 +70,7 @@ LD := ld
 NM := nm
 OBJDUMP := objdump
 HOST_CC ?= cc
+HOST_ABSOLUTE_SYMBOL_FLAGS := -fno-pie -no-pie
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -172,7 +173,8 @@ $(HOST_PHYSICAL_GUARD_RUNNER): tests/physical_memory_guard_runner.c \
 		include/zenith/boot.h include/zenith/memory.h include/zenith/preempt.h \
 		include/zenith/spinlock.h \
 		include/zenith/test.h | $(HOST_TEST_DIR)
-	$(HOST_CC) -Iinclude -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+	$(HOST_CC) $(HOST_ABSOLUTE_SYMBOL_FLAGS) -Iinclude -std=c11 -O2 \
+		-Wall -Wextra -Werror -Wpedantic \
 		-Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
 		tests/physical_memory_guard_runner.c \
 		tests/physical_memory_guard_symbols.S src/kernel/physical_memory.c -o $@
@@ -380,7 +382,8 @@ $(HOST_SANITIZED_PHYSICAL_GUARD_RUNNER): \
 		include/zenith/boot.h include/zenith/memory.h include/zenith/preempt.h \
 		include/zenith/spinlock.h \
 		include/zenith/test.h | $(HOST_SANITIZER_DIR)
-	$(HOST_CC) -Iinclude -std=c11 -O1 -g -Wall -Wextra -Werror -Wpedantic \
+	$(HOST_CC) $(HOST_ABSOLUTE_SYMBOL_FLAGS) -Iinclude -std=c11 -O1 -g \
+		-Wall -Wextra -Werror -Wpedantic \
 		-Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		tests/physical_memory_guard_runner.c \
