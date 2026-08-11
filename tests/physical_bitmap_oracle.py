@@ -45,8 +45,10 @@ def word_highest_set_bit(value: int) -> int:
     return bit
 
 
-def word_model(eligible: int, used: int, heap: int, task: int) -> tuple:
-    owners = heap | task
+def word_model(
+    eligible: int, used: int, heap: int, task: int, process: int
+) -> tuple:
+    owners = heap | task | process
     ineligible = (~eligible) & MASK
     allocated = eligible & used
     valid = not (
@@ -54,6 +56,8 @@ def word_model(eligible: int, used: int, heap: int, task: int) -> tuple:
         or (owners & ineligible)
         or (owners & ~used & MASK)
         or (heap & task)
+        or (heap & process)
+        or (task & process)
     )
     if not valid:
         return False, None, None
@@ -62,26 +66,36 @@ def word_model(eligible: int, used: int, heap: int, task: int) -> tuple:
     free_count = word_population(eligible & ~used & MASK)
     heap_count = word_population(heap)
     task_count = word_population(task)
+    process_count = word_population(process)
     counts = (
         allocatable_count,
         64 - allocatable_count,
         allocatable_count - free_count,
         free_count,
-        allocatable_count - free_count - heap_count - task_count,
+        allocatable_count
+        - free_count
+        - heap_count
+        - task_count
+        - process_count,
         heap_count,
         task_count,
+        process_count,
     )
     highest = word_highest_set_bit(eligible) if eligible else None
     return valid, counts, highest
 
 
-def bit_model(eligible: int, used: int, heap: int, task: int) -> tuple:
-    owners = heap | task
+def bit_model(
+    eligible: int, used: int, heap: int, task: int, process: int
+) -> tuple:
+    owners = heap | task | process
     allocated = eligible & used
     valid = not (
         (~eligible & ~used & MASK)
         or (owners & ~allocated & MASK)
         or (heap & task)
+        or (heap & process)
+        or (task & process)
     )
     if not valid:
         return False, None, None
@@ -94,6 +108,7 @@ def bit_model(eligible: int, used: int, heap: int, task: int) -> tuple:
         (allocated & ~owners & MASK).bit_count(),
         heap.bit_count(),
         task.bit_count(),
+        process.bit_count(),
     )
     highest = eligible.bit_length() - 1 if eligible else None
     return valid, counts, highest
@@ -102,25 +117,27 @@ def bit_model(eligible: int, used: int, heap: int, task: int) -> tuple:
 def main() -> None:
     rng = random.Random(SEED)
     fixed = [
-        (0, 0, 0, 0),
-        (0, MASK, 0, 0),
-        (MASK, 0, 0, 0),
-        (MASK, MASK, 0, 0),
-        (MASK, MASK, MASK, 0),
-        (MASK, MASK, 0, MASK),
-        (MASK, MASK, MASK, MASK),
-        (1, 1, 1, 0),
-        (1 << 63, 1 << 63, 0, 1 << 63),
+        (0, 0, 0, 0, 0),
+        (0, MASK, 0, 0, 0),
+        (MASK, 0, 0, 0, 0),
+        (MASK, MASK, 0, 0, 0),
+        (MASK, MASK, MASK, 0, 0),
+        (MASK, MASK, 0, MASK, 0),
+        (MASK, MASK, 0, 0, MASK),
+        (MASK, MASK, MASK, MASK, MASK),
+        (1, 1, 1, 0, 0),
+        (1 << 63, 1 << 63, 0, 0, 1 << 63),
     ]
 
     for bit in range(64):
         bit_mask = 1 << bit
-        for state in range(16):
+        for state in range(32):
             eligible = bit_mask if state & 1 else 0
             used = (MASK ^ bit_mask) | (bit_mask if state & 2 else 0)
             heap = bit_mask if state & 4 else 0
             task = bit_mask if state & 8 else 0
-            fixed.append((eligible, used, heap, task))
+            process = bit_mask if state & 16 else 0
+            fixed.append((eligible, used, heap, task, process))
 
     for case in fixed:
         assert word_model(*case) == bit_model(*case), case
@@ -133,10 +150,18 @@ def main() -> None:
             used |= ~eligible & MASK
             allocated = eligible & used
             heap = allocated & rng.getrandbits(64)
-            task = allocated & ~heap & rng.getrandbits(64)
-            case = eligible, used, heap, task
+            remaining = allocated & ~heap & MASK
+            task = remaining & rng.getrandbits(64)
+            process = remaining & ~task & rng.getrandbits(64)
+            case = eligible, used, heap, task, process
         else:
-            case = eligible, used, rng.getrandbits(64), rng.getrandbits(64)
+            case = (
+                eligible,
+                used,
+                rng.getrandbits(64),
+                rng.getrandbits(64),
+                rng.getrandbits(64),
+            )
 
         assert word_model(*case) == bit_model(*case), (index, case)
 

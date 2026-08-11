@@ -562,7 +562,7 @@ enum kernel_time_status kernel_time_wait_for_ticks(uint64_t tick_count)
 {
     struct spinlock_irq_token token;
     const bool interrupts_were_enabled = cpu_interrupts_enabled();
-    uint64_t target;
+    uint64_t target = 0U;
     enum kernel_time_status status;
     enum preempt_status preempt_status = PREEMPT_STATUS_OK;
     bool switch_allowed = true;

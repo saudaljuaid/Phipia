@@ -24,9 +24,14 @@ static uint64_t eligible_bitmap[BITMAP_WORD_COUNT];
 static uint64_t used_bitmap[BITMAP_WORD_COUNT];
 static uint64_t heap_owner_bitmap[BITMAP_WORD_COUNT];
 static uint64_t task_stack_owner_bitmap[BITMAP_WORD_COUNT];
+static uint64_t process_page_owner_bitmap[BITMAP_WORD_COUNT];
 /* Exact 32 KiB scratch: 4,096 heap frames times one 64-bit uintptr_t. */
 static uintptr_t
     heap_owner_validation_frames[FRAME_ALLOCATOR_HEAP_VALIDATION_LIMIT];
+/* Exact 4 KiB scratch: sixteen spaces times thirty-two process pages. */
+static uintptr_t process_page_owner_validation_frames[
+    FRAME_ALLOCATOR_PROCESS_PAGE_VALIDATION_LIMIT
+];
 static struct frame_allocator_stats allocator_stats;
 static size_t next_search_index;
 static size_t test_allocation_successes_remaining;
@@ -35,11 +40,17 @@ static bool test_allocation_reports_out_of_memory;
 static bool allocator_poisoned;
 static bool allocator_initialized;
 static uint64_t task_stack_mutation_epoch;
+static uint64_t process_page_mutation_epoch;
 static bool allocator_lock_registered;
 static struct spinlock allocator_lock;
 
+bool frame_test_set_process_page_mutation_epoch(uint64_t mutation_epoch);
+bool frame_test_process_page_state_matches(size_t expected_owned_frames);
+
 _Static_assert(sizeof(heap_owner_validation_frames) == 32U * 1024U,
                "heap-owner validation scratch must remain exactly 32 KiB");
+_Static_assert(sizeof(process_page_owner_validation_frames) == 4U * 1024U,
+               "process-page validation scratch must remain exactly 4 KiB");
 
 static void frame_test_disarm_allocation_failure_unguarded(void)
 {
@@ -58,6 +69,17 @@ static bool task_stack_epoch_has_headroom(uint64_t required_increments)
 {
     if (required_increments == 0U ||
         task_stack_mutation_epoch > UINT64_MAX - required_increments) {
+        frame_allocator_poison();
+        return false;
+    }
+
+    return true;
+}
+
+static bool process_page_epoch_has_headroom(uint64_t required_increments)
+{
+    if (required_increments == 0U ||
+        process_page_mutation_epoch > UINT64_MAX - required_increments) {
         frame_allocator_poison();
         return false;
     }
@@ -267,6 +289,7 @@ static void mark_available_frames(size_t first_frame, size_t past_last_frame)
         bitmap_set(used_bitmap, frame, false);
         bitmap_set(heap_owner_bitmap, frame, false);
         bitmap_set(task_stack_owner_bitmap, frame, false);
+        bitmap_set(process_page_owner_bitmap, frame, false);
     }
 }
 
@@ -277,6 +300,7 @@ static void mark_reserved_frames(size_t first_frame, size_t past_last_frame)
         bitmap_set(used_bitmap, frame, true);
         bitmap_set(heap_owner_bitmap, frame, false);
         bitmap_set(task_stack_owner_bitmap, frame, false);
+        bitmap_set(process_page_owner_bitmap, frame, false);
     }
 }
 
@@ -284,13 +308,15 @@ static bool owner_is_allocatable(enum frame_owner owner)
 {
     return owner == FRAME_OWNER_GENERIC ||
         owner == FRAME_OWNER_KERNEL_HEAP ||
-        owner == FRAME_OWNER_TASK_STACK;
+        owner == FRAME_OWNER_TASK_STACK ||
+        owner == FRAME_OWNER_PROCESS_PAGE;
 }
 
 static bool allocator_stats_are_locally_valid(void)
 {
     return !allocator_poisoned &&
         task_stack_mutation_epoch != 0U &&
+        process_page_mutation_epoch != 0U &&
         allocator_stats.addressable_frames == FRAME_COUNT &&
         allocator_stats.allocatable_frames <= FRAME_COUNT &&
         allocator_stats.reserved_frames <= FRAME_COUNT &&
@@ -306,9 +332,12 @@ static bool allocator_stats_are_locally_valid(void)
             allocator_stats.allocated_frames &&
         allocator_stats.task_stack_allocated_frames <=
             allocator_stats.allocated_frames &&
+        allocator_stats.process_page_allocated_frames <=
+            allocator_stats.allocated_frames &&
         allocator_stats.generic_allocated_frames +
                 allocator_stats.heap_allocated_frames +
-                allocator_stats.task_stack_allocated_frames ==
+                allocator_stats.task_stack_allocated_frames +
+                allocator_stats.process_page_allocated_frames ==
             allocator_stats.allocated_frames &&
         allocator_stats.highest_allocatable_address <=
             ZENITH_EARLY_PHYSICAL_LIMIT &&
@@ -346,6 +375,7 @@ static void recompute_stats(void)
         .generic_allocated_frames = 0,
         .heap_allocated_frames = 0,
         .task_stack_allocated_frames = 0,
+        .process_page_allocated_frames = 0,
         .reserved_frames = 0,
         .highest_allocatable_address = 0
     };
@@ -367,6 +397,8 @@ static void recompute_stats(void)
                 ++stats.heap_allocated_frames;
             } else if (bitmap_get(task_stack_owner_bitmap, frame)) {
                 ++stats.task_stack_allocated_frames;
+            } else if (bitmap_get(process_page_owner_bitmap, frame)) {
+                ++stats.process_page_allocated_frames;
             } else {
                 ++stats.generic_allocated_frames;
             }
@@ -449,13 +481,17 @@ static enum frame_status frame_allocator_initialize_unguarded(
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
-    if (task_stack_mutation_epoch == UINT64_MAX) {
+    if (task_stack_mutation_epoch == UINT64_MAX ||
+        process_page_mutation_epoch == UINT64_MAX) {
         frame_allocator_poison();
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
     if (task_stack_mutation_epoch != 0U) {
         ++task_stack_mutation_epoch;
+    }
+    if (process_page_mutation_epoch != 0U) {
+        ++process_page_mutation_epoch;
     }
 
     allocator_initialized = false;
@@ -465,6 +501,7 @@ static enum frame_status frame_allocator_initialize_unguarded(
     bitmap_fill(used_bitmap, UINT64_MAX);
     bitmap_fill(heap_owner_bitmap, 0U);
     bitmap_fill(task_stack_owner_bitmap, 0U);
+    bitmap_fill(process_page_owner_bitmap, 0U);
 
     status = apply_memory_map(context);
 
@@ -509,6 +546,9 @@ static enum frame_status frame_allocator_initialize_unguarded(
     next_search_index = (size_t)(ZENITH_LOW_MEMORY_RESERVATION / ZENITH_PAGE_SIZE);
     if (task_stack_mutation_epoch == 0U) {
         task_stack_mutation_epoch = 1U;
+    }
+    if (process_page_mutation_epoch == 0U) {
+        process_page_mutation_epoch = 1U;
     }
     allocator_initialized = true;
     return FRAME_STATUS_OK;
@@ -560,6 +600,10 @@ static enum frame_status frame_allocate_owned_unguarded(
                 !task_stack_epoch_has_headroom(2U)) {
                 return FRAME_STATUS_VALIDATION_FAILURE;
             }
+            if (owner == FRAME_OWNER_PROCESS_PAGE &&
+                !process_page_epoch_has_headroom(2U)) {
+                return FRAME_STATUS_VALIDATION_FAILURE;
+            }
 
             bitmap_set(used_bitmap, frame, true);
             bitmap_set(
@@ -572,6 +616,11 @@ static enum frame_status frame_allocate_owned_unguarded(
                 frame,
                 owner == FRAME_OWNER_TASK_STACK
             );
+            bitmap_set(
+                process_page_owner_bitmap,
+                frame,
+                owner == FRAME_OWNER_PROCESS_PAGE
+            );
             --allocator_stats.free_frames;
             ++allocator_stats.allocated_frames;
 
@@ -580,6 +629,9 @@ static enum frame_status frame_allocate_owned_unguarded(
             } else if (owner == FRAME_OWNER_TASK_STACK) {
                 ++allocator_stats.task_stack_allocated_frames;
                 ++task_stack_mutation_epoch;
+            } else if (owner == FRAME_OWNER_PROCESS_PAGE) {
+                ++allocator_stats.process_page_allocated_frames;
+                ++process_page_mutation_epoch;
             } else {
                 ++allocator_stats.generic_allocated_frames;
             }
@@ -650,7 +702,9 @@ static enum frame_status frame_release_owned_unguarded(
     if (bitmap_get(heap_owner_bitmap, frame) !=
             (owner == FRAME_OWNER_KERNEL_HEAP) ||
         bitmap_get(task_stack_owner_bitmap, frame) !=
-            (owner == FRAME_OWNER_TASK_STACK)) {
+            (owner == FRAME_OWNER_TASK_STACK) ||
+        bitmap_get(process_page_owner_bitmap, frame) !=
+            (owner == FRAME_OWNER_PROCESS_PAGE)) {
         return FRAME_STATUS_OWNER_MISMATCH;
     }
 
@@ -662,10 +716,15 @@ static enum frame_status frame_release_owned_unguarded(
         !task_stack_epoch_has_headroom(1U)) {
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
+    if (owner == FRAME_OWNER_PROCESS_PAGE &&
+        !process_page_epoch_has_headroom(1U)) {
+        return FRAME_STATUS_VALIDATION_FAILURE;
+    }
 
     bitmap_set(used_bitmap, frame, false);
     bitmap_set(heap_owner_bitmap, frame, false);
     bitmap_set(task_stack_owner_bitmap, frame, false);
+    bitmap_set(process_page_owner_bitmap, frame, false);
     ++allocator_stats.free_frames;
     --allocator_stats.allocated_frames;
 
@@ -674,6 +733,9 @@ static enum frame_status frame_release_owned_unguarded(
     } else if (owner == FRAME_OWNER_TASK_STACK) {
         --allocator_stats.task_stack_allocated_frames;
         ++task_stack_mutation_epoch;
+    } else if (owner == FRAME_OWNER_PROCESS_PAGE) {
+        --allocator_stats.process_page_allocated_frames;
+        ++process_page_mutation_epoch;
     } else {
         --allocator_stats.generic_allocated_frames;
     }
@@ -714,7 +776,8 @@ static enum frame_status frame_query_allocation_unguarded(
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
-    if (task_stack_mutation_epoch == 0U) {
+    if (task_stack_mutation_epoch == 0U ||
+        process_page_mutation_epoch == 0U) {
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
@@ -776,6 +839,8 @@ static enum frame_status frame_query_owner_unguarded(
             *owner = FRAME_OWNER_KERNEL_HEAP;
         } else if (bitmap_get(task_stack_owner_bitmap, frame)) {
             *owner = FRAME_OWNER_TASK_STACK;
+        } else if (bitmap_get(process_page_owner_bitmap, frame)) {
+            *owner = FRAME_OWNER_PROCESS_PAGE;
         } else {
             *owner = FRAME_OWNER_GENERIC;
         }
@@ -833,6 +898,7 @@ static enum frame_status frame_allocator_validate_unguarded(void)
         .generic_allocated_frames = 0U,
         .heap_allocated_frames = 0U,
         .task_stack_allocated_frames = 0U,
+        .process_page_allocated_frames = 0U,
         .reserved_frames = 0U,
         .highest_allocatable_address = 0U
     };
@@ -847,7 +913,8 @@ static enum frame_status frame_allocator_validate_unguarded(void)
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
-    if (task_stack_mutation_epoch == 0U) {
+    if (task_stack_mutation_epoch == 0U ||
+        process_page_mutation_epoch == 0U) {
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
 
@@ -863,17 +930,23 @@ static enum frame_status frame_allocator_validate_unguarded(void)
         const uint64_t heap_owned = heap_owner_bitmap[word_index];
         const uint64_t task_stack_owned =
             task_stack_owner_bitmap[word_index];
-        const uint64_t owners = heap_owned | task_stack_owned;
+        const uint64_t process_page_owned =
+            process_page_owner_bitmap[word_index];
+        const uint64_t owners = heap_owned | task_stack_owned |
+            process_page_owned;
         const uint64_t ineligible = ~eligible;
         size_t allocatable_count;
         size_t free_count;
         size_t heap_count;
         size_t task_stack_count;
+        size_t process_page_count;
 
         if ((ineligible & ~used) != 0U ||
             (owners & ineligible) != 0U ||
             (owners & ~used) != 0U ||
-            (heap_owned & task_stack_owned) != 0U) {
+            (heap_owned & task_stack_owned) != 0U ||
+            (heap_owned & process_page_owned) != 0U ||
+            (task_stack_owned & process_page_owned) != 0U) {
             return FRAME_STATUS_VALIDATION_FAILURE;
         }
 
@@ -881,14 +954,17 @@ static enum frame_status frame_allocator_validate_unguarded(void)
         free_count = bitmap_word_population(eligible & ~used);
         heap_count = bitmap_word_population(heap_owned);
         task_stack_count = bitmap_word_population(task_stack_owned);
+        process_page_count = bitmap_word_population(process_page_owned);
         observed.allocatable_frames += allocatable_count;
         observed.reserved_frames += BITMAP_WORD_BITS - allocatable_count;
         observed.allocated_frames += allocatable_count - free_count;
         observed.free_frames += free_count;
         observed.heap_allocated_frames += heap_count;
         observed.task_stack_allocated_frames += task_stack_count;
+        observed.process_page_allocated_frames += process_page_count;
         observed.generic_allocated_frames +=
-            allocatable_count - free_count - heap_count - task_stack_count;
+            allocatable_count - free_count - heap_count - task_stack_count -
+                process_page_count;
 
         if (eligible != 0U) {
             highest_eligible_word = word_index;
@@ -915,6 +991,8 @@ static enum frame_status frame_allocator_validate_unguarded(void)
             allocator_stats.heap_allocated_frames ||
         observed.task_stack_allocated_frames !=
             allocator_stats.task_stack_allocated_frames ||
+        observed.process_page_allocated_frames !=
+            allocator_stats.process_page_allocated_frames ||
         observed.reserved_frames != allocator_stats.reserved_frames ||
         observed.highest_allocatable_address !=
             allocator_stats.highest_allocatable_address ||
@@ -922,7 +1000,8 @@ static enum frame_status frame_allocator_validate_unguarded(void)
         observed.free_frames + observed.allocated_frames !=
             observed.allocatable_frames ||
         observed.generic_allocated_frames + observed.heap_allocated_frames +
-                observed.task_stack_allocated_frames !=
+                observed.task_stack_allocated_frames +
+                observed.process_page_allocated_frames !=
             observed.allocated_frames) {
         return FRAME_STATUS_VALIDATION_FAILURE;
     }
@@ -990,7 +1069,8 @@ static enum frame_status frame_allocator_validate_heap_owners_unguarded(
         if (!bitmap_get(eligible_bitmap, frame) ||
             !bitmap_get(used_bitmap, frame) ||
             !bitmap_get(heap_owner_bitmap, frame) ||
-            bitmap_get(task_stack_owner_bitmap, frame)) {
+            bitmap_get(task_stack_owner_bitmap, frame) ||
+            bitmap_get(process_page_owner_bitmap, frame)) {
             status = FRAME_STATUS_OWNER_MISMATCH;
             break;
         }
@@ -1000,6 +1080,96 @@ static enum frame_status frame_allocator_validate_heap_owners_unguarded(
         heap_owner_validation_frames[index] = 0U;
     }
 
+    return status;
+}
+
+static enum frame_status
+frame_allocator_validate_process_page_owners_unguarded(
+    const uintptr_t *committed_frames,
+    size_t committed_frame_count,
+    const uintptr_t *staged_frames,
+    size_t staged_frame_count,
+    struct frame_allocator_process_page_certificate *certificate
+)
+{
+    enum frame_status status;
+    size_t scratch_count = 0U;
+    size_t total_frame_count;
+
+    if (certificate == NULL ||
+        (committed_frame_count != 0U && committed_frames == NULL) ||
+        (staged_frame_count != 0U && staged_frames == NULL)) {
+        return FRAME_STATUS_NULL_ARGUMENT;
+    }
+
+    certificate->mutation_epoch = 0U;
+    certificate->owned_frames = 0U;
+
+    if (committed_frame_count >
+            FRAME_ALLOCATOR_PROCESS_PAGE_VALIDATION_LIMIT ||
+        staged_frame_count >
+            FRAME_ALLOCATOR_PROCESS_PAGE_VALIDATION_LIMIT -
+                committed_frame_count) {
+        return FRAME_STATUS_OWNER_MISMATCH;
+    }
+
+    status = frame_allocator_validate_unguarded();
+    if (status != FRAME_STATUS_OK) {
+        return status;
+    }
+
+    total_frame_count = committed_frame_count + staged_frame_count;
+    if (total_frame_count != allocator_stats.process_page_allocated_frames) {
+        return FRAME_STATUS_OWNER_MISMATCH;
+    }
+
+    for (size_t index = 0U; index < committed_frame_count; ++index) {
+        process_page_owner_validation_frames[scratch_count] =
+            committed_frames[index];
+        ++scratch_count;
+    }
+    for (size_t index = 0U; index < staged_frame_count; ++index) {
+        process_page_owner_validation_frames[scratch_count] =
+            staged_frames[index];
+        ++scratch_count;
+    }
+
+    frame_heap_sort(process_page_owner_validation_frames, scratch_count);
+
+    for (size_t index = 0U; index < scratch_count; ++index) {
+        const uintptr_t physical_address =
+            process_page_owner_validation_frames[index];
+        size_t frame;
+
+        if ((uint64_t)physical_address >= ZENITH_EARLY_PHYSICAL_LIMIT ||
+            ((uint64_t)physical_address & (ZENITH_PAGE_SIZE - 1U)) != 0U ||
+            (index != 0U &&
+             process_page_owner_validation_frames[index - 1U] ==
+                physical_address)) {
+            status = FRAME_STATUS_OWNER_MISMATCH;
+            break;
+        }
+
+        frame = (size_t)((uint64_t)physical_address / ZENITH_PAGE_SIZE);
+        if (!bitmap_get(eligible_bitmap, frame) ||
+            !bitmap_get(used_bitmap, frame) ||
+            bitmap_get(heap_owner_bitmap, frame) ||
+            bitmap_get(task_stack_owner_bitmap, frame) ||
+            !bitmap_get(process_page_owner_bitmap, frame)) {
+            status = FRAME_STATUS_OWNER_MISMATCH;
+            break;
+        }
+    }
+
+    for (size_t index = 0U; index < scratch_count; ++index) {
+        process_page_owner_validation_frames[index] = 0U;
+    }
+
+    if (status == FRAME_STATUS_OK) {
+        certificate->mutation_epoch = process_page_mutation_epoch;
+        certificate->owned_frames =
+            allocator_stats.process_page_allocated_frames;
+    }
     return status;
 }
 
@@ -1046,6 +1216,19 @@ static bool frame_test_set_task_stack_mutation_epoch_unguarded(
     return true;
 }
 
+static bool frame_test_set_process_page_mutation_epoch_unguarded(
+    uint64_t mutation_epoch
+)
+{
+    if (!allocator_initialized || allocator_poisoned ||
+        mutation_epoch == 0U) {
+        return false;
+    }
+
+    process_page_mutation_epoch = mutation_epoch;
+    return true;
+}
+
 static bool frame_test_task_stack_state_matches_unguarded(
     size_t expected_owned_frames
 )
@@ -1056,13 +1239,36 @@ static bool frame_test_task_stack_state_matches_unguarded(
         const uint64_t task_owned = task_stack_owner_bitmap[word];
 
         if ((task_owned & ~used_bitmap[word]) != 0U ||
-            (task_owned & heap_owner_bitmap[word]) != 0U) {
+            (task_owned & heap_owner_bitmap[word]) != 0U ||
+            (task_owned & process_page_owner_bitmap[word]) != 0U) {
             return false;
         }
         observed_owned_frames += bitmap_word_population(task_owned);
     }
 
     return allocator_stats.task_stack_allocated_frames ==
+            expected_owned_frames &&
+        observed_owned_frames == expected_owned_frames;
+}
+
+static bool frame_test_process_page_state_matches_unguarded(
+    size_t expected_owned_frames
+)
+{
+    size_t observed_owned_frames = 0U;
+
+    for (size_t word = 0U; word < BITMAP_WORD_COUNT; ++word) {
+        const uint64_t process_owned = process_page_owner_bitmap[word];
+
+        if ((process_owned & ~used_bitmap[word]) != 0U ||
+            (process_owned & heap_owner_bitmap[word]) != 0U ||
+            (process_owned & task_stack_owner_bitmap[word]) != 0U) {
+            return false;
+        }
+        observed_owned_frames += bitmap_word_population(process_owned);
+    }
+
+    return allocator_stats.process_page_allocated_frames ==
             expected_owned_frames &&
         observed_owned_frames == expected_owned_frames;
 }
@@ -1099,6 +1305,32 @@ frame_allocator_task_stack_certificate_get_unguarded(
 
     certificate->mutation_epoch = task_stack_mutation_epoch;
     certificate->owned_frames = allocator_stats.task_stack_allocated_frames;
+    return FRAME_STATUS_OK;
+}
+
+static enum frame_status
+frame_allocator_process_page_certificate_get_unguarded(
+    struct frame_allocator_process_page_certificate *certificate
+)
+{
+    if (certificate == NULL) {
+        return FRAME_STATUS_NULL_ARGUMENT;
+    }
+
+    certificate->mutation_epoch = 0U;
+    certificate->owned_frames = 0U;
+
+    if (!allocator_initialized) {
+        return FRAME_STATUS_NOT_INITIALIZED;
+    }
+
+    if (!allocator_stats_are_locally_valid()) {
+        return FRAME_STATUS_VALIDATION_FAILURE;
+    }
+
+    certificate->mutation_epoch = process_page_mutation_epoch;
+    certificate->owned_frames =
+        allocator_stats.process_page_allocated_frames;
     return FRAME_STATUS_OK;
 }
 
@@ -1392,6 +1624,40 @@ bool frame_test_task_stack_state_matches(size_t expected_owned_frames)
     return result;
 }
 
+bool frame_test_set_process_page_mutation_epoch(uint64_t mutation_epoch)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (!frame_lock_acquire(&token)) {
+        return false;
+    }
+    result = frame_test_set_process_page_mutation_epoch_unguarded(
+        mutation_epoch
+    );
+    if (!frame_lock_exit(&token)) {
+        return false;
+    }
+    return result;
+}
+
+bool frame_test_process_page_state_matches(size_t expected_owned_frames)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (!frame_lock_acquire(&token)) {
+        return false;
+    }
+    result = frame_test_process_page_state_matches_unguarded(
+        expected_owned_frames
+    );
+    if (!frame_lock_exit(&token)) {
+        return false;
+    }
+    return result;
+}
+
 struct frame_allocator_stats frame_allocator_get_stats(void)
 {
     struct frame_allocator_stats stats = {0U};
@@ -1443,6 +1709,44 @@ enum frame_status frame_allocator_task_stack_certificate_get(
     return status;
 }
 
+enum frame_status frame_allocator_process_page_certificate_get(
+    struct frame_allocator_process_page_certificate *certificate
+)
+{
+    struct spinlock_irq_token token;
+    enum frame_status status;
+
+    if (!frame_lock_acquire(&token)) {
+        if (certificate != NULL) {
+            const struct frame_allocator_process_page_certificate zero = {
+                0U
+            };
+
+            *certificate = zero;
+        }
+        return frame_lock_failure_status();
+    }
+    status = frame_allocator_process_page_certificate_get_unguarded(
+        certificate
+    );
+    if (!frame_lock_exit(&token)) {
+        if (certificate != NULL) {
+            const struct frame_allocator_process_page_certificate zero = {
+                0U
+            };
+
+            *certificate = zero;
+        }
+        return FRAME_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != FRAME_STATUS_OK && certificate != NULL) {
+        const struct frame_allocator_process_page_certificate zero = {0U};
+
+        *certificate = zero;
+    }
+    return status;
+}
+
 enum frame_status frame_allocator_validate_heap_owners(
     const uintptr_t *committed_frames,
     size_t committed_frame_count,
@@ -1464,6 +1768,52 @@ enum frame_status frame_allocator_validate_heap_owners(
             staged_frame_count
         )
     );
+}
+
+enum frame_status frame_allocator_validate_process_page_owners(
+    const uintptr_t *committed_frames,
+    size_t committed_frame_count,
+    const uintptr_t *staged_frames,
+    size_t staged_frame_count,
+    struct frame_allocator_process_page_certificate *certificate
+)
+{
+    struct spinlock_irq_token token;
+    enum frame_status status;
+
+    if (!frame_lock_acquire(&token)) {
+        if (certificate != NULL) {
+            const struct frame_allocator_process_page_certificate zero = {
+                0U
+            };
+
+            *certificate = zero;
+        }
+        return frame_lock_failure_status();
+    }
+    status = frame_allocator_validate_process_page_owners_unguarded(
+        committed_frames,
+        committed_frame_count,
+        staged_frames,
+        staged_frame_count,
+        certificate
+    );
+    if (!frame_lock_exit(&token)) {
+        if (certificate != NULL) {
+            const struct frame_allocator_process_page_certificate zero = {
+                0U
+            };
+
+            *certificate = zero;
+        }
+        return FRAME_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != FRAME_STATUS_OK && certificate != NULL) {
+        const struct frame_allocator_process_page_certificate zero = {0U};
+
+        *certificate = zero;
+    }
+    return status;
 }
 
 const char *frame_status_string(enum frame_status status)

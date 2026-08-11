@@ -23,6 +23,8 @@ HOST_PERCPU_SPINLOCK_RUNNER := $(HOST_TEST_DIR)/percpu-spinlock-core-runner
 HOST_PERCPU_IRQSAVE_RUNTIME_RUNNER := \
 	$(HOST_TEST_DIR)/percpu-irqsave-runtime-runner
 HOST_ADDRESS_SPACE_RUNNER := $(HOST_TEST_DIR)/address-space-core-runner
+HOST_ADDRESS_SPACE_TABLES_RUNNER := \
+	$(HOST_TEST_DIR)/address-space-tables-runner
 HOST_PROCESS_SYSCALL_RUNNER := $(HOST_TEST_DIR)/process-syscall-core-runner
 HOST_XSTATE_RUNNER := $(HOST_TEST_DIR)/xstate-core-runner
 HOST_XSTATE_RUNTIME_RUNNER := $(HOST_TEST_DIR)/xstate-runtime-runner
@@ -49,6 +51,8 @@ HOST_SANITIZED_PERCPU_IRQSAVE_RUNTIME_RUNNER := \
 	$(HOST_SANITIZER_DIR)/percpu-irqsave-runtime-runner
 HOST_SANITIZED_ADDRESS_SPACE_RUNNER := \
 	$(HOST_SANITIZER_DIR)/address-space-core-runner
+HOST_SANITIZED_ADDRESS_SPACE_TABLES_RUNNER := \
+	$(HOST_SANITIZER_DIR)/address-space-tables-runner
 HOST_SANITIZED_PROCESS_SYSCALL_RUNNER := \
 	$(HOST_SANITIZER_DIR)/process-syscall-core-runner
 HOST_SANITIZED_XSTATE_RUNNER := $(HOST_SANITIZER_DIR)/xstate-core-runner
@@ -256,6 +260,14 @@ $(HOST_ADDRESS_SPACE_RUNNER): tests/address_space_core_runner.c \
 		-Wpedantic -Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
 		tests/address_space_core_runner.c src/kernel/address_space_core.c -o $@
 
+$(HOST_ADDRESS_SPACE_TABLES_RUNNER): tests/address_space_tables_runner.c \
+		src/kernel/address_space_tables.c src/kernel/address_space_tables.h | \
+		$(HOST_TEST_DIR)
+	$(HOST_CC) -Iinclude -Isrc/kernel -std=c11 -O2 -Wall -Wextra -Werror \
+		-Wpedantic -Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		tests/address_space_tables_runner.c src/kernel/address_space_tables.c \
+		-o $@
+
 $(HOST_PROCESS_SYSCALL_RUNNER): tests/process_syscall_core_runner.c \
 		src/kernel/process_core.c src/kernel/process_core.h \
 		src/kernel/syscall_core.c src/kernel/syscall_core.h \
@@ -297,7 +309,8 @@ host-tests: $(HOST_HEAP_RUNNER) $(HOST_SCHEDULER_RUNNER) \
 		$(HOST_VIRTUAL_MEMORY_EPOCH_RUNNER) \
 		$(HOST_PERCPU_SPINLOCK_RUNNER) \
 		$(HOST_PERCPU_IRQSAVE_RUNTIME_RUNNER) \
-		$(HOST_ADDRESS_SPACE_RUNNER) $(HOST_PROCESS_SYSCALL_RUNNER) \
+		$(HOST_ADDRESS_SPACE_RUNNER) $(HOST_ADDRESS_SPACE_TABLES_RUNNER) \
+		$(HOST_PROCESS_SYSCALL_RUNNER) \
 		$(HOST_XSTATE_RUNNER) $(HOST_XSTATE_RUNTIME_RUNNER) \
 		$(HOST_XSTATE_CORE_OBJECT)
 	python3 tests/heap_oracle.py $(HOST_HEAP_RUNNER) --cases 100000
@@ -308,7 +321,11 @@ host-tests: $(HOST_HEAP_RUNNER) $(HOST_SCHEDULER_RUNNER) \
 	$(HOST_PREEMPT_RUNTIME_RUNNER)
 	@for scenario in pre-init initialize certificate epoch-allocate-overflow \
 		epoch-lifetime epoch-release heap-batch allocate allocate-owned release \
-		reserve inject-failure inject-oom stats exact-if; do \
+		reserve inject-failure inject-oom stats exact-if process-certificate \
+		process-owner-set process-failure-atomicity process-reinitialize \
+		process-epoch-allocate-overflow process-epoch-lifetime \
+		process-epoch-release process-allocate-lock process-certificate-lock \
+		process-owner-set-lock; do \
 		$(HOST_PHYSICAL_GUARD_RUNNER) $$scenario || exit 1; \
 	done
 	@for scenario in pre-init init-if deferred-scheduler exact-if bad-frame \
@@ -331,6 +348,9 @@ host-tests: $(HOST_HEAP_RUNNER) $(HOST_SCHEDULER_RUNNER) \
 	done
 	python3 tests/address_space_oracle.py $(HOST_ADDRESS_SPACE_RUNNER) \
 		--operations 250000
+	$(HOST_ADDRESS_SPACE_TABLES_RUNNER) selftest
+	python3 tests/address_space_tables_oracle.py \
+		$(HOST_ADDRESS_SPACE_TABLES_RUNNER) --cases 250000
 	python3 tests/process_syscall_oracle.py $(HOST_PROCESS_SYSCALL_RUNNER) \
 		--operations 300000
 	python3 tests/xstate_oracle.py $(HOST_XSTATE_RUNNER) --cases 250000
@@ -476,6 +496,15 @@ $(HOST_SANITIZED_ADDRESS_SPACE_RUNNER): tests/address_space_core_runner.c \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		tests/address_space_core_runner.c src/kernel/address_space_core.c -o $@
 
+$(HOST_SANITIZED_ADDRESS_SPACE_TABLES_RUNNER): \
+		tests/address_space_tables_runner.c src/kernel/address_space_tables.c \
+		src/kernel/address_space_tables.h | $(HOST_SANITIZER_DIR)
+	$(HOST_CC) -Iinclude -Isrc/kernel -std=c11 -O1 -g -Wall -Wextra -Werror \
+		-Wpedantic -Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		tests/address_space_tables_runner.c src/kernel/address_space_tables.c \
+		-o $@
+
 $(HOST_SANITIZED_PROCESS_SYSCALL_RUNNER): \
 		tests/process_syscall_core_runner.c src/kernel/process_core.c \
 		src/kernel/process_core.h src/kernel/syscall_core.c \
@@ -519,6 +548,7 @@ host-sanitizers: $(HOST_SANITIZED_HEAP_RUNNER) \
 		$(HOST_SANITIZED_PERCPU_SPINLOCK_RUNNER) \
 		$(HOST_SANITIZED_PERCPU_IRQSAVE_RUNTIME_RUNNER) \
 		$(HOST_SANITIZED_ADDRESS_SPACE_RUNNER) \
+		$(HOST_SANITIZED_ADDRESS_SPACE_TABLES_RUNNER) \
 		$(HOST_SANITIZED_PROCESS_SYSCALL_RUNNER) \
 		$(HOST_SANITIZED_XSTATE_RUNNER) \
 		$(HOST_SANITIZED_XSTATE_RUNTIME_RUNNER)
@@ -544,7 +574,11 @@ host-sanitizers: $(HOST_SANITIZED_HEAP_RUNNER) \
 		$(HOST_SANITIZED_PREEMPT_RUNTIME_RUNNER)
 	@for scenario in pre-init initialize certificate epoch-allocate-overflow \
 		epoch-lifetime epoch-release heap-batch allocate allocate-owned release \
-		reserve inject-failure inject-oom stats exact-if; do \
+		reserve inject-failure inject-oom stats exact-if process-certificate \
+		process-owner-set process-failure-atomicity process-reinitialize \
+		process-epoch-allocate-overflow process-epoch-lifetime \
+		process-epoch-release process-allocate-lock process-certificate-lock \
+		process-owner-set-lock; do \
 		ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 			$(HOST_SANITIZED_PHYSICAL_GUARD_RUNNER) $$scenario || exit 1; \
@@ -584,6 +618,13 @@ host-sanitizers: $(HOST_SANITIZED_HEAP_RUNNER) \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		python3 tests/address_space_oracle.py \
 			$(HOST_SANITIZED_ADDRESS_SPACE_RUNNER) --operations 250000
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		$(HOST_SANITIZED_ADDRESS_SPACE_TABLES_RUNNER) selftest
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		python3 tests/address_space_tables_oracle.py \
+			$(HOST_SANITIZED_ADDRESS_SPACE_TABLES_RUNNER) --cases 250000
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		python3 tests/process_syscall_oracle.py \
