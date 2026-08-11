@@ -4,3 +4,7 @@
 
 .globl __kernel_end
 .set __kernel_end, 0x00240000
+
+#ifndef _WIN32
+    .section .note.GNU-stack,"",@progbits
+#endif

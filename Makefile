@@ -71,6 +71,17 @@ NM := nm
 OBJDUMP := objdump
 HOST_CC ?= cc
 HOST_ABSOLUTE_SYMBOL_FLAGS := -fno-pie -no-pie
+HOST_VM_SYMBOL_FLAGS := \
+	-D__kernel_start=zenith_test_kernel_start \
+	-D__kernel_end=zenith_test_kernel_end \
+	-D__text_start=zenith_test_text_start \
+	-D__text_end=zenith_test_text_end \
+	-D__rodata_start=zenith_test_rodata_start \
+	-D__rodata_end=zenith_test_rodata_end \
+	-D__data_start=zenith_test_data_start \
+	-D__data_end=zenith_test_data_end \
+	-D__bss_start=zenith_test_bss_start \
+	-D__bss_end=zenith_test_bss_end
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -194,7 +205,8 @@ $(HOST_VIRTUAL_MEMORY_IRQSAVE_RUNNER): \
 		include/zenith/preempt.h include/zenith/spinlock.h \
 		include/zenith/test.h include/zenith/virtual_memory.h | \
 		$(HOST_TEST_DIR)
-	$(HOST_CC) -Iinclude -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+	$(HOST_CC) $(HOST_VM_SYMBOL_FLAGS) -Iinclude -std=c11 -O2 \
+		-Wall -Wextra -Werror -Wpedantic \
 		-Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
 		tests/virtual_memory_irqsave_runner.c \
 		src/kernel/virtual_memory.c -o $@
@@ -206,7 +218,8 @@ $(HOST_VIRTUAL_MEMORY_EPOCH_RUNNER): \
 		include/zenith/preempt.h include/zenith/spinlock.h \
 		include/zenith/test.h include/zenith/virtual_memory.h | \
 		$(HOST_TEST_DIR)
-	$(HOST_CC) -DVM_EPOCH_RUNNER -Iinclude -std=c11 -O2 -Wall -Wextra \
+	$(HOST_CC) $(HOST_VM_SYMBOL_FLAGS) -DVM_EPOCH_RUNNER -Iinclude \
+		-std=c11 -O2 -Wall -Wextra \
 		-Werror -Wpedantic -Wshadow -Wundef -Wstrict-prototypes \
 		-Wmissing-prototypes tests/virtual_memory_irqsave_runner.c \
 		tests/virtual_memory_epoch_symbols.S src/kernel/virtual_memory.c -o $@
@@ -406,7 +419,8 @@ $(HOST_SANITIZED_VIRTUAL_MEMORY_IRQSAVE_RUNNER): \
 		include/zenith/preempt.h include/zenith/spinlock.h \
 		include/zenith/test.h include/zenith/virtual_memory.h | \
 		$(HOST_SANITIZER_DIR)
-	$(HOST_CC) -Iinclude -std=c11 -O1 -g -Wall -Wextra -Werror -Wpedantic \
+	$(HOST_CC) $(HOST_VM_SYMBOL_FLAGS) -Iinclude -std=c11 -O1 -g \
+		-Wall -Wextra -Werror -Wpedantic \
 		-Wshadow -Wundef -Wstrict-prototypes -Wmissing-prototypes \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		tests/virtual_memory_irqsave_runner.c \
@@ -419,7 +433,8 @@ $(HOST_SANITIZED_VIRTUAL_MEMORY_EPOCH_RUNNER): \
 		include/zenith/preempt.h include/zenith/spinlock.h \
 		include/zenith/test.h include/zenith/virtual_memory.h | \
 		$(HOST_SANITIZER_DIR)
-	$(HOST_CC) -DVM_EPOCH_RUNNER -Iinclude -std=c11 -O1 -g -Wall -Wextra \
+	$(HOST_CC) $(HOST_VM_SYMBOL_FLAGS) -DVM_EPOCH_RUNNER -Iinclude \
+		-std=c11 -O1 -g -Wall -Wextra \
 		-Werror -Wpedantic -Wshadow -Wundef -Wstrict-prototypes \
 		-Wmissing-prototypes -fsanitize=address,undefined \
 		-fno-omit-frame-pointer tests/virtual_memory_irqsave_runner.c \
