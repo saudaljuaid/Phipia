@@ -73,6 +73,8 @@ struct heap_core_stats {
     uint32_t descriptor_limit;
 };
 
+/* Clear storage before its first initialize call; initialize reads the magic
+ * markers so that a second initialization is rejected. */
 void heap_core_clear(struct heap_core_state *state);
 void heap_core_copy(
     struct heap_core_state *destination,

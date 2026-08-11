@@ -60,6 +60,14 @@ The physical allocator separately spends fixed 128 KiB owner bitmaps for the
 complete below-4-GiB frame domain. The heap bitmap gives every heap frame an
 identity distinct from generic and task-stack ownership. The heap neither
 duplicates that state nor infers ownership from global allocation counts.
+Exact heap-owner validation adds a fixed 32 KiB private physical-allocator BSS
+scratch array (4,096 64-bit frame addresses). Under one physical-memory lock it
+runs the complete bitmap/stat audit, copies the committed and staged spans,
+uses an in-file bounded heapsort, rejects adjacent duplicates, verifies every
+frame is aligned, in range, used, and exclusively heap-owned, and requires the
+provided cardinality to equal the independently audited heap-owner count. The
+scratch never occupies a kernel stack, invokes no runtime sorting helper, and
+every used entry is cleared before the lock is released, including failures.
 
 The active state contains at most 512 descriptors. Its linked descriptors must
 cover `[0, committed_bytes)` exactly once, in ascending order, without gaps,
@@ -112,6 +120,13 @@ Growth follows this ownership sequence:
 6. Transfer the new frame ownership records, publish the candidate metadata,
    and only then return the pointer.
 
+The candidate proof batches both frame spans through one physical lock and one
+VM lock. VM validation walks every heap leaf once against the exact spans and
+returns same-snapshot statistics; physical validation performs the full owner
+audit and O(n log n) duplicate/orphan proof. No invariant or page is sampled or
+skipped, while the former per-page locks, duplicate VM scans, and O(n^2) frame
+comparison are eliminated.
+
 If any frame acquisition, mapping, or later validation fails, mapped pages are
 unmapped in reverse order and each successfully unmapped or never-mapped frame
 is released. Every unmap invalidates its TLB entry. Active metadata remains
@@ -129,20 +144,20 @@ reclamation.
 
 ## Interrupt-state contract
 
-The kernel is single-core and cooperatively scheduled without preemption; its
-periodic Local APIC timer remains active but never selects a task. Heap entry is
+The kernel is single-core and timer-preemptible. Heap entry is
 allowed from ordinary task context and forbidden while the C interrupt
 dispatcher is active, including exception and NMI handlers, and after panic has
 started. Heap functions must not be called from assembly-only interrupt entry,
 panic, or other emergency paths either.
 
-Ordinary metadata work and frame zeroing do not mask interrupts. Each leaf
-mutation uses one bounded IF-disabled section because the virtual-memory API
-requires it. The wrapper records IF before `cli` and executes `sti` only when IF
-was originally set; a caller that entered with IF clear returns with IF clear.
-No spinlock, wait, recursion, or SMP-safety claim is present. The integrated
-scenario checks both IF-preservation states and proves monotonic ticks and APIC
-EOIs continue across normal heap work.
+Each complete heap transaction holds a HEAP-class irqsave spinlock, including
+metadata work, frame ownership, page mapping, and frame zeroing. Nested growth
+uses the fixed `HEAP -> VIRTUAL_MEMORY -> PHYSICAL_MEMORY` lock order. A caller
+that entered with IF clear returns with IF clear, and no path sleeps or switches
+while holding a lock. This is BSP serialization against maskable-interrupt
+reentry, not an SMP-safety claim. The integrated scenario checks both
+IF-preservation states and proves monotonic ticks and APIC EOIs continue across
+normal heap work.
 
 ## API and deterministic failure
 
@@ -169,7 +184,7 @@ physical-width rejection, and metadata corruption. The host runner is compared
 with an independent Python list-model oracle for 100,000 deterministic
 randomized operations.
 
-The heap scenario remains the thirteenth QEMU scenario. It must emit exactly:
+The heap scenario is the eleventh QEMU scenario. It must emit exactly:
 
 ```text
 ZT BEGIN heap
@@ -217,10 +232,10 @@ cross-release and make heap validation independent of generic allocations, but t
 cannot protect against an arbitrary write that corrupts both allocator state
 and its validation inputs. First-fit can fragment, free pages do not shrink, and
 the 512-descriptor ceiling is intentionally small. There is no sanitizing red
-zone inside the payload window, use-after-free detector, SMP coordination,
-lock, per-CPU heap, interrupt-context pool, general mapping consumer, dynamic
-page-table allocation, process address space, userspace, preemption, blocking
-synchronization, storage, networking, or driver framework. The cooperative
+zone inside the payload window, use-after-free detector, cross-CPU SMP
+coordination, per-CPU heap, interrupt-context pool, general mapping consumer,
+dynamic page-table allocation, process address space, userspace, blocking
+synchronization, storage, networking, or driver framework. The preemptive
 scheduler's separate ownership contract is documented in
 `docs/KERNEL_SCHEDULER.md`. The remaining features require their own ownership
 and executable acceptance contracts.

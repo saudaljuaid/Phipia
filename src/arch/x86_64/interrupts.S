@@ -66,7 +66,9 @@ interrupt_common_entry:
     andq $-16, %rsp
     movq %rbx, %rdi
     call interrupt_dispatch
-    movq %rbx, %rsp
+
+    /* C returns the only frame whose provenance it has accepted for return. */
+    movq %rax, %rsp
 
     addq $8, %rsp
     popq %r15
@@ -306,6 +308,13 @@ interrupt_trigger_apic_spurious:
     int $0xFF
     ret
 .size interrupt_trigger_apic_spurious, . - interrupt_trigger_apic_spurious
+
+.global interrupt_trigger_reschedule
+.type interrupt_trigger_reschedule, @function
+interrupt_trigger_reschedule:
+    int $0x31
+    ret
+.size interrupt_trigger_reschedule, . - interrupt_trigger_reschedule
 
 .section .rodata, "a"
 double_fault_message:

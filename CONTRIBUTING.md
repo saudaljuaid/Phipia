@@ -8,13 +8,19 @@ is not a correct change. These rules are mandatory.
 Every commit must be atomic, buildable, bootable, reviewable, and reversible.
 Before creating a commit, run `make verify`. Before pushing an interrupt or CPU
 state change, run `make qemu-tests`; other changes must run at least `make smoke`.
-Enable the repository hooks once with `make hooks`; disabling or bypassing them
-is grounds to reject the change.
+Enable and verify the repository hooks once with `make bootstrap`; disabling or
+bypassing them is grounds to reject the change. The pre-commit gate rejects
+unstaged or untracked files so `make verify` observes exactly the staged tree;
+the pre-push gate checks each pushed ref tip in a temporary detached worktree.
 
-No direct push to `main` is acceptable. Every change uses a pull request and the
-`build-and-boot` check must pass against its latest commit. Do not merge around a
-red, skipped, stale, or missing check. Do not force-push `main`, delete `main`, or
-merge an unreviewed kernel change.
+No direct push to `main` is acceptable. Every change uses a pull request, whose
+latest commit must pass all four verification checks:
+`build, analyze, sanitize, inspect`,
+`QEMU 16-scenario default RAM`,
+`QEMU 19 MiB floor and 18 MiB OOM`, and
+`QEMU scheduler competing-load repetitions`. Do not merge around a red,
+cancelled, skipped, stale, or missing check. Do not force-push `main`, delete
+`main`, or merge an unreviewed kernel change.
 
 ## Code standard
 
@@ -59,5 +65,5 @@ docs: record the interrupt-entry ABI
 Protect `main` with pull requests, one approving review when another maintainer
 is available, required code-owner review, dismissal of stale approvals, required
 conversation resolution, linear history, signed commits, blocked force pushes
-and deletions, and the required `build-and-boot` status check. Administrators do
-not bypass these rules.
+and deletions, and all four required verification checks named above.
+Administrators do not bypass these rules.

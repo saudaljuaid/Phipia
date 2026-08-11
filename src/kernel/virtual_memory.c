@@ -5,6 +5,7 @@
 
 #include <zenith/cpu.h>
 #include <zenith/memory.h>
+#include <zenith/spinlock.h>
 #include <zenith/test.h>
 #include <zenith/virtual_memory.h>
 
@@ -14,6 +15,7 @@
 #define VM_MAX_RANGE_PAGES 16384U
 #define VM_VGA_ADDRESS UINT64_C(0x00000000000B8000)
 #define VM_UNMAPPED_PROBE UINT64_C(0x0000000100000000)
+#define VIRTUAL_MEMORY_LOCK_INDEX UINT32_C(3)
 
 #define VM_ENTRY_PRESENT (UINT64_C(1) << 0U)
 #define VM_ENTRY_WRITABLE (UINT64_C(1) << 1U)
@@ -78,6 +80,7 @@ static uint64_t active_local_apic_physical;
 static uint64_t active_io_apic_physical[ACPI_MAX_IO_APICS];
 static size_t active_heap_mapped_pages;
 static size_t active_task_stack_mapped_pages;
+static uint64_t task_stack_mutation_epoch;
 static size_t test_heap_map_successes_remaining;
 static bool test_heap_map_failure_enabled;
 static bool test_heap_map_uncertain_failure_enabled;
@@ -85,6 +88,12 @@ static size_t test_task_stack_map_successes_remaining;
 static bool test_task_stack_map_failure_enabled;
 static bool test_task_stack_map_uncertain_failure_enabled;
 static bool virtual_memory_initialized;
+static bool virtual_memory_poisoned;
+static bool virtual_memory_lock_registered;
+static struct spinlock virtual_memory_lock;
+
+static enum virtual_memory_status virtual_memory_validate_unguarded(void);
+static bool permanent_arena_metadata_matches(void);
 
 _Static_assert(sizeof(permanent_table_pages[0]) == ZENITH_PAGE_SIZE,
                "one page-table row must occupy one page");
@@ -125,6 +134,17 @@ static void bytes_zero(void *destination, size_t size)
 static bool address_is_page_aligned(uint64_t address)
 {
     return (address & (ZENITH_PAGE_SIZE - 1U)) == 0U;
+}
+
+static bool task_stack_epoch_has_headroom(uint64_t required_increments)
+{
+    if (required_increments == 0U ||
+        task_stack_mutation_epoch > UINT64_MAX - required_increments) {
+        virtual_memory_poisoned = true;
+        return false;
+    }
+
+    return true;
 }
 
 static bool address_is_canonical(uint64_t address)
@@ -1202,10 +1222,24 @@ static bool layout_core_matches(
         );
 }
 
-static bool heap_window_matches(const struct vm_table_arena *arena)
+enum heap_window_validation_result {
+    HEAP_WINDOW_VALID = 0,
+    HEAP_WINDOW_STRUCTURAL_FAILURE,
+    HEAP_WINDOW_EXPECTATION_MISMATCH
+};
+
+static enum heap_window_validation_result heap_window_validate(
+    const struct vm_table_arena *arena,
+    const uintptr_t *committed_frames,
+    size_t committed_page_count,
+    const uintptr_t *staged_frames,
+    size_t staged_page_count,
+    bool check_expected_frames
+)
 {
     struct virtual_memory_mapping ignored;
     size_t mapped_pages = 0U;
+    bool expectation_mismatch = false;
     const uint64_t allowed_leaf_bits = VM_ENTRY_ADDRESS_MASK |
         VM_ENTRY_PRESENT | VM_ENTRY_WRITABLE | VM_ENTRY_ACCESSED |
         VM_ENTRY_DIRTY | VM_ENTRY_NO_EXECUTE;
@@ -1215,7 +1249,7 @@ static bool heap_window_matches(const struct vm_table_arena *arena)
             VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
         query_arena(arena, VIRTUAL_MEMORY_HEAP_GUARD_ABOVE, &ignored) !=
             VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
-        return false;
+        return HEAP_WINDOW_STRUCTURAL_FAILURE;
     }
 
     for (size_t page = 0U; page < VM_HEAP_PAGE_COUNT; ++page) {
@@ -1226,14 +1260,19 @@ static bool heap_window_matches(const struct vm_table_arena *arena)
 
         if (locate_leaf_entry(arena, address, &leaf_entry) !=
             VIRTUAL_MEMORY_STATUS_OK) {
-            return false;
+            return HEAP_WINDOW_STRUCTURAL_FAILURE;
         }
 
         entry = *leaf_entry;
 
         if ((entry & VM_ENTRY_PRESENT) == 0U) {
             if (entry != 0U) {
-                return false;
+                return HEAP_WINDOW_STRUCTURAL_FAILURE;
+            }
+
+            if (check_expected_frames &&
+                page < committed_page_count + staged_page_count) {
+                expectation_mismatch = true;
             }
 
             continue;
@@ -1246,13 +1285,54 @@ static bool heap_window_matches(const struct vm_table_arena *arena)
                 entry & VM_ENTRY_ADDRESS_MASK,
                 arena->physical_mask
             )) {
-            return false;
+            return HEAP_WINDOW_STRUCTURAL_FAILURE;
+        }
+
+        if (check_expected_frames) {
+            uintptr_t expected_frame = 0U;
+
+            if (page < committed_page_count) {
+                expected_frame = committed_frames[page];
+            } else if (page - committed_page_count < staged_page_count) {
+                expected_frame = staged_frames[page - committed_page_count];
+            } else {
+                expectation_mismatch = true;
+            }
+
+            if ((entry & VM_ENTRY_ADDRESS_MASK) !=
+                    (uint64_t)expected_frame) {
+                expectation_mismatch = true;
+            }
         }
 
         ++mapped_pages;
     }
 
-    return mapped_pages == active_heap_mapped_pages;
+    if (mapped_pages != active_heap_mapped_pages) {
+        return HEAP_WINDOW_STRUCTURAL_FAILURE;
+    }
+
+    if (check_expected_frames &&
+        active_heap_mapped_pages !=
+            committed_page_count + staged_page_count) {
+        expectation_mismatch = true;
+    }
+
+    return expectation_mismatch
+        ? HEAP_WINDOW_EXPECTATION_MISMATCH
+        : HEAP_WINDOW_VALID;
+}
+
+static bool heap_window_matches(const struct vm_table_arena *arena)
+{
+    return heap_window_validate(
+            arena,
+            NULL,
+            0U,
+            NULL,
+            0U,
+            false
+        ) == HEAP_WINDOW_VALID;
 }
 
 static bool task_stack_window_matches(const struct vm_table_arena *arena)
@@ -1363,14 +1443,42 @@ static bool layout_matches_topology(
     return true;
 }
 
-static bool active_layout_matches(void)
+static enum virtual_memory_status active_runtime_validate(
+    const uintptr_t *committed_frames,
+    size_t committed_page_count,
+    const uintptr_t *staged_frames,
+    size_t staged_page_count,
+    bool check_expected_frames
+)
 {
-    if (!layout_core_matches(
+    enum heap_window_validation_result heap_result;
+
+    /*
+     * This is the exact union of runtime_foundation_matches() and the old
+     * active_layout_matches().  Keeping the full-runtime validator separate
+     * from the mutation foundation avoids weakening map/unmap transactions,
+     * while ensuring the 4,096-leaf heap window and 256-leaf task-stack
+     * window are each traversed only once per public validation.
+     */
+    if (!permanent_arena_metadata_matches() ||
+        active_layout.io_apic_count > ACPI_MAX_IO_APICS ||
+        active_layout.local_apic_virtual_address !=
+            VIRTUAL_MEMORY_DEVICE_WINDOW_BASE ||
+        active_heap_mapped_pages > VM_HEAP_PAGE_COUNT ||
+        active_task_stack_mapped_pages > VM_TASK_STACK_PAGE_COUNT ||
+        task_stack_mutation_epoch == 0U ||
+        (cpu_read_cr3() & VM_ENTRY_ADDRESS_MASK) !=
+            active_layout.root_table_address ||
+        (cpu_read_cr0() & VM_CR0_WRITE_PROTECT) == 0U ||
+        (cpu_read_msr(VM_EFER_MSR) & VM_EFER_NXE) == 0U ||
+        cpu_read_msr(VM_PAT_MSR) != VM_PAT_ARCHITECTURAL_DEFAULT ||
+        !heap_window_layout_is_valid() ||
+        !task_stack_window_layout_is_valid() ||
+        !layout_core_matches(
             &permanent_arena,
             &active_layout,
             active_layout.io_apic_count
         ) ||
-        !heap_window_matches(&permanent_arena) ||
         !task_stack_window_matches(&permanent_arena) ||
         !mapping_matches(
             &permanent_arena,
@@ -1378,21 +1486,39 @@ static bool active_layout_matches(void)
             active_local_apic_physical,
             VIRTUAL_MEMORY_WRITABLE | VIRTUAL_MEMORY_DEVICE
         )) {
-        return false;
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
     }
 
     for (size_t index = 0U; index < active_layout.io_apic_count; ++index) {
-        if (!mapping_matches(
+        if (active_layout.io_apic_virtual_addresses[index] !=
+                VIRTUAL_MEMORY_DEVICE_WINDOW_BASE +
+                    (index + 1U) * ZENITH_PAGE_SIZE ||
+            !mapping_matches(
                 &permanent_arena,
                 active_layout.io_apic_virtual_addresses[index],
                 active_io_apic_physical[index],
                 VIRTUAL_MEMORY_WRITABLE | VIRTUAL_MEMORY_DEVICE
             )) {
-            return false;
+            return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
         }
     }
 
-    return true;
+    heap_result = heap_window_validate(
+        &permanent_arena,
+        committed_frames,
+        committed_page_count,
+        staged_frames,
+        staged_page_count,
+        check_expected_frames
+    );
+
+    if (heap_result == HEAP_WINDOW_STRUCTURAL_FAILURE) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    return heap_result == HEAP_WINDOW_EXPECTATION_MISMATCH
+        ? VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH
+        : VIRTUAL_MEMORY_STATUS_OK;
 }
 
 static bool permanent_arena_metadata_matches(void)
@@ -1423,6 +1549,7 @@ static bool runtime_foundation_matches(void)
             VIRTUAL_MEMORY_DEVICE_WINDOW_BASE ||
         active_heap_mapped_pages > VM_HEAP_PAGE_COUNT ||
         active_task_stack_mapped_pages > VM_TASK_STACK_PAGE_COUNT ||
+        task_stack_mutation_epoch == 0U ||
         (cpu_read_cr3() & VM_ENTRY_ADDRESS_MASK) !=
             active_layout.root_table_address ||
         (cpu_read_cr0() & VM_CR0_WRITE_PROTECT) == 0U ||
@@ -1496,6 +1623,7 @@ static void active_state_reset(void)
     active_local_apic_physical = 0U;
     active_heap_mapped_pages = 0U;
     active_task_stack_mapped_pages = 0U;
+    task_stack_mutation_epoch = 0U;
     test_heap_map_successes_remaining = 0U;
     test_heap_map_failure_enabled = false;
     test_heap_map_uncertain_failure_enabled = false;
@@ -1803,7 +1931,7 @@ bool virtual_memory_self_test(void)
         device_policy_self_test();
 }
 
-enum virtual_memory_status virtual_memory_initialize(
+static enum virtual_memory_status virtual_memory_initialize_unguarded(
     const struct acpi_topology *topology,
     struct virtual_memory_layout *layout
 )
@@ -1912,8 +2040,9 @@ enum virtual_memory_status virtual_memory_initialize(
     }
 
     virtual_memory_initialized = true;
+    task_stack_mutation_epoch = 1U;
 
-    if (virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK) {
+    if (virtual_memory_validate_unguarded() != VIRTUAL_MEMORY_STATUS_OK) {
         active_state_reset();
         cpu_write_cr3(previous_cr3);
 
@@ -1928,35 +2057,26 @@ enum virtual_memory_status virtual_memory_initialize(
     return VIRTUAL_MEMORY_STATUS_OK;
 }
 
-enum virtual_memory_status virtual_memory_validate(void)
+static enum virtual_memory_status virtual_memory_validate_unguarded(void)
 {
     if (!virtual_memory_initialized) {
         return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
     }
 
-    if ((cpu_read_cr3() & VM_ENTRY_ADDRESS_MASK) !=
-            active_layout.root_table_address ||
-        (cpu_read_cr0() & VM_CR0_WRITE_PROTECT) == 0U ||
-        (cpu_read_msr(VM_EFER_MSR) & VM_EFER_NXE) == 0U ||
-        cpu_read_msr(VM_PAT_MSR) != VM_PAT_ARCHITECTURAL_DEFAULT) {
-        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
-    }
-
-    if (!runtime_foundation_matches() || !active_layout_matches()) {
-        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
-    }
-
-    return VIRTUAL_MEMORY_STATUS_OK;
+    return active_runtime_validate(NULL, 0U, NULL, 0U, false);
 }
 
-enum virtual_memory_status virtual_memory_query(
+static enum virtual_memory_status virtual_memory_query_unguarded(
     uint64_t virtual_address,
     struct virtual_memory_mapping *mapping
 )
 {
+    enum virtual_memory_status status;
+
     if (mapping == NULL) {
         return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
     }
+    bytes_zero(mapping, sizeof(*mapping));
 
     if (!virtual_memory_initialized) {
         return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
@@ -1966,7 +2086,11 @@ enum virtual_memory_status virtual_memory_query(
         return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
     }
 
-    return query_arena(&permanent_arena, virtual_address, mapping);
+    status = query_arena(&permanent_arena, virtual_address, mapping);
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        bytes_zero(mapping, sizeof(*mapping));
+    }
+    return status;
 }
 
 enum virtual_memory_status virtual_memory_task_stack_bounds(
@@ -2047,7 +2171,7 @@ enum virtual_memory_status virtual_memory_task_stack_bounds(
     return VIRTUAL_MEMORY_STATUS_OK;
 }
 
-enum virtual_memory_status virtual_memory_query_task_stack_page(
+static enum virtual_memory_status virtual_memory_query_task_stack_page_unguarded(
     size_t slot_index,
     size_t page_index,
     struct virtual_memory_mapping *mapping
@@ -2059,6 +2183,7 @@ enum virtual_memory_status virtual_memory_query_task_stack_page(
     if (mapping == NULL) {
         return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
     }
+    bytes_zero(mapping, sizeof(*mapping));
 
     status = task_stack_page_address(slot_index, page_index, &virtual_address);
 
@@ -2066,10 +2191,10 @@ enum virtual_memory_status virtual_memory_query_task_stack_page(
         return status;
     }
 
-    return virtual_memory_query(virtual_address, mapping);
+    return virtual_memory_query_unguarded(virtual_address, mapping);
 }
 
-enum virtual_memory_status virtual_memory_map_task_stack_page(
+static enum virtual_memory_status virtual_memory_map_task_stack_page_unguarded(
     size_t slot_index,
     size_t page_index,
     uintptr_t physical_address
@@ -2134,12 +2259,17 @@ enum virtual_memory_status virtual_memory_map_task_stack_page(
         return VIRTUAL_MEMORY_STATUS_TEST_FAILURE;
     }
 
+    if (!task_stack_epoch_has_headroom(3U)) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
     entry = (uint64_t)physical_address | VM_ENTRY_PRESENT |
         VM_ENTRY_WRITABLE | VM_ENTRY_NO_EXECUTE;
     *leaf_entry = entry;
     __asm__ volatile ("" : : : "memory");
     cpu_invalidate_page((uintptr_t)virtual_address);
     ++active_task_stack_mapped_pages;
+    ++task_stack_mutation_epoch;
 
     if (test_task_stack_map_uncertain_failure_enabled) {
         test_task_stack_map_uncertain_failure_enabled = false;
@@ -2155,6 +2285,7 @@ enum virtual_memory_status virtual_memory_map_task_stack_page(
         __asm__ volatile ("" : : : "memory");
         cpu_invalidate_page((uintptr_t)virtual_address);
         --active_task_stack_mapped_pages;
+        ++task_stack_mutation_epoch;
 
         if (query_arena(&permanent_arena, virtual_address, &mapping) !=
                 VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
@@ -2172,7 +2303,7 @@ enum virtual_memory_status virtual_memory_map_task_stack_page(
     return VIRTUAL_MEMORY_STATUS_OK;
 }
 
-enum virtual_memory_status virtual_memory_unmap_task_stack_page(
+static enum virtual_memory_status virtual_memory_unmap_task_stack_page_unguarded(
     size_t slot_index,
     size_t page_index,
     uintptr_t expected_physical_address
@@ -2244,10 +2375,15 @@ enum virtual_memory_status virtual_memory_unmap_task_stack_page(
         return VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH;
     }
 
+    if (!task_stack_epoch_has_headroom(2U)) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
     *leaf_entry = 0U;
     __asm__ volatile ("" : : : "memory");
     cpu_invalidate_page((uintptr_t)virtual_address);
     --active_task_stack_mapped_pages;
+    ++task_stack_mutation_epoch;
 
     if (query_arena(&permanent_arena, virtual_address, &mapping) ==
             VIRTUAL_MEMORY_STATUS_NOT_MAPPED &&
@@ -2259,6 +2395,7 @@ enum virtual_memory_status virtual_memory_unmap_task_stack_page(
     __asm__ volatile ("" : : : "memory");
     cpu_invalidate_page((uintptr_t)virtual_address);
     ++active_task_stack_mapped_pages;
+    ++task_stack_mutation_epoch;
 
     if (query_arena(&permanent_arena, virtual_address, &mapping) !=
             VIRTUAL_MEMORY_STATUS_OK ||
@@ -2271,7 +2408,7 @@ enum virtual_memory_status virtual_memory_unmap_task_stack_page(
     return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
 }
 
-enum virtual_memory_status virtual_memory_map_heap_page(
+static enum virtual_memory_status virtual_memory_map_heap_page_unguarded(
     uint64_t virtual_address,
     uintptr_t physical_address
 )
@@ -2375,7 +2512,7 @@ enum virtual_memory_status virtual_memory_map_heap_page(
     return VIRTUAL_MEMORY_STATUS_OK;
 }
 
-enum virtual_memory_status virtual_memory_unmap_heap_page(
+static enum virtual_memory_status virtual_memory_unmap_heap_page_unguarded(
     uint64_t virtual_address,
     uintptr_t expected_physical_address
 )
@@ -2475,19 +2612,20 @@ enum virtual_memory_status virtual_memory_unmap_heap_page(
     return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
 }
 
-enum virtual_memory_status virtual_memory_runtime_get_stats(
+static enum virtual_memory_status virtual_memory_runtime_get_stats_unguarded(
     struct virtual_memory_runtime_stats *stats
 )
 {
     if (stats == NULL) {
         return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
     }
+    bytes_zero(stats, sizeof(*stats));
 
     if (!virtual_memory_initialized) {
         return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
     }
 
-    if (virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK) {
+    if (virtual_memory_validate_unguarded() != VIRTUAL_MEMORY_STATUS_OK) {
         return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
     }
 
@@ -2500,7 +2638,467 @@ enum virtual_memory_status virtual_memory_runtime_get_stats(
     return VIRTUAL_MEMORY_STATUS_OK;
 }
 
-bool virtual_memory_test_fail_heap_map_after(size_t successful_maps)
+static enum virtual_memory_status
+virtual_memory_validate_heap_backing_unguarded(
+    const uintptr_t *committed_frames,
+    size_t committed_page_count,
+    const uintptr_t *staged_frames,
+    size_t staged_page_count,
+    struct virtual_memory_runtime_stats *stats
+)
+{
+    enum virtual_memory_status status;
+
+    if (stats == NULL ||
+        (committed_page_count != 0U && committed_frames == NULL) ||
+        (staged_page_count != 0U && staged_frames == NULL)) {
+        return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
+    }
+    bytes_zero(stats, sizeof(*stats));
+
+    if (!virtual_memory_initialized) {
+        return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
+    }
+
+    if (committed_page_count > VM_HEAP_PAGE_COUNT ||
+        staged_page_count > VM_HEAP_PAGE_COUNT - committed_page_count) {
+        return VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH;
+    }
+
+    status = active_runtime_validate(
+        committed_frames,
+        committed_page_count,
+        staged_frames,
+        staged_page_count,
+        true
+    );
+    if (status != VIRTUAL_MEMORY_STATUS_OK) {
+        return status;
+    }
+
+    stats->heap_window_pages = VM_HEAP_PAGE_COUNT;
+    stats->heap_mapped_pages = active_heap_mapped_pages;
+    stats->task_stack_payload_pages = VM_TASK_STACK_PAGE_COUNT;
+    stats->task_stack_mapped_pages = active_task_stack_mapped_pages;
+    stats->table_pages_used = permanent_arena.used;
+    stats->table_pages_capacity = permanent_arena.capacity;
+    return VIRTUAL_MEMORY_STATUS_OK;
+}
+
+static enum virtual_memory_status
+virtual_memory_task_stack_certificate_get_unguarded(
+    struct virtual_memory_task_stack_certificate *certificate
+)
+{
+    if (certificate == NULL) {
+        return VIRTUAL_MEMORY_STATUS_NULL_ARGUMENT;
+    }
+    bytes_zero(certificate, sizeof(*certificate));
+
+    if (!virtual_memory_initialized) {
+        return VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
+    }
+
+    if (task_stack_mutation_epoch == 0U ||
+        active_task_stack_mapped_pages > VM_TASK_STACK_PAGE_COUNT ||
+        !permanent_arena_metadata_matches()) {
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+
+    certificate->mutation_epoch = task_stack_mutation_epoch;
+    certificate->mapped_pages = active_task_stack_mapped_pages;
+    return VIRTUAL_MEMORY_STATUS_OK;
+}
+
+static bool virtual_memory_lock_register(void)
+{
+    enum spinlock_status status;
+
+    if (virtual_memory_lock_registered) {
+        return true;
+    }
+
+    status = spinlock_runtime_register(
+        &virtual_memory_lock,
+        VIRTUAL_MEMORY_LOCK_INDEX,
+        SPINLOCK_CLASS_VIRTUAL_MEMORY,
+        UINT8_C(0)
+    );
+    if (status != SPINLOCK_STATUS_OK) {
+        return false;
+    }
+
+    virtual_memory_lock_registered = true;
+    return true;
+}
+
+static bool virtual_memory_lock_acquire(struct spinlock_irq_token *token)
+{
+    return virtual_memory_lock_registered && !virtual_memory_poisoned &&
+        spinlock_irqsave_acquire(&virtual_memory_lock, token) ==
+            SPINLOCK_STATUS_OK;
+}
+
+static enum virtual_memory_status virtual_memory_lock_failure_status(void)
+{
+    return virtual_memory_lock_registered
+        ? VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE
+        : VIRTUAL_MEMORY_STATUS_NOT_INITIALIZED;
+}
+
+static bool virtual_memory_lock_exit(struct spinlock_irq_token *token)
+{
+    if (spinlock_irqrestore_release(&virtual_memory_lock, token) !=
+            SPINLOCK_STATUS_OK) {
+        virtual_memory_poisoned = true;
+        return false;
+    }
+    return true;
+}
+
+static enum virtual_memory_status virtual_memory_lock_finish(
+    struct spinlock_irq_token *token,
+    enum virtual_memory_status status
+)
+{
+    return virtual_memory_lock_exit(token)
+        ? status
+        : VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+}
+
+enum virtual_memory_status virtual_memory_initialize(
+    const struct acpi_topology *topology,
+    struct virtual_memory_layout *layout
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (layout != NULL) {
+            layout_reset(layout);
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_register() ||
+        !virtual_memory_lock_acquire(&token)) {
+        if (layout != NULL) {
+            layout_reset(layout);
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    status = virtual_memory_initialize_unguarded(topology, layout);
+    if (!virtual_memory_lock_exit(&token)) {
+        if (layout != NULL) {
+            layout_reset(layout);
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && layout != NULL) {
+        layout_reset(layout);
+    }
+    return status;
+}
+
+enum virtual_memory_status virtual_memory_validate(void)
+{
+    struct spinlock_irq_token token;
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        return virtual_memory_lock_failure_status();
+    }
+    return virtual_memory_lock_finish(
+        &token,
+        virtual_memory_validate_unguarded()
+    );
+}
+
+enum virtual_memory_status virtual_memory_query(
+    uint64_t virtual_address,
+    struct virtual_memory_mapping *mapping
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return virtual_memory_lock_failure_status();
+    }
+    status = virtual_memory_query_unguarded(virtual_address, mapping);
+    if (!virtual_memory_lock_exit(&token)) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && mapping != NULL) {
+        bytes_zero(mapping, sizeof(*mapping));
+    }
+    return status;
+}
+
+enum virtual_memory_status virtual_memory_query_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    struct virtual_memory_mapping *mapping
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return virtual_memory_lock_failure_status();
+    }
+    status = virtual_memory_query_task_stack_page_unguarded(
+        slot_index,
+        page_index,
+        mapping
+    );
+    if (!virtual_memory_lock_exit(&token)) {
+        if (mapping != NULL) {
+            bytes_zero(mapping, sizeof(*mapping));
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && mapping != NULL) {
+        bytes_zero(mapping, sizeof(*mapping));
+    }
+    return status;
+}
+
+enum virtual_memory_status virtual_memory_map_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    uintptr_t physical_address
+)
+{
+    struct spinlock_irq_token token;
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        return virtual_memory_lock_failure_status();
+    }
+    return virtual_memory_lock_finish(
+        &token,
+        virtual_memory_map_task_stack_page_unguarded(
+            slot_index,
+            page_index,
+            physical_address
+        )
+    );
+}
+
+enum virtual_memory_status virtual_memory_unmap_task_stack_page(
+    size_t slot_index,
+    size_t page_index,
+    uintptr_t expected_physical_address
+)
+{
+    struct spinlock_irq_token token;
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        return virtual_memory_lock_failure_status();
+    }
+    return virtual_memory_lock_finish(
+        &token,
+        virtual_memory_unmap_task_stack_page_unguarded(
+            slot_index,
+            page_index,
+            expected_physical_address
+        )
+    );
+}
+
+enum virtual_memory_status virtual_memory_map_heap_page(
+    uint64_t virtual_address,
+    uintptr_t physical_address
+)
+{
+    struct spinlock_irq_token token;
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        return virtual_memory_lock_failure_status();
+    }
+    return virtual_memory_lock_finish(
+        &token,
+        virtual_memory_map_heap_page_unguarded(
+            virtual_address,
+            physical_address
+        )
+    );
+}
+
+enum virtual_memory_status virtual_memory_unmap_heap_page(
+    uint64_t virtual_address,
+    uintptr_t expected_physical_address
+)
+{
+    struct spinlock_irq_token token;
+
+    if (cpu_interrupts_enabled()) {
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        return virtual_memory_lock_failure_status();
+    }
+    return virtual_memory_lock_finish(
+        &token,
+        virtual_memory_unmap_heap_page_unguarded(
+            virtual_address,
+            expected_physical_address
+        )
+    );
+}
+
+enum virtual_memory_status virtual_memory_runtime_get_stats(
+    struct virtual_memory_runtime_stats *stats
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return virtual_memory_lock_failure_status();
+    }
+    status = virtual_memory_runtime_get_stats_unguarded(stats);
+    if (!virtual_memory_lock_exit(&token)) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && stats != NULL) {
+        bytes_zero(stats, sizeof(*stats));
+    }
+    return status;
+}
+
+enum virtual_memory_status virtual_memory_validate_heap_backing(
+    const uintptr_t *committed_frames,
+    size_t committed_page_count,
+    const uintptr_t *staged_frames,
+    size_t staged_page_count,
+    struct virtual_memory_runtime_stats *stats
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return virtual_memory_lock_failure_status();
+    }
+    status = virtual_memory_validate_heap_backing_unguarded(
+        committed_frames,
+        committed_page_count,
+        staged_frames,
+        staged_page_count,
+        stats
+    );
+    if (!virtual_memory_lock_exit(&token)) {
+        if (stats != NULL) {
+            bytes_zero(stats, sizeof(*stats));
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && stats != NULL) {
+        bytes_zero(stats, sizeof(*stats));
+    }
+    return status;
+}
+
+enum virtual_memory_status virtual_memory_task_stack_certificate_get(
+    struct virtual_memory_task_stack_certificate *certificate
+)
+{
+    struct spinlock_irq_token token;
+    enum virtual_memory_status status;
+
+    if (cpu_interrupts_enabled()) {
+        if (certificate != NULL) {
+            bytes_zero(certificate, sizeof(*certificate));
+        }
+        return VIRTUAL_MEMORY_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!virtual_memory_lock_acquire(&token)) {
+        if (certificate != NULL) {
+            bytes_zero(certificate, sizeof(*certificate));
+        }
+        return virtual_memory_lock_failure_status();
+    }
+    status = virtual_memory_task_stack_certificate_get_unguarded(certificate);
+    if (!virtual_memory_lock_exit(&token)) {
+        if (certificate != NULL) {
+            bytes_zero(certificate, sizeof(*certificate));
+        }
+        return VIRTUAL_MEMORY_STATUS_VALIDATION_FAILURE;
+    }
+    if (status != VIRTUAL_MEMORY_STATUS_OK && certificate != NULL) {
+        bytes_zero(certificate, sizeof(*certificate));
+    }
+    return status;
+}
+
+static bool virtual_memory_test_fail_heap_map_after_unguarded(
+    size_t successful_maps
+)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_heap_map_failure_enabled ||
@@ -2515,7 +3113,7 @@ bool virtual_memory_test_fail_heap_map_after(size_t successful_maps)
     return true;
 }
 
-bool virtual_memory_test_report_uncertain_heap_map_once(void)
+static bool virtual_memory_test_report_uncertain_heap_map_once_unguarded(void)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_heap_map_failure_enabled ||
@@ -2529,7 +3127,9 @@ bool virtual_memory_test_report_uncertain_heap_map_once(void)
     return true;
 }
 
-bool virtual_memory_test_fail_task_stack_map_after(size_t successful_maps)
+static bool virtual_memory_test_fail_task_stack_map_after_unguarded(
+    size_t successful_maps
+)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_task_stack_map_failure_enabled ||
@@ -2544,7 +3144,8 @@ bool virtual_memory_test_fail_task_stack_map_after(size_t successful_maps)
     return true;
 }
 
-bool virtual_memory_test_report_uncertain_task_stack_map_once(void)
+static bool
+virtual_memory_test_report_uncertain_task_stack_map_once_unguarded(void)
 {
     if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
         test_task_stack_map_failure_enabled ||
@@ -2558,9 +3159,168 @@ bool virtual_memory_test_report_uncertain_task_stack_map_once(void)
     return true;
 }
 
+static bool virtual_memory_test_set_task_stack_mutation_epoch_unguarded(
+    uint64_t mutation_epoch
+)
+{
+    if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
+        mutation_epoch == 0U) {
+        return false;
+    }
+
+    task_stack_mutation_epoch = mutation_epoch;
+    return true;
+}
+
+static bool virtual_memory_test_task_stack_state_matches_unguarded(
+    size_t slot_index,
+    size_t page_index,
+    bool expected_mapped,
+    uintptr_t expected_physical_address,
+    size_t expected_total_mapped_pages
+)
+{
+    struct virtual_memory_mapping mapping;
+    uint64_t virtual_address;
+    enum virtual_memory_status status;
+
+    if (!virtual_memory_initialized || cpu_interrupts_enabled() ||
+        expected_total_mapped_pages > VM_TASK_STACK_PAGE_COUNT ||
+        task_stack_page_address(slot_index, page_index, &virtual_address) !=
+            VIRTUAL_MEMORY_STATUS_OK) {
+        return false;
+    }
+
+    status = query_arena(&permanent_arena, virtual_address, &mapping);
+    if (expected_mapped) {
+        return status == VIRTUAL_MEMORY_STATUS_OK &&
+            mapping.physical_address ==
+                (uint64_t)expected_physical_address &&
+            mapping.permissions == VIRTUAL_MEMORY_WRITABLE &&
+            active_task_stack_mapped_pages == expected_total_mapped_pages;
+    }
+
+    return status == VIRTUAL_MEMORY_STATUS_NOT_MAPPED &&
+        active_task_stack_mapped_pages == expected_total_mapped_pages;
+}
+
+static bool virtual_memory_test_hook_finish(
+    struct spinlock_irq_token *token,
+    bool result
+)
+{
+    return virtual_memory_lock_exit(token) && result;
+}
+
+bool virtual_memory_test_fail_heap_map_after(size_t successful_maps)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    result = virtual_memory_test_fail_heap_map_after_unguarded(
+        successful_maps
+    );
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
+bool virtual_memory_test_report_uncertain_heap_map_once(void)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    result = virtual_memory_test_report_uncertain_heap_map_once_unguarded();
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
+bool virtual_memory_test_fail_task_stack_map_after(size_t successful_maps)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    result = virtual_memory_test_fail_task_stack_map_after_unguarded(
+        successful_maps
+    );
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
+bool virtual_memory_test_report_uncertain_task_stack_map_once(void)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    result =
+        virtual_memory_test_report_uncertain_task_stack_map_once_unguarded();
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
+bool virtual_memory_test_set_task_stack_mutation_epoch(uint64_t mutation_epoch)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    result = virtual_memory_test_set_task_stack_mutation_epoch_unguarded(
+        mutation_epoch
+    );
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
+bool virtual_memory_test_task_stack_state_matches(
+    size_t slot_index,
+    size_t page_index,
+    bool expected_mapped,
+    uintptr_t expected_physical_address,
+    size_t expected_total_mapped_pages
+)
+{
+    struct spinlock_irq_token token;
+    bool result;
+
+    if (cpu_interrupts_enabled() || !virtual_memory_lock_registered ||
+        spinlock_irqsave_acquire(&virtual_memory_lock, &token) !=
+            SPINLOCK_STATUS_OK) {
+        return false;
+    }
+    result = virtual_memory_test_task_stack_state_matches_unguarded(
+        slot_index,
+        page_index,
+        expected_mapped,
+        expected_physical_address,
+        expected_total_mapped_pages
+    );
+    return virtual_memory_test_hook_finish(&token, result);
+}
+
 bool virtual_memory_ready(void)
 {
-    return virtual_memory_initialized;
+    struct spinlock_irq_token token;
+    bool ready;
+
+    if (cpu_interrupts_enabled() ||
+        !virtual_memory_lock_acquire(&token)) {
+        return false;
+    }
+    ready = virtual_memory_initialized;
+    return virtual_memory_lock_exit(&token) && ready;
 }
 
 const char *virtual_memory_status_string(enum virtual_memory_status status)

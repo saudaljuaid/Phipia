@@ -8,12 +8,14 @@
 #include <zenith/heap.h>
 #include <zenith/interrupts.h>
 #include <zenith/memory.h>
+#include <zenith/spinlock.h>
 #include <zenith/virtual_memory.h>
 
 #include "heap_core.h"
 
 #define HEAP_PAGE_COUNT \
     ((size_t)(VIRTUAL_MEMORY_HEAP_SIZE / ZENITH_PAGE_SIZE))
+#define HEAP_LOCK_INDEX UINT32_C(2)
 
 _Static_assert(sizeof(uintptr_t) == sizeof(uint64_t),
     "the kernel heap requires 64-bit pointers");
@@ -21,8 +23,13 @@ _Static_assert(VIRTUAL_MEMORY_HEAP_SIZE % ZENITH_PAGE_SIZE == 0U,
     "the kernel heap window must contain whole pages");
 _Static_assert(VIRTUAL_MEMORY_HEAP_BASE % ZENITH_PAGE_SIZE == 0U,
     "the kernel heap base must be page aligned");
+_Static_assert(HEAP_PAGE_COUNT == FRAME_ALLOCATOR_HEAP_VALIDATION_LIMIT,
+    "heap and physical batch-validation limits must agree");
 _Static_assert(VIRTUAL_MEMORY_HEAP_SIZE <= SIZE_MAX,
     "the kernel heap window must fit in size_t");
+_Static_assert(SPINLOCK_CLASS_HEAP < SPINLOCK_CLASS_VIRTUAL_MEMORY &&
+    SPINLOCK_CLASS_VIRTUAL_MEMORY < SPINLOCK_CLASS_PHYSICAL_MEMORY,
+    "heap transactions must nest through VM into physical memory");
 
 static struct heap_core_state active_core;
 static struct heap_core_state candidate_core;
@@ -33,6 +40,8 @@ static bool transaction_mapped[HEAP_PAGE_COUNT];
 static size_t failed_allocations;
 static bool heap_initialized;
 static bool heap_poisoned;
+static bool heap_lock_registered;
+static struct spinlock heap_lock;
 
 static bool forbidden_context(void)
 {
@@ -58,34 +67,6 @@ static bool round_up_pages(uint64_t bytes, uint64_t *rounded_bytes)
     }
 
     *rounded_bytes = (bytes + mask) & ~mask;
-    return true;
-}
-
-static bool frame_is_heap_owned(uintptr_t frame)
-{
-    enum frame_owner owner = FRAME_OWNER_NONE;
-
-    return frame != 0U &&
-        frame_query_owner(frame, &owner) == FRAME_STATUS_OK &&
-        owner == FRAME_OWNER_KERNEL_HEAP;
-}
-
-static bool frame_is_unique_in(
-    uintptr_t frame,
-    const uintptr_t *frames,
-    size_t count
-)
-{
-    if (frames == NULL) {
-        return false;
-    }
-
-    for (size_t index = 0U; index < count; ++index) {
-        if (frames[index] == frame) {
-            return false;
-        }
-    }
-
     return true;
 }
 
@@ -186,44 +167,6 @@ static enum heap_status record_allocation_failure(enum heap_status status)
     return status;
 }
 
-static enum heap_status validate_mapping(
-    uint64_t virtual_address,
-    uintptr_t expected_frame
-)
-{
-    struct virtual_memory_mapping mapping;
-    enum virtual_memory_status status = virtual_memory_query(
-        virtual_address,
-        &mapping
-    );
-
-    if (status != VIRTUAL_MEMORY_STATUS_OK ||
-        mapping.physical_address != (uint64_t)expected_frame ||
-        mapping.permissions != VIRTUAL_MEMORY_WRITABLE) {
-        return HEAP_STATUS_MAPPING_FAILURE;
-    }
-
-    return HEAP_STATUS_OK;
-}
-
-static enum heap_status validate_guard_pages(void)
-{
-    struct virtual_memory_mapping mapping;
-
-    if (virtual_memory_query(
-            VIRTUAL_MEMORY_HEAP_GUARD_BELOW,
-            &mapping
-        ) != VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
-        virtual_memory_query(
-            VIRTUAL_MEMORY_HEAP_GUARD_ABOVE,
-            &mapping
-        ) != VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
-        return HEAP_STATUS_MAPPING_FAILURE;
-    }
-
-    return HEAP_STATUS_OK;
-}
-
 static enum heap_status validate_candidate(
     const struct heap_core_state *candidate,
     size_t old_page_count,
@@ -235,6 +178,8 @@ static enum heap_status validate_candidate(
     struct virtual_memory_runtime_stats vm_stats;
     size_t total_pages;
     enum heap_core_status core_status;
+    enum frame_status frame_status;
+    enum virtual_memory_status vm_status;
 
     if (old_page_count > HEAP_PAGE_COUNT ||
         added_page_count > HEAP_PAGE_COUNT - old_page_count) {
@@ -251,15 +196,39 @@ static enum heap_status validate_candidate(
             : HEAP_STATUS_CORRUPTED_STATE;
     }
 
-    if (core_stats.committed != (uint64_t)total_pages * ZENITH_PAGE_SIZE ||
-        frame_allocator_validate() != FRAME_STATUS_OK ||
-        virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK ||
-        virtual_memory_runtime_get_stats(&vm_stats) !=
-            VIRTUAL_MEMORY_STATUS_OK ||
+    if (core_stats.committed != (uint64_t)total_pages * ZENITH_PAGE_SIZE) {
+        return HEAP_STATUS_VALIDATION_FAILURE;
+    }
+
+    frame_status = frame_allocator_validate_heap_owners(
+        backing_frames,
+        old_page_count,
+        transaction_frames,
+        added_page_count
+    );
+    if (frame_status == FRAME_STATUS_OWNER_MISMATCH) {
+        return HEAP_STATUS_MAPPING_FAILURE;
+    }
+    if (frame_status != FRAME_STATUS_OK) {
+        return HEAP_STATUS_VALIDATION_FAILURE;
+    }
+
+    vm_status = virtual_memory_validate_heap_backing(
+        backing_frames,
+        old_page_count,
+        transaction_frames,
+        added_page_count,
+        &vm_stats
+    );
+
+    if (vm_status == VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH) {
+        return HEAP_STATUS_MAPPING_FAILURE;
+    }
+
+    if (vm_status != VIRTUAL_MEMORY_STATUS_OK ||
         vm_stats.heap_window_pages != HEAP_PAGE_COUNT ||
         vm_stats.heap_mapped_pages != total_pages ||
-        vm_stats.table_pages_used > vm_stats.table_pages_capacity ||
-        validate_guard_pages() != HEAP_STATUS_OK) {
+        vm_stats.table_pages_used > vm_stats.table_pages_capacity) {
         return HEAP_STATUS_VALIDATION_FAILURE;
     }
 
@@ -273,40 +242,8 @@ static enum heap_status validate_candidate(
         return HEAP_STATUS_STATS_INVALID;
     }
 
-    for (size_t index = 0U; index < old_page_count; ++index) {
-        if (!frame_is_heap_owned(backing_frames[index]) ||
-            !frame_is_unique_in(
-                backing_frames[index],
-                backing_frames,
-                index
-            ) ||
-            validate_mapping(
-                VIRTUAL_MEMORY_HEAP_BASE +
-                    (uint64_t)index * ZENITH_PAGE_SIZE,
-                backing_frames[index]
-            ) != HEAP_STATUS_OK) {
-            return HEAP_STATUS_MAPPING_FAILURE;
-        }
-    }
-
     for (size_t index = 0U; index < added_page_count; ++index) {
-        if (!transaction_mapped[index] ||
-            !frame_is_heap_owned(transaction_frames[index]) ||
-            !frame_is_unique_in(
-                transaction_frames[index],
-                backing_frames,
-                old_page_count
-            ) ||
-            !frame_is_unique_in(
-                transaction_frames[index],
-                transaction_frames,
-                index
-            ) ||
-            validate_mapping(
-                VIRTUAL_MEMORY_HEAP_BASE +
-                    (uint64_t)(old_page_count + index) * ZENITH_PAGE_SIZE,
-                transaction_frames[index]
-            ) != HEAP_STATUS_OK) {
+        if (!transaction_mapped[index]) {
             return HEAP_STATUS_MAPPING_FAILURE;
         }
     }
@@ -471,6 +408,8 @@ static enum heap_status validate_active(void)
     struct virtual_memory_runtime_stats vm_stats;
     size_t mapped_pages;
     enum heap_core_status core_status;
+    enum frame_status frame_status;
+    enum virtual_memory_status vm_status;
 
     if (!heap_initialized) {
         return HEAP_STATUS_NOT_INITIALIZED;
@@ -495,16 +434,39 @@ static enum heap_status validate_active(void)
         stats.live_extent_bytes + stats.reusable_bytes != stats.committed ||
         stats.largest_reusable_block > stats.reusable_bytes ||
         stats.descriptors_in_use > stats.descriptor_limit ||
-        stats.descriptor_limit != HEAP_DESCRIPTOR_LIMIT ||
-        frame_allocator_validate() != FRAME_STATUS_OK ||
-        virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK ||
-        virtual_memory_runtime_get_stats(&vm_stats) !=
-            VIRTUAL_MEMORY_STATUS_OK ||
-        validate_guard_pages() != HEAP_STATUS_OK) {
+        stats.descriptor_limit != HEAP_DESCRIPTOR_LIMIT) {
         return HEAP_STATUS_VALIDATION_FAILURE;
     }
 
     mapped_pages = (size_t)(stats.committed / ZENITH_PAGE_SIZE);
+    frame_status = frame_allocator_validate_heap_owners(
+        backing_frames,
+        mapped_pages,
+        NULL,
+        0U
+    );
+    if (frame_status == FRAME_STATUS_OWNER_MISMATCH) {
+        return HEAP_STATUS_MAPPING_FAILURE;
+    }
+    if (frame_status != FRAME_STATUS_OK) {
+        return HEAP_STATUS_VALIDATION_FAILURE;
+    }
+
+    vm_status = virtual_memory_validate_heap_backing(
+        backing_frames,
+        mapped_pages,
+        NULL,
+        0U,
+        &vm_stats
+    );
+
+    if (vm_status == VIRTUAL_MEMORY_STATUS_MAPPING_MISMATCH) {
+        return HEAP_STATUS_MAPPING_FAILURE;
+    }
+
+    if (vm_status != VIRTUAL_MEMORY_STATUS_OK) {
+        return HEAP_STATUS_VALIDATION_FAILURE;
+    }
 
     if (mapped_pages > HEAP_PAGE_COUNT ||
         vm_stats.heap_window_pages != HEAP_PAGE_COUNT ||
@@ -518,27 +480,8 @@ static enum heap_status validate_active(void)
         return HEAP_STATUS_STATS_INVALID;
     }
 
-    for (size_t index = 0U; index < HEAP_PAGE_COUNT; ++index) {
-        struct virtual_memory_mapping mapping;
-        enum virtual_memory_status vm_status = virtual_memory_query(
-            VIRTUAL_MEMORY_HEAP_BASE + (uint64_t)index * ZENITH_PAGE_SIZE,
-            &mapping
-        );
-
-        if (index < mapped_pages) {
-            if (!frame_is_heap_owned(backing_frames[index]) ||
-                !frame_is_unique_in(
-                    backing_frames[index],
-                    backing_frames,
-                    index
-                ) ||
-                vm_status != VIRTUAL_MEMORY_STATUS_OK ||
-                mapping.physical_address != (uint64_t)backing_frames[index] ||
-                mapping.permissions != VIRTUAL_MEMORY_WRITABLE) {
-                return HEAP_STATUS_MAPPING_FAILURE;
-            }
-        } else if (backing_frames[index] != 0U ||
-            vm_status != VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
+    for (size_t index = mapped_pages; index < HEAP_PAGE_COUNT; ++index) {
+        if (backing_frames[index] != 0U) {
             return HEAP_STATUS_MAPPING_FAILURE;
         }
     }
@@ -694,7 +637,7 @@ bool heap_self_test(void)
         core_self_test();
 }
 
-enum heap_status heap_initialize(void)
+static enum heap_status heap_initialize_unguarded(void)
 {
     struct frame_allocator_stats frame_stats;
     struct virtual_memory_runtime_stats vm_stats;
@@ -708,12 +651,10 @@ enum heap_status heap_initialize(void)
     }
 
     if (frame_allocator_validate() != FRAME_STATUS_OK ||
-        virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK ||
         virtual_memory_runtime_get_stats(&vm_stats) !=
             VIRTUAL_MEMORY_STATUS_OK ||
         vm_stats.heap_window_pages != HEAP_PAGE_COUNT ||
-        vm_stats.heap_mapped_pages != 0U ||
-        validate_guard_pages() != HEAP_STATUS_OK) {
+        vm_stats.heap_mapped_pages != 0U) {
         return HEAP_STATUS_VALIDATION_FAILURE;
     }
 
@@ -752,7 +693,7 @@ enum heap_status heap_initialize(void)
     return HEAP_STATUS_OK;
 }
 
-enum heap_status heap_allocate(
+static enum heap_status heap_allocate_unguarded(
     size_t byte_size,
     size_t alignment,
     void **allocation
@@ -903,7 +844,7 @@ enum heap_status heap_allocate(
     return HEAP_STATUS_OK;
 }
 
-enum heap_status heap_deallocate(void *allocation)
+static enum heap_status heap_deallocate_unguarded(void *allocation)
 {
     struct heap_core_stats stats;
     uintptr_t address;
@@ -955,7 +896,7 @@ enum heap_status heap_deallocate(void *allocation)
     return HEAP_STATUS_OK;
 }
 
-enum heap_status heap_validate(void)
+static enum heap_status heap_validate_unguarded(void)
 {
     if (forbidden_context()) {
         return HEAP_STATUS_FORBIDDEN_CONTEXT;
@@ -964,7 +905,7 @@ enum heap_status heap_validate(void)
     return validate_active();
 }
 
-enum heap_status heap_get_stats(struct heap_stats *stats)
+static enum heap_status heap_get_stats_unguarded(struct heap_stats *stats)
 {
     struct heap_core_stats core_stats;
     enum heap_status status;
@@ -1013,6 +954,182 @@ enum heap_status heap_get_stats(struct heap_stats *stats)
     stats->descriptor_limit = (size_t)core_stats.descriptor_limit;
     stats->failed_allocations = failed_allocations;
     return HEAP_STATUS_OK;
+}
+
+static bool heap_lock_register(void)
+{
+    enum spinlock_status status;
+
+    if (heap_lock_registered) {
+        return true;
+    }
+
+    status = spinlock_runtime_register(
+        &heap_lock,
+        HEAP_LOCK_INDEX,
+        SPINLOCK_CLASS_HEAP,
+        UINT8_C(0)
+    );
+    if (status != SPINLOCK_STATUS_OK) {
+        return false;
+    }
+
+    heap_lock_registered = true;
+    return true;
+}
+
+static bool heap_lock_acquire(struct spinlock_irq_token *token)
+{
+    return heap_lock_registered && !heap_poisoned &&
+        spinlock_irqsave_acquire(&heap_lock, token) == SPINLOCK_STATUS_OK;
+}
+
+static enum heap_status heap_lock_failure_status(void)
+{
+    return heap_lock_registered
+        ? HEAP_STATUS_CORRUPTED_STATE
+        : HEAP_STATUS_NOT_INITIALIZED;
+}
+
+static bool heap_lock_exit(struct spinlock_irq_token *token)
+{
+    if (spinlock_irqrestore_release(&heap_lock, token) !=
+            SPINLOCK_STATUS_OK) {
+        heap_poisoned = true;
+        return false;
+    }
+    return true;
+}
+
+static enum heap_status heap_lock_finish(
+    struct spinlock_irq_token *token,
+    enum heap_status status
+)
+{
+    if (!heap_lock_exit(token)) {
+        return HEAP_STATUS_CORRUPTED_STATE;
+    }
+    return status;
+}
+
+enum heap_status heap_initialize(void)
+{
+    struct spinlock_irq_token token;
+
+    if (forbidden_context()) {
+        return HEAP_STATUS_FORBIDDEN_CONTEXT;
+    }
+
+    if (!heap_lock_register() || !heap_lock_acquire(&token)) {
+        return HEAP_STATUS_CORRUPTED_STATE;
+    }
+
+    return heap_lock_finish(&token, heap_initialize_unguarded());
+}
+
+enum heap_status heap_allocate(
+    size_t byte_size,
+    size_t alignment,
+    void **allocation
+)
+{
+    struct spinlock_irq_token token;
+    enum heap_status status;
+
+    if (forbidden_context()) {
+        if (allocation != NULL) {
+            *allocation = NULL;
+        }
+        return HEAP_STATUS_FORBIDDEN_CONTEXT;
+    }
+
+    if (!heap_lock_acquire(&token)) {
+        if (allocation != NULL) {
+            *allocation = NULL;
+        }
+        return heap_lock_failure_status();
+    }
+
+    status = heap_allocate_unguarded(byte_size, alignment, allocation);
+    if (!heap_lock_exit(&token)) {
+        if (allocation != NULL) {
+            *allocation = NULL;
+        }
+        return HEAP_STATUS_CORRUPTED_STATE;
+    }
+    if (status != HEAP_STATUS_OK && allocation != NULL) {
+        *allocation = NULL;
+    }
+    return status;
+}
+
+enum heap_status heap_deallocate(void *allocation)
+{
+    struct spinlock_irq_token token;
+
+    if (forbidden_context()) {
+        return HEAP_STATUS_FORBIDDEN_CONTEXT;
+    }
+
+    if (!heap_lock_acquire(&token)) {
+        return heap_lock_failure_status();
+    }
+
+    return heap_lock_finish(&token, heap_deallocate_unguarded(allocation));
+}
+
+enum heap_status heap_validate(void)
+{
+    struct spinlock_irq_token token;
+
+    if (forbidden_context()) {
+        return HEAP_STATUS_FORBIDDEN_CONTEXT;
+    }
+
+    if (!heap_lock_acquire(&token)) {
+        return heap_lock_failure_status();
+    }
+
+    return heap_lock_finish(&token, heap_validate_unguarded());
+}
+
+enum heap_status heap_get_stats(struct heap_stats *stats)
+{
+    struct spinlock_irq_token token;
+    enum heap_status status;
+
+    if (forbidden_context()) {
+        if (stats != NULL) {
+            struct heap_stats zero = {0U};
+
+            *stats = zero;
+        }
+        return HEAP_STATUS_FORBIDDEN_CONTEXT;
+    }
+
+    if (!heap_lock_acquire(&token)) {
+        if (stats != NULL) {
+            struct heap_stats zero = {0U};
+
+            *stats = zero;
+        }
+        return heap_lock_failure_status();
+    }
+    status = heap_get_stats_unguarded(stats);
+    if (!heap_lock_exit(&token)) {
+        if (stats != NULL) {
+            struct heap_stats zero = {0U};
+
+            *stats = zero;
+        }
+        return HEAP_STATUS_CORRUPTED_STATE;
+    }
+    if (status != HEAP_STATUS_OK && stats != NULL) {
+        struct heap_stats zero = {0U};
+
+        *stats = zero;
+    }
+    return status;
 }
 
 const char *heap_status_string(enum heap_status status)

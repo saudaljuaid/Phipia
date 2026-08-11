@@ -56,6 +56,7 @@ static void ist_handler(struct interrupt_frame *frame, void *context)
 bool interrupt_frame_layout_self_test(void)
 {
     return sizeof(struct interrupt_frame) == 184U &&
+        INTERRUPT_KERNEL_FRAME_SIZE == sizeof(struct interrupt_frame) &&
         offsetof(struct interrupt_frame, cr2) == 0U &&
         offsetof(struct interrupt_frame, rax) == 120U &&
         offsetof(struct interrupt_frame, vector) == 128U &&
@@ -63,6 +64,7 @@ bool interrupt_frame_layout_self_test(void)
         offsetof(struct interrupt_frame, rip) == 144U &&
         offsetof(struct interrupt_frame, rsp) == 168U &&
         offsetof(struct interrupt_frame, ss) == 176U &&
+        interrupt_initialization_rollback_self_test() &&
         cpu_read_cs() == CPU_GDT_CODE_SELECTOR &&
         cpu_read_task_register() == CPU_GDT_TSS_SELECTOR &&
         interrupts_validate() == INTERRUPT_STATUS_OK;
@@ -82,6 +84,16 @@ bool interrupt_breakpoint_self_test(void)
 
     if (interrupt_register_handler(3U, NULL, NULL) !=
         INTERRUPT_STATUS_NULL_HANDLER) {
+        return false;
+    }
+
+    if (interrupt_register_handler(
+            INTERRUPT_RESCHEDULE_VECTOR,
+            breakpoint_handler,
+            NULL
+        ) != INTERRUPT_STATUS_RESERVED_VECTOR ||
+        interrupt_unregister_handler(INTERRUPT_RESCHEDULE_VECTOR) !=
+            INTERRUPT_STATUS_RESERVED_VECTOR) {
         return false;
     }
 

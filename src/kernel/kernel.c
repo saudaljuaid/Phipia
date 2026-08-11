@@ -10,10 +10,12 @@
 #include <zenith/heap.h>
 #include <zenith/interrupts.h>
 #include <zenith/memory.h>
+#include <zenith/percpu.h>
 #include <zenith/pic.h>
 #include <zenith/pit.h>
 #include <zenith/scheduler.h>
 #include <zenith/self_test.h>
+#include <zenith/spinlock.h>
 #include <zenith/test.h>
 #include <zenith/time.h>
 #include <zenith/virtual_memory.h>
@@ -219,9 +221,10 @@ static void prove_frame_lifecycle(void)
 
     if (frame_allocate_owned(FRAME_OWNER_NONE, &rejected_frame) !=
             FRAME_STATUS_INVALID_OWNER ||
-        rejected_frame != UINTPTR_MAX ||
+        rejected_frame != 0U ||
         frame_query_owner(first_frame, NULL) != FRAME_STATUS_NULL_ARGUMENT ||
         frame_query_owner(1U, &owner) != FRAME_STATUS_UNALIGNED_ADDRESS ||
+        owner != FRAME_OWNER_NONE ||
         frame_query_owner(0U, &owner) !=
             FRAME_STATUS_FRAME_NOT_ALLOCATABLE) {
         console_panic("frame allocator failed owner rejection checks");
@@ -355,7 +358,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
+    enum percpu_status percpu_status;
     enum pit_status pit_status;
+    enum spinlock_status spinlock_status;
     enum kernel_time_status time_status;
     uint64_t monotonic_before;
     uint64_t monotonic_after;
@@ -365,6 +370,18 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum virtual_memory_status virtual_memory_status;
 
     console_initialize();
+    percpu_status = percpu_runtime_initialize_current(0U);
+
+    if (percpu_status != PERCPU_STATUS_OK) {
+        console_panic(percpu_status_string(percpu_status));
+    }
+
+    spinlock_status = spinlock_runtime_initialize();
+
+    if (spinlock_status != SPINLOCK_STATUS_OK) {
+        console_panic(spinlock_status_string(spinlock_status));
+    }
+
     interrupt_status = interrupts_initialize();
 
     if (interrupt_status != INTERRUPT_STATUS_OK) {
@@ -380,6 +397,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Zenith OS: kernel online\n");
     console_write("Zenith OS: descriptor tables verified\n");
     console_write("Zenith OS: interrupt foundation online\n");
+
+    if (percpu_runtime_validate() != PERCPU_STATUS_OK ||
+        spinlock_runtime_validate() != SPINLOCK_STATUS_OK) {
+        console_panic("per-CPU irqsave runtime validation failed");
+    }
+
+    console_write("Zenith OS: per-CPU irqsave foundation online\n");
 
     if (!boot_parser_self_test()) {
         console_panic("Multiboot2 parser self-test failed");
@@ -614,7 +638,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         test_scenario == KERNEL_TEST_NORMAL ||
         test_scenario == KERNEL_TEST_HEAP ||
         test_scenario == KERNEL_TEST_SCHEDULER ||
-        test_scenario == KERNEL_TEST_SCHEDULER_GUARD) {
+        test_scenario == KERNEL_TEST_SCHEDULER_GUARD ||
+        test_scenario == KERNEL_TEST_SCHEDULER_NM) {
         enum heap_status heap_status = heap_initialize();
         enum scheduler_status scheduler_status;
 

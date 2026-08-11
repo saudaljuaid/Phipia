@@ -1031,7 +1031,7 @@ static void spurious_handler(struct interrupt_frame *frame, void *context)
     }
 }
 
-static bool local_timer_registers_match(void)
+static bool local_timer_registers_match_state(bool expected_active)
 {
     const uint32_t timer_lvt = mmio_read32(
         active_local_apic_virtual_address,
@@ -1049,13 +1049,13 @@ static bool local_timer_registers_match(void)
         active_local_apic_virtual_address,
         LOCAL_APIC_TIMER_CURRENT_COUNT
     );
-    const uint32_t expected_lvt = local_timer_active
+    const uint32_t expected_lvt = expected_active
         ? LOCAL_APIC_TIMER_PERIODIC | APIC_LOCAL_TIMER_VECTOR
         : LOCAL_APIC_LVT_MASKED | APIC_LOCAL_TIMER_VECTOR;
-    const uint32_t expected_initial_count = local_timer_active
+    const uint32_t expected_initial_count = expected_active
         ? active_timer_configuration.periodic_initial_count
         : 0U;
-    const uint32_t expected_divide_configuration = local_timer_active
+    const uint32_t expected_divide_configuration = expected_active
         ? active_timer_configuration.divide_configuration
         : LOCAL_APIC_TIMER_DIVIDE_BY_16;
 
@@ -1071,7 +1071,78 @@ static bool local_timer_registers_match(void)
         return false;
     }
 
-    return local_timer_active || current_count == 0U;
+    return expected_active || current_count == 0U;
+}
+
+static bool local_timer_registers_match(void)
+{
+    return local_timer_registers_match_state(local_timer_active);
+}
+
+static enum apic_status timer_route_publish_mask(
+    bool masked,
+    bool registers_match
+)
+{
+    if (!registers_match) {
+        return APIC_STATUS_REGISTER_MISMATCH;
+    }
+
+    pit_route_masked = masked;
+    return APIC_STATUS_OK;
+}
+
+static enum apic_status local_timer_retire_state(
+    enum interrupt_status interrupt_status
+)
+{
+    if (interrupt_status != INTERRUPT_STATUS_OK) {
+        return APIC_STATUS_INTERRUPT_FAILURE;
+    }
+
+    local_timer_active = false;
+    timer_configuration_reset(&active_timer_configuration);
+    return APIC_STATUS_OK;
+}
+
+static bool controller_state_publication_self_test(void)
+{
+    struct apic_local_timer_configuration saved_timer_configuration;
+    bool saved_local_timer_active = local_timer_active;
+    bool saved_pit_route_masked = pit_route_masked;
+    bool passed;
+
+    timer_configuration_copy(
+        &saved_timer_configuration,
+        &active_timer_configuration
+    );
+
+    pit_route_masked = false;
+    passed = timer_route_publish_mask(true, false) ==
+            APIC_STATUS_REGISTER_MISMATCH &&
+        !pit_route_masked &&
+        timer_route_publish_mask(true, true) == APIC_STATUS_OK &&
+        pit_route_masked;
+
+    timer_configuration_reset(&active_timer_configuration);
+    active_timer_configuration.divisor = UINT32_C(16);
+    local_timer_active = true;
+    passed = passed &&
+        local_timer_retire_state(INTERRUPT_STATUS_HANDLER_MISSING) ==
+            APIC_STATUS_INTERRUPT_FAILURE &&
+        local_timer_active &&
+        active_timer_configuration.divisor == UINT32_C(16) &&
+        local_timer_retire_state(INTERRUPT_STATUS_OK) == APIC_STATUS_OK &&
+        !local_timer_active &&
+        active_timer_configuration.divisor == 0U;
+
+    pit_route_masked = saved_pit_route_masked;
+    local_timer_active = saved_local_timer_active;
+    timer_configuration_copy(
+        &active_timer_configuration,
+        &saved_timer_configuration
+    );
+    return passed;
 }
 
 static bool active_registers_match(void)
@@ -1150,7 +1221,7 @@ bool apic_self_test(void)
     struct io_apic_probe probes[ACPI_MAX_IO_APICS];
     struct apic_configuration configuration;
 
-    if (initialized) {
+    if (initialized || !controller_state_publication_self_test()) {
         return false;
     }
 
@@ -1745,12 +1816,18 @@ enum apic_status apic_initialize(
     initialized = true;
 
     if (apic_validate() != APIC_STATUS_OK) {
+        interrupt_status = interrupt_unregister_handler(
+            APIC_SPURIOUS_VECTOR
+        );
+        if (interrupt_status != INTERRUPT_STATUS_OK) {
+            return APIC_STATUS_INTERRUPT_FAILURE;
+        }
+
         initialized = false;
         local_timer_active = false;
         active_local_apic_virtual_address = 0U;
         configuration_reset(&active_configuration);
         timer_configuration_reset(&active_timer_configuration);
-        (void)interrupt_unregister_handler(APIC_SPURIOUS_VECTOR);
         return APIC_STATUS_REGISTER_MISMATCH;
     }
 
@@ -1854,13 +1931,10 @@ enum apic_status apic_timer_set_mask(bool masked)
     }
 
     program_timer_route(&active_configuration, masked);
-
-    if (!route_register_matches(&active_configuration, masked)) {
-        return APIC_STATUS_REGISTER_MISMATCH;
-    }
-
-    pit_route_masked = masked;
-    return APIC_STATUS_OK;
+    return timer_route_publish_mask(
+        masked,
+        route_register_matches(&active_configuration, masked)
+    );
 }
 
 bool apic_timer_is_masked(void)
@@ -2171,15 +2245,51 @@ enum apic_status apic_local_timer_calibrate_and_start(
 
     if (apic_local_timer_validate() != APIC_STATUS_OK ||
         apic_validate() != APIC_STATUS_OK) {
-        local_timer_active = false;
-        timer_configuration_reset(&active_timer_configuration);
         local_timer_reset_hardware();
-        (void)interrupt_unregister_handler(APIC_LOCAL_TIMER_VECTOR);
+
+        if (!local_timer_registers_match_state(false)) {
+            return APIC_STATUS_REGISTER_MISMATCH;
+        }
+
+        interrupt_status = interrupt_unregister_handler(
+            APIC_LOCAL_TIMER_VECTOR
+        );
+        if (local_timer_retire_state(interrupt_status) != APIC_STATUS_OK) {
+            return APIC_STATUS_INTERRUPT_FAILURE;
+        }
+
         return APIC_STATUS_REGISTER_MISMATCH;
     }
 
     timer_configuration_copy(configuration, &candidate);
     return APIC_STATUS_OK;
+}
+
+enum apic_status apic_local_timer_stop(void)
+{
+    enum interrupt_status interrupt_status;
+
+    if (!initialized) {
+        return APIC_STATUS_NOT_INITIALIZED;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return APIC_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!local_timer_active) {
+        return APIC_STATUS_LOCAL_TIMER_NOT_ACTIVE;
+    }
+
+    /* Mask and zero the hardware before making the handler unreachable. */
+    local_timer_reset_hardware();
+
+    if (!local_timer_registers_match_state(false)) {
+        return APIC_STATUS_REGISTER_MISMATCH;
+    }
+
+    interrupt_status = interrupt_unregister_handler(APIC_LOCAL_TIMER_VECTOR);
+    return local_timer_retire_state(interrupt_status);
 }
 
 enum apic_status apic_local_timer_validate(void)

@@ -41,14 +41,15 @@ initializes a fixed 16 MiB kernel-heap window. Heap growth obtains frames from
 the existing allocator, maps supervisor RW+NX write-back leaves through the
 permanent hierarchy, zeroes them before publication, and uses fixed external
 metadata for bounded first-fit splitting and coalescing.
-After the heap is valid, Zenith initializes a fixed single-core cooperative
+After the heap is valid, Zenith initializes a fixed single-core preemptive
 scheduler. It represents the bootstrap task separately and supports at most 16
 dynamic ring-zero tasks. Each dynamic task receives one fixed 64 KiB
 page-backed RW+NX stack payload between genuinely absent guard pages. A
-freestanding AMD64 switch preserves the System V callee-saved registers, and
+uniform AMD64 trap-frame switch preserves every GPR plus RIP/CS/RFLAGS, and
 generation handles plus two-phase exit/reap ownership prevent a task stack from
-being reclaimed while it is running. The Local APIC timer remains a time source
-only; it does not preempt or select tasks.
+being reclaimed while it is running. The Local APIC timer requests a scheduler
+decision after each fixed four-tick quantum; switching happens after EOI at the
+outermost eligible interrupt exit.
 
 The day-one success contract is the serial line:
 
@@ -60,6 +61,7 @@ Zenith OS: ACPI root verified
 Zenith OS: ACPI MADT verified
 Zenith OS: ACPI MADT topology verified
 Zenith OS: virtual memory foundation passed
+Zenith OS: per-CPU irqsave foundation online
 Zenith OS: APIC interrupt routing verified
 Zenith OS: Local APIC timer and monotonic clock verified
 Zenith OS: bounded kernel heap verified
@@ -71,7 +73,7 @@ Zenith OS: bounded cooperative scheduler verified
 On Ubuntu 24.04 or a compatible Debian-based environment, install:
 
 ```sh
-sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+sudo apt-get install binutils clang gcc grub-common grub-pc-bin lld make mtools python3 qemu-system-x86 xorriso
 ```
 
 Then run:
@@ -79,13 +81,13 @@ Then run:
 ```sh
 make verify     # clean build, host oracle, ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run fifteen deterministic fault, memory, timer, heap, and scheduler scenarios
+make qemu-tests # run sixteen deterministic fault, memory, timer, heap, and scheduler scenarios
 make run      # optional interactive boot
-make hooks    # enforce verification in this local clone
+make bootstrap # verify the complete toolchain and enforce hooks in this clone
 ```
 
 The default QEMU matrix uses 128 MiB. `QEMU_RAM=19M make qemu-tests` is the
-lowest whole-MiB configuration supported by the complete fifteen-scenario
+lowest whole-MiB configuration supported by the complete sixteen-scenario
 protocol: the heap scenario must simultaneously back the full 16 MiB payload
 window. The canonical GCC/BIOS run reports 4,266 allocatable frames at 19 MiB.
 At 18 MiB it reports 4,010, fewer than the 4,096 simultaneous heap frames that
@@ -108,11 +110,18 @@ supported full-matrix setup.
 - `src/kernel/virtual_memory.c` — bounded permanent mapping construction.
 - `src/kernel/apic.c` — xAPIC routing and calibrated Local APIC timer control.
 - `src/kernel/time.c` — saturating monotonic ticks and checked time conversion.
+- `src/kernel/percpu.c` — bounded BSP/per-CPU identity and runtime ownership.
+- `src/kernel/preempt.c` — IRQ nesting, preemption pins, and deferred reschedule.
+- `src/kernel/spinlock.c` — ordered irqsave locks and exact IF restoration.
 - `src/kernel/heap.c` — transactional page-backed heap ownership and API.
 - `src/kernel/heap_core.c` — fixed-descriptor split/coalesce allocator core.
 - `src/kernel/scheduler.c` — task-stack transactions, lifecycle, and API.
 - `src/kernel/scheduler_core.c` — pure bounded task and ready-ring state machine.
-- `src/arch/x86_64/scheduler.S` — cooperative AMD64 context switching.
+- `src/arch/x86_64/scheduler.S` — task entry and preemption register proofs.
+- `src/kernel/xstate.c` and `src/arch/x86_64/xstate.S` — eager XSAVE/XRSTOR.
+- `src/kernel/address_space_core.c` — bounded process-VM and shootdown state core.
+- `src/kernel/process_core.c`, `syscall_core.c`, and `usercopy_core.c` — bounded
+  ring-three/process/syscall policy cores awaiting runtime activation.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/VIRTUAL_MEMORY.md` — page permissions, cache policy, and CR3 proof.
@@ -127,14 +136,13 @@ supported full-matrix setup.
 
 Zenith now owns the discovered xAPIC interrupt path, uses a calibrated Local
 APIC timer for a single-core monotonic clock, and has one bounded page-backed
-kernel heap plus one bounded cooperative ring-zero scheduler. The PIT remains
+kernel heap plus one bounded preemptive ring-zero scheduler. The PIT remains
 only as the boot calibration reference. Free heap
 space is reusable, but committed pages do not shrink back to the frame
 allocator. The heap-only leaf mapper is not a general virtual-memory manager.
-There is no post-boot drift correction, timer-driven preemption, SMP, dynamic
-interrupt-vector allocation, userspace, process or syscall ABI, blocking or
-sleeping, filesystem, networking, graphics, or general hardware-driver
-framework. A task that never yields retains the CPU. Those capabilities require
+There is no post-boot drift correction, SMP, dynamic
+interrupt-vector allocation, userspace, process or syscall ABI,
+filesystem, networking, graphics, or general hardware-driver framework. Those capabilities require
 separate executable acceptance contracts.
 
 Zenith OS is licensed under GPL-3.0; see `LICENSE`.

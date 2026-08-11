@@ -82,7 +82,8 @@ _start:
     /* Zero a PML4, PDPT, and four 512-entry 2 MiB page directories. */
     movl $pml4_table, %edi
     xorl %eax, %eax
-    movl $(6 * 4096 / 4), %ecx
+    /* Six 4 KiB tables, expressed in the 32-bit units consumed by stosl. */
+    movl $6144, %ecx
     rep stosl
     movl $pdpt_table, %eax
     orl $(PAGE_PRESENT | PAGE_WRITABLE), %eax

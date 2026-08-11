@@ -8,7 +8,10 @@
 #include <zenith/cpu.h>
 #include <zenith/interrupts.h>
 #include <zenith/pic.h>
+#include <zenith/preempt.h>
+#include <zenith/scheduler.h>
 #include <zenith/test.h>
+#include <zenith/xstate.h>
 
 #define IDT_GATE_PRESENT UINT8_C(0x80)
 #define IDT_GATE_INTERRUPT UINT8_C(0x0E)
@@ -67,6 +70,81 @@ static struct descriptor_table_pointer idt_pointer;
 static bool initialized;
 static volatile unsigned int fatal_depth;
 static volatile unsigned int dispatch_depth;
+
+static bool interrupt_vector_is_reserved(uint8_t vector)
+{
+    return vector == 2U || vector == 8U || vector == 18U ||
+        vector == INTERRUPT_RESCHEDULE_VECTOR;
+}
+
+static void reschedule_handler(struct interrupt_frame *frame, void *context)
+{
+    (void)context;
+
+    if (frame == NULL || frame->vector != INTERRUPT_RESCHEDULE_VECTOR) {
+        console_panic("invalid software reschedule interrupt");
+    }
+}
+
+static void handler_slot_clear(struct handler_slot *slot)
+{
+    slot->handler = NULL;
+    __asm__ volatile ("" : : : "memory");
+    slot->context = NULL;
+}
+
+static enum interrupt_status reschedule_runtime_publish(
+    struct handler_slot *slot,
+    enum preempt_status preempt_status
+)
+{
+    if (preempt_status != PREEMPT_STATUS_OK) {
+        handler_slot_clear(slot);
+        return INTERRUPT_STATUS_PREEMPT_FAILURE;
+    }
+
+    slot->context = NULL;
+    __asm__ volatile ("" : : : "memory");
+    slot->handler = reschedule_handler;
+    return INTERRUPT_STATUS_OK;
+}
+
+bool interrupt_initialization_rollback_self_test(void)
+{
+    struct handler_slot slot;
+
+    slot.handler = reschedule_handler;
+    slot.context = (void *)&slot;
+
+    return reschedule_runtime_publish(
+            &slot,
+            PREEMPT_STATUS_CORRUPTED
+        ) == INTERRUPT_STATUS_PREEMPT_FAILURE &&
+        slot.handler == NULL && slot.context == NULL;
+}
+
+/*
+ * The entry frame is always acceptable.  An alternate scheduler frame is
+ * accepted only after the scheduler has committed its new running identity
+ * and can prove exact stack ownership, generation, state, CS/RIP/SS, saved RSP,
+ * and RFLAGS provenance for that identity.
+ */
+static struct interrupt_frame *interrupt_validate_return_frame(
+    struct interrupt_frame *entry_frame,
+    struct interrupt_frame *candidate
+)
+{
+    if (entry_frame == NULL || candidate == NULL ||
+        ((uintptr_t)(void *)candidate & (sizeof(uint64_t) - 1U)) != 0U ||
+        candidate->vector >= INTERRUPT_VECTOR_COUNT ||
+        (candidate->cs & UINT64_C(3)) != 0U ||
+        (candidate != entry_frame &&
+            !scheduler_interrupt_return_frame_is_valid(candidate))) {
+        console_panic("invalid interrupt return frame");
+    }
+
+    return candidate;
+}
 
 static const char *const exception_names[INTERRUPT_EXCEPTION_COUNT] = {
     "divide error",
@@ -209,6 +287,8 @@ static void report_register(const char *name, uint64_t value)
 
 static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
 {
+    enum xstate_status nm_status = XSTATE_STATUS_NOT_INITIALIZED;
+
     cpu_interrupt_disable();
 
     if (fatal_depth != 0U) {
@@ -216,6 +296,9 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     }
 
     fatal_depth = 1U;
+    if (frame->vector == 7U && xstate_runtime_is_initialized()) {
+        nm_status = xstate_runtime_unexpected_nm();
+    }
     console_write("Zenith OS FATAL INTERRUPT\n");
     console_write("  vector=");
     console_write_u64(frame->vector);
@@ -245,6 +328,12 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     report_register("r14", frame->r14);
     report_register("r15", frame->r15);
 
+    if (frame->vector == 7U) {
+        console_write("  xstate=");
+        console_write(xstate_status_string(nm_status));
+        console_putc('\n');
+    }
+
     if (frame->vector == 14U) {
         report_page_fault(frame->error_code);
     }
@@ -257,6 +346,7 @@ enum interrupt_status interrupts_initialize(void)
 {
     enum cpu_status cpu_status;
     enum pic_status pic_status;
+    enum interrupt_status preempt_status;
     enum interrupt_status validation_status;
 
     if (initialized) {
@@ -314,6 +404,14 @@ enum interrupt_status interrupts_initialize(void)
         return INTERRUPT_STATUS_PIC_FAILURE;
     }
 
+    preempt_status = reschedule_runtime_publish(
+        &handlers[INTERRUPT_RESCHEDULE_VECTOR],
+        preempt_runtime_initialize()
+    );
+    if (preempt_status != INTERRUPT_STATUS_OK) {
+        return preempt_status;
+    }
+
     initialized = true;
     return INTERRUPT_STATUS_OK;
 }
@@ -363,7 +461,7 @@ enum interrupt_status interrupt_register_handler(
         return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    if (vector == 2U || vector == 8U || vector == 18U) {
+    if (interrupt_vector_is_reserved(vector)) {
         return INTERRUPT_STATUS_RESERVED_VECTOR;
     }
 
@@ -387,7 +485,7 @@ enum interrupt_status interrupt_unregister_handler(uint8_t vector)
         return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    if (vector == 2U || vector == 8U || vector == 18U) {
+    if (interrupt_vector_is_reserved(vector)) {
         return INTERRUPT_STATUS_RESERVED_VECTOR;
     }
 
@@ -395,14 +493,14 @@ enum interrupt_status interrupt_unregister_handler(uint8_t vector)
         return INTERRUPT_STATUS_HANDLER_MISSING;
     }
 
-    handlers[vector].handler = NULL;
-    __asm__ volatile ("" : : : "memory");
-    handlers[vector].context = NULL;
+    handler_slot_clear(&handlers[vector]);
     return INTERRUPT_STATUS_OK;
 }
 
-void interrupt_dispatch(struct interrupt_frame *frame)
+struct interrupt_frame *interrupt_dispatch(struct interrupt_frame *frame)
 {
+    struct interrupt_frame *candidate;
+    bool reschedule_eligible;
     uint8_t vector;
     struct handler_slot *slot;
 
@@ -419,6 +517,10 @@ void interrupt_dispatch(struct interrupt_frame *frame)
     slot = &handlers[vector];
     ++dispatch_depth;
 
+    if (preempt_runtime_irq_enter() != PREEMPT_STATUS_OK) {
+        console_panic("preemption interrupt-entry accounting failed");
+    }
+
     if (apic_vector_requires_eoi(vector)) {
         if (slot->handler == NULL) {
             apic_send_eoi();
@@ -427,16 +529,36 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         apic_send_eoi();
+        reschedule_eligible = false;
+        if (preempt_runtime_irq_exit(&reschedule_eligible) !=
+                PREEMPT_STATUS_OK) {
+            console_panic("preemption interrupt-exit accounting failed");
+        }
         --dispatch_depth;
-        return;
+        candidate = scheduler_interrupt_exit(
+            frame,
+            vector,
+            reschedule_eligible
+        );
+        return interrupt_validate_return_frame(frame, candidate);
     }
 
     if (vector >= INTERRUPT_PIC_MASTER_BASE && vector < INTERRUPT_PIC_LIMIT) {
         const uint8_t irq = vector - INTERRUPT_PIC_MASTER_BASE;
 
         if (!pic_irq_is_real(irq)) {
+            reschedule_eligible = false;
+            if (preempt_runtime_irq_exit(&reschedule_eligible) !=
+                    PREEMPT_STATUS_OK) {
+                console_panic("preemption spurious-exit accounting failed");
+            }
             --dispatch_depth;
-            return;
+            candidate = scheduler_interrupt_exit(
+                frame,
+                vector,
+                reschedule_eligible
+            );
+            return interrupt_validate_return_frame(frame, candidate);
         }
 
         if (slot->handler == NULL) {
@@ -446,14 +568,34 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         pic_send_eoi(irq);
+        reschedule_eligible = false;
+        if (preempt_runtime_irq_exit(&reschedule_eligible) !=
+                PREEMPT_STATUS_OK) {
+            console_panic("preemption interrupt-exit accounting failed");
+        }
         --dispatch_depth;
-        return;
+        candidate = scheduler_interrupt_exit(
+            frame,
+            vector,
+            reschedule_eligible
+        );
+        return interrupt_validate_return_frame(frame, candidate);
     }
 
     if (slot->handler != NULL) {
         slot->handler(frame, slot->context);
+        reschedule_eligible = false;
+        if (preempt_runtime_irq_exit(&reschedule_eligible) !=
+                PREEMPT_STATUS_OK) {
+            console_panic("preemption interrupt-exit accounting failed");
+        }
         --dispatch_depth;
-        return;
+        candidate = scheduler_interrupt_exit(
+            frame,
+            vector,
+            reschedule_eligible
+        );
+        return interrupt_validate_return_frame(frame, candidate);
     }
 
     fatal_interrupt(frame);
@@ -470,6 +612,8 @@ const char *interrupt_status_string(enum interrupt_status status)
         return "interrupt subsystem is not initialized";
     case INTERRUPT_STATUS_CPU_TABLE_FAILURE:
         return "CPU descriptor table operation failed";
+    case INTERRUPT_STATUS_PREEMPT_FAILURE:
+        return "preemption runtime initialization failed";
     case INTERRUPT_STATUS_PIC_FAILURE:
         return "PIC initialization failed";
     case INTERRUPT_STATUS_BAD_IDT:

@@ -26,12 +26,35 @@ struct topology_test_fixture {
 
 static struct topology_test_fixture test_fixture __attribute__((aligned(8)));
 static struct acpi_topology test_topology;
+static uint8_t fixture_overflow_entry[UINT8_MAX + 1U];
+static bool fixture_overflowed;
 
 _Static_assert(
     TEST_MADT_FIXED_SIZE + TEST_IO_APIC_SIZE +
         (ACPI_MAX_PROCESSORS + 1U) * TEST_LOCAL_X2APIC_SIZE <=
         TEST_MADT_CAPACITY,
     "largest topology test fixture exceeds its static buffer"
+);
+_Static_assert(
+    TEST_MADT_FIXED_SIZE + TEST_LOCAL_APIC_SIZE + TEST_IO_APIC_SIZE +
+        (ACPI_MAX_MADT_ENTRIES - 1U) * 2U <= TEST_MADT_CAPACITY,
+    "MADT-entry limit fixture exceeds its static buffer"
+);
+_Static_assert(
+    TEST_MADT_FIXED_SIZE + TEST_LOCAL_APIC_SIZE +
+        (ACPI_MAX_IO_APICS + 1U) * TEST_IO_APIC_SIZE <= TEST_MADT_CAPACITY,
+    "I/O APIC limit fixture exceeds its static buffer"
+);
+_Static_assert(
+    TEST_MADT_FIXED_SIZE + TEST_LOCAL_APIC_SIZE + TEST_IO_APIC_SIZE +
+        (ACPI_MAX_INTERRUPT_OVERRIDES + 1U) *
+            TEST_INTERRUPT_OVERRIDE_SIZE <= TEST_MADT_CAPACITY,
+    "interrupt-override limit fixture exceeds its static buffer"
+);
+_Static_assert(
+    TEST_MADT_FIXED_SIZE + TEST_LOCAL_APIC_SIZE + TEST_IO_APIC_SIZE + 2U <=
+        TEST_MADT_CAPACITY,
+    "truncated-entry fixtures exceed their static buffer"
 );
 
 static void write_u16(uint8_t *bytes, uint16_t value)
@@ -85,11 +108,27 @@ static void fixture_begin(uint32_t local_apic_address)
     write_u32(test_fixture.bytes + 36U, local_apic_address);
     write_u32(test_fixture.bytes + 40U, UINT32_C(1));
     test_fixture.length = TEST_MADT_FIXED_SIZE;
+    fixture_overflowed = false;
 }
 
 static uint8_t *fixture_append(uint8_t type, uint8_t length)
 {
-    uint8_t *entry = test_fixture.bytes + test_fixture.length;
+    uint8_t *entry;
+
+    if (length < 2U || test_fixture.length > sizeof(test_fixture.bytes) ||
+        (size_t)length > sizeof(test_fixture.bytes) - test_fixture.length) {
+        fixture_overflowed = true;
+        entry = fixture_overflow_entry;
+
+        for (size_t index = 0U; index < sizeof(fixture_overflow_entry);
+             ++index) {
+            entry[index] = 0U;
+        }
+
+        return entry;
+    }
+
+    entry = test_fixture.bytes + test_fixture.length;
 
     entry[0] = type;
     entry[1] = length;
@@ -231,6 +270,10 @@ static struct acpi_madt fixture_finish(void)
 
 static enum acpi_status fixture_status(void)
 {
+    if (fixture_overflowed) {
+        return ACPI_STATUS_BAD_MADT_LENGTH;
+    }
+
     struct acpi_madt madt = fixture_finish();
 
     return acpi_topology_discover(&madt, &test_topology);

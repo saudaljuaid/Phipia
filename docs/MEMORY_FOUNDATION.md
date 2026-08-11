@@ -67,10 +67,14 @@ after COM1 emits:
 Zenith OS: memory foundation passed
 ```
 
-This is still an early single-core allocator. Heap callers are excluded from
-interrupt, exception, NMI, and panic context, and runtime PTE changes preserve
-the caller's IF state. NUMA policy, dynamic page-table allocation, memory above
-4 GiB, process address spaces, and SMP synchronization are explicitly deferred.
+This is still an early single-core allocator. A physical-memory-class irqsave
+lock serializes frame-allocation transactions and preserves the caller's exact
+IF state. This prevents maskable-interrupt reentry on the BSP; allocator APIs
+are not NMI, IST, or panic safe and those paths must not call them. Heap callers
+are excluded from interrupt, exception, NMI, and panic context, and runtime PTE
+changes preserve the caller's IF state. NUMA policy, dynamic page-table
+allocation, memory above 4 GiB, process address spaces, and cross-CPU SMP
+synchronization are explicitly deferred.
 The permanent hierarchy owns static tables inside the kernel image and adds
 only bounded heap-specific and task-stack-specific runtime leaf mapping
 surfaces.

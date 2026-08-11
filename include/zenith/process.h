@@ -1,0 +1,96 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+#ifndef ZENITH_PROCESS_H
+#define ZENITH_PROCESS_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <zenith/address_space.h>
+
+#define PROCESS_LIMIT UINT32_C(16)
+#define PROCESS_TASK_ATTACHMENT_LIMIT UINT16_MAX
+#define PROCESS_USER_CODE_SELECTOR UINT16_C(0x33)
+#define PROCESS_USER_DATA_SELECTOR UINT16_C(0x2B)
+#define PROCESS_USER_ADDRESS_MIN UINT64_C(0x1000)
+#define PROCESS_USER_ADDRESS_MAX UINT64_C(0x00007FFFFFFFFFFF)
+
+#define PROCESS_RFLAGS_RESERVED UINT64_C(0x0000000000000002)
+#define PROCESS_RFLAGS_INTERRUPT UINT64_C(0x0000000000000200)
+#define PROCESS_RFLAGS_USER_MUTABLE UINT64_C(0x0000000000000DD5)
+#define PROCESS_RFLAGS_USER_ALLOWED \
+    (PROCESS_RFLAGS_RESERVED | PROCESS_RFLAGS_INTERRUPT | \
+     PROCESS_RFLAGS_USER_MUTABLE)
+
+typedef uint64_t process_handle_t;
+
+enum process_state {
+    PROCESS_STATE_FREE = 0,
+    PROCESS_STATE_RUNNABLE,
+    PROCESS_STATE_BLOCKED,
+    PROCESS_STATE_EXITED,
+    PROCESS_STATE_DYING
+};
+
+enum process_status {
+    PROCESS_STATUS_OK = 0,
+    PROCESS_STATUS_NULL_ARGUMENT,
+    PROCESS_STATUS_ALREADY_INITIALIZED,
+    PROCESS_STATUS_NOT_INITIALIZED,
+    PROCESS_STATUS_POISONED,
+    PROCESS_STATUS_INVALID_HANDLE,
+    PROCESS_STATUS_STALE_HANDLE,
+    PROCESS_STATUS_NO_SLOTS,
+    PROCESS_STATUS_GENERATION_EXHAUSTED,
+    PROCESS_STATUS_INVALID_PARENT,
+    PROCESS_STATUS_INVALID_ADDRESS_SPACE,
+    PROCESS_STATUS_INVALID_STATE,
+    PROCESS_STATUS_TASK_LIMIT,
+    PROCESS_STATUS_NO_TASKS,
+    PROCESS_STATUS_EVENT_EPOCH_EXHAUSTED,
+    PROCESS_STATUS_WOULD_BLOCK,
+    PROCESS_STATUS_EVENT_CHANGED,
+    PROCESS_STATUS_NOT_PARENT,
+    PROCESS_STATUS_PROCESS_BUSY,
+    PROCESS_STATUS_CORRUPTED
+};
+
+struct process_wait_token {
+    process_handle_t process;
+    uint64_t epoch;
+};
+
+struct process_snapshot {
+    enum process_state state;
+    uint32_t generation;
+    process_handle_t parent;
+    address_space_handle_t address_space;
+    uint64_t completion_epoch;
+    uint16_t task_attachment_count;
+    uint16_t child_count;
+    int32_t exit_status;
+};
+
+struct process_user_frame {
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+};
+
+enum process_frame_status {
+    PROCESS_FRAME_OK = 0,
+    PROCESS_FRAME_NULL_ARGUMENT,
+    PROCESS_FRAME_BAD_CODE_SELECTOR,
+    PROCESS_FRAME_BAD_DATA_SELECTOR,
+    PROCESS_FRAME_BAD_INSTRUCTION_POINTER,
+    PROCESS_FRAME_BAD_STACK_POINTER,
+    PROCESS_FRAME_BAD_FLAGS
+};
+
+enum process_fault_disposition {
+    PROCESS_FAULT_KERNEL_FATAL = 0,
+    PROCESS_FAULT_KILL_OFFENDING_PROCESS
+};
+
+#endif

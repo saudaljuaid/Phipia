@@ -5,12 +5,14 @@ on:
         branches: [main]
     pull_request:
         branches: [main, agent/bounded-kernel-heap]
+        types: [opened, synchronize]
+    workflow_dispatch:
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-${{ github.ref }}
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
     cancel-in-progress: true
 
 jobs:
@@ -26,6 +28,10 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
                       binutils clang gcc grub-common lld make python3
+            - name: Validate repository hooks
+              run: |
+                  make hooks
+                  make hooks-check
             - name: Verify with GCC and host oracles
               run: make verify
             - name: Run GCC analysis and stack-usage gates
@@ -57,7 +63,7 @@ jobs:
                   readelf -W -l build/zenith.elf
 
     qemu-default:
-        name: QEMU 15-scenario default RAM
+        name: QEMU 16-scenario default RAM
         runs-on: ubuntu-24.04
         timeout-minutes: 10
         steps:

@@ -100,6 +100,7 @@ enum apic_status apic_local_timer_calibrate_and_start(
     void *context,
     struct apic_local_timer_configuration *configuration
 );
+enum apic_status apic_local_timer_stop(void);
 enum apic_status apic_local_timer_validate(void);
 bool apic_local_timer_active(void);
 bool apic_vector_requires_eoi(uint8_t vector);

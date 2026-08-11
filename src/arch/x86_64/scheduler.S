@@ -1,14 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Bounded cooperative task context switching and scheduler fault probes. */
+/* Trap-frame task entry and scheduler fault/preemption probes. */
 
-.set CONTEXT_RBX, 0
-.set CONTEXT_RBP, 8
-.set CONTEXT_R12, 16
-.set CONTEXT_R13, 24
-.set CONTEXT_R14, 32
-.set CONTEXT_R15, 40
-.set CONTEXT_RSP, 48
-.set CONTEXT_RIP, 56
 .set SCHEDULER_STATUS_OK, 0
 
 .section .text, "ax"
@@ -16,32 +8,7 @@
 .extern scheduler_task_first_entry_c
 .extern scheduler_task_exit
 .extern scheduler_yield
-
-.global scheduler_context_switch
-.type scheduler_context_switch, @function
-scheduler_context_switch:
-    movq %rbx, CONTEXT_RBX(%rdi)
-    movq %rbp, CONTEXT_RBP(%rdi)
-    movq %r12, CONTEXT_R12(%rdi)
-    movq %r13, CONTEXT_R13(%rdi)
-    movq %r14, CONTEXT_R14(%rdi)
-    movq %r15, CONTEXT_R15(%rdi)
-    movq %rsp, CONTEXT_RSP(%rdi)
-    leaq scheduler_context_switch_resume(%rip), %rax
-    movq %rax, CONTEXT_RIP(%rdi)
-
-    movq CONTEXT_RBX(%rsi), %rbx
-    movq CONTEXT_RBP(%rsi), %rbp
-    movq CONTEXT_R12(%rsi), %r12
-    movq CONTEXT_R13(%rsi), %r13
-    movq CONTEXT_R14(%rsi), %r14
-    movq CONTEXT_R15(%rsi), %r15
-    movq CONTEXT_RSP(%rsi), %rsp
-    jmp *CONTEXT_RIP(%rsi)
-.global scheduler_context_switch_resume
-scheduler_context_switch_resume:
-    ret
-.size scheduler_context_switch, . - scheduler_context_switch
+.extern scheduler_preempt_stage
 
 .global scheduler_task_first_entry
 .global scheduler_task_first_entry_address
@@ -49,9 +16,7 @@ scheduler_context_switch_resume:
 scheduler_task_first_entry:
 scheduler_task_first_entry_address:
     cld
-    subq $8, %rsp
     call scheduler_task_first_entry_c
-    addq $8, %rsp
     jmp scheduler_task_return_trampoline
 .size scheduler_task_first_entry, . - scheduler_task_first_entry
 
@@ -61,7 +26,6 @@ scheduler_task_first_entry_address:
 scheduler_task_return_trampoline:
 scheduler_task_return_trampoline_address:
     cld
-    subq $8, %rsp
     call scheduler_task_exit
     ud2
 .size scheduler_task_return_trampoline, . - scheduler_task_return_trampoline
@@ -124,6 +88,119 @@ scheduler_test_callee_saved_probe:
     ret
 .size scheduler_test_callee_saved_probe, . - scheduler_test_callee_saved_probe
 
+.global scheduler_test_timer_register_probe
+.type scheduler_test_timer_register_probe, @function
+scheduler_test_timer_register_probe:
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    subq $16, %rsp
+    movq $100000000, (%rsp)
+
+    movl $0x01010101, %eax
+    movl $0x02020202, %ebx
+    movl $0x03030303, %ecx
+    movl $0x04040404, %edx
+    movl $0x05050505, %ebp
+    movl $0x06060606, %edi
+    movl $0x07070707, %esi
+    movl $0x08080808, %r8d
+    movl $0x09090909, %r9d
+    movl $0x10101010, %r10d
+    movl $0x11111111, %r11d
+    movl $0x12121212, %r12d
+    movl $0x13131313, %r13d
+    movl $0x14141414, %r14d
+    movl $0x15151515, %r15d
+    movq %rax, %xmm0
+    movq %rbx, %xmm7
+    movq %r15, %xmm15
+    std
+    movl $1, scheduler_preempt_stage(%rip)
+.Ltimer_probe_wait:
+    cmpl $2, scheduler_preempt_stage(%rip)
+    je .Ltimer_probe_check
+    subq $1, (%rsp)
+    jz .Ltimer_probe_failed
+    pause
+    jmp .Ltimer_probe_wait
+.Ltimer_probe_check:
+    cmpq $0x01010101, %rax
+    jne .Ltimer_probe_failed
+    cmpq $0x02020202, %rbx
+    jne .Ltimer_probe_failed
+    cmpq $0x03030303, %rcx
+    jne .Ltimer_probe_failed
+    cmpq $0x04040404, %rdx
+    jne .Ltimer_probe_failed
+    cmpq $0x05050505, %rbp
+    jne .Ltimer_probe_failed
+    cmpq $0x06060606, %rdi
+    jne .Ltimer_probe_failed
+    cmpq $0x07070707, %rsi
+    jne .Ltimer_probe_failed
+    cmpq $0x08080808, %r8
+    jne .Ltimer_probe_failed
+    cmpq $0x09090909, %r9
+    jne .Ltimer_probe_failed
+    cmpq $0x10101010, %r10
+    jne .Ltimer_probe_failed
+    cmpq $0x11111111, %r11
+    jne .Ltimer_probe_failed
+    cmpq $0x12121212, %r12
+    jne .Ltimer_probe_failed
+    cmpq $0x13131313, %r13
+    jne .Ltimer_probe_failed
+    cmpq $0x14141414, %r14
+    jne .Ltimer_probe_failed
+    cmpq $0x15151515, %r15
+    jne .Ltimer_probe_failed
+    movq %xmm0, %rdx
+    cmpq $0x01010101, %rdx
+    jne .Ltimer_probe_failed
+    movq %xmm7, %rdx
+    cmpq $0x02020202, %rdx
+    jne .Ltimer_probe_failed
+    movq %xmm15, %rdx
+    cmpq $0x15151515, %rdx
+    jne .Ltimer_probe_failed
+    pushfq
+    popq %rax
+    andq $0x600, %rax
+    cmpq $0x600, %rax
+    jne .Ltimer_probe_failed
+    cld
+    movl $0, scheduler_preempt_stage(%rip)
+    movl $1, %eax
+    jmp .Ltimer_probe_restore
+.Ltimer_probe_failed:
+    cld
+    movl $0, scheduler_preempt_stage(%rip)
+    movl $0, %eax
+.Ltimer_probe_restore:
+    addq $16, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+.size scheduler_test_timer_register_probe, . - scheduler_test_timer_register_probe
+
+.global scheduler_test_xstate_clobber
+.type scheduler_test_xstate_clobber, @function
+scheduler_test_xstate_clobber:
+    pxor %xmm0, %xmm0
+    pcmpeqb %xmm7, %xmm7
+    movabsq $0xDEADBEEFCAFEBABE, %rax
+    movq %rax, %xmm15
+    ret
+.size scheduler_test_xstate_clobber, . - scheduler_test_xstate_clobber
+
 .global scheduler_test_trigger_guard
 .type scheduler_test_trigger_guard, @function
 scheduler_test_trigger_guard:
@@ -135,5 +212,20 @@ scheduler_guard_fault_site:
     hlt
     jmp .guard_fault_returned
 .size scheduler_test_trigger_guard, . - scheduler_test_trigger_guard
+
+.global scheduler_test_trigger_nm
+.type scheduler_test_trigger_nm, @function
+scheduler_test_trigger_nm:
+    movq %cr0, %rax
+    orq $0x8, %rax
+    movq %rax, %cr0
+.global scheduler_nm_fault_site
+scheduler_nm_fault_site:
+    pxor %xmm0, %xmm0
+    cli
+.nm_fault_returned:
+    hlt
+    jmp .nm_fault_returned
+.size scheduler_test_trigger_nm, . - scheduler_test_trigger_nm
 
 .section .note.GNU-stack, "", @progbits

@@ -26,6 +26,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_HEAP,
     KERNEL_TEST_SCHEDULER,
     KERNEL_TEST_SCHEDULER_GUARD,
+    KERNEL_TEST_SCHEDULER_NM,
     KERNEL_TEST_INVALID
 };
 
@@ -43,12 +44,23 @@ _Noreturn void kernel_test_fail(const char *reason);
 
 bool frame_test_fail_allocate_after(size_t successful_allocations);
 bool frame_test_report_out_of_memory_after(size_t successful_allocations);
+bool frame_test_set_task_stack_mutation_epoch(uint64_t mutation_epoch);
+bool frame_test_task_stack_state_matches(size_t expected_owned_frames);
 bool apic_test_discard_calibration_attempts(size_t attempt_count);
 bool virtual_memory_test_fail_heap_map_after(size_t successful_maps);
 bool virtual_memory_test_report_uncertain_heap_map_once(void);
 bool virtual_memory_test_fail_task_stack_map_after(size_t successful_maps);
 bool virtual_memory_test_report_uncertain_task_stack_map_once(void);
+bool virtual_memory_test_set_task_stack_mutation_epoch(uint64_t mutation_epoch);
+bool virtual_memory_test_task_stack_state_matches(
+    size_t slot_index,
+    size_t page_index,
+    bool expected_mapped,
+    uintptr_t expected_physical_address,
+    size_t expected_total_mapped_pages
+);
 bool scheduler_test_callee_saved_probe(void);
+bool scheduler_test_timer_register_probe(void);
 _Noreturn void scheduler_test_trigger_guard(uintptr_t address);
 
 extern const uint8_t scheduler_guard_fault_site[];

@@ -10,6 +10,7 @@
 
 #define ZENITH_PAGE_SIZE UINT64_C(4096)
 #define ZENITH_LOW_MEMORY_RESERVATION UINT64_C(0x100000)
+#define FRAME_ALLOCATOR_HEAP_VALIDATION_LIMIT ((size_t)4096U)
 
 enum frame_status {
     FRAME_STATUS_OK = 0,
@@ -48,6 +49,11 @@ struct frame_allocator_stats {
     uint64_t highest_allocatable_address;
 };
 
+struct frame_allocator_task_stack_certificate {
+    uint64_t mutation_epoch;
+    size_t owned_frames;
+};
+
 enum frame_status frame_allocator_initialize(const struct boot_context *context);
 enum frame_status frame_allocate(uintptr_t *physical_address);
 enum frame_status frame_allocate_owned(
@@ -70,6 +76,21 @@ enum frame_status frame_query_owner(
 enum frame_status frame_reserve_range(uint64_t base_address, uint64_t length);
 enum frame_status frame_allocator_validate(void);
 struct frame_allocator_stats frame_allocator_get_stats(void);
+/* O(1), irqsave-locked certificate; every failure clears the output. */
+enum frame_status frame_allocator_task_stack_certificate_get(
+    struct frame_allocator_task_stack_certificate *certificate
+);
+/*
+ * Full allocator audit plus exact, duplicate-free heap-owner set proof under
+ * one physical-memory lock.  The implementation reserves exactly 32 KiB of
+ * private BSS scratch at the configured maximum and clears every used entry.
+ */
+enum frame_status frame_allocator_validate_heap_owners(
+    const uintptr_t *committed_frames,
+    size_t committed_frame_count,
+    const uintptr_t *staged_frames,
+    size_t staged_frame_count
+);
 const char *frame_status_string(enum frame_status status);
 
 #endif

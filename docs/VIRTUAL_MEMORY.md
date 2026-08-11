@@ -56,6 +56,16 @@ slot and payload-page index, fixes the leaf policy to supervisor RW+NX WB and
 non-global, requires exact task-frame provenance on unmap, and uses `invlpg`.
 The 64-page arena is unchanged.
 
+Every actual task-stack leaf write advances a nonzero 64-bit mutation epoch.
+Mapping preflights three stamps (the new leaf plus enough lifetime headroom for
+a later unmap and possible restoration); unmapping preflights two. Injected
+uncertain commits are stamped, and a validation rollback stamps both the first
+write and the restoring write. Exhaustion poisons the VM before a leaf can be
+changed. An O(1), irqsave-locked certificate returns this epoch with the exact
+mapped-page count and clears its output on every failure. A complete audit can
+therefore mint a certificate that later scheduler-local validation compares
+without rescanning all 256 task-stack leaves.
+
 Page zero, the remainder of low memory, boot information, ACPI tables, free
 physical frames, and the 4 GiB fault probe are absent after the transition.
 Every hierarchy entry is supervisor-only. The builder uses a 64-page,
@@ -68,6 +78,24 @@ normalizes PAT, loads the new CR3 once, and validates CR3, CR0.WP, EFER.NXE, PAT
 every kernel page, VGA, the null and 4 GiB holes, and every APIC device mapping.
 If post-load validation fails while the old hierarchy is still usable, Zenith
 restores the bootstrap CR3 and previous PAT value before reporting failure.
+
+## Interrupt-state and lock contract
+
+Runtime query, map, unmap, validation, and statistics transactions use a
+virtual-memory-class irqsave lock. Nested heap growth follows the one permitted
+order: `HEAP -> VIRTUAL_MEMORY -> PHYSICAL_MEMORY`. Every operation preserves
+entry IF, while mutation entry points additionally require the caller to enter
+with IF clear. These APIs are not NMI, IST, or panic safe and those paths must
+not call them. This is BSP serialization against maskable-interrupt reentry,
+not cross-CPU TLB-shootdown or SMP safety.
+
+Full active validation traverses the 4,096-leaf heap window and 256-leaf
+task-stack window exactly once each. Heap validation supplies its committed and
+staged backing-frame spans to a combined VM operation, which proves every
+present and required-absent heap leaf and returns statistics from the same lock
+snapshot. This preserves the full guard, permission, count, hardware-control,
+kernel, device, and task-stack checks without duplicate window scans or one VM
+lock acquisition per heap page.
 
 ## Executable proof
 

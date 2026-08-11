@@ -4,9 +4,9 @@ This milestone extends Zenith's active xAPIC subsystem with one calibrated,
 periodic Local APIC timer on the bootstrap processor. The PIT is retained only
 as a bounded calibration reference. After calibration, its I/O APIC
 redirection entry is masked and vector `0x30` is the only active kernel timer
-vector. The implementation remains single-core. The cooperative scheduler may
-be interrupted by this timer, but vector `0x30` never selects or switches a
-task and does not imply preemption.
+vector. The implementation remains single-core. Vector `0x30` requests a
+scheduler decision every four ticks; switching occurs after its EOI at the
+outermost eligible interrupt exit.
 
 ## Timer invariants
 
@@ -23,6 +23,17 @@ path. The spurious vector remains `0xFF` and receives no EOI. The Local APIC
 timer is programmed in periodic mode only after its handler exists and the PIT
 route has been masked and verified. All controller mutation runs with
 `RFLAGS.IF=0`.
+
+Stopping follows the inverse publication order: mask and zero the timer,
+verify that stopped hardware state, unregister its handler, and only then clear
+the active configuration. A failed readback or handler operation retains the
+software configuration so the bounded stop can be inspected and retried. The
+PIT route-mask cache likewise changes only after matching I/O APIC readback.
+If timebase validation then needs rollback and stop fails, the time subsystem
+keeps a distinct rollback-pending state and rejects clock operations with a
+dedicated status. Calling initialization again with `IF=0` first retries the
+same stop; only successful cleanup clears the retained state and begins a fresh
+bounded calibration.
 
 The active target is 1,000 interrupts per second. The calibrated divided-clock
 frequency must be at least 100 kHz, the periodic target must be within 10 Hz to
@@ -84,6 +95,20 @@ at `UINT64_MAX` and records overflow rather than wrapping backward. This gives
 single-core readers a monotonic nondecreasing counter with explicit units and
 an explicit failure result at the representable boundary.
 
+TIME state uses a TIME-class irqsave lock. The Local APIC timer handler releases
+that lock before calling `scheduler_timer_tick`, and bounded waits release it
+while polling. The timer handler is the sole interrupt-owned TIME entry; public
+TIME APIs must not be called from NMI, IST, or panic paths. This contract covers
+maskable-interrupt serialization on the BSP only.
+
+The bounded wait may temporarily enable interrupts only from an ordinary,
+unpinned task context. Before taking the TIME lock or beginning its polling
+window, it requires the current CPU to have both interrupt depth and preemption
+count at zero. A caller inside an interrupt, an outer `preempt_guard`, or any
+other critical pin is rejected without enabling interrupts and with `IF` still
+clear. This prevents a nested critical section from becoming interruptible
+behind its caller's back.
+
 ## Worst credible failure
 
 The worst credible failure is a wrong calibration or invalid interrupt program
@@ -114,20 +139,19 @@ integrated proof and emits:
 Zenith OS: Local APIC timer and monotonic clock verified
 ```
 
-The host protocol now contains fifteen scenarios. The `heap` scenario also
+The host protocol now contains sixteen scenarios. The `heap` scenario also
 forces one valid calibration attempt to be discarded, requires the bounded
 retry diagnostic, and then proves periodic ticks and EOIs advance across
 page-backed allocation, rollback, and exhaustion while the PIT route remains
 masked. Each scenario requires one
 exact `ZT BEGIN <scenario>` and one exact `ZT PASS <scenario>`, its
 scenario-specific exit status, and no failure or panic marker. The scheduler
-scenario additionally proves timer ticks and EOIs advance across cooperative
-switches while ticks observed before the first yield never change the current
-task.
+scenario additionally proves timer ticks and EOIs advance across voluntary and
+involuntary switches, including a CPU-bound task that never yields.
 
 ## Deferred work
 
 Zenith does not yet compensate for post-boot clock drift, use TSC-deadline,
 HPET, an invariant TSC, one-shot deadlines, or a tickless design. Dynamic
-vector allocation, scheduler timers, preemption, SMP calibration and clock
+vector allocation, tickless scheduling, SMP calibration and clock
 synchronization, userspace clocks, and wall-clock time remain deferred.

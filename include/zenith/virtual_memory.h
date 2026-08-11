@@ -87,6 +87,11 @@ struct virtual_memory_runtime_stats {
     size_t table_pages_capacity;
 };
 
+struct virtual_memory_task_stack_certificate {
+    uint64_t mutation_epoch;
+    size_t mapped_pages;
+};
+
 bool virtual_memory_self_test(void);
 enum virtual_memory_status virtual_memory_initialize(
     const struct acpi_topology *topology,
@@ -129,6 +134,24 @@ enum virtual_memory_status virtual_memory_unmap_task_stack_page(
 );
 enum virtual_memory_status virtual_memory_runtime_get_stats(
     struct virtual_memory_runtime_stats *stats
+);
+/*
+ * Validate the complete active address space and prove that the heap window
+ * is exactly the contiguous union of these two frame spans.  Every heap leaf,
+ * including every required-unmapped leaf, is inspected under one VM lock.
+ * Successful return also supplies the runtime statistics from that same
+ * validation snapshot; failure always clears a non-null stats output.
+ */
+enum virtual_memory_status virtual_memory_validate_heap_backing(
+    const uintptr_t *committed_frames,
+    size_t committed_page_count,
+    const uintptr_t *staged_frames,
+    size_t staged_page_count,
+    struct virtual_memory_runtime_stats *stats
+);
+/* O(1), irqsave-locked certificate; every failure clears the output. */
+enum virtual_memory_status virtual_memory_task_stack_certificate_get(
+    struct virtual_memory_task_stack_certificate *certificate
 );
 bool virtual_memory_ready(void);
 const char *virtual_memory_status_string(enum virtual_memory_status status);

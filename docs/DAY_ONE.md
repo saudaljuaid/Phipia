@@ -49,8 +49,9 @@ layout and process address spaces remain future virtual-memory work.
 5. ~~Calibrate the Local APIC timer against the APIC-routed PIT and expose a
    monotonic kernel timebase.~~
 6. ~~Establish a bounded page-backed kernel heap with deterministic failure.~~
-7. Only then consider scheduling; userspace, storage, networking, and graphics
-   remain later independent milestones.
+7. ~~Establish bounded priority scheduling, blocking/wakeup, and timer-driven
+   preemption on the boot CPU.~~ Userspace, SMP, storage, networking, and
+   graphics remain later independent milestones.
 
 Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
 is explicitly out of scope until the kernel can isolate processes, survive

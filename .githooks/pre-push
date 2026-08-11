@@ -1,4 +1,50 @@
 #!/bin/sh
 set -eu
 
-make qemu-tests
+zero_sha=0000000000000000000000000000000000000000
+temporary_root=
+temporary_worktree=
+
+cleanup()
+{
+    if test -n "$temporary_worktree"; then
+        git worktree remove --force "$temporary_worktree" >/dev/null 2>&1 || true
+    fi
+    if test -n "$temporary_root"; then
+        rm -rf "$temporary_root"
+    fi
+}
+
+verify_commit()
+{
+    pushed_object=$1
+    pushed_commit=$(git rev-parse "$pushed_object^{commit}")
+    temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/zenith-pre-push.XXXXXX")
+    temporary_worktree="$temporary_root/tree"
+
+    git worktree add --detach --quiet "$temporary_worktree" "$pushed_commit"
+    (
+        cd "$temporary_worktree"
+        make qemu-tests
+    )
+    git worktree remove --force "$temporary_worktree"
+    temporary_worktree=
+    rm -rf "$temporary_root"
+    temporary_root=
+}
+
+trap cleanup EXIT HUP INT TERM
+
+saw_ref=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+    saw_ref=true
+    if test "$local_sha" != "$zero_sha"; then
+        verify_commit "$local_sha"
+    fi
+done
+
+# `git hook run pre-push` supplies no ref records; keep it useful as a manual
+# exact-HEAD verification command.
+if test "$saw_ref" = false; then
+    verify_commit "$(git rev-parse HEAD)"
+fi

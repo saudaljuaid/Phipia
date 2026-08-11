@@ -11,10 +11,12 @@
 #include <zenith/memory.h>
 #include <zenith/pic.h>
 #include <zenith/pit.h>
+#include <zenith/preempt.h>
 #include <zenith/scheduler.h>
 #include <zenith/test.h>
 #include <zenith/time.h>
 #include <zenith/virtual_memory.h>
+#include <zenith/xstate.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -33,17 +35,43 @@
     (SCHEDULER_TEST_TASK_COUNT * SCHEDULER_TEST_ROUNDS)
 #define SCHEDULER_TEST_STACK_PAGE_COUNT \
     VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES
+#define SCHEDULER_TEST_EVENT UINT32_C(3)
+
+void scheduler_test_xstate_clobber(void);
+bool scheduler_test_interrupt_while_locked(void);
+_Noreturn void scheduler_test_trigger_nm(void);
+extern const uint8_t scheduler_nm_fault_site[];
 
 volatile uint8_t kernel_test_double_fault_armed;
 static enum kernel_test_scenario active_scenario;
 static volatile bool heap_context_rejection_observed;
 static volatile bool scheduler_context_rejection_observed;
+static volatile enum scheduler_status scheduler_context_validate_status;
+static volatile enum scheduler_status scheduler_context_yield_status;
 static volatile uint32_t scheduler_trace[SCHEDULER_TEST_TRACE_LENGTH];
 static volatile size_t scheduler_trace_count;
 static volatile size_t scheduler_first_entry_count;
 static volatile size_t scheduler_register_probe_count;
 static volatile size_t scheduler_explicit_exit_count;
+static volatile uint32_t scheduler_priority_trace[2];
+static volatile size_t scheduler_priority_trace_count;
+static volatile unsigned int scheduler_event_stage;
+volatile unsigned int scheduler_preempt_stage;
+static struct scheduler_event_token scheduler_event_test_token;
+static uint32_t scheduler_priority_identifiers[2];
 static uint64_t scheduler_guard_expected_address;
+static volatile unsigned int scheduler_sleep_stage;
+static volatile unsigned int scheduler_join_stage;
+static volatile unsigned int scheduler_cancel_event_stage;
+static volatile unsigned int scheduler_cancel_join_stage;
+static volatile unsigned int scheduler_cancel_sleep_stage;
+static volatile unsigned int scheduler_cycle_first_stage;
+static volatile unsigned int scheduler_cycle_second_stage;
+static struct scheduler_task_handle scheduler_join_target;
+static struct scheduler_task_handle scheduler_cancel_join_target;
+static struct scheduler_task_handle scheduler_cycle_first;
+static struct scheduler_task_handle scheduler_cycle_second;
+static struct scheduler_event_token scheduler_cancel_event_token;
 
 struct scheduler_test_context {
     uint32_t identifier;
@@ -168,6 +196,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_SCHEDULER_GUARD;
     }
 
+    if (token_equals(value, length, "scheduler-nm")) {
+        return KERNEL_TEST_SCHEDULER_NM;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -204,6 +236,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1D);
     case KERNEL_TEST_SCHEDULER_GUARD:
         return UINT8_C(0x1E);
+    case KERNEL_TEST_SCHEDULER_NM:
+        return UINT8_C(0x1F);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -327,6 +361,9 @@ static void heap_runtime_mapping_rejection_proof(void)
     bool allocated;
     enum frame_owner owner;
 
+    mapping.physical_address = UINT64_MAX;
+    mapping.permissions = UINT32_MAX;
+
     if (frame_allocate(&frame) != FRAME_STATUS_OK ||
         frame_query_allocation(frame, &allocated) != FRAME_STATUS_OK ||
         !allocated ||
@@ -351,6 +388,7 @@ static void heap_runtime_mapping_rejection_proof(void)
             UINT64_C(0x0000800000000000),
             &mapping
         ) != VIRTUAL_MEMORY_STATUS_NONCANONICAL_ADDRESS ||
+        mapping.physical_address != 0U || mapping.permissions != 0U ||
         virtual_memory_map_heap_page(
             VIRTUAL_MEMORY_HEAP_GUARD_BELOW,
             frame
@@ -378,16 +416,20 @@ static void heap_runtime_mapping_rejection_proof(void)
         kernel_test_fail("runtime mapping rejection contract failed");
     }
 
-    if (interrupts_were_enabled) {
-        cpu_interrupt_enable();
-    }
-
     if (frame_release(frame) != FRAME_STATUS_OK ||
         frame_query_allocation(frame, &allocated) != FRAME_STATUS_OK ||
         allocated ||
         frame_allocator_validate() != FRAME_STATUS_OK ||
         virtual_memory_validate() != VIRTUAL_MEMORY_STATUS_OK) {
+        if (interrupts_were_enabled) {
+            cpu_interrupt_enable();
+        }
+
         kernel_test_fail("runtime mapping proof rollback failed");
+    }
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
     }
 
     after = frame_allocator_get_stats();
@@ -702,6 +744,7 @@ static void heap_exhaustion_and_mapping_proof(void)
 {
     const struct frame_allocator_stats frames_before =
         frame_allocator_get_stats();
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
     struct frame_allocator_stats frames_after;
     struct heap_stats stats_before;
     struct heap_stats stats;
@@ -752,6 +795,8 @@ static void heap_exhaustion_and_mapping_proof(void)
         kernel_test_fail("exhausted heap was corrupted");
     }
 
+    cpu_interrupt_disable();
+
     if (virtual_memory_query(VIRTUAL_MEMORY_HEAP_BASE, &mapping) !=
             VIRTUAL_MEMORY_STATUS_OK ||
         mapping.permissions != VIRTUAL_MEMORY_WRITABLE ||
@@ -764,7 +809,15 @@ static void heap_exhaustion_and_mapping_proof(void)
             VIRTUAL_MEMORY_STATUS_NOT_MAPPED ||
         virtual_memory_query(VIRTUAL_MEMORY_HEAP_GUARD_ABOVE, &mapping) !=
             VIRTUAL_MEMORY_STATUS_NOT_MAPPED) {
+        if (interrupts_were_enabled) {
+            cpu_interrupt_enable();
+        }
+
         kernel_test_fail("heap page or guard permissions are invalid");
+    }
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
     }
 
     frames_after = frame_allocator_get_stats();
@@ -840,6 +893,15 @@ static void expect_scheduler_status(
 )
 {
     if (observed != expected) {
+        console_write("ZT DETAIL scheduler-status observed=");
+        console_write_u64((uint64_t)observed);
+        console_write(" (");
+        console_write(scheduler_status_string(observed));
+        console_write(") expected=");
+        console_write_u64((uint64_t)expected);
+        console_write(" (");
+        console_write(scheduler_status_string(expected));
+        console_write(")\n");
         kernel_test_fail(reason);
     }
 }
@@ -849,16 +911,621 @@ static void scheduler_noop_task(void *context)
     (void)context;
 }
 
+static void scheduler_sleep_task(void *context)
+{
+    const struct scheduler_task_handle *self =
+        (const struct scheduler_task_handle *)context;
+    struct scheduler_stack_trace trace;
+    uint64_t ticks;
+    size_t high_water = 1U;
+
+    if (self == NULL ||
+        scheduler_monotonic_ticks(&ticks) != SCHEDULER_STATUS_OK ||
+        ticks == 0U) {
+        kernel_test_fail("sleep task could not establish its tick domain");
+    }
+    expect_scheduler_status(
+        scheduler_task_join(*self),
+        SCHEDULER_STATUS_SELF_JOIN,
+        "scheduler accepted a self join"
+    );
+    expect_scheduler_status(
+        scheduler_sleep_for(0U),
+        SCHEDULER_STATUS_INVALID_DEADLINE,
+        "scheduler accepted a zero-duration sleep"
+    );
+    expect_scheduler_status(
+        scheduler_sleep_until(ticks),
+        SCHEDULER_STATUS_INVALID_DEADLINE,
+        "scheduler accepted a past sleep deadline"
+    );
+    expect_scheduler_status(
+        scheduler_sleep_for(UINT64_MAX),
+        SCHEDULER_STATUS_DEADLINE_OVERFLOW,
+        "scheduler accepted an overflowing relative sleep"
+    );
+    expect_scheduler_status(
+        scheduler_task_stack_high_water(*self, &high_water),
+        SCHEDULER_STATUS_RUNNING_TASK,
+        "scheduler scanned the current mutable stack"
+    );
+    if (high_water != 0U) {
+        kernel_test_fail("running high-water rejection published output");
+    }
+    expect_scheduler_status(
+        scheduler_task_stack_unwind(*self, &trace),
+        SCHEDULER_STATUS_RUNNING_TASK,
+        "scheduler unwound the current mutable stack"
+    );
+    if (trace.frame_count != 0U || trace.truncated) {
+        kernel_test_fail("running unwind rejection published output");
+    }
+    if (scheduler_monotonic_ticks(&ticks) != SCHEDULER_STATUS_OK ||
+        ticks > UINT64_MAX - UINT64_C(16)) {
+        kernel_test_fail("sleep task could not refresh its deadline base");
+    }
+    scheduler_sleep_stage = 1U;
+    expect_scheduler_status(
+        scheduler_sleep_until(ticks + UINT64_C(16)),
+        SCHEDULER_STATUS_OK,
+        "bounded scheduler sleep did not resume"
+    );
+    scheduler_sleep_stage = 2U;
+}
+
+static void scheduler_join_task(void *context)
+{
+    (void)context;
+    scheduler_join_stage = 1U;
+    expect_scheduler_status(
+        scheduler_task_join(scheduler_join_target),
+        SCHEDULER_STATUS_OK,
+        "completion-safe scheduler join failed"
+    );
+    scheduler_join_stage = 2U;
+}
+
+static void scheduler_cycle_first_task(void *context)
+{
+    (void)context;
+    scheduler_cycle_first_stage = 1U;
+    expect_scheduler_status(
+        scheduler_task_join(scheduler_cycle_second),
+        SCHEDULER_STATUS_OK,
+        "first cycle-probe join did not complete"
+    );
+    scheduler_cycle_first_stage = 2U;
+}
+
+static void scheduler_cycle_second_task(void *context)
+{
+    (void)context;
+    expect_scheduler_status(
+        scheduler_task_join(scheduler_cycle_first),
+        SCHEDULER_STATUS_JOIN_CYCLE,
+        "scheduler accepted a join dependency cycle"
+    );
+    scheduler_cycle_second_stage = 1U;
+}
+
+static void scheduler_cancel_event_task(void *context)
+{
+    (void)context;
+    scheduler_cancel_event_stage = 1U;
+    expect_scheduler_status(
+        scheduler_event_wait(scheduler_cancel_event_token),
+        SCHEDULER_STATUS_OK,
+        "cancelled event wait did not resume"
+    );
+    scheduler_cancel_event_stage = 2U;
+    (void)scheduler_cancellation_point();
+    kernel_test_fail("cancelled event waiter survived its cancellation point");
+}
+
+static void scheduler_cancel_join_task(void *context)
+{
+    (void)context;
+    scheduler_cancel_join_stage = 1U;
+    expect_scheduler_status(
+        scheduler_task_join(scheduler_cancel_join_target),
+        SCHEDULER_STATUS_OK,
+        "cancelled join wait did not resume"
+    );
+    scheduler_cancel_join_stage = 2U;
+    (void)scheduler_cancellation_point();
+    kernel_test_fail("cancelled join waiter survived its cancellation point");
+}
+
+static void scheduler_cancel_sleep_task(void *context)
+{
+    (void)context;
+    scheduler_cancel_sleep_stage = 1U;
+    expect_scheduler_status(
+        scheduler_sleep_for(UINT64_C(1000)),
+        SCHEDULER_STATUS_OK,
+        "cancelled sleeping task did not resume"
+    );
+    scheduler_cancel_sleep_stage = 2U;
+    (void)scheduler_cancellation_point();
+    kernel_test_fail("cancelled sleeper survived its cancellation point");
+}
+
+static void scheduler_cpu_bound_task(void *context)
+{
+    const uint64_t ticks_before = kernel_time_monotonic_ticks();
+
+    (void)context;
+    if (!scheduler_test_timer_register_probe() ||
+        scheduler_preempt_stage != 0U ||
+        !cpu_interrupts_enabled() ||
+        kernel_time_monotonic_ticks() <= ticks_before) {
+        kernel_test_fail("timer preemption corrupted registers or RFLAGS");
+    }
+}
+
+static void scheduler_preempt_observer_task(void *context)
+{
+    (void)context;
+
+    while (scheduler_preempt_stage == 0U) {
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "preemption observer could not wait for the armed probe"
+        );
+    }
+
+    if (scheduler_preempt_stage != 1U) {
+        kernel_test_fail("preemption observer ran out of order");
+    }
+
+    scheduler_test_xstate_clobber();
+    scheduler_preempt_stage = 2U;
+}
+
+static void scheduler_timer_preemption_proof(void)
+{
+    struct scheduler_task_handle cpu_bound;
+    struct scheduler_task_handle observer;
+    struct scheduler_task_info cpu_info;
+    struct scheduler_task_info observer_info;
+    struct scheduler_stats before;
+    struct scheduler_stats after;
+    const uint64_t eoi_before = apic_eoi_count();
+    bool completed = false;
+
+    if (scheduler_get_stats(&before) != SCHEDULER_STATUS_OK) {
+        kernel_test_fail("could not snapshot scheduler before preemption proof");
+    }
+
+    scheduler_preempt_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_cpu_bound_task, NULL, &cpu_bound),
+        SCHEDULER_STATUS_OK,
+        "CPU-bound preemption task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_preempt_observer_task,
+            NULL,
+            &observer
+        ),
+        SCHEDULER_STATUS_OK,
+        "preemption observer task creation failed"
+    );
+
+    for (size_t attempt = 0U; attempt < 64U; ++attempt) {
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "preemption proof could not dispatch a task"
+        );
+
+        if (scheduler_task_query(cpu_bound, &cpu_info) !=
+                SCHEDULER_STATUS_OK ||
+            scheduler_task_query(observer, &observer_info) !=
+                SCHEDULER_STATUS_OK) {
+            kernel_test_fail("preemption proof task became unqueryable");
+        }
+
+        completed = cpu_info.state == SCHEDULER_TASK_EXITED &&
+            observer_info.state == SCHEDULER_TASK_EXITED;
+        if (completed) {
+            break;
+        }
+    }
+
+    if (!completed || scheduler_preempt_stage != 0U ||
+        scheduler_get_stats(&after) != SCHEDULER_STATUS_OK ||
+        after.poisoned ||
+        scheduler_validate() != SCHEDULER_STATUS_OK ||
+        after.preemptions <= before.preemptions ||
+        after.timer_reschedule_requests <= before.timer_reschedule_requests ||
+        apic_eoi_count() <= eoi_before) {
+        kernel_test_fail(
+            "timer preemption poisoned or invalidated scheduler state"
+        );
+    }
+
+    expect_scheduler_status(
+        scheduler_task_reap(cpu_bound),
+        SCHEDULER_STATUS_OK,
+        "CPU-bound preemption task could not be reaped"
+    );
+    expect_scheduler_status(
+        scheduler_task_reap(observer),
+        SCHEDULER_STATUS_OK,
+        "preemption observer task could not be reaped"
+    );
+    console_write("ZT PROOF scheduler-eager-xstate\n");
+}
+
+static void scheduler_lifecycle_and_diagnostics_proof(void)
+{
+    struct scheduler_task_handle sleeper;
+    struct scheduler_task_handle joiner;
+    struct scheduler_task_handle replacement;
+    struct scheduler_task_handle cancel_event;
+    struct scheduler_task_handle cancel_join;
+    struct scheduler_task_handle cancel_sleep;
+    struct scheduler_task_info info;
+    struct scheduler_stack_trace trace;
+    struct scheduler_stats stats;
+    struct preempt_guard guard;
+    uint64_t ticks_before;
+    uint64_t ticks_after;
+    uint64_t ticks_remaining;
+    size_t high_water = 0U;
+    enum scheduler_status sleep_query_status;
+    enum scheduler_status sleep_high_water_status;
+    enum scheduler_status sleep_unwind_status;
+    const bool bootstrap_interrupts = cpu_interrupts_enabled();
+
+    cpu_interrupt_disable();
+    scheduler_sleep_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_sleep_task, &sleeper, &sleeper),
+        SCHEDULER_STATUS_OK,
+        "scheduler sleep task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "scheduler sleep task did not block"
+    );
+    for (size_t attempt = 0U; attempt < 64U; ++attempt) {
+        if (scheduler_task_query(sleeper, &info) != SCHEDULER_STATUS_OK) {
+            kernel_test_fail(
+                "sleep entry retry could not query scheduler state"
+            );
+        }
+        if (scheduler_sleep_stage == 1U &&
+            info.state == SCHEDULER_TASK_SLEEPING && !info.queued) {
+            break;
+        }
+        if ((scheduler_sleep_stage != 0U &&
+                scheduler_sleep_stage != 1U) ||
+            info.state != SCHEDULER_TASK_READY || !info.queued) {
+            kernel_test_fail(
+                "sleep entry retry observed an invalid scheduler state"
+            );
+        }
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "sleep entry retry could not dispatch the task"
+        );
+    }
+    expect_scheduler_status(
+        scheduler_monotonic_ticks(&ticks_before),
+        SCHEDULER_STATUS_OK,
+        "scheduler monotonic tick query failed"
+    );
+    sleep_query_status = scheduler_task_query(sleeper, &info);
+    sleep_high_water_status =
+        scheduler_task_stack_high_water(sleeper, &high_water);
+    sleep_unwind_status = scheduler_task_stack_unwind(sleeper, &trace);
+    if (scheduler_sleep_stage != 1U ||
+        sleep_query_status != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_SLEEPING || info.queued ||
+        info.wake_deadline <= ticks_before ||
+        info.wake_deadline > ticks_before + UINT64_C(16) ||
+        !info.stack_canary_intact || !info.stack_diagnostics_available ||
+        sleep_high_water_status != SCHEDULER_STATUS_OK ||
+        high_water < sizeof(struct interrupt_frame) ||
+        high_water >
+            VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES * ZENITH_PAGE_SIZE -
+                64U ||
+        sleep_unwind_status != SCHEDULER_STATUS_OK ||
+        trace.frame_count == 0U || trace.truncated) {
+        console_write("ZT DETAIL scheduler-sleep-diagnostic stage=");
+        console_write_u64((uint64_t)scheduler_sleep_stage);
+        console_write(" query=");
+        console_write_u64((uint64_t)sleep_query_status);
+        console_write(" state=");
+        console_write_u64((uint64_t)info.state);
+        console_write(" queued=");
+        console_write_u64(info.queued ? 1U : 0U);
+        console_write(" deadline=");
+        console_write_u64(info.wake_deadline);
+        console_write(" ticks=");
+        console_write_u64(ticks_before);
+        console_write(" canary=");
+        console_write_u64(info.stack_canary_intact ? 1U : 0U);
+        console_write(" available=");
+        console_write_u64(info.stack_diagnostics_available ? 1U : 0U);
+        console_write(" high-status=");
+        console_write_u64((uint64_t)sleep_high_water_status);
+        console_write(" high=");
+        console_write_u64((uint64_t)high_water);
+        console_write(" unwind-status=");
+        console_write_u64((uint64_t)sleep_unwind_status);
+        console_write(" frames=");
+        console_write_u64((uint64_t)trace.frame_count);
+        console_write(" truncated=");
+        console_write_u64(trace.truncated ? 1U : 0U);
+        console_write("\n");
+        kernel_test_fail("sleeping task stack diagnostics are invalid");
+    }
+
+    /* This sleeper is the only dynamic task and the ready queue is empty. */
+    ticks_remaining = info.wake_deadline - ticks_before;
+    for (uint64_t tick = 0U; tick < ticks_remaining; ++tick) {
+        scheduler_timer_tick();
+    }
+    if (scheduler_monotonic_ticks(&ticks_after) != SCHEDULER_STATUS_OK ||
+        ticks_after != info.wake_deadline ||
+        scheduler_task_query(sleeper, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_READY || !info.queued) {
+        kernel_test_fail("bounded timer wake skipped an empty-ready-queue sleep");
+    }
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "woken scheduler sleeper did not finish"
+    );
+    if (scheduler_sleep_stage != 2U ||
+        scheduler_task_query(sleeper, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_EXITED) {
+        kernel_test_fail("woken scheduler sleeper did not exit");
+    }
+    expect_scheduler_status(
+        scheduler_task_reap(sleeper),
+        SCHEDULER_STATUS_OK,
+        "woken scheduler sleeper could not be reaped"
+    );
+    if (bootstrap_interrupts) {
+        cpu_interrupt_enable();
+    }
+    console_write("ZT PROOF scheduler-stack-diagnostics\n");
+
+    scheduler_join_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_join_task, NULL, &joiner),
+        SCHEDULER_STATUS_OK,
+        "scheduler joiner creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_noop_task, NULL, &scheduler_join_target),
+        SCHEDULER_STATUS_OK,
+        "scheduler join target creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "scheduler join target did not complete"
+    );
+    if (scheduler_join_stage != 1U ||
+        scheduler_task_query(joiner, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_READY ||
+        !info.join_completion_ready ||
+        info.join_completion.index != scheduler_join_target.index ||
+        info.join_completion.generation != scheduler_join_target.generation) {
+        kernel_test_fail("join completion was not retained for its waiter");
+    }
+    expect_scheduler_status(
+        scheduler_task_reap(scheduler_join_target),
+        SCHEDULER_STATUS_OK,
+        "completed join target could not be reaped"
+    );
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_noop_task, NULL, &replacement),
+        SCHEDULER_STATUS_OK,
+        "reaped join target slot could not be reused"
+    );
+    if (replacement.index != scheduler_join_target.index ||
+        replacement.generation == scheduler_join_target.generation ||
+        scheduler_task_query(joiner, &info) != SCHEDULER_STATUS_OK ||
+        !info.join_completion_ready ||
+        info.join_completion.generation != scheduler_join_target.generation) {
+        kernel_test_fail("target reuse corrupted retained join completion");
+    }
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "completion-safe joiner did not resume"
+    );
+    if (scheduler_join_stage != 2U) {
+        kernel_test_fail("completion-safe join did not return to its waiter");
+    }
+    expect_scheduler_status(
+        scheduler_task_reap(joiner),
+        SCHEDULER_STATUS_OK,
+        "completion-safe joiner could not be reaped"
+    );
+    expect_scheduler_status(
+        scheduler_task_reap(replacement),
+        SCHEDULER_STATUS_OK,
+        "replacement join target could not be reaped"
+    );
+
+    scheduler_cycle_first_stage = 0U;
+    scheduler_cycle_second_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_cycle_first_task,
+            NULL,
+            &scheduler_cycle_first
+        ),
+        SCHEDULER_STATUS_OK,
+        "first cycle-probe task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_cycle_second_task,
+            NULL,
+            &scheduler_cycle_second
+        ),
+        SCHEDULER_STATUS_OK,
+        "second cycle-probe task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "join cycle-probe tasks did not reach cycle rejection"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "join cycle-probe waiter did not consume completion"
+    );
+    if (scheduler_cycle_first_stage != 2U ||
+        scheduler_cycle_second_stage != 1U) {
+        kernel_test_fail("join cycle rejection sequence was not deterministic");
+    }
+    expect_scheduler_status(scheduler_task_reap(scheduler_cycle_first),
+        SCHEDULER_STATUS_OK, "first cycle-probe task could not be reaped");
+    expect_scheduler_status(scheduler_task_reap(scheduler_cycle_second),
+        SCHEDULER_STATUS_OK, "second cycle-probe task could not be reaped");
+
+    expect_scheduler_status(
+        scheduler_event_observe(
+            SCHEDULER_TEST_EVENT,
+            &scheduler_cancel_event_token
+        ),
+        SCHEDULER_STATUS_OK,
+        "cancellation event observation failed"
+    );
+    scheduler_cancel_event_stage = 0U;
+    scheduler_cancel_join_stage = 0U;
+    scheduler_cancel_sleep_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_cancel_event_task,
+            NULL,
+            &cancel_event
+        ),
+        SCHEDULER_STATUS_OK,
+        "cancellable event task creation failed"
+    );
+    expect_scheduler_status(scheduler_yield(), SCHEDULER_STATUS_OK,
+        "cancellable event task did not block");
+    scheduler_cancel_join_target = cancel_event;
+    expect_scheduler_status(
+        scheduler_task_create(scheduler_cancel_join_task, NULL, &cancel_join),
+        SCHEDULER_STATUS_OK,
+        "cancellable join task creation failed"
+    );
+    expect_scheduler_status(scheduler_yield(), SCHEDULER_STATUS_OK,
+        "cancellable join task did not block");
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_cancel_sleep_task,
+            NULL,
+            &cancel_sleep
+        ),
+        SCHEDULER_STATUS_OK,
+        "cancellable sleep task creation failed"
+    );
+    expect_scheduler_status(scheduler_yield(), SCHEDULER_STATUS_OK,
+        "cancellable sleep task did not block");
+
+    if (scheduler_task_query(cancel_event, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_BLOCKED ||
+        scheduler_task_query(cancel_join, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_JOIN_BLOCKED ||
+        scheduler_task_query(cancel_sleep, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_SLEEPING) {
+        kernel_test_fail("cancellation tasks did not enter all blocked states");
+    }
+    expect_scheduler_status(
+        scheduler_task_request_cancel(cancel_event),
+        SCHEDULER_STATUS_OK,
+        "event-blocked cancellation request failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_request_cancel(cancel_event),
+        SCHEDULER_STATUS_OK,
+        "repeated cancellation request was not idempotent"
+    );
+    expect_scheduler_status(
+        scheduler_task_request_cancel(cancel_join),
+        SCHEDULER_STATUS_OK,
+        "join-blocked cancellation request failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_request_cancel(cancel_sleep),
+        SCHEDULER_STATUS_OK,
+        "sleep-blocked cancellation request failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "cancelled scheduler tasks did not reach their cancellation points"
+    );
+    if (scheduler_cancel_event_stage != 2U ||
+        scheduler_cancel_join_stage != 2U ||
+        scheduler_cancel_sleep_stage != 2U) {
+        kernel_test_fail("deferred cancellation did not resume every wait kind");
+    }
+    expect_scheduler_status(scheduler_task_reap(cancel_event),
+        SCHEDULER_STATUS_OK, "cancelled event task could not be reaped");
+    expect_scheduler_status(scheduler_task_reap(cancel_join),
+        SCHEDULER_STATUS_OK, "cancelled join task could not be reaped");
+    expect_scheduler_status(scheduler_task_reap(cancel_sleep),
+        SCHEDULER_STATUS_OK, "cancelled sleep task could not be reaped");
+
+    if (scheduler_get_stats(&stats) != SCHEDULER_STATUS_OK ||
+        stats.join_blocks == 0U || stats.timed_sleeps < 2U ||
+        stats.cancellation_requests < 3U || stats.cancellations < 3U) {
+        kernel_test_fail("scheduler lifecycle statistics are inconsistent");
+    }
+    if (preempt_guard_enter(&guard) != PREEMPT_STATUS_OK) {
+        kernel_test_fail("scheduler pin-rejection guard could not be entered");
+    }
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_FORBIDDEN_CONTEXT,
+        "scheduler published a switch while preemption was pinned"
+    );
+    if (preempt_guard_exit(&guard) != PREEMPT_STATUS_OK) {
+        kernel_test_fail("scheduler pin-rejection guard could not be exited");
+    }
+    expect_scheduler_status(
+        scheduler_cancellation_point(),
+        SCHEDULER_STATUS_BOOTSTRAP_TASK,
+        "bootstrap cancellation point was not rejected"
+    );
+    console_write("ZT PROOF scheduler-lifecycle\n");
+}
+
 static void scheduler_context_test_handler(
     struct interrupt_frame *frame,
     void *context
 )
 {
+    enum scheduler_status validate_status;
+    enum scheduler_status yield_status;
+
     (void)context;
+    validate_status = scheduler_validate();
+    yield_status = scheduler_yield();
+    scheduler_context_validate_status = validate_status;
+    scheduler_context_yield_status = yield_status;
     scheduler_context_rejection_observed = frame != NULL &&
         frame->vector == SCHEDULER_CONTEXT_TEST_VECTOR &&
-        scheduler_validate() == SCHEDULER_STATUS_FORBIDDEN_CONTEXT &&
-        scheduler_yield() == SCHEDULER_STATUS_FORBIDDEN_CONTEXT;
+        validate_status == SCHEDULER_STATUS_FORBIDDEN_CONTEXT &&
+        yield_status == SCHEDULER_STATUS_FORBIDDEN_CONTEXT;
 }
 
 static void scheduler_worker_task(void *opaque_context)
@@ -1062,11 +1729,31 @@ static void scheduler_descriptor_exhaustion_proof(void)
         "scheduler descriptor exhaustion was not deterministic"
     );
 
-    expect_scheduler_status(
-        scheduler_yield(),
-        SCHEDULER_STATUS_OK,
-        "descriptor-exhaustion tasks did not run"
-    );
+    for (size_t attempt = 0U; attempt < SCHEDULER_TASK_LIMIT * 4U; ++attempt) {
+        size_t exited = 0U;
+
+        for (size_t index = 0U; index < SCHEDULER_TASK_LIMIT; ++index) {
+            struct scheduler_task_info info;
+
+            if (scheduler_task_query(handles[index], &info) !=
+                    SCHEDULER_STATUS_OK) {
+                kernel_test_fail("descriptor task became unqueryable");
+            }
+            if (info.state == SCHEDULER_TASK_EXITED) {
+                ++exited;
+            }
+        }
+
+        if (exited == SCHEDULER_TASK_LIMIT) {
+            break;
+        }
+
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "descriptor-exhaustion tasks did not run"
+        );
+    }
 
     for (size_t index = 0U; index < SCHEDULER_TASK_LIMIT; ++index) {
         struct scheduler_task_info info;
@@ -1086,6 +1773,277 @@ static void scheduler_descriptor_exhaustion_proof(void)
             SCHEDULER_STATUS_OK,
             "completed descriptor task could not be reaped"
         );
+    }
+}
+
+static void scheduler_priority_task(void *opaque_context)
+{
+    const uint32_t *identifier = (const uint32_t *)opaque_context;
+    const size_t position = scheduler_priority_trace_count;
+
+    if (identifier == NULL || position >= 2U) {
+        kernel_test_fail("priority scheduler trace overflowed");
+    }
+
+    scheduler_priority_trace[position] = *identifier;
+    scheduler_priority_trace_count = position + 1U;
+}
+
+static void scheduler_event_waiter_task(void *opaque_context)
+{
+    const struct scheduler_event_token *token =
+        (const struct scheduler_event_token *)opaque_context;
+
+    if (token == NULL || scheduler_event_stage != 0U ||
+        !cpu_interrupts_enabled()) {
+        kernel_test_fail("event waiter entered with invalid context");
+    }
+
+    scheduler_event_stage = 1U;
+    expect_scheduler_status(
+        scheduler_event_wait(*token),
+        SCHEDULER_STATUS_OK,
+        "event waiter did not resume after its wakeup"
+    );
+
+    if (!cpu_interrupts_enabled()) {
+        kernel_test_fail("event wait did not restore task interrupt state");
+    }
+
+    scheduler_event_stage = 2U;
+}
+
+static void scheduler_priority_and_event_proof(void)
+{
+    struct scheduler_task_handle low;
+    struct scheduler_task_handle high;
+    struct scheduler_task_handle waiter;
+    struct scheduler_task_handle invalid;
+    struct scheduler_event_token current_token;
+    struct scheduler_event_token invalid_token;
+    struct scheduler_task_info info;
+    struct scheduler_stats stats;
+    uint8_t priority = UINT8_MAX;
+    size_t woken = SIZE_MAX;
+    bool interrupts_were_enabled;
+
+    scheduler_priority_identifiers[0] = 0U;
+    scheduler_priority_identifiers[1] = 1U;
+    scheduler_priority_trace_count = 0U;
+    invalid.index = 0U;
+    invalid.generation = 1U;
+    invalid_token.index = 0U;
+    invalid_token.epoch = UINT64_MAX;
+
+    expect_scheduler_status(
+        scheduler_task_create_with_priority(
+            scheduler_priority_task,
+            &scheduler_priority_identifiers[0],
+            (uint8_t)(SCHEDULER_PRIORITY_MAX + UINT8_C(1)),
+            &invalid
+        ),
+        SCHEDULER_STATUS_INVALID_PRIORITY,
+        "scheduler accepted an out-of-range creation priority"
+    );
+
+    if (invalid.index != SCHEDULER_INVALID_INDEX ||
+        invalid.generation != 0U) {
+        kernel_test_fail("invalid priority published a task handle");
+    }
+
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_priority_task,
+            &scheduler_priority_identifiers[0],
+            &low
+        ),
+        SCHEDULER_STATUS_OK,
+        "default-priority task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_set_priority(low, UINT8_C(1)),
+        SCHEDULER_STATUS_OK,
+        "ready task priority update failed"
+    );
+    expect_scheduler_status(
+        scheduler_task_set_priority(
+            low,
+            (uint8_t)(SCHEDULER_PRIORITY_MAX + UINT8_C(1))
+        ),
+        SCHEDULER_STATUS_INVALID_PRIORITY,
+        "scheduler accepted an out-of-range priority update"
+    );
+    expect_scheduler_status(
+        scheduler_task_get_priority(low, &priority),
+        SCHEDULER_STATUS_OK,
+        "ready task priority query failed"
+    );
+
+    if (priority != UINT8_C(1)) {
+        kernel_test_fail("invalid priority update changed the task");
+    }
+
+    expect_scheduler_status(
+        scheduler_task_create_with_priority(
+            scheduler_priority_task,
+            &scheduler_priority_identifiers[1],
+            SCHEDULER_PRIORITY_MAX,
+            &high
+        ),
+        SCHEDULER_STATUS_OK,
+        "high-priority task creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "priority tasks did not run"
+    );
+
+    if (scheduler_priority_trace_count != 2U ||
+        scheduler_priority_trace[0] != 1U ||
+        scheduler_priority_trace[1] != 0U) {
+        kernel_test_fail("priority scheduler selection was not deterministic");
+    }
+
+    expect_scheduler_status(
+        scheduler_task_reap(low),
+        SCHEDULER_STATUS_OK,
+        "low-priority task could not be reaped"
+    );
+    expect_scheduler_status(
+        scheduler_task_reap(high),
+        SCHEDULER_STATUS_OK,
+        "high-priority task could not be reaped"
+    );
+
+    expect_scheduler_status(
+        scheduler_event_observe(
+            (uint32_t)SCHEDULER_EVENT_LIMIT,
+            &invalid_token
+        ),
+        SCHEDULER_STATUS_INVALID_EVENT,
+        "scheduler accepted an out-of-range event"
+    );
+
+    if (invalid_token.index != SCHEDULER_INVALID_EVENT ||
+        invalid_token.epoch != 0U) {
+        kernel_test_fail("invalid event observation published a token");
+    }
+
+    expect_scheduler_status(
+        scheduler_event_observe(
+            SCHEDULER_TEST_EVENT,
+            &scheduler_event_test_token
+        ),
+        SCHEDULER_STATUS_OK,
+        "scheduler event observation failed"
+    );
+    scheduler_event_stage = 0U;
+    expect_scheduler_status(
+        scheduler_task_create(
+            scheduler_event_waiter_task,
+            &scheduler_event_test_token,
+            &waiter
+        ),
+        SCHEDULER_STATUS_OK,
+        "event waiter creation failed"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "event waiter did not block"
+    );
+    expect_scheduler_status(
+        scheduler_task_query(waiter, &info),
+        SCHEDULER_STATUS_OK,
+        "blocked event waiter was not queryable"
+    );
+
+    if (scheduler_event_stage != 1U ||
+        info.state != SCHEDULER_TASK_BLOCKED || info.queued ||
+        info.wait_event != SCHEDULER_TEST_EVENT ||
+        info.wait_epoch != scheduler_event_test_token.epoch) {
+        kernel_test_fail("event waiter did not enter exact blocked state");
+    }
+
+    expect_scheduler_status(
+        scheduler_task_reap(waiter),
+        SCHEDULER_STATUS_BLOCKED_TASK,
+        "scheduler allowed a blocked task to be reaped"
+    );
+    expect_scheduler_status(
+        scheduler_event_wake_one(SCHEDULER_TEST_EVENT, &woken),
+        SCHEDULER_STATUS_OK,
+        "scheduler event wake-one failed"
+    );
+
+    if (woken != 1U ||
+        scheduler_task_query(waiter, &info) != SCHEDULER_STATUS_OK ||
+        info.state != SCHEDULER_TASK_READY || !info.queued ||
+        info.wait_event != SCHEDULER_INVALID_EVENT || info.wait_epoch != 0U) {
+        kernel_test_fail("wake-one did not publish one exact ready task");
+    }
+
+    expect_scheduler_status(
+        scheduler_event_wake_all(SCHEDULER_TEST_EVENT, &woken),
+        SCHEDULER_STATUS_OK,
+        "empty scheduler event wake-all failed"
+    );
+
+    if (woken != 0U) {
+        kernel_test_fail("empty event wake reported a task");
+    }
+
+    interrupts_were_enabled = cpu_interrupts_enabled();
+    expect_scheduler_status(
+        scheduler_event_wait(scheduler_event_test_token),
+        SCHEDULER_STATUS_EVENT_CHANGED,
+        "stale scheduler event token could block"
+    );
+
+    if (interrupts_were_enabled != cpu_interrupts_enabled()) {
+        kernel_test_fail("stale event wait changed bootstrap IF state");
+    }
+    expect_scheduler_status(
+        scheduler_event_observe(SCHEDULER_TEST_EVENT, &current_token),
+        SCHEDULER_STATUS_OK,
+        "current scheduler event token was not observable"
+    );
+    expect_scheduler_status(
+        scheduler_event_wait(current_token),
+        SCHEDULER_STATUS_BOOTSTRAP_TASK,
+        "bootstrap task was allowed to block"
+    );
+    expect_scheduler_status(
+        scheduler_yield(),
+        SCHEDULER_STATUS_OK,
+        "woken event task did not run"
+    );
+
+    for (size_t attempt = 0U;
+         attempt < 16U && scheduler_event_stage != 2U;
+         ++attempt) {
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "woken event task did not finish"
+        );
+    }
+
+    if (scheduler_event_stage != 2U) {
+        kernel_test_fail("woken event task did not resume after its wait");
+    }
+
+    expect_scheduler_status(
+        scheduler_task_reap(waiter),
+        SCHEDULER_STATUS_OK,
+        "woken event task could not be reaped"
+    );
+
+    if (scheduler_get_stats(&stats) != SCHEDULER_STATUS_OK ||
+        stats.blocked_tasks != 0U || stats.blocked_transitions == 0U ||
+        stats.wakeups == 0U || stats.blocked_transitions < stats.wakeups) {
+        kernel_test_fail("scheduler event statistics are inconsistent");
     }
 }
 
@@ -1125,7 +2083,79 @@ void kernel_test_scheduler_normal_proof(void)
         "normal scheduler first yield failed"
     );
 
+    /*
+     * First entry deliberately enables IF before calling the task entry.
+     * A pending periodic interrupt may therefore preempt the task in that
+     * narrow window and return to bootstrap before the first task-side store.
+     * Keep dispatching only while the exact committed READY state proves that
+     * this legal involuntary switch occurred.
+     */
+    for (size_t attempt = 0U;
+         scheduler_normal_stage == 0U && attempt < 64U;
+         ++attempt) {
+        if (scheduler_task_query(handle, &info) != SCHEDULER_STATUS_OK ||
+            info.state != SCHEDULER_TASK_READY) {
+            kernel_test_fail(
+                "normal scheduler entry retry observed invalid task state"
+            );
+        }
+        expect_scheduler_status(
+            scheduler_yield(),
+            SCHEDULER_STATUS_OK,
+            "normal scheduler entry retry failed"
+        );
+    }
+
     if (scheduler_normal_stage != 1U) {
+        struct scheduler_task_identity current;
+        struct scheduler_task_info diagnostic_info;
+        struct scheduler_stats diagnostic_stats;
+        const enum scheduler_status current_status =
+            scheduler_current_task(&current);
+        const enum scheduler_status query_status =
+            scheduler_task_query(handle, &diagnostic_info);
+        const enum scheduler_status stats_status =
+            scheduler_get_stats(&diagnostic_stats);
+
+        console_write("ZT DETAIL scheduler-normal stage=");
+        console_write_u64((uint64_t)scheduler_normal_stage);
+        console_write(" current-status=");
+        console_write_u64((uint64_t)current_status);
+        console_write(" bootstrap=");
+        console_write_u64(
+            current_status == SCHEDULER_STATUS_OK && current.bootstrap
+                ? 1U
+                : 0U
+        );
+        console_write(" query-status=");
+        console_write_u64((uint64_t)query_status);
+        console_write(" task-state=");
+        console_write_u64(
+            query_status == SCHEDULER_STATUS_OK
+                ? (uint64_t)diagnostic_info.state
+                : UINT64_MAX
+        );
+        console_write(" stats-status=");
+        console_write_u64((uint64_t)stats_status);
+        console_write(" switches=");
+        console_write_u64(
+            stats_status == SCHEDULER_STATUS_OK
+                ? (uint64_t)diagnostic_stats.context_switches
+                : UINT64_MAX
+        );
+        console_write(" completed=");
+        console_write_u64(
+            stats_status == SCHEDULER_STATUS_OK
+                ? (uint64_t)diagnostic_stats.completed_tasks
+                : UINT64_MAX
+        );
+        console_write(" preemptions=");
+        console_write_u64(
+            stats_status == SCHEDULER_STATUS_OK
+                ? (uint64_t)diagnostic_stats.preemptions
+                : UINT64_MAX
+        );
+        console_write("\n");
         kernel_test_fail("normal scheduler task did not run once");
     }
 
@@ -1142,6 +2172,10 @@ void kernel_test_scheduler_normal_proof(void)
         scheduler_yield() != SCHEDULER_STATUS_NO_RUNNABLE_PEER ||
         scheduler_validate() != SCHEDULER_STATUS_OK) {
         kernel_test_fail("normal scheduler lifecycle proof failed");
+    }
+
+    if (active_scenario == KERNEL_TEST_SCHEDULER_NM) {
+        scheduler_test_trigger_nm();
     }
 }
 
@@ -1258,6 +2292,7 @@ void kernel_test_run(enum kernel_test_scenario scenario)
     case KERNEL_TEST_HEAP:
     case KERNEL_TEST_SCHEDULER:
     case KERNEL_TEST_SCHEDULER_GUARD:
+    case KERNEL_TEST_SCHEDULER_NM:
         return;
     case KERNEL_TEST_INVALID:
         kernel_test_fail("invalid or duplicate zenith.test argument");
@@ -1371,6 +2406,7 @@ _Noreturn void kernel_test_complete_scheduler(void)
     struct scheduler_task_identity identity_before;
     struct scheduler_task_identity identity_after;
     struct scheduler_stats stats;
+    struct xstate_runtime_snapshot xstate_snapshot;
     struct heap_stats heap_stats;
     uint64_t ticks_before;
     uint64_t eoi_before;
@@ -1428,6 +2464,21 @@ _Noreturn void kernel_test_complete_scheduler(void)
         kernel_test_fail("interrupt-context scheduler use was not rejected");
     }
 
+    scheduler_context_rejection_observed = false;
+    if (!scheduler_test_interrupt_while_locked()) {
+        kernel_test_fail("interrupted scheduler-lock probe could not run");
+    }
+    if (!scheduler_context_rejection_observed) {
+        console_write("ZT DETAIL locked-interrupt validate=");
+        console_write_u64((uint64_t)scheduler_context_validate_status);
+        console_write(" yield=");
+        console_write_u64((uint64_t)scheduler_context_yield_status);
+        console_putc('\n');
+        kernel_test_fail(
+            "interrupted scheduler-lock holder touched scheduler state"
+        );
+    }
+
     cpu_interrupt_disable();
 
     if (interrupt_unregister_handler(SCHEDULER_CONTEXT_TEST_VECTOR) !=
@@ -1459,7 +2510,8 @@ _Noreturn void kernel_test_complete_scheduler(void)
 
         if (infos[index].state != SCHEDULER_TASK_READY ||
             infos[index].stack_end - infos[index].stack_start !=
-                UINT64_C(65536) ||
+                VIRTUAL_MEMORY_TASK_STACK_PAYLOAD_PAGES * ZENITH_PAGE_SIZE ||
+            infos[index].saved_stack_pointer != infos[index].stack_end ||
             infos[index].lower_guard + ZENITH_PAGE_SIZE !=
                 infos[index].stack_start ||
             infos[index].upper_guard != infos[index].stack_end) {
@@ -1535,12 +2587,24 @@ _Noreturn void kernel_test_complete_scheduler(void)
         kernel_test_fail("scheduler workers did not complete deterministically");
     }
 
-    for (size_t position = 0U;
-         position < SCHEDULER_TEST_TRACE_LENGTH;
-         ++position) {
-        if (scheduler_trace[position] !=
-            (uint32_t)(position % SCHEDULER_TEST_TASK_COUNT)) {
-            kernel_test_fail("round-robin scheduler trace is not deterministic");
+    for (uint32_t identifier = 0U;
+         identifier < SCHEDULER_TEST_TASK_COUNT;
+         ++identifier) {
+        size_t observed = 0U;
+
+        for (size_t position = 0U;
+             position < SCHEDULER_TEST_TRACE_LENGTH;
+             ++position) {
+            if (scheduler_trace[position] >= SCHEDULER_TEST_TASK_COUNT) {
+                kernel_test_fail("scheduler trace contains an invalid task");
+            }
+            if (scheduler_trace[position] == identifier) {
+                ++observed;
+            }
+        }
+
+        if (observed != SCHEDULER_TEST_ROUNDS) {
+            kernel_test_fail("preemptive scheduler lost a worker round");
         }
     }
 
@@ -1576,6 +2640,22 @@ _Noreturn void kernel_test_complete_scheduler(void)
             SCHEDULER_STATUS_OK,
             "reused scheduler task did not run"
         );
+        for (size_t attempt = 0U; attempt < 16U; ++attempt) {
+            struct scheduler_task_info reused_info;
+
+            if (scheduler_task_query(reused, &reused_info) !=
+                    SCHEDULER_STATUS_OK) {
+                kernel_test_fail("reused scheduler task became unqueryable");
+            }
+            if (reused_info.state == SCHEDULER_TASK_EXITED) {
+                break;
+            }
+            expect_scheduler_status(
+                scheduler_yield(),
+                SCHEDULER_STATUS_OK,
+                "reused scheduler task did not finish"
+            );
+        }
         expect_scheduler_status(
             scheduler_task_reap(reused),
             SCHEDULER_STATUS_OK,
@@ -1583,7 +2663,11 @@ _Noreturn void kernel_test_complete_scheduler(void)
         );
     }
 
+    scheduler_timer_preemption_proof();
+    scheduler_lifecycle_and_diagnostics_proof();
+
     scheduler_descriptor_exhaustion_proof();
+    scheduler_priority_and_event_proof();
     expect_scheduler_status(
         scheduler_yield(),
         SCHEDULER_STATUS_NO_RUNNABLE_PEER,
@@ -1591,8 +2675,21 @@ _Noreturn void kernel_test_complete_scheduler(void)
     );
 
     if (scheduler_get_stats(&stats) != SCHEDULER_STATUS_OK ||
+        xstate_runtime_snapshot(&xstate_snapshot) != XSTATE_STATUS_OK ||
+        xstate_snapshot.live_tasks != 0U ||
+        !xstate_snapshot.bootstrap_loaded ||
+        xstate_snapshot.loaded_task != XSTATE_INVALID_INDEX ||
+        xstate_snapshot.bootstrap_save_count == 0U ||
+        xstate_snapshot.bootstrap_save_count !=
+            xstate_snapshot.bootstrap_restore_count ||
+        (xstate_snapshot.layout.enabled_mask &
+            (XSTATE_X87_MASK | XSTATE_SSE_MASK)) !=
+                (XSTATE_X87_MASK | XSTATE_SSE_MASK) ||
+        xstate_snapshot.layout.area_size > XSTATE_MAXIMUM_AREA_SIZE ||
         stats.ready_queue_entries != 0U || stats.ready_tasks != 0U ||
-        stats.running_dynamic_tasks != 0U || stats.exited_tasks != 0U ||
+        stats.running_dynamic_tasks != 0U || stats.blocked_tasks != 0U ||
+        stats.join_blocked_tasks != 0U || stats.sleeping_tasks != 0U ||
+        stats.exited_tasks != 0U ||
         stats.mapped_stack_pages != 0U ||
         stats.task_stack_owned_frames != 0U ||
         !stats.bootstrap_running || stats.poisoned ||
@@ -1687,6 +2784,10 @@ bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
             frame->cr2 == scheduler_guard_expected_address &&
             frame->rip == (uintptr_t)(const void *)scheduler_guard_fault_site;
         break;
+    case KERNEL_TEST_SCHEDULER_NM:
+        matches = frame->vector == 7U && frame->error_code == 0U &&
+            frame->rip == (uintptr_t)(const void *)scheduler_nm_fault_site;
+        break;
     default:
         return false;
     }
@@ -1733,6 +2834,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "scheduler";
     case KERNEL_TEST_SCHEDULER_GUARD:
         return "scheduler-guard";
+    case KERNEL_TEST_SCHEDULER_NM:
+        return "scheduler-nm";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

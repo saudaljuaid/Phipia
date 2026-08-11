@@ -11,6 +11,7 @@
 #define INTERRUPT_PIC_MASTER_BASE 32U
 #define INTERRUPT_PIC_SLAVE_BASE 40U
 #define INTERRUPT_PIC_LIMIT 48U
+#define INTERRUPT_RESCHEDULE_VECTOR UINT8_C(0x31)
 #define INTERRUPT_IST_TEST_VECTOR UINT8_C(0xF0)
 
 struct interrupt_frame {
@@ -39,6 +40,9 @@ struct interrupt_frame {
     uint64_t ss;
 };
 
+/* Long-mode interrupt entry and iretq always include the complete SS:RSP pair. */
+#define INTERRUPT_KERNEL_FRAME_SIZE sizeof(struct interrupt_frame)
+
 typedef void (*interrupt_handler_t)(
     struct interrupt_frame *frame,
     void *context
@@ -49,6 +53,7 @@ enum interrupt_status {
     INTERRUPT_STATUS_ALREADY_INITIALIZED,
     INTERRUPT_STATUS_NOT_INITIALIZED,
     INTERRUPT_STATUS_CPU_TABLE_FAILURE,
+    INTERRUPT_STATUS_PREEMPT_FAILURE,
     INTERRUPT_STATUS_PIC_FAILURE,
     INTERRUPT_STATUS_BAD_IDT,
     INTERRUPT_STATUS_INTERRUPTS_ENABLED,
@@ -69,7 +74,7 @@ enum interrupt_status interrupt_register_handler(
     void *context
 );
 enum interrupt_status interrupt_unregister_handler(uint8_t vector);
-void interrupt_dispatch(struct interrupt_frame *frame);
+struct interrupt_frame *interrupt_dispatch(struct interrupt_frame *frame);
 const char *interrupt_status_string(enum interrupt_status status);
 const char *interrupt_exception_name(uint8_t vector);
 void interrupt_test_set_gate_present(uint8_t vector, bool present);
@@ -78,11 +83,13 @@ bool interrupt_breakpoint_self_test(void);
 bool interrupt_ist_self_test(void);
 bool interrupt_pic_spurious_self_test(void);
 bool interrupt_frame_layout_self_test(void);
+bool interrupt_initialization_rollback_self_test(void);
 bool interrupt_trigger_register_probe(void);
 void interrupt_trigger_ist_probe(void);
 void interrupt_trigger_spurious_irq7(void);
 void interrupt_trigger_spurious_irq15(void);
 void interrupt_trigger_apic_spurious(void);
+void interrupt_trigger_reschedule(void);
 _Noreturn void interrupt_trigger_invalid_opcode(void);
 _Noreturn void interrupt_trigger_page_fault(void);
 _Noreturn void interrupt_trigger_write_protect(void);

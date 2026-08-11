@@ -7,20 +7,31 @@ diagnostic and halts. A dedicated double-fault path does not call ordinary C.
 
 ## Interrupt-entry ABI
 
-AMD64 long mode pushes `SS`, `RSP`, `RFLAGS`, `CS`, and `RIP` as eight-byte
-values for every interrupt. Vectors 8, 10-14, 17, 21, 29, and 30 also receive a
-hardware error code. Their stubs push only the vector; every other stub pushes a
-zero error code followed by the vector.
+AMD64 64-bit interrupt entry always pushes the complete 40-byte `SS`, `RSP`,
+`RFLAGS`, `CS`, and `RIP` return frame, and 64-bit `iretq` pops the `SS:RSP`
+pair even when CPL does not change. Privilege transitions and IST selection
+change which stack receives that same frame; they do not shorten the same-CPL
+shape. Vectors 8, 10-14, 17, 21, 29, and 30 also receive an eight-byte hardware
+error code. Their stubs push only the eight-byte vector slot; every other stub
+pushes a zero error-code slot followed by the vector slot.
 
 The common entry clears the direction flag, saves all fifteen non-RSP general
 registers, snapshots CR2, aligns the live stack to the System V call boundary,
 and calls ordinary freestanding C. The original frame pointer is held in a
-callee-saved register. Return restores the exact saved stack, registers, vector
-and error slots before executing `iretq`.
+callee-saved register while C runs. The dispatcher returns the frame pointer to
+restore. C accepts either that aligned original ring-zero frame or an alternate
+frame selected only after the scheduler commits and proves exact stack
+ownership, live generation, running-state provenance, kernel CS/RIP/SS, legal
+RFLAGS, the saved return RSP, and aligned bounds. Only then does Assembly load
+`RSP` directly from the returned pointer, restore the registers, vector and
+error slots, and execute `iretq`.
 
-The C structure is statically asserted to 184 bytes. Changing its field order,
-the Assembly push order, or the list of error-code vectors is one ABI change and
-must be reviewed as such.
+The stubs' 16 normalized bytes plus the common entry's CR2 and fifteen GPRs
+extend the hardware frame to the complete 184-byte C and Assembly ABI. Its size
+is statically asserted, and scheduler provenance checks require all 184 bytes to
+remain inside the owning task stack. Changing its field order, the Assembly
+push order, or the list of error-code vectors is one ABI change and must be
+reviewed as such.
 
 ## Descriptor-table invariants
 
@@ -35,6 +46,11 @@ selectors while the bootstrap GDT is still active. Zenith then loads the
 permanent GDT and task register, patches the live IDT with IST selectors, and
 validates GDTR, IDTR, TR, all 256 gates, the TSS, and stack canaries before the
 boot parser, memory allocator, or any `sti`.
+
+The bootstrap preemption runtime is also an interrupt-activation gate. A
+failure returns the dedicated preemption-initialization status and clears the
+reserved reschedule handler slot, so the interrupt subsystem is never
+published with a handler backed by an unavailable runtime.
 
 Canaries detect some downward overflow but are not guard pages. The permanent
 map gives the bootstrap and IST storage writable, NX pages, but those linked
@@ -67,7 +83,7 @@ milestone exists to prevent.
 
 ## Executable proof
 
-`make qemu-tests` boots one kernel under fifteen Multiboot command-line scenarios:
+`make qemu-tests` boots one kernel under sixteen Multiboot command-line scenarios:
 
 1. normal descriptor and frame validation;
 2. breakpoint return with every GPR and the direction flag restored;
@@ -86,9 +102,11 @@ milestone exists to prevent.
     continued Local APIC timer delivery;
 12. deterministic handling of an unregistered vector;
 13. a genuine double fault created by making page-fault delivery fail;
-14. cooperative scheduler creation, switching, exit, reaping, rollback, and
-    continued timer/EOI delivery;
-15. a genuine non-present page fault on an exact task-stack guard address.
+14. preemptive scheduler creation, switching, CPU-bound register/RFLAGS proof,
+    exit, reaping, rollback, and continued timer/EOI delivery;
+15. a genuine non-present page fault on an exact task-stack guard address;
+16. a deliberate device-not-available exception after eager XSAVE activation,
+    proving the exact #NM fault site and fail-closed xstate poisoning.
 
 Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
 `ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
@@ -100,8 +118,10 @@ cannot be mistaken for success.
 ## Deferred work
 
 This remains a single-core, ring-zero foundation. It intentionally has no
-`swapgs`, userspace frame, nested interrupts, SMP state, preemption, dynamic
+`swapgs`, userspace frame, nested interrupts, SMP state, dynamic
 vector allocation, guarded interrupt stacks, or interrupt-safe console lock.
-The cooperative scheduler never changes an interrupt frame; the calibrated
-timer supplies time only and does not introduce preemption. Those mechanisms
-must arrive with their own changed ABI and executable proofs.
+The scheduler changes return-frame ownership only at an outermost eligible
+interrupt exit after any required EOI; software reschedule vector `0x31`
+requires none. IST, panic, nested, and preempt-disabled exits retain their entry
+frame. Userspace and SMP mechanisms must arrive with their own changed ABI and
+executable proofs.
