@@ -117,6 +117,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_IOAPIC;
     }
 
+    if (token_equals(value, length, "retired")) {
+        return KERNEL_TEST_RETIRED;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -143,6 +147,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x18);
     case KERNEL_TEST_IOAPIC:
         return UINT8_C(0x19);
+    case KERNEL_TEST_RETIRED:
+        return UINT8_C(0x1A);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -331,6 +337,70 @@ static void ioapic_scenario(void)
     }
 }
 
+/*
+ * Retire the 8259 pair and prove the machine keeps its timer. This is the
+ * scenario that would catch a retirement which silently took interrupt
+ * delivery with it.
+ */
+static void retired_scenario(void)
+{
+    enum pit_status pit_status;
+    enum pic_status pic_status;
+
+    if (!pic_is_initialized() || pic_is_retired()) {
+        kernel_test_fail("legacy PIC was not in its expected initial state");
+    }
+
+    pic_status = pic_retire();
+
+    if (pic_status != PIC_STATUS_OK) {
+        kernel_test_fail(pic_status_string(pic_status));
+    }
+
+    if (apic_retire_legacy_routing() != APIC_STATUS_OK) {
+        kernel_test_fail("local APIC kept carrying legacy interrupts");
+    }
+
+    if (!pic_is_retired() || pic_mask_snapshot() != UINT16_C(0xFFFF)) {
+        kernel_test_fail("legacy PIC is not fully masked after retirement");
+    }
+
+    if (pic_set_mask(0U, false) != PIC_STATUS_RETIRED ||
+        pic_retire() != PIC_STATUS_RETIRED) {
+        kernel_test_fail("retired PIC accepted a further mutation");
+    }
+
+    if (apic_get_state().legacy_interrupts_routed) {
+        kernel_test_fail("local APIC still reports legacy routing");
+    }
+
+    pit_status = pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_wait_for_ticks(PIT_TEST_TICKS);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < PIT_TEST_TICKS) {
+        kernel_test_fail("timer stopped once the legacy PIC was retired");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -394,6 +464,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_IOAPIC:
         ioapic_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_RETIRED:
+        retired_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -475,6 +548,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "apic";
     case KERNEL_TEST_IOAPIC:
         return "ioapic";
+    case KERNEL_TEST_RETIRED:
+        return "retired";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

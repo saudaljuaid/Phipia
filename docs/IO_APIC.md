@@ -93,9 +93,8 @@ APIC end of interrupt does the same after the first tick.
 
 ## Deferred work
 
-The 8259 pair is still initialized and still proves the legacy path, and this
-increment deliberately does not retire it. Masking it permanently belongs with
-the increment that moves every interrupt source Seneri owns onto the I/O APIC.
-Level-triggered routing needs I/O APIC directed EOI. Replacing the PIT with the
-local APIC timer needs its own calibration and acceptance test, and only then
-does the legacy timer proof become redundant.
+`docs/LEGACY_RETIREMENT.md` covers the next increment, which masks the 8259 pair
+permanently and stops the local APIC carrying its output. Level-triggered
+routing needs I/O APIC directed EOI. Replacing the PIT with the local APIC timer
+needs its own calibration and acceptance test, and only then does the legacy
+timer proof become redundant.
