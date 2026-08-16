@@ -1,0 +1,86 @@
+# Local APIC timer
+
+Seneri's timer interrupt now originates in the processor rather than in a
+separate 8254 chip. Getting there required answering one question the hardware
+does not answer for itself: how fast does the local APIC timer count?
+
+## Why calibration is unavoidable
+
+The PIT's rate is fixed by its own crystal, so a divisor turns into a known
+frequency by arithmetic alone. The local APIC timer counts the processor's bus
+or core crystal clock, whose rate is not reported by CPUID on the processors
+Seneri targets and is not described by ACPI. A count is therefore meaningless
+until it has been measured against a reference whose rate is known.
+
+That is the whole reason the PIT survives this increment. It is no longer the
+kernel's timer; it is the ruler the kernel measures its timer with.
+
+## How the measurement is taken
+
+The divide configuration selects divide by sixteen, which keeps a one-shot run
+from exhausting the 32-bit counter while leaving far more resolution than the
+interval needs. The timer is loaded with the maximum count while its local
+vector table entry is masked, so calibration raises no interrupt.
+
+The PIT then runs for ten ticks at 100 Hz, one tenth of a second, and the APIC
+timer's current count is read before and after. The rate is the elapsed count
+scaled to a second.
+
+Three outcomes are refused rather than recorded:
+
+- an end count of zero, which means the counter reached the bottom and the
+  elapsed count is a floor rather than a measurement;
+- a start that is not above the end, which means the counter never ran down;
+- a computed rate of zero, which cannot divide into any period.
+
+Calibration happens once. A second attempt is refused, because a rate that
+changed under the kernel would silently change the meaning of every interval
+derived from it.
+
+## Running
+
+A requested frequency becomes an initial count by dividing the calibrated rate.
+A count of zero or one wider than the register is refused, so an unrepresentable
+frequency fails at the call rather than producing a timer running at some other
+rate. The local vector table entry is programmed in periodic mode and read back
+before the count is written, because writing the count is what starts the timer.
+
+The timer's vector sits in a range disjoint from both the 8259 and I/O APIC
+ranges, and the dispatcher acknowledges it at the local APIC. Its end of
+interrupt follows the handler, as with every other APIC-delivered vector.
+
+## Executable proof
+
+`apic_timer_self_test` proves the calibration arithmetic without hardware,
+which matters because wrong arithmetic does not fail loudly: it produces a timer
+that runs at the wrong speed forever. It covers a correct measurement, a counter
+that never moved, a counter that ran backwards, one that reached zero, a zero
+reference frequency, a correct count for a requested frequency, a frequency too
+fast to express, one too slow for the register, a zero frequency, and the
+refusals for waiting on and stopping a timer that is not running.
+
+The `apic-timer` QEMU scenario proves the hardware path and, more importantly,
+the *rate*: an uncalibrated timer refuses to start, calibration succeeds and
+cannot be repeated, a second start is refused, and then the APIC timer's tick
+count is compared against the PIT running over the same interval. A rate wrong
+by more than a factor of two shows up as a tick count that disagrees.
+
+Normal boot additionally requires:
+
+```text
+Seneri OS: local APIC timer calibrated at <n> counts per second
+Seneri OS: local APIC timer delivered eight interrupts
+```
+
+A negative control confirms the cross-check is real: multiplying the calibrated
+rate by four makes the scenario fail with `local APIC timer rate disagrees with
+its reference`, rather than passing because the timer ticked at all.
+
+## Deferred work
+
+The PIT remains as the calibration reference. Removing it needs a second
+reference Seneri can trust, which on this target means the TSC with its
+invariant-rate CPUID leaf, or the ACPI power management timer, and that is its
+own increment with its own proof. Level-triggered I/O APIC routing still needs
+directed EOI. Nothing here is per-processor yet: a second processor would need
+its own calibration, since the local APIC timer is core-local.

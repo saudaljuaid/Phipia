@@ -19,6 +19,14 @@
  */
 #define INTERRUPT_IOAPIC_BASE 48U
 #define INTERRUPT_IOAPIC_LIMIT 64U
+
+/*
+ * Vectors the local APIC raises for its own sources, starting with the timer.
+ * They are acknowledged the same way as I/O APIC vectors, so the two ranges are
+ * kept adjacent and the dispatcher tests them as one span.
+ */
+#define INTERRUPT_LOCAL_APIC_BASE 64U
+#define INTERRUPT_LOCAL_APIC_LIMIT 72U
 #define INTERRUPT_IST_TEST_VECTOR UINT8_C(0xF0)
 
 struct interrupt_frame {

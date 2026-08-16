@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <seneri/apic.h>
+#include <seneri/apic_timer.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
@@ -17,6 +18,8 @@
 #define PAGE_FAULT_TEST_ADDRESS UINT64_C(0x0000000100000000)
 #define PIT_TEST_FREQUENCY UINT32_C(100)
 #define PIT_TEST_TICKS UINT64_C(8)
+#define APIC_TIMER_TEST_FREQUENCY UINT32_C(100)
+#define APIC_TIMER_TEST_TICKS UINT64_C(20)
 
 volatile uint8_t kernel_test_double_fault_armed;
 static enum kernel_test_scenario active_scenario;
@@ -121,6 +124,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_RETIRED;
     }
 
+    if (token_equals(value, length, "apic-timer")) {
+        return KERNEL_TEST_APIC_TIMER;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -149,6 +156,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x19);
     case KERNEL_TEST_RETIRED:
         return UINT8_C(0x1A);
+    case KERNEL_TEST_APIC_TIMER:
+        return UINT8_C(0x1B);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -401,6 +410,90 @@ static void retired_scenario(void)
     }
 }
 
+/*
+ * Calibrate and run the local APIC timer, then check the rate it measured is
+ * consistent with the reference it measured against. A timer that ticks but
+ * counts at the wrong rate is the failure this scenario exists to find.
+ */
+static void apic_timer_scenario(void)
+{
+    enum apic_timer_status status;
+    uint64_t elapsed_ticks;
+
+    if (!apic_is_online()) {
+        kernel_test_fail("local APIC is not online");
+    }
+
+    if (apic_timer_is_calibrated() || apic_timer_is_running()) {
+        kernel_test_fail("local APIC timer was already in use");
+    }
+
+    if (apic_timer_start(APIC_TIMER_TEST_FREQUENCY) !=
+        APIC_TIMER_STATUS_NOT_CALIBRATED) {
+        kernel_test_fail("uncalibrated local APIC timer agreed to run");
+    }
+
+    status = apic_timer_calibrate();
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail(apic_timer_status_string(status));
+    }
+
+    if (apic_timer_counts_per_second() == 0U) {
+        kernel_test_fail("local APIC timer calibrated to a zero rate");
+    }
+
+    if (apic_timer_calibrate() != APIC_TIMER_STATUS_ALREADY_CALIBRATED) {
+        kernel_test_fail("local APIC timer accepted a second calibration");
+    }
+
+    status = apic_timer_start(APIC_TIMER_TEST_FREQUENCY);
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail(apic_timer_status_string(status));
+    }
+
+    if (apic_timer_start(APIC_TIMER_TEST_FREQUENCY) !=
+        APIC_TIMER_STATUS_ALREADY_RUNNING) {
+        kernel_test_fail("local APIC timer started twice");
+    }
+
+    /*
+     * Measure the APIC timer against the same PIT it was calibrated from. Both
+     * are asked for the same interval, so a rate that is wrong by more than a
+     * quarter shows up as a tick count that disagrees.
+     */
+    if (pit_start(APIC_TIMER_TEST_FREQUENCY, PIT_ROUTE_IO_APIC) !=
+        PIT_STATUS_OK) {
+        kernel_test_fail("reference timer would not start");
+    }
+
+    if (pit_wait_for_ticks(APIC_TIMER_TEST_TICKS) != PIT_STATUS_OK) {
+        kernel_test_fail("reference timer stopped delivering");
+    }
+
+    elapsed_ticks = apic_timer_ticks();
+
+    if (pit_stop() != PIT_STATUS_OK) {
+        kernel_test_fail("reference timer would not stop");
+    }
+
+    status = apic_timer_stop();
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail(apic_timer_status_string(status));
+    }
+
+    if (elapsed_ticks < APIC_TIMER_TEST_TICKS / 2U ||
+        elapsed_ticks > APIC_TIMER_TEST_TICKS * 2U) {
+        kernel_test_fail("local APIC timer rate disagrees with its reference");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -467,6 +560,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_RETIRED:
         retired_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_APIC_TIMER:
+        apic_timer_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -550,6 +646,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "ioapic";
     case KERNEL_TEST_RETIRED:
         return "retired";
+    case KERNEL_TEST_APIC_TIMER:
+        return "apic-timer";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

@@ -71,7 +71,7 @@ through hardware Seneri believed it had retired.
 
 ## Deferred work
 
-The timer is still the PIT, now reached through the I/O APIC. Replacing it with
-the local APIC timer needs its own calibration against a known reference and its
-own acceptance test, and only then does the PIT become redundant. Level
-triggered routing still needs I/O APIC directed EOI. Neither belongs here.
+`docs/APIC_TIMER.md` covers the next increment, which calibrates the local APIC
+timer against the PIT and runs the timer interrupt on the processor itself. The
+PIT stays on as that calibration reference. Level triggered routing still needs
+I/O APIC directed EOI.
