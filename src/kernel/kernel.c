@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <seneri/acpi.h>
+#include <seneri/apic.h>
 #include <seneri/boot.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
@@ -153,6 +154,23 @@ static void report_acpi_topology(const struct acpi_topology *topology)
     }
 }
 
+static void report_apic(const struct apic_state *apic)
+{
+    console_write("Seneri OS: local APIC id ");
+    console_write_u64(apic->id);
+    console_write(" version ");
+    console_write_hex(apic->version);
+    console_write(" LVT entries ");
+    console_write_u64((uint64_t)apic->max_lvt_entry + 1U);
+    console_write(" at ");
+    console_write_hex(apic->base_address);
+    console_putc('\n');
+
+    console_write("Seneri OS: local APIC legacy routing ");
+    console_write(apic->legacy_interrupts_routed ? "LINT0 ExtINT" : "masked");
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -212,10 +230,12 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
     struct acpi_madt acpi_madt;
     struct acpi_root acpi_root;
+    struct apic_state apic_state;
     struct boot_context context;
     struct frame_allocator_stats stats;
     enum boot_status boot_status;
     enum acpi_status acpi_status;
+    enum apic_status apic_status;
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
@@ -254,6 +274,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI topology rejection self-test failed");
     }
 
+    if (!apic_self_test()) {
+        console_panic("local APIC rejection self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -287,6 +311,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: ACPI root verified\n");
     console_write("Seneri OS: ACPI MADT verified\n");
     console_write("Seneri OS: ACPI topology verified\n");
+    apic_status = apic_bring_online(&boot_topology);
+
+    if (apic_status != APIC_STATUS_OK) {
+        console_panic(apic_status_string(apic_status));
+    }
+
+    apic_state = apic_get_state();
+    report_apic(&apic_state);
+    console_write("Seneri OS: local APIC online\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {

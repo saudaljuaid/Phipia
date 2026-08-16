@@ -8,6 +8,9 @@
 
 #include <seneri/boot.h>
 
+/* ACPI 6.6 section 5.2.12 defines the MADT flag field. */
+#define ACPI_MADT_PCAT_COMPAT UINT32_C(1)
+
 enum acpi_root_kind {
     ACPI_ROOT_NONE = 0,
     ACPI_ROOT_RSDT,
@@ -112,6 +115,7 @@ struct acpi_interrupt_override {
 struct acpi_topology {
     uint64_t local_apic_address;
     bool local_apic_address_overridden;
+    bool legacy_pic_present;
     size_t local_apic_count;
     size_t enabled_processor_count;
     size_t io_apic_count;
