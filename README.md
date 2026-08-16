@@ -22,8 +22,10 @@ The C kernel defensively validates every Multiboot2 tag, constructs a bounded
 physical-frame allocator from the firmware memory map, proves allocation and
 release, installs a complete IDT and production GDT/TSS, routes fatal CPU
 exceptions through deterministic diagnostics, proves recoverable interrupt
-entry plus PIT delivery, validates the firmware ACPI root, and walks the
-checksummed system-description tables to the MADT before halting safely.
+entry plus PIT delivery, validates the firmware ACPI root, walks the checksummed
+system-description tables to the MADT, and parses that table's
+interrupt-controller records into a validated processor, I/O APIC, and
+interrupt-override topology before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -33,6 +35,7 @@ Seneri OS: memory foundation passed
 Seneri OS: never triple fault milestone passed
 Seneri OS: ACPI root verified
 Seneri OS: ACPI MADT verified
+Seneri OS: ACPI topology verified
 ```
 
 ## Build and prove it
@@ -64,17 +67,21 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
 - `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
 - `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
+- `src/kernel/acpi_madt.c` — bounded MADT record walking and interrupt topology.
+- `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
+- `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Seneri now discovers but does not program APIC hardware. It still has a
-deliberately narrow single-core interrupt foundation, but no virtual-memory
-manager, heap, scheduler, userspace, filesystem, networking, graphics, or
-general hardware drivers. Those arrive only after the previous layer has an
+Seneri now knows where its APIC hardware is and what it would have to route,
+but programs none of it: the legacy 8259 pair still delivers interrupts. It
+still has a deliberately narrow single-core interrupt foundation, but no
+virtual-memory manager, heap, scheduler, userspace, filesystem, networking,
+graphics, or general hardware drivers. Those arrive only after the previous layer has an
 executable acceptance test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.
