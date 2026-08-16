@@ -13,6 +13,7 @@
 /* Intel SDM volume 3A table 11-1 fixes these register offsets. */
 #define APIC_REGISTER_ID UINT32_C(0x0020)
 #define APIC_REGISTER_VERSION UINT32_C(0x0030)
+#define APIC_REGISTER_EOI UINT32_C(0x00B0)
 #define APIC_REGISTER_SPURIOUS UINT32_C(0x00F0)
 #define APIC_REGISTER_ERROR_STATUS UINT32_C(0x0280)
 #define APIC_REGISTER_LVT_BASE UINT32_C(0x0320)
@@ -354,6 +355,20 @@ enum apic_status apic_bring_online(const struct acpi_topology *topology)
 
     state.online = true;
     return APIC_STATUS_OK;
+}
+
+/*
+ * Intel SDM volume 3A section 11.8.5 requires a zero write to acknowledge an
+ * APIC-delivered interrupt. An offline APIC has no register window, and no
+ * vector it owns can have been delivered, so the write is simply skipped.
+ */
+void apic_send_eoi(void)
+{
+    if (!state.online) {
+        return;
+    }
+
+    apic_write(APIC_REGISTER_EOI, 0U);
 }
 
 struct apic_state apic_get_state(void)

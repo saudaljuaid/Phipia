@@ -25,8 +25,9 @@ exceptions through deterministic diagnostics, proves recoverable interrupt
 entry plus PIT delivery, validates the firmware ACPI root, walks the checksummed
 system-description tables to the MADT, and parses that table's
 interrupt-controller records into a validated processor, I/O APIC, and
-interrupt-override topology, and brings the bootstrap processor's local APIC
-online in virtual wire mode before halting safely.
+interrupt-override topology, brings the bootstrap processor's local APIC online
+in virtual wire mode, and delivers the timer through a programmed I/O APIC
+redirection entry before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -38,6 +39,8 @@ Seneri OS: ACPI root verified
 Seneri OS: ACPI MADT verified
 Seneri OS: ACPI topology verified
 Seneri OS: local APIC online
+Seneri OS: I/O APIC online
+Seneri OS: I/O APIC delivered eight interrupts
 ```
 
 ## Build and prove it
@@ -53,7 +56,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run nine deterministic fault and interrupt scenarios
+make qemu-tests # run ten deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -72,21 +75,24 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/acpi_madt.c` — bounded MADT record walking and interrupt topology.
 - `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
 - `src/kernel/apic.c` — local APIC bring-up, virtual wire routing, and identity.
+- `src/kernel/ioapic.c` — I/O APIC redirection entries and ISA override routing.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
+- `docs/IO_APIC.md` — redirection invariants, override routing, and proof.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Seneri's local APIC is online, but it carries no interrupt source of its own
-yet: the legacy 8259 pair still delivers every interrupt, now through the
-APIC's LINT0 in virtual wire mode. No I/O APIC redirection entry is programmed
-and no APIC timer runs. It still has a deliberately narrow single-core
-interrupt foundation, but no virtual-memory manager, heap, scheduler,
-userspace, filesystem, networking, graphics, or general hardware drivers. Those
-arrive only after the previous layer has an executable acceptance test.
+Seneri's local APIC is online and the timer reaches it through a programmed I/O
+APIC redirection entry, but the 8259 pair is still initialized and still proves
+the legacy path on every boot; retiring it permanently is a later increment, as
+is level-triggered routing and an APIC timer. It still has a deliberately narrow
+single-core interrupt foundation, but no virtual-memory manager, heap,
+scheduler, userspace, filesystem, networking, graphics, or general hardware
+drivers. Those arrive only after the previous layer has an executable acceptance
+test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.

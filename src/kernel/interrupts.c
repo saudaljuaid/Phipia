@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <seneri/apic.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
@@ -425,6 +426,22 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         pic_send_eoi(irq);
+        return;
+    }
+
+    /*
+     * An I/O APIC delivered interrupt is acknowledged at the local APIC, not
+     * the 8259 pair. The end of interrupt follows the handler so a second
+     * interrupt from the same source cannot arrive while the first is running.
+     */
+    if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_IOAPIC_LIMIT) {
+        if (slot->handler == NULL) {
+            apic_send_eoi();
+            fatal_interrupt(frame);
+        }
+
+        slot->handler(frame, slot->context);
+        apic_send_eoi();
         return;
     }
 

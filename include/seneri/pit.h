@@ -12,10 +12,22 @@ enum pit_status {
     PIT_STATUS_INTERRUPTS_ENABLED,
     PIT_STATUS_BAD_FREQUENCY,
     PIT_STATUS_INTERRUPT_FAILURE,
-    PIT_STATUS_PIC_FAILURE
+    PIT_STATUS_PIC_FAILURE,
+    PIT_STATUS_BAD_ROUTE,
+    PIT_STATUS_IOAPIC_FAILURE
 };
 
-enum pit_status pit_start(uint32_t frequency_hz);
+/*
+ * The same timer hardware reaches the processor by two different paths. Which
+ * one is in use is the caller's decision, not a hidden default.
+ */
+enum pit_route {
+    PIT_ROUTE_LEGACY_PIC = 0,
+    PIT_ROUTE_IO_APIC
+};
+
+enum pit_status pit_start(uint32_t frequency_hz, enum pit_route route);
+enum pit_route pit_active_route(void);
 enum pit_status pit_stop(void);
 uint64_t pit_ticks(void);
 uint32_t pit_frequency(void);

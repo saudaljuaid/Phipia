@@ -42,6 +42,7 @@ struct apic_state {
 };
 
 enum apic_status apic_bring_online(const struct acpi_topology *topology);
+void apic_send_eoi(void);
 struct apic_state apic_get_state(void);
 bool apic_is_online(void);
 uint64_t apic_spurious_count(void);

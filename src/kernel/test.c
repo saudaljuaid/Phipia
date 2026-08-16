@@ -7,6 +7,8 @@
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
+#include <seneri/ioapic.h>
+#include <seneri/pic.h>
 #include <seneri/pit.h>
 #include <seneri/test.h>
 
@@ -111,6 +113,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_APIC;
     }
 
+    if (token_equals(value, length, "ioapic")) {
+        return KERNEL_TEST_IOAPIC;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -135,6 +141,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x17);
     case KERNEL_TEST_APIC:
         return UINT8_C(0x18);
+    case KERNEL_TEST_IOAPIC:
+        return UINT8_C(0x19);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -239,7 +247,7 @@ static void apic_scenario(void)
         kernel_test_fail("local APIC did not route legacy interrupts");
     }
 
-    pit_status = pit_start(PIT_TEST_FREQUENCY);
+    pit_status = pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_LEGACY_PIC);
 
     if (pit_status != PIT_STATUS_OK) {
         kernel_test_fail(pit_status_string(pit_status));
@@ -259,6 +267,63 @@ static void apic_scenario(void)
 
     if (pit_ticks() < PIT_TEST_TICKS) {
         kernel_test_fail("PIT stopped delivering once the local APIC was on");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
+/*
+ * Prove the timer arrives through the I/O APIC rather than the 8259 pair: the
+ * legacy line stays masked, the redirection entry carries the ACPI override,
+ * and the interrupt is acknowledged at the local APIC.
+ */
+static void ioapic_scenario(void)
+{
+    const struct ioapic_state ioapic = ioapic_get_state();
+    enum pit_status pit_status;
+
+    if (!ioapic_is_initialized() || ioapic.count == 0U) {
+        kernel_test_fail("I/O APIC is not initialized");
+    }
+
+    if (ioapic.units[0].entry_count < 16U) {
+        kernel_test_fail("I/O APIC cannot redirect the ISA interrupts");
+    }
+
+    if (pic_mask_snapshot() != UINT16_C(0xFFFF)) {
+        kernel_test_fail("a legacy PIC line was left unmasked");
+    }
+
+    pit_status = pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (pit_active_route() != PIT_ROUTE_IO_APIC) {
+        kernel_test_fail("timer did not take the I/O APIC route");
+    }
+
+    if (pic_mask_snapshot() != UINT16_C(0xFFFF)) {
+        kernel_test_fail("I/O APIC routing unmasked a legacy PIC line");
+    }
+
+    pit_status = pit_wait_for_ticks(PIT_TEST_TICKS);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < PIT_TEST_TICKS) {
+        kernel_test_fail("I/O APIC delivered too few timer interrupts");
     }
 
     if (apic_spurious_count() != 0U) {
@@ -299,7 +364,7 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         }
         kernel_test_pass();
     case KERNEL_TEST_PIT:
-        pit_status = pit_start(PIT_TEST_FREQUENCY);
+        pit_status = pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_LEGACY_PIC);
 
         if (pit_status != PIT_STATUS_OK) {
             kernel_test_fail(pit_status_string(pit_status));
@@ -326,6 +391,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         interrupt_trigger_unexpected();
     case KERNEL_TEST_APIC:
         apic_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_IOAPIC:
+        ioapic_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -405,6 +473,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "double-fault";
     case KERNEL_TEST_APIC:
         return "apic";
+    case KERNEL_TEST_IOAPIC:
+        return "ioapic";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
