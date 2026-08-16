@@ -4,10 +4,10 @@
 #include <stdint.h>
 
 #include <seneri/acpi.h>
+#include <seneri/acpi_util.h>
 
 #define ACPI_RSDP_V1_SIZE 20U
 #define ACPI_RSDP_V2_SIZE 36U
-#define ACPI_ROOT_HEADER_SIZE 36U
 
 struct acpi_rsdp {
     char signature[8];
@@ -34,32 +34,6 @@ _Static_assert(offsetof(struct acpi_rsdp, length) == ACPI_RSDP_V1_SIZE,
 
 static const char rsdp_signature[8] = {'R', 'S', 'D', ' ', 'P', 'T', 'R', ' '};
 static const char test_oem_id[6] = {'Z', 'E', 'N', 'I', 'T', 'H'};
-
-static bool bytes_equal(const void *left, const void *right, size_t size)
-{
-    const uint8_t *left_bytes = (const uint8_t *)left;
-    const uint8_t *right_bytes = (const uint8_t *)right;
-
-    for (size_t index = 0; index < size; ++index) {
-        if (left_bytes[index] != right_bytes[index]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static uint8_t byte_sum(const void *data, size_t size)
-{
-    const uint8_t *bytes = (const uint8_t *)data;
-    uint8_t sum = 0U;
-
-    for (size_t index = 0; index < size; ++index) {
-        sum = (uint8_t)(sum + bytes[index]);
-    }
-
-    return sum;
-}
 
 static void root_reset(struct acpi_root *root)
 {
@@ -105,11 +79,15 @@ enum acpi_status acpi_root_discover(
     payload_size = tag->tag.size - sizeof(tag->tag);
     rsdp = (const struct acpi_rsdp *)(const void *)tag->rsdp;
 
-    if (!bytes_equal(rsdp->signature, rsdp_signature, sizeof(rsdp_signature))) {
+    if (!acpi_bytes_equal(
+            rsdp->signature,
+            rsdp_signature,
+            sizeof(rsdp_signature)
+        )) {
         return ACPI_STATUS_BAD_SIGNATURE;
     }
 
-    if (byte_sum(rsdp, ACPI_RSDP_V1_SIZE) != 0U) {
+    if (acpi_byte_sum(rsdp, ACPI_RSDP_V1_SIZE) != 0U) {
         return ACPI_STATUS_BAD_LEGACY_CHECKSUM;
     }
 
@@ -122,7 +100,7 @@ enum acpi_status acpi_root_discover(
             return ACPI_STATUS_BAD_LENGTH;
         }
 
-        if (byte_sum(rsdp, rsdp->length) != 0U) {
+        if (acpi_byte_sum(rsdp, rsdp->length) != 0U) {
             return ACPI_STATUS_BAD_EXTENDED_CHECKSUM;
         }
 
@@ -146,7 +124,7 @@ enum acpi_status acpi_root_discover(
         return ACPI_STATUS_NULL_ROOT;
     }
 
-    if (address > SENERI_EARLY_PHYSICAL_LIMIT - ACPI_ROOT_HEADER_SIZE) {
+    if (!acpi_span_is_early_mapped(address, ACPI_SDT_HEADER_SIZE)) {
         root_reset(root);
         return ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP;
     }
@@ -163,11 +141,7 @@ enum acpi_status acpi_root_discover(
 
 static void make_test_tag(struct acpi_test_tag *tag, bool modern)
 {
-    uint8_t *bytes = (uint8_t *)(void *)tag;
-
-    for (size_t index = 0; index < sizeof(*tag); ++index) {
-        bytes[index] = 0U;
-    }
+    acpi_bytes_zero(tag, sizeof(*tag));
 
     tag->tag.type = modern ? MULTIBOOT2_TAG_ACPI_NEW : MULTIBOOT2_TAG_ACPI_OLD;
     tag->tag.size = sizeof(tag->tag) +
@@ -185,9 +159,11 @@ static void make_test_tag(struct acpi_test_tag *tag, bool modern)
     tag->rsdp.rsdt_address = UINT32_C(0x12345000);
     tag->rsdp.length = ACPI_RSDP_V2_SIZE;
     tag->rsdp.xsdt_address = UINT64_C(0x23456000);
-    tag->rsdp.checksum = (uint8_t)(0U - byte_sum(&tag->rsdp, ACPI_RSDP_V1_SIZE));
+    tag->rsdp.checksum = (uint8_t)(
+        0U - acpi_byte_sum(&tag->rsdp, ACPI_RSDP_V1_SIZE)
+    );
     tag->rsdp.extended_checksum = (uint8_t)(
-        0U - byte_sum(&tag->rsdp, ACPI_RSDP_V2_SIZE)
+        0U - acpi_byte_sum(&tag->rsdp, ACPI_RSDP_V2_SIZE)
     );
 }
 
@@ -204,7 +180,7 @@ bool acpi_self_test(void)
     if (acpi_root_discover(&context, &root) != ACPI_STATUS_OK ||
         root.kind != ACPI_ROOT_XSDT ||
         root.physical_address != UINT64_C(0x23456000) ||
-        !bytes_equal(root.oem_id, test_oem_id, sizeof(test_oem_id))) {
+        !acpi_bytes_equal(root.oem_id, test_oem_id, sizeof(test_oem_id))) {
         return false;
     }
 

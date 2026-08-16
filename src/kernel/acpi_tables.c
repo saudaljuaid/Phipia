@@ -4,15 +4,13 @@
 #include <stdint.h>
 
 #include <seneri/acpi.h>
+#include <seneri/acpi_util.h>
 
-/* ACPI 6.6 sections 5.2.6-5.2.8 and 5.2.12 define these wire sizes. */
-#define ACPI_SDT_HEADER_SIZE 36U
-#define ACPI_MADT_FIXED_SIZE 44U
+/* ACPI 6.6 section 5.2.12 defines the MADT flag field. */
 #define ACPI_MADT_PCAT_COMPAT UINT32_C(1)
 
-/* Seneri early-boot policy bounds firmware-controlled work and table sizes. */
+/* Seneri early-boot policy bounds firmware-controlled work. */
 #define ACPI_MAX_ROOT_ENTRIES 256U
-#define ACPI_MAX_TABLE_SIZE (1024U * 1024U)
 
 struct acpi_sdt_header {
     char signature[4];
@@ -81,74 +79,6 @@ static const char test_signature[4] = {'T', 'E', 'S', 'T'};
 static const char test_oem_id[6] = {'Z', 'E', 'N', 'I', 'T', 'H'};
 static const char test_oem_table_id[8] = {'Z', 'T', 'T', 'A', 'B', 'L', 'E', 'S'};
 
-static void bytes_zero(void *data, size_t size)
-{
-    uint8_t *bytes = (uint8_t *)data;
-
-    for (size_t index = 0; index < size; ++index) {
-        bytes[index] = 0U;
-    }
-}
-
-static bool bytes_equal(const void *left, const void *right, size_t size)
-{
-    const uint8_t *left_bytes = (const uint8_t *)left;
-    const uint8_t *right_bytes = (const uint8_t *)right;
-
-    for (size_t index = 0; index < size; ++index) {
-        if (left_bytes[index] != right_bytes[index]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static uint8_t byte_sum(const void *data, size_t size)
-{
-    const uint8_t *bytes = (const uint8_t *)data;
-    uint8_t sum = 0U;
-
-    for (size_t index = 0; index < size; ++index) {
-        sum = (uint8_t)(sum + bytes[index]);
-    }
-
-    return sum;
-}
-
-static uint32_t read_u32(const uint8_t *bytes)
-{
-    uint32_t value = bytes[0];
-
-    value |= (uint32_t)bytes[1] << 8U;
-    value |= (uint32_t)bytes[2] << 16U;
-    value |= (uint32_t)bytes[3] << 24U;
-    return value;
-}
-
-static uint64_t read_u64(const uint8_t *bytes)
-{
-    uint64_t value = read_u32(bytes);
-
-    value |= (uint64_t)read_u32(bytes + sizeof(uint32_t)) << 32U;
-    return value;
-}
-
-static bool physical_span_is_mapped(uint64_t address, uint64_t length)
-{
-    return address < SENERI_EARLY_PHYSICAL_LIMIT &&
-        length <= SENERI_EARLY_PHYSICAL_LIMIT - address;
-}
-
-static void copy_string(char *destination, const char *source, size_t length)
-{
-    for (size_t index = 0; index < length; ++index) {
-        destination[index] = source[index];
-    }
-
-    destination[length] = '\0';
-}
-
 static void madt_reset(struct acpi_madt *madt)
 {
     madt->physical_address = 0U;
@@ -184,7 +114,10 @@ static enum acpi_status validate_root_table(
         return ACPI_STATUS_NULL_ROOT;
     }
 
-    if (!physical_span_is_mapped(root->physical_address, ACPI_SDT_HEADER_SIZE)) {
+    if (!acpi_span_is_early_mapped(
+            root->physical_address,
+            ACPI_SDT_HEADER_SIZE
+        )) {
         return ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP;
     }
 
@@ -200,7 +133,7 @@ static enum acpi_status validate_root_table(
         return ACPI_STATUS_BAD_ROOT_SIGNATURE;
     }
 
-    if (!bytes_equal(
+    if (!acpi_bytes_equal(
             header->signature,
             expected_signature,
             sizeof(header->signature)
@@ -225,11 +158,11 @@ static enum acpi_status validate_root_table(
         return ACPI_STATUS_TOO_MANY_ROOT_ENTRIES;
     }
 
-    if (!physical_span_is_mapped(root->physical_address, header->length)) {
+    if (!acpi_span_is_early_mapped(root->physical_address, header->length)) {
         return ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP;
     }
 
-    if (byte_sum(header, header->length) != 0U) {
+    if (acpi_byte_sum(header, header->length) != 0U) {
         return ACPI_STATUS_BAD_ROOT_CHECKSUM;
     }
 
@@ -250,7 +183,7 @@ static enum acpi_status validate_referenced_table(
         return ACPI_STATUS_NULL_TABLE;
     }
 
-    if (!physical_span_is_mapped(physical_address, ACPI_SDT_HEADER_SIZE)) {
+    if (!acpi_span_is_early_mapped(physical_address, ACPI_SDT_HEADER_SIZE)) {
         return ACPI_STATUS_TABLE_OUTSIDE_EARLY_MAP;
     }
 
@@ -261,11 +194,11 @@ static enum acpi_status validate_referenced_table(
         return ACPI_STATUS_BAD_TABLE_LENGTH;
     }
 
-    if (!physical_span_is_mapped(physical_address, header->length)) {
+    if (!acpi_span_is_early_mapped(physical_address, header->length)) {
         return ACPI_STATUS_TABLE_OUTSIDE_EARLY_MAP;
     }
 
-    if (byte_sum(header, header->length) != 0U) {
+    if (acpi_byte_sum(header, header->length) != 0U) {
         return ACPI_STATUS_BAD_TABLE_CHECKSUM;
     }
 
@@ -307,8 +240,8 @@ enum acpi_status acpi_madt_discover(
         const uint8_t *entry = entries + index * entry_size;
         const struct acpi_sdt_header *header;
         uint64_t physical_address = entry_size == sizeof(uint64_t)
-            ? read_u64(entry)
-            : read_u32(entry);
+            ? acpi_read_u64(entry)
+            : acpi_read_u32(entry);
 
         status = validate_referenced_table(physical_address, &header);
 
@@ -317,7 +250,7 @@ enum acpi_status acpi_madt_discover(
             return status;
         }
 
-        if (!bytes_equal(
+        if (!acpi_bytes_equal(
                 header->signature,
                 madt_signature,
                 sizeof(header->signature)
@@ -350,8 +283,12 @@ enum acpi_status acpi_madt_discover(
             madt->flags = table->flags;
             madt->root_entry_count = entry_count;
             madt->revision = header->revision;
-            copy_string(madt->oem_id, header->oem_id, sizeof(header->oem_id));
-            copy_string(
+            acpi_copy_string(
+                madt->oem_id,
+                header->oem_id,
+                sizeof(header->oem_id)
+            );
+            acpi_copy_string(
                 madt->oem_table_id,
                 header->oem_table_id,
                 sizeof(header->oem_table_id)
@@ -374,7 +311,7 @@ static void initialize_header(
     uint32_t length
 )
 {
-    bytes_zero(header, sizeof(*header));
+    acpi_bytes_zero(header, sizeof(*header));
 
     for (size_t index = 0; index < sizeof(header->signature); ++index) {
         header->signature[index] = signature[index];
@@ -400,12 +337,12 @@ static void set_checksum(void *table, size_t size)
     struct acpi_sdt_header *header = (struct acpi_sdt_header *)table;
 
     header->checksum = 0U;
-    header->checksum = (uint8_t)(0U - byte_sum(table, size));
+    header->checksum = (uint8_t)(0U - acpi_byte_sum(table, size));
 }
 
 static void prepare_test_fixture(struct acpi_test_fixture *fixture)
 {
-    bytes_zero(fixture, sizeof(*fixture));
+    acpi_bytes_zero(fixture, sizeof(*fixture));
 
     initialize_header(
         &fixture->other.header,
@@ -482,8 +419,8 @@ static bool valid_fixture_is_accepted(void)
         madt.flags != ACPI_MADT_PCAT_COMPAT ||
         madt.root_entry_count != 2U ||
         madt.revision != 7U ||
-        !bytes_equal(madt.oem_id, test_oem_id, sizeof(test_oem_id)) ||
-        !bytes_equal(
+        !acpi_bytes_equal(madt.oem_id, test_oem_id, sizeof(test_oem_id)) ||
+        !acpi_bytes_equal(
             madt.oem_table_id,
             test_oem_table_id,
             sizeof(test_oem_table_id)
