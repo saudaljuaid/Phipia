@@ -11,6 +11,14 @@
 #define INTERRUPT_PIC_MASTER_BASE 32U
 #define INTERRUPT_PIC_SLAVE_BASE 40U
 #define INTERRUPT_PIC_LIMIT 48U
+
+/*
+ * Vectors the I/O APIC delivers, one per ISA interrupt. They are deliberately
+ * disjoint from the 8259 range so the dispatcher can tell from the vector alone
+ * which controller must be acknowledged.
+ */
+#define INTERRUPT_IOAPIC_BASE 48U
+#define INTERRUPT_IOAPIC_LIMIT 64U
 #define INTERRUPT_IST_TEST_VECTOR UINT8_C(0xF0)
 
 struct interrupt_frame {

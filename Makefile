@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic
+	double-fault apic ioapic
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -111,6 +111,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		unexpected) expected=45 ;; \
 		double-fault) expected=47 ;; \
 		apic) expected=49 ;; \
+		ioapic) expected=51 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -137,6 +138,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Eq '^Seneri OS: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC online' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC legacy routing LINT0 ExtINT' "$$log" || \
+		  ! grep -Fq 'Seneri OS: I/O APIC online' "$$log" || \
+		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight interrupts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \

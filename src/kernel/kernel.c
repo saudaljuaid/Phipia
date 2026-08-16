@@ -8,6 +8,7 @@
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
+#include <seneri/ioapic.h>
 #include <seneri/memory.h>
 #include <seneri/pit.h>
 #include <seneri/self_test.h>
@@ -171,6 +172,53 @@ static void report_apic(const struct apic_state *apic)
     console_putc('\n');
 }
 
+static void report_ioapic(const struct ioapic_state *ioapic)
+{
+    for (size_t index = 0; index < ioapic->count; ++index) {
+        const struct ioapic_unit *unit = &ioapic->units[index];
+
+        console_write("Seneri OS: I/O APIC id ");
+        console_write_u64(unit->identifier);
+        console_write(" version ");
+        console_write_hex(unit->version);
+        console_write(" entries ");
+        console_write_u64(unit->entry_count);
+        console_write(" base GSI ");
+        console_write_u64(unit->interrupt_base);
+        console_putc('\n');
+    }
+}
+
+/*
+ * The same timer, counted over both delivery paths. Proving the legacy path
+ * still works after the I/O APIC path is programmed is what keeps this
+ * increment reversible.
+ */
+static void prove_timer_route(enum pit_route route)
+{
+    enum pit_status pit_status = pit_start(UINT32_C(100), route);
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_wait_for_ticks(UINT64_C(8));
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < UINT64_C(8)) {
+        console_panic("timer route delivered too few interrupts");
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -233,13 +281,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     struct apic_state apic_state;
     struct boot_context context;
     struct frame_allocator_stats stats;
+    struct ioapic_state ioapic_state;
     enum boot_status boot_status;
     enum acpi_status acpi_status;
     enum apic_status apic_status;
+    enum ioapic_status ioapic_status;
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
-    enum pit_status pit_status;
 
     console_initialize();
     interrupt_status = interrupts_initialize();
@@ -276,6 +325,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!apic_self_test()) {
         console_panic("local APIC rejection self-test failed");
+    }
+
+    if (!ioapic_self_test()) {
+        console_panic("I/O APIC routing self-test failed");
     }
 
     console_write("Seneri OS: parser rejection tests passed\n");
@@ -320,6 +373,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     apic_state = apic_get_state();
     report_apic(&apic_state);
     console_write("Seneri OS: local APIC online\n");
+    ioapic_status = ioapic_initialize(&boot_topology);
+
+    if (ioapic_status != IOAPIC_STATUS_OK) {
+        console_panic(ioapic_status_string(ioapic_status));
+    }
+
+    ioapic_state = ioapic_get_state();
+    report_ioapic(&ioapic_state);
+    console_write("Seneri OS: I/O APIC online\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {
@@ -353,27 +415,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("PIC spurious interrupt self-test failed");
     }
 
-    pit_status = pit_start(UINT32_C(100));
-
-    if (pit_status != PIT_STATUS_OK) {
-        console_panic(pit_status_string(pit_status));
-    }
-
-    pit_status = pit_wait_for_ticks(UINT64_C(8));
-
-    if (pit_status != PIT_STATUS_OK) {
-        console_panic(pit_status_string(pit_status));
-    }
-
-    pit_status = pit_stop();
-
-    if (pit_status != PIT_STATUS_OK) {
-        console_panic(pit_status_string(pit_status));
-    }
+    prove_timer_route(PIT_ROUTE_LEGACY_PIC);
+    prove_timer_route(PIT_ROUTE_IO_APIC);
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
     console_write("Seneri OS: PIT delivered eight interrupts\n");
+    console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
