@@ -23,11 +23,12 @@ physical-frame allocator from the firmware memory map, proves allocation and
 release, installs a complete IDT and production GDT/TSS, routes fatal CPU
 exceptions through deterministic diagnostics, proves recoverable interrupt
 entry plus PIT delivery, validates the firmware ACPI root, walks the checksummed
-system-description tables to the MADT, and parses that table's
+system-description tables to the MADT, parses that table's
 interrupt-controller records into a validated processor, I/O APIC, and
 interrupt-override topology, brings the bootstrap processor's local APIC online
 in virtual wire mode, delivers the timer through a programmed I/O APIC
-redirection entry, and retires the legacy 8259 pair before halting safely.
+redirection entry, retires the legacy 8259 pair, and calibrates and runs the
+local APIC timer before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -43,6 +44,7 @@ Seneri OS: I/O APIC online
 Seneri OS: I/O APIC delivered eight interrupts
 Seneri OS: legacy 8259 retired
 Seneri OS: timer survives legacy retirement
+Seneri OS: local APIC timer delivered eight interrupts
 ```
 
 ## Build and prove it
@@ -58,7 +60,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run eleven deterministic fault and interrupt scenarios
+make qemu-tests # run twelve deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -78,24 +80,26 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
 - `src/kernel/apic.c` — local APIC bring-up, virtual wire routing, and identity.
 - `src/kernel/ioapic.c` — I/O APIC redirection entries and ISA override routing.
+- `src/kernel/apic_timer.c` — local APIC timer calibration and periodic ticks.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
 - `docs/IO_APIC.md` — redirection invariants, override routing, and proof.
 - `docs/LEGACY_RETIREMENT.md` — how the 8259 pair is latched shut, and proof.
+- `docs/APIC_TIMER.md` — why the APIC timer needs calibration, and its proof.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Every interrupt Seneri owns now arrives through discovered hardware: the timer
-is routed by a programmed I/O APIC redirection entry and the 8259 pair is
-latched shut. The timer itself is still the PIT rather than the local APIC
-timer, and level-triggered routing still needs I/O APIC directed EOI. It has a
-deliberately narrow single-core interrupt foundation, but no virtual-memory
-manager, heap, scheduler, userspace, filesystem, networking, graphics, or
-general hardware drivers. Those arrive only after the previous layer has an
-executable acceptance test.
+Every interrupt Seneri owns now arrives through discovered hardware, and the
+timer interrupt originates in the processor's own local APIC. The PIT remains
+only as the reference that timer is calibrated against, since its rate is not
+reported anywhere. Level-triggered I/O APIC routing still needs directed EOI. It
+has a deliberately narrow single-core interrupt foundation, but no
+virtual-memory manager, heap, scheduler, userspace, filesystem, networking,
+graphics, or general hardware drivers. Those arrive only after the previous
+layer has an executable acceptance test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.

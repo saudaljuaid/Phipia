@@ -430,11 +430,12 @@ void interrupt_dispatch(struct interrupt_frame *frame)
     }
 
     /*
-     * An I/O APIC delivered interrupt is acknowledged at the local APIC, not
-     * the 8259 pair. The end of interrupt follows the handler so a second
-     * interrupt from the same source cannot arrive while the first is running.
+     * Anything the APIC delivered, whether routed by an I/O APIC or raised by
+     * the local APIC itself, is acknowledged at the local APIC rather than the
+     * 8259 pair. The end of interrupt follows the handler so a second interrupt
+     * from the same source cannot arrive while the first is still running.
      */
-    if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_IOAPIC_LIMIT) {
+    if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_LOCAL_APIC_LIMIT) {
         if (slot->handler == NULL) {
             apic_send_eoi();
             fatal_interrupt(frame);
