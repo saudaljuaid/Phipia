@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired
+	double-fault apic ioapic retired apic-timer
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -113,6 +113,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		apic) expected=49 ;; \
 		ioapic) expected=51 ;; \
 		retired) expected=53 ;; \
+		apic-timer) expected=55 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -143,6 +144,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight interrupts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: legacy 8259 retired' "$$log" || \
 		  ! grep -Fq 'Seneri OS: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^Seneri OS: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
+		  ! grep -Fq 'Seneri OS: local APIC timer delivered eight interrupts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \

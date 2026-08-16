@@ -45,6 +45,14 @@ struct apic_state {
 enum apic_status apic_bring_online(const struct acpi_topology *topology);
 enum apic_status apic_retire_legacy_routing(void);
 void apic_send_eoi(void);
+
+/*
+ * The local APIC's own register window, for subsystems that are part of this
+ * device rather than callers of it. Both require the APIC to be online; an
+ * offline APIC has no window and reads back zero rather than faulting.
+ */
+uint32_t apic_register_read(uint32_t offset);
+void apic_register_write(uint32_t offset, uint32_t value);
 struct apic_state apic_get_state(void);
 bool apic_is_online(void);
 uint64_t apic_spurious_count(void);

@@ -4,6 +4,7 @@
 
 #include <seneri/acpi.h>
 #include <seneri/apic.h>
+#include <seneri/apic_timer.h>
 #include <seneri/boot.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
@@ -246,6 +247,46 @@ static void retire_legacy_interrupt_path(void)
     }
 }
 
+/*
+ * Calibrate the local APIC timer against the PIT and run it. The PIT stays for
+ * exactly this reason: the APIC timer's input clock rate is not reported
+ * anywhere, so it can only become a clock by being counted against one.
+ */
+static void prove_apic_timer(void)
+{
+    enum apic_timer_status status = apic_timer_calibrate();
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(status));
+    }
+
+    console_write("Seneri OS: local APIC timer calibrated at ");
+    console_write_u64(apic_timer_counts_per_second());
+    console_write(" counts per second\n");
+
+    status = apic_timer_start(UINT32_C(100));
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(status));
+    }
+
+    status = apic_timer_wait_for_ticks(UINT64_C(8));
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(status));
+    }
+
+    status = apic_timer_stop();
+
+    if (status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(status));
+    }
+
+    if (apic_timer_ticks() < UINT64_C(8)) {
+        console_panic("local APIC timer delivered too few interrupts");
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -358,6 +399,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("I/O APIC routing self-test failed");
     }
 
+    if (!apic_timer_self_test()) {
+        console_panic("local APIC timer calibration self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -446,6 +491,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_timer_route(PIT_ROUTE_IO_APIC);
     retire_legacy_interrupt_path();
     prove_timer_route(PIT_ROUTE_IO_APIC);
+    prove_apic_timer();
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
@@ -453,6 +499,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
     console_write("Seneri OS: legacy 8259 retired\n");
     console_write("Seneri OS: timer survives legacy retirement\n");
+    console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

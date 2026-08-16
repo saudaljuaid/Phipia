@@ -400,6 +400,18 @@ void apic_send_eoi(void)
     apic_write(APIC_REGISTER_EOI, 0U);
 }
 
+uint32_t apic_register_read(uint32_t offset)
+{
+    return state.online ? apic_read(offset) : 0U;
+}
+
+void apic_register_write(uint32_t offset, uint32_t value)
+{
+    if (state.online) {
+        apic_write(offset, value);
+    }
+}
+
 struct apic_state apic_get_state(void)
 {
     return state;
