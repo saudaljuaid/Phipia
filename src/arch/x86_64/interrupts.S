@@ -279,9 +279,9 @@ interrupt_trigger_unexpected:
 
 .section .rodata, "a"
 double_fault_message:
-    .asciz "Zenith OS DOUBLE FAULT - HALTED\n"
+    .asciz "Seneri OS DOUBLE FAULT - HALTED\n"
 double_fault_test_message:
-    .asciz "Zenith OS DOUBLE FAULT - HALTED\nZT PASS double-fault\n"
+    .asciz "Seneri OS DOUBLE FAULT - HALTED\nST PASS double-fault\n"
 
 .balign 8
 .global interrupt_vector_table

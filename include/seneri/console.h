@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_CONSOLE_H
-#define ZENITH_CONSOLE_H
+#ifndef SENERI_CONSOLE_H
+#define SENERI_CONSOLE_H
 
 #include <stddef.h>
 #include <stdint.h>

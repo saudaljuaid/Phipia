@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
-#include <zenith/memory.h>
+#include <seneri/boot.h>
+#include <seneri/memory.h>
 
-#define FRAME_COUNT ((size_t)(ZENITH_EARLY_PHYSICAL_LIMIT / ZENITH_PAGE_SIZE))
+#define FRAME_COUNT ((size_t)(SENERI_EARLY_PHYSICAL_LIMIT / SENERI_PAGE_SIZE))
 #define BITMAP_BYTE_COUNT ((FRAME_COUNT + 7U) / 8U)
 
 extern uint8_t __kernel_start[];
@@ -61,7 +61,7 @@ static enum frame_status available_frame_bounds(
     size_t *past_last_frame
 )
 {
-    const uint64_t page_mask = ZENITH_PAGE_SIZE - 1U;
+    const uint64_t page_mask = SENERI_PAGE_SIZE - 1U;
     uint64_t end;
     uint64_t clipped_end;
     uint64_t aligned_base;
@@ -70,15 +70,15 @@ static enum frame_status available_frame_bounds(
         return FRAME_STATUS_RANGE_OVERFLOW;
     }
 
-    if (length == 0U || base >= ZENITH_EARLY_PHYSICAL_LIMIT) {
+    if (length == 0U || base >= SENERI_EARLY_PHYSICAL_LIMIT) {
         *first_frame = 0;
         *past_last_frame = 0;
         return FRAME_STATUS_OK;
     }
 
-    clipped_end = end < ZENITH_EARLY_PHYSICAL_LIMIT
+    clipped_end = end < SENERI_EARLY_PHYSICAL_LIMIT
         ? end
-        : ZENITH_EARLY_PHYSICAL_LIMIT;
+        : SENERI_EARLY_PHYSICAL_LIMIT;
     aligned_base = (base + page_mask) & ~page_mask;
 
     if (aligned_base >= clipped_end) {
@@ -87,8 +87,8 @@ static enum frame_status available_frame_bounds(
         return FRAME_STATUS_OK;
     }
 
-    *first_frame = (size_t)(aligned_base / ZENITH_PAGE_SIZE);
-    *past_last_frame = (size_t)((clipped_end & ~page_mask) / ZENITH_PAGE_SIZE);
+    *first_frame = (size_t)(aligned_base / SENERI_PAGE_SIZE);
+    *past_last_frame = (size_t)((clipped_end & ~page_mask) / SENERI_PAGE_SIZE);
     return FRAME_STATUS_OK;
 }
 
@@ -112,17 +112,17 @@ static enum frame_status covering_frame_bounds(
         return FRAME_STATUS_OK;
     }
 
-    if (base >= ZENITH_EARLY_PHYSICAL_LIMIT) {
+    if (base >= SENERI_EARLY_PHYSICAL_LIMIT) {
         return FRAME_STATUS_RANGE_OUTSIDE_LIMIT;
     }
 
-    clipped_end = end < ZENITH_EARLY_PHYSICAL_LIMIT
+    clipped_end = end < SENERI_EARLY_PHYSICAL_LIMIT
         ? end
-        : ZENITH_EARLY_PHYSICAL_LIMIT;
-    *first_frame = (size_t)(base / ZENITH_PAGE_SIZE);
-    *past_last_frame = (size_t)(clipped_end / ZENITH_PAGE_SIZE);
+        : SENERI_EARLY_PHYSICAL_LIMIT;
+    *first_frame = (size_t)(base / SENERI_PAGE_SIZE);
+    *past_last_frame = (size_t)(clipped_end / SENERI_PAGE_SIZE);
 
-    if ((clipped_end & (ZENITH_PAGE_SIZE - 1U)) != 0U) {
+    if ((clipped_end & (SENERI_PAGE_SIZE - 1U)) != 0U) {
         ++*past_last_frame;
     }
 
@@ -183,7 +183,7 @@ static void recompute_stats(void)
 
         ++stats.allocatable_frames;
         stats.highest_allocatable_address =
-            ((uint64_t)frame + 1U) * ZENITH_PAGE_SIZE;
+            ((uint64_t)frame + 1U) * SENERI_PAGE_SIZE;
 
         if (bitmap_get(used_bitmap, frame)) {
             ++stats.allocated_frames;
@@ -271,7 +271,7 @@ enum frame_status frame_allocator_initialize(const struct boot_context *context)
         return status;
     }
 
-    status = reserve_internal(0U, ZENITH_LOW_MEMORY_RESERVATION);
+    status = reserve_internal(0U, SENERI_LOW_MEMORY_RESERVATION);
 
     if (status != FRAME_STATUS_OK) {
         return status;
@@ -305,7 +305,7 @@ enum frame_status frame_allocator_initialize(const struct boot_context *context)
         return FRAME_STATUS_OUT_OF_MEMORY;
     }
 
-    next_search_index = (size_t)(ZENITH_LOW_MEMORY_RESERVATION / ZENITH_PAGE_SIZE);
+    next_search_index = (size_t)(SENERI_LOW_MEMORY_RESERVATION / SENERI_PAGE_SIZE);
     allocator_initialized = true;
     return FRAME_STATUS_OK;
 }
@@ -341,7 +341,7 @@ enum frame_status frame_allocate(uintptr_t *physical_address)
                 next_search_index = 0;
             }
 
-            *physical_address = (uintptr_t)((uint64_t)frame * ZENITH_PAGE_SIZE);
+            *physical_address = (uintptr_t)((uint64_t)frame * SENERI_PAGE_SIZE);
             return FRAME_STATUS_OK;
         }
     }
@@ -357,15 +357,15 @@ enum frame_status frame_release(uintptr_t physical_address)
         return FRAME_STATUS_NOT_INITIALIZED;
     }
 
-    if (((uint64_t)physical_address & (ZENITH_PAGE_SIZE - 1U)) != 0U) {
+    if (((uint64_t)physical_address & (SENERI_PAGE_SIZE - 1U)) != 0U) {
         return FRAME_STATUS_UNALIGNED_ADDRESS;
     }
 
-    if ((uint64_t)physical_address >= ZENITH_EARLY_PHYSICAL_LIMIT) {
+    if ((uint64_t)physical_address >= SENERI_EARLY_PHYSICAL_LIMIT) {
         return FRAME_STATUS_RANGE_OUTSIDE_LIMIT;
     }
 
-    frame = (size_t)((uint64_t)physical_address / ZENITH_PAGE_SIZE);
+    frame = (size_t)((uint64_t)physical_address / SENERI_PAGE_SIZE);
 
     if (!bitmap_get(eligible_bitmap, frame)) {
         return FRAME_STATUS_FRAME_NOT_ALLOCATABLE;

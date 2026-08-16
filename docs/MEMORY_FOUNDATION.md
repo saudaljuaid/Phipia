@@ -1,6 +1,6 @@
 # Memory foundation
 
-This increment turns the boot loader's byte buffer into a validated Zenith
+This increment turns the boot loader's byte buffer into a validated Seneri
 contract and establishes ownership of physical frames below 4 GiB.
 
 ## Trust boundary
@@ -10,7 +10,7 @@ misaligned information address, unreasonable total size, arithmetic overflow,
 nonzero reserved header field, truncated or undersized tags, duplicate memory
 maps, malformed entry geometry, unterminated strings, and a missing or misplaced
 end tag. Unknown tags are skipped only after their bounds have been proven.
-Boot modules are rejected until Zenith can assign their lifetime explicitly;
+Boot modules are rejected until Seneri can assign their lifetime explicitly;
 silently treating module storage as allocatable memory would corrupt them.
 
 The parser never follows a tag pointer outside the declared information block.
@@ -25,7 +25,7 @@ and use bitmaps. A frame becomes eligible only when the firmware map calls the
 entire page available. A second pass lets every reserved or bad region override
 an overlapping available entry.
 
-Zenith permanently removes these ranges from allocation:
+Seneri permanently removes these ranges from allocation:
 
 - the first 1 MiB, including firmware data and VGA memory;
 - the complete linked kernel image, including both allocator bitmaps;
@@ -44,7 +44,7 @@ order, and proves the allocated-frame count returned to zero. CI accepts the
 increment only after COM1 emits:
 
 ```text
-Zenith OS: memory foundation passed
+Seneri OS: memory foundation passed
 ```
 
 This is still an early single-core allocator. Interrupt safety, synchronization,

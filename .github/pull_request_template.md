@@ -1,11 +1,11 @@
 ## Change
 
-Explain exactly what changed and why it belongs in Zenith OS.
+Explain exactly what changed and why it belongs in Seneri OS.
 
 ## Evidence
 
 - [ ] `make verify` passes from a clean tree.
-- [ ] `make smoke` reaches `Zenith OS: day one passed` in QEMU.
+- [ ] `make smoke` reaches `Seneri OS: day one passed` in QEMU.
 - [ ] No warning, failed check, or unexplained binary artifact is present.
 - [ ] The commit is atomic, reviewable, and safe to revert.
 - [ ] Boot, memory, ABI, or linker invariants changed here are documented.

@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/acpi.h>
+#include <seneri/acpi.h>
 
 /* ACPI 6.6 sections 5.2.6-5.2.8 and 5.2.12 define these wire sizes. */
 #define ACPI_SDT_HEADER_SIZE 36U
 #define ACPI_MADT_FIXED_SIZE 44U
 #define ACPI_MADT_PCAT_COMPAT UINT32_C(1)
 
-/* Zenith early-boot policy bounds firmware-controlled work and table sizes. */
+/* Seneri early-boot policy bounds firmware-controlled work and table sizes. */
 #define ACPI_MAX_ROOT_ENTRIES 256U
 #define ACPI_MAX_TABLE_SIZE (1024U * 1024U)
 
@@ -136,8 +136,8 @@ static uint64_t read_u64(const uint8_t *bytes)
 
 static bool physical_span_is_mapped(uint64_t address, uint64_t length)
 {
-    return address < ZENITH_EARLY_PHYSICAL_LIMIT &&
-        length <= ZENITH_EARLY_PHYSICAL_LIMIT - address;
+    return address < SENERI_EARLY_PHYSICAL_LIMIT &&
+        length <= SENERI_EARLY_PHYSICAL_LIMIT - address;
 }
 
 static void copy_string(char *destination, const char *source, size_t length)
@@ -525,7 +525,7 @@ bool acpi_tables_self_test(void)
     prepare_test_fixture(&fixture);
     root = test_root(&fixture, ACPI_ROOT_XSDT);
     root.physical_address =
-        ZENITH_EARLY_PHYSICAL_LIMIT - ACPI_SDT_HEADER_SIZE + 1U;
+        SENERI_EARLY_PHYSICAL_LIMIT - ACPI_SDT_HEADER_SIZE + 1U;
 
     if (acpi_madt_discover(&root, &madt) !=
         ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP) {
@@ -578,7 +578,7 @@ bool acpi_tables_self_test(void)
     prepare_test_fixture(&fixture);
     root = test_root(&fixture, ACPI_ROOT_XSDT);
     fixture.xsdt.entries[0] =
-        ZENITH_EARLY_PHYSICAL_LIMIT - ACPI_SDT_HEADER_SIZE + 1U;
+        SENERI_EARLY_PHYSICAL_LIMIT - ACPI_SDT_HEADER_SIZE + 1U;
     set_checksum(&fixture.xsdt, sizeof(fixture.xsdt));
 
     if (acpi_madt_discover(&root, &madt) !=
