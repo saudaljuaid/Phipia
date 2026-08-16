@@ -312,6 +312,8 @@ enum acpi_status acpi_topology_discover(
     }
 
     topology->local_apic_address = madt->local_apic_address;
+    topology->legacy_pic_present =
+        (madt->flags & ACPI_MADT_PCAT_COMPAT) != 0U;
 
     for (size_t offset = ACPI_MADT_FIXED_SIZE; offset < madt->length;) {
         const uint8_t *entry = table + offset;
@@ -590,6 +592,7 @@ static bool reference_fixture_is_accepted(void)
     return acpi_topology_discover(&madt, &topology) == ACPI_STATUS_OK &&
         topology.local_apic_address == TEST_LOCAL_APIC_ADDRESS &&
         !topology.local_apic_address_overridden &&
+        topology.legacy_pic_present &&
         topology.local_apic_count == 2U &&
         topology.enabled_processor_count == 1U &&
         topology.local_apics[0].processor_uid == 0U &&

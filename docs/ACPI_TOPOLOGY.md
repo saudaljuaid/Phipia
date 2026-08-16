@@ -82,8 +82,9 @@ Seneri OS: ACPI topology verified
 
 ## Deferred work
 
-Seneri now knows where its interrupt hardware is and what it must route. The
-next increment may map the local APIC and I/O APIC register windows, program
-redirection entries using the discovered overrides, mask the legacy PIC
-permanently, and move the timer proof onto discovered hardware. Nothing may
-touch an APIC register before that increment brings its own executable proof.
+Seneri now knows where its interrupt hardware is and what it must route.
+`docs/LOCAL_APIC.md` covers the next increment, which brings the bootstrap
+processor's local APIC online against this description. Programming I/O APIC
+redirection entries from the discovered overrides, masking the legacy PIC
+permanently, and moving the timer proof onto discovered hardware follow it,
+each with its own executable proof.

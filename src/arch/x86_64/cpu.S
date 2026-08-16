@@ -77,6 +77,39 @@ cpu_io_wait:
     ret
 .size cpu_io_wait, . - cpu_io_wait
 
+/*
+ * void cpu_cpuid(uint32_t leaf, uint32_t subleaf, struct cpuid_result *out)
+ * CPUID clobbers RBX, which the System V ABI makes callee-saved, so the
+ * destination pointer moves out of RDX before CPUID overwrites it.
+ */
+.global cpu_cpuid
+.type cpu_cpuid, @function
+cpu_cpuid:
+    movq %rdx, %r8
+    movl %edi, %eax
+    movl %esi, %ecx
+    pushq %rbx
+    cpuid
+    movl %eax, 0(%r8)
+    movl %ebx, 4(%r8)
+    movl %ecx, 8(%r8)
+    movl %edx, 12(%r8)
+    popq %rbx
+    ret
+.size cpu_cpuid, . - cpu_cpuid
+
+/* uint64_t cpu_read_msr(uint32_t msr) - RDMSR returns EDX:EAX. */
+.global cpu_read_msr
+.type cpu_read_msr, @function
+cpu_read_msr:
+    movl %edi, %ecx
+    rdmsr
+    shlq $32, %rdx
+    movl %eax, %eax
+    orq %rdx, %rax
+    ret
+.size cpu_read_msr, . - cpu_read_msr
+
 .global cpu_read_cr2
 .type cpu_read_cr2, @function
 cpu_read_cr2:
