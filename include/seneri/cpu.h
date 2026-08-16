@@ -14,6 +14,13 @@
 #define CPU_IST_MACHINE_CHECK UINT8_C(3)
 #define CPU_IST_STACK_SIZE (16U * 1024U)
 
+struct cpuid_result {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+};
+
 struct descriptor_table_pointer {
     uint16_t limit;
     uintptr_t base;
@@ -48,6 +55,8 @@ uint8_t cpu_in8(uint16_t port);
 void cpu_out8(uint16_t port, uint8_t value);
 void cpu_out32(uint16_t port, uint32_t value);
 void cpu_io_wait(void);
+void cpu_cpuid(uint32_t leaf, uint32_t subleaf, struct cpuid_result *result);
+uint64_t cpu_read_msr(uint32_t msr);
 uint64_t cpu_read_cr2(void);
 uint16_t cpu_read_cs(void);
 uint16_t cpu_read_task_register(void);

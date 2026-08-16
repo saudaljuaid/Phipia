@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <seneri/apic.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
@@ -106,6 +107,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_DOUBLE_FAULT;
     }
 
+    if (token_equals(value, length, "apic")) {
+        return KERNEL_TEST_APIC;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -128,6 +133,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x16);
     case KERNEL_TEST_DOUBLE_FAULT:
         return UINT8_C(0x17);
+    case KERNEL_TEST_APIC:
+        return UINT8_C(0x18);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -210,6 +217,55 @@ enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
     return selected;
 }
 
+/*
+ * Enabling the local APIC takes the 8259 pair off the processor's direct
+ * interrupt path. This scenario proves the replacement path: the APIC is online
+ * and agrees with firmware, and the PIT still delivers through LINT0.
+ */
+static void apic_scenario(void)
+{
+    const struct apic_state apic = apic_get_state();
+    enum pit_status pit_status;
+
+    if (!apic_is_online() || !apic.online) {
+        kernel_test_fail("local APIC is not online");
+    }
+
+    if (apic.base_address == 0U || apic.max_lvt_entry < 4U) {
+        kernel_test_fail("local APIC reported an unusable register window");
+    }
+
+    if (!apic.legacy_interrupts_routed) {
+        kernel_test_fail("local APIC did not route legacy interrupts");
+    }
+
+    pit_status = pit_start(PIT_TEST_FREQUENCY);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_wait_for_ticks(PIT_TEST_TICKS);
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        kernel_test_fail(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < PIT_TEST_TICKS) {
+        kernel_test_fail("PIT stopped delivering once the local APIC was on");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -268,6 +324,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_UNEXPECTED:
         interrupt_trigger_unexpected();
+    case KERNEL_TEST_APIC:
+        apic_scenario();
+        kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -344,6 +403,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "unexpected";
     case KERNEL_TEST_DOUBLE_FAULT:
         return "double-fault";
+    case KERNEL_TEST_APIC:
+        return "apic";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

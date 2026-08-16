@@ -6,9 +6,6 @@
 #include <seneri/acpi.h>
 #include <seneri/acpi_util.h>
 
-/* ACPI 6.6 section 5.2.12 defines the MADT flag field. */
-#define ACPI_MADT_PCAT_COMPAT UINT32_C(1)
-
 /* Seneri early-boot policy bounds firmware-controlled work. */
 #define ACPI_MAX_ROOT_ENTRIES 256U
 
