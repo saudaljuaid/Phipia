@@ -31,8 +31,11 @@ ASM_OBJECTS := $(patsubst src/arch/x86_64/%.S,$(BUILD_DIR)/arch_%.o,$(ASM_SOURCE
 OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
-.PHONY: all clean hooks iso kernel lint qemu-tests run smoke toolchain verify \
-	$(TEST_TARGETS)
+# The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
+# implicit and pattern rule search for a phony target, so declaring them phony
+# makes every scenario resolve to "nothing to be done" and pass without booting.
+# They never create a file of their own name, so they rerun regardless.
+.PHONY: all clean hooks iso kernel lint qemu-tests run smoke toolchain verify
 
 all: kernel
 
