@@ -29,7 +29,8 @@ enum apic_status {
     APIC_STATUS_TOO_FEW_LVT_ENTRIES,
     APIC_STATUS_ID_DISAGREES_WITH_ACPI,
     APIC_STATUS_INTERRUPT_FAILURE,
-    APIC_STATUS_READBACK_MISMATCH
+    APIC_STATUS_READBACK_MISMATCH,
+    APIC_STATUS_NOT_ONLINE
 };
 
 struct apic_state {
@@ -42,6 +43,7 @@ struct apic_state {
 };
 
 enum apic_status apic_bring_online(const struct acpi_topology *topology);
+enum apic_status apic_retire_legacy_routing(void);
 void apic_send_eoi(void);
 struct apic_state apic_get_state(void);
 bool apic_is_online(void);
