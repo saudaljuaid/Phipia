@@ -255,12 +255,27 @@ const char *acpi_status_string(enum acpi_status status)
         "ACPI root table does not contain a MADT",
         "ACPI root table contains duplicate MADTs",
         "ACPI MADT is shorter than its fixed header",
-        "ACPI MADT contains nonzero reserved flags"
+        "ACPI MADT contains nonzero reserved flags",
+        "ACPI MADT entry runs past the table",
+        "ACPI MADT entry length disagrees with its type",
+        "ACPI processor contains nonzero reserved flags",
+        "ACPI MADT contains a duplicate processor identifier",
+        "ACPI MADT exceeds the early processor limit",
+        "ACPI MADT contains a duplicate I/O APIC identifier",
+        "ACPI MADT exceeds the early I/O APIC limit",
+        "ACPI APIC register window is outside the early map",
+        "ACPI interrupt override names a bus other than ISA",
+        "ACPI interrupt override names a source outside the ISA range",
+        "ACPI interrupt override contains nonzero reserved flags",
+        "ACPI MADT overrides one interrupt source twice",
+        "ACPI MADT overrides the local APIC address twice",
+        "ACPI MADT declares no enabled processor",
+        "ACPI MADT declares no I/O APIC"
     };
 
     _Static_assert(
         sizeof(messages) / sizeof(messages[0]) ==
-            (size_t)ACPI_STATUS_BAD_MADT_FLAGS + 1U,
+            (size_t)ACPI_STATUS_MISSING_IO_APIC + 1U,
         "ACPI status messages are out of sync"
     );
 
