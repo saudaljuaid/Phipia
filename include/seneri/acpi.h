@@ -38,7 +38,22 @@ enum acpi_status {
     ACPI_STATUS_MISSING_MADT,
     ACPI_STATUS_DUPLICATE_MADT,
     ACPI_STATUS_BAD_MADT_LENGTH,
-    ACPI_STATUS_BAD_MADT_FLAGS
+    ACPI_STATUS_BAD_MADT_FLAGS,
+    ACPI_STATUS_TRUNCATED_MADT_ENTRY,
+    ACPI_STATUS_BAD_MADT_ENTRY_LENGTH,
+    ACPI_STATUS_BAD_PROCESSOR_FLAGS,
+    ACPI_STATUS_DUPLICATE_PROCESSOR_UID,
+    ACPI_STATUS_TOO_MANY_LOCAL_APICS,
+    ACPI_STATUS_DUPLICATE_IO_APIC_ID,
+    ACPI_STATUS_TOO_MANY_IO_APICS,
+    ACPI_STATUS_APIC_OUTSIDE_EARLY_MAP,
+    ACPI_STATUS_BAD_OVERRIDE_BUS,
+    ACPI_STATUS_BAD_OVERRIDE_SOURCE,
+    ACPI_STATUS_BAD_OVERRIDE_FLAGS,
+    ACPI_STATUS_DUPLICATE_OVERRIDE_SOURCE,
+    ACPI_STATUS_DUPLICATE_APIC_ADDRESS_OVERRIDE,
+    ACPI_STATUS_MISSING_BOOT_PROCESSOR,
+    ACPI_STATUS_MISSING_IO_APIC
 };
 
 struct acpi_root {
@@ -59,6 +74,56 @@ struct acpi_madt {
     char oem_table_id[9];
 };
 
+/*
+ * Seneri early-boot policy bounds on firmware-declared topology. They keep the
+ * discovered description in fixed storage until a heap exists. They are not
+ * ACPI architectural limits.
+ */
+#define ACPI_MAX_LOCAL_APICS 64U
+#define ACPI_MAX_IO_APICS 8U
+
+/*
+ * Overrides need no runtime capacity check: only the ISA bus may be overridden,
+ * only its sixteen IRQs are valid sources, and a repeated source is rejected.
+ * acpi_madt.c statically asserts that this array covers that proved bound.
+ */
+#define ACPI_MAX_INTERRUPT_OVERRIDES 16U
+
+struct acpi_local_apic {
+    uint32_t processor_uid;
+    uint32_t apic_id;
+    bool enabled;
+    bool online_capable;
+};
+
+struct acpi_io_apic {
+    uint32_t identifier;
+    uint32_t address;
+    uint32_t interrupt_base;
+};
+
+struct acpi_interrupt_override {
+    uint32_t global_system_interrupt;
+    uint16_t flags;
+    uint8_t bus;
+    uint8_t source;
+};
+
+struct acpi_topology {
+    uint64_t local_apic_address;
+    bool local_apic_address_overridden;
+    size_t local_apic_count;
+    size_t enabled_processor_count;
+    size_t io_apic_count;
+    size_t interrupt_override_count;
+    size_t nmi_entry_count;
+    size_t ignored_entry_count;
+    struct acpi_local_apic local_apics[ACPI_MAX_LOCAL_APICS];
+    struct acpi_io_apic io_apics[ACPI_MAX_IO_APICS];
+    struct acpi_interrupt_override
+        interrupt_overrides[ACPI_MAX_INTERRUPT_OVERRIDES];
+};
+
 enum acpi_status acpi_root_discover(
     const struct boot_context *context,
     struct acpi_root *root
@@ -67,8 +132,13 @@ enum acpi_status acpi_madt_discover(
     const struct acpi_root *root,
     struct acpi_madt *madt
 );
+enum acpi_status acpi_topology_discover(
+    const struct acpi_madt *madt,
+    struct acpi_topology *topology
+);
 bool acpi_self_test(void);
 bool acpi_tables_self_test(void);
+bool acpi_topology_self_test(void);
 const char *acpi_root_kind_string(enum acpi_root_kind kind);
 const char *acpi_status_string(enum acpi_status status);
 
