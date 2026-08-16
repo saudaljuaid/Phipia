@@ -131,6 +131,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 	if test '$*' = normal && \
 		{ ! grep -Fq 'Seneri OS: ACPI root verified' "$$log" || \
 		  ! grep -Fq 'Seneri OS: ACPI MADT verified' "$$log" || \
+		  ! grep -Fq 'Seneri OS: ACPI topology verified' "$$log" || \
+		  ! grep -Eq '^Seneri OS: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \

@@ -50,7 +50,7 @@ Seneri OS: ACPI MADT verified
 
 ## Deferred work
 
-The next ACPI increment must parse the MADT's variable-length records with the
-same bounded discipline. Only after Seneri has proved local APIC, I/O APIC, and
-interrupt-source-override topology may it mask the legacy PIC permanently,
-route a timer through discovered APIC hardware, and retire the PIT proof.
+`docs/ACPI_TOPOLOGY.md` covers the next increment, which parses the MADT's
+variable-length records with the same bounded discipline. Only after that
+topology is proved may Seneri mask the legacy PIC permanently, route a timer
+through discovered APIC hardware, and retire the PIT proof.

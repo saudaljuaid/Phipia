@@ -16,6 +16,12 @@
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
+/*
+ * The discovered interrupt topology outlives kernel_main's frame and is larger
+ * than early boot should place on the 16 KiB kernel stack.
+ */
+static struct acpi_topology boot_topology;
+
 static void report_boot_context(const struct boot_context *context)
 {
     console_write("Seneri OS: boot loader: ");
@@ -98,6 +104,53 @@ static void report_acpi_madt(const struct acpi_madt *madt)
     console_putc(' ');
     console_write_n(madt->oem_table_id, 8U);
     console_putc('\n');
+}
+
+static void report_acpi_topology(const struct acpi_topology *topology)
+{
+    console_write("Seneri OS: ACPI local APIC base ");
+    console_write_hex(topology->local_apic_address);
+
+    if (topology->local_apic_address_overridden) {
+        console_write(" overridden");
+    }
+
+    console_putc('\n');
+
+    console_write("Seneri OS: ACPI processors: ");
+    console_write_u64(topology->local_apic_count);
+    console_write(" enabled ");
+    console_write_u64(topology->enabled_processor_count);
+    console_write(" NMI entries ");
+    console_write_u64(topology->nmi_entry_count);
+    console_write(" unmodelled ");
+    console_write_u64(topology->ignored_entry_count);
+    console_putc('\n');
+
+    for (size_t index = 0; index < topology->io_apic_count; ++index) {
+        const struct acpi_io_apic *io_apic = &topology->io_apics[index];
+
+        console_write("Seneri OS: ACPI I/O APIC id ");
+        console_write_u64(io_apic->identifier);
+        console_write(" at ");
+        console_write_hex(io_apic->address);
+        console_write(" base GSI ");
+        console_write_u64(io_apic->interrupt_base);
+        console_putc('\n');
+    }
+
+    for (size_t index = 0; index < topology->interrupt_override_count; ++index) {
+        const struct acpi_interrupt_override *override =
+            &topology->interrupt_overrides[index];
+
+        console_write("Seneri OS: ACPI override ISA IRQ ");
+        console_write_u64(override->source);
+        console_write(" to GSI ");
+        console_write_u64(override->global_system_interrupt);
+        console_write(" flags ");
+        console_write_hex(override->flags);
+        console_putc('\n');
+    }
 }
 
 static void prove_frame_lifecycle(void)
@@ -197,6 +250,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI table rejection self-test failed");
     }
 
+    if (!acpi_topology_self_test()) {
+        console_panic("ACPI topology rejection self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -217,11 +274,19 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(acpi_status_string(acpi_status));
     }
 
+    acpi_status = acpi_topology_discover(&acpi_madt, &boot_topology);
+
+    if (acpi_status != ACPI_STATUS_OK) {
+        console_panic(acpi_status_string(acpi_status));
+    }
+
     report_boot_context(&context);
     report_acpi_root(&acpi_root);
     report_acpi_madt(&acpi_madt);
+    report_acpi_topology(&boot_topology);
     console_write("Seneri OS: ACPI root verified\n");
     console_write("Seneri OS: ACPI MADT verified\n");
+    console_write("Seneri OS: ACPI topology verified\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {
