@@ -3,11 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/console.h>
-#include <zenith/cpu.h>
-#include <zenith/interrupts.h>
-#include <zenith/pic.h>
-#include <zenith/test.h>
+#include <seneri/console.h>
+#include <seneri/cpu.h>
+#include <seneri/interrupts.h>
+#include <seneri/pic.h>
+#include <seneri/test.h>
 
 #define IDT_GATE_PRESENT UINT8_C(0x80)
 #define IDT_GATE_INTERRUPT UINT8_C(0x0E)
@@ -214,7 +214,7 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     }
 
     fatal_depth = 1U;
-    console_write("Zenith OS FATAL INTERRUPT\n");
+    console_write("Seneri OS FATAL INTERRUPT\n");
     console_write("  vector=");
     console_write_u64(frame->vector);
     console_write(" name=");

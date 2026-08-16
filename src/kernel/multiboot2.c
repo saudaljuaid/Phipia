@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
+#include <seneri/boot.h>
 
 #define ACPI_RSDP_V1_SIZE 20U
 #define ACPI_RSDP_V2_SIZE 36U
@@ -152,7 +152,7 @@ enum boot_status boot_context_parse(
     }
 
     if ((uint64_t)information_address >
-        ZENITH_EARLY_PHYSICAL_LIMIT - sizeof(*information)) {
+        SENERI_EARLY_PHYSICAL_LIMIT - sizeof(*information)) {
         return BOOT_STATUS_INFORMATION_TOO_LARGE;
     }
 
@@ -175,7 +175,7 @@ enum boot_status boot_context_parse(
         return BOOT_STATUS_INFORMATION_OVERFLOW;
     }
 
-    if ((uint64_t)information_address + total_size > ZENITH_EARLY_PHYSICAL_LIMIT) {
+    if ((uint64_t)information_address + total_size > SENERI_EARLY_PHYSICAL_LIMIT) {
         return BOOT_STATUS_INFORMATION_TOO_LARGE;
     }
 

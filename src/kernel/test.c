@@ -3,11 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/console.h>
-#include <zenith/cpu.h>
-#include <zenith/interrupts.h>
-#include <zenith/pit.h>
-#include <zenith/test.h>
+#include <seneri/console.h>
+#include <seneri/cpu.h>
+#include <seneri/interrupts.h>
+#include <seneri/pit.h>
+#include <seneri/test.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -135,7 +135,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
 {
-    console_write("ZT ");
+    console_write("ST ");
     console_write(kind);
     console_putc(' ');
     console_write(kernel_test_scenario_name(scenario));
@@ -153,7 +153,7 @@ static _Noreturn void kernel_test_pass(void)
 
 enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
 {
-    static const char prefix[] = "zenith.test=";
+    static const char prefix[] = "seneri.test=";
     enum kernel_test_scenario selected = KERNEL_TEST_NONE;
     size_t offset = 0;
 
@@ -273,7 +273,7 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         interrupt_test_set_gate_present(14U, false);
         interrupt_trigger_page_fault();
     case KERNEL_TEST_INVALID:
-        kernel_test_fail("invalid or duplicate zenith.test argument");
+        kernel_test_fail("invalid or duplicate seneri.test argument");
     case KERNEL_TEST_NONE:
     default:
         kernel_test_fail("unreachable test scenario");
@@ -353,7 +353,7 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
 
 _Noreturn void kernel_test_fail(const char *reason)
 {
-    console_write("ZT FAIL ");
+    console_write("ST FAIL ");
     console_write(kernel_test_scenario_name(active_scenario));
     console_write(": ");
     console_write(reason);

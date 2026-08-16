@@ -1,6 +1,6 @@
 # Never Triple Fault
 
-This milestone gives Zenith a deterministic failure boundary. Every x86_64 IDT
+This milestone gives Seneri a deterministic failure boundary. Every x86_64 IDT
 vector is present, every entry reaches a normalized Assembly ABI, and every
 unexpected event either returns through a registered handler or emits a bounded
 diagnostic and halts. A dedicated double-fault path does not call ordinary C.
@@ -31,7 +31,7 @@ Vector `0xF0` temporarily shares IST1 solely for a recoverable stack-routing
 proof.
 
 The IDT is the first subsystem initialized by C. It is first loaded without IST
-selectors while the bootstrap GDT is still active. Zenith then loads the
+selectors while the bootstrap GDT is still active. Seneri then loads the
 permanent GDT and task register, patches the live IDT with IST selectors, and
 validates GDTR, IDTR, TR, all 256 gates, the TSS, and stack canaries before the
 boot parser, memory allocator, or any `sti`.
@@ -72,8 +72,8 @@ milestone exists to prevent.
 7. deterministic handling of an unregistered vector;
 8. a genuine double fault created by making page-fault delivery fail.
 
-Each guest prints exactly one `ZT BEGIN <scenario>` and one matching
-`ZT PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
+Each guest prints exactly one `ST BEGIN <scenario>` and one matching
+`ST PASS <scenario>`, then writes a scenario-specific value to QEMU's test-only
 exit device. The host requires the exact transformed status. Timeouts, ordinary
 exit, duplicate markers, stale logs, panic text, and missing markers all fail.
 Consequently, a reset, hang, malformed `iretq`, double fault, or triple fault

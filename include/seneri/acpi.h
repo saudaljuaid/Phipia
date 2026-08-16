@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_ACPI_H
-#define ZENITH_ACPI_H
+#ifndef SENERI_ACPI_H
+#define SENERI_ACPI_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
+#include <seneri/boot.h>
 
 enum acpi_root_kind {
     ACPI_ROOT_NONE = 0,

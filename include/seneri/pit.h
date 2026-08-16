@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_PIT_H
-#define ZENITH_PIT_H
+#ifndef SENERI_PIT_H
+#define SENERI_PIT_H
 
 #include <stdbool.h>
 #include <stdint.h>

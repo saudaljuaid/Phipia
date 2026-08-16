@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_MEMORY_H
-#define ZENITH_MEMORY_H
+#ifndef SENERI_MEMORY_H
+#define SENERI_MEMORY_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
+#include <seneri/boot.h>
 
-#define ZENITH_PAGE_SIZE UINT64_C(4096)
-#define ZENITH_LOW_MEMORY_RESERVATION UINT64_C(0x100000)
+#define SENERI_PAGE_SIZE UINT64_C(4096)
+#define SENERI_LOW_MEMORY_RESERVATION UINT64_C(0x100000)
 
 enum frame_status {
     FRAME_STATUS_OK = 0,

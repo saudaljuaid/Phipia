@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <zenith/cpu.h>
-#include <zenith/pic.h>
+#include <seneri/cpu.h>
+#include <seneri/pic.h>
 
 #define PIC_MASTER_COMMAND UINT16_C(0x20)
 #define PIC_MASTER_DATA UINT16_C(0x21)

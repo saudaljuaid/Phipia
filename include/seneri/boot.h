@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_BOOT_H
-#define ZENITH_BOOT_H
+#ifndef SENERI_BOOT_H
+#define SENERI_BOOT_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,7 +9,7 @@
 #define MULTIBOOT2_BOOT_MAGIC UINT32_C(0x36D76289)
 #define MULTIBOOT2_TAG_ALIGNMENT 8U
 #define MULTIBOOT2_MAX_INFORMATION_SIZE (16U * 1024U * 1024U)
-#define ZENITH_EARLY_PHYSICAL_LIMIT UINT64_C(0x100000000)
+#define SENERI_EARLY_PHYSICAL_LIMIT UINT64_C(0x100000000)
 
 enum multiboot2_tag_type {
     MULTIBOOT2_TAG_END = 0,

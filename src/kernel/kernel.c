@@ -2,15 +2,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/acpi.h>
-#include <zenith/boot.h>
-#include <zenith/console.h>
-#include <zenith/cpu.h>
-#include <zenith/interrupts.h>
-#include <zenith/memory.h>
-#include <zenith/pit.h>
-#include <zenith/self_test.h>
-#include <zenith/test.h>
+#include <seneri/acpi.h>
+#include <seneri/boot.h>
+#include <seneri/console.h>
+#include <seneri/cpu.h>
+#include <seneri/interrupts.h>
+#include <seneri/memory.h>
+#include <seneri/pit.h>
+#include <seneri/self_test.h>
+#include <seneri/test.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
 
@@ -18,7 +18,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
 static void report_boot_context(const struct boot_context *context)
 {
-    console_write("Zenith OS: boot loader: ");
+    console_write("Seneri OS: boot loader: ");
 
     if (context->boot_loader_name == NULL) {
         console_write("unnamed");
@@ -38,41 +38,41 @@ static void report_boot_context(const struct boot_context *context)
 
     console_putc('\n');
 
-    console_write("Zenith OS: memory map entries: ");
+    console_write("Seneri OS: memory map entries: ");
     console_write_u64(context->memory_map_entry_count);
     console_putc('\n');
 
-    console_write("Zenith OS: reported usable bytes: ");
+    console_write("Seneri OS: reported usable bytes: ");
     console_write_u64(context->reported_usable_bytes);
     console_putc('\n');
 
-    console_write("Zenith OS: highest reported address: ");
+    console_write("Seneri OS: highest reported address: ");
     console_write_hex(context->highest_reported_address);
     console_putc('\n');
 }
 
 static void report_allocator(const struct frame_allocator_stats *stats)
 {
-    console_write("Zenith OS: allocatable frames: ");
+    console_write("Seneri OS: allocatable frames: ");
     console_write_u64(stats->allocatable_frames);
     console_putc('\n');
 
-    console_write("Zenith OS: free frames: ");
+    console_write("Seneri OS: free frames: ");
     console_write_u64(stats->free_frames);
     console_putc('\n');
 
-    console_write("Zenith OS: reserved frames: ");
+    console_write("Seneri OS: reserved frames: ");
     console_write_u64(stats->reserved_frames);
     console_putc('\n');
 
-    console_write("Zenith OS: highest allocatable address: ");
+    console_write("Seneri OS: highest allocatable address: ");
     console_write_hex(stats->highest_allocatable_address);
     console_putc('\n');
 }
 
 static void report_acpi_root(const struct acpi_root *root)
 {
-    console_write("Zenith OS: ACPI ");
+    console_write("Seneri OS: ACPI ");
     console_write(acpi_root_kind_string(root->kind));
     console_write(" at ");
     console_write_hex(root->physical_address);
@@ -83,7 +83,7 @@ static void report_acpi_root(const struct acpi_root *root)
 
 static void report_acpi_madt(const struct acpi_madt *madt)
 {
-    console_write("Zenith OS: ACPI MADT at ");
+    console_write("Seneri OS: ACPI MADT at ");
     console_write_hex(madt->physical_address);
     console_write(" local APIC ");
     console_write_hex(madt->local_apic_address);
@@ -91,7 +91,7 @@ static void report_acpi_madt(const struct acpi_madt *madt)
     console_write_hex(madt->flags);
     console_putc('\n');
 
-    console_write("Zenith OS: ACPI root entries: ");
+    console_write("Seneri OS: ACPI root entries: ");
     console_write_u64(madt->root_entry_count);
     console_write(" MADT OEM ");
     console_write_n(madt->oem_id, 6U);
@@ -119,12 +119,12 @@ static void prove_frame_lifecycle(void)
     }
 
     if (first_frame == second_frame ||
-        (first_frame & (ZENITH_PAGE_SIZE - 1U)) != 0U ||
-        (second_frame & (ZENITH_PAGE_SIZE - 1U)) != 0U) {
+        (first_frame & (SENERI_PAGE_SIZE - 1U)) != 0U ||
+        (second_frame & (SENERI_PAGE_SIZE - 1U)) != 0U) {
         console_panic("frame allocator returned an invalid address");
     }
 
-    console_write("Zenith OS: frame probe: ");
+    console_write("Seneri OS: frame probe: ");
     console_write_hex(first_frame);
     console_write(" and ");
     console_write_hex(second_frame);
@@ -173,7 +173,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (interrupt_status != INTERRUPT_STATUS_OK) {
         if (interrupt_status == INTERRUPT_STATUS_CPU_TABLE_FAILURE) {
-            console_write("Zenith OS: CPU table detail: ");
+            console_write("Seneri OS: CPU table detail: ");
             console_write(cpu_status_string(cpu_tables_validate()));
             console_putc('\n');
         }
@@ -181,9 +181,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(interrupt_status_string(interrupt_status));
     }
 
-    console_write("Zenith OS: kernel online\n");
-    console_write("Zenith OS: descriptor tables verified\n");
-    console_write("Zenith OS: interrupt foundation online\n");
+    console_write("Seneri OS: kernel online\n");
+    console_write("Seneri OS: descriptor tables verified\n");
+    console_write("Seneri OS: interrupt foundation online\n");
 
     if (!boot_parser_self_test()) {
         console_panic("Multiboot2 parser self-test failed");
@@ -197,7 +197,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI table rejection self-test failed");
     }
 
-    console_write("Zenith OS: parser rejection tests passed\n");
+    console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
 
@@ -220,8 +220,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     report_boot_context(&context);
     report_acpi_root(&acpi_root);
     report_acpi_madt(&acpi_madt);
-    console_write("Zenith OS: ACPI root verified\n");
-    console_write("Zenith OS: ACPI MADT verified\n");
+    console_write("Seneri OS: ACPI root verified\n");
+    console_write("Seneri OS: ACPI MADT verified\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {
@@ -238,8 +238,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("frame lifecycle leaked a physical frame");
     }
 
-    console_write("Zenith OS: day one passed\n");
-    console_write("Zenith OS: memory foundation passed\n");
+    console_write("Seneri OS: day one passed\n");
+    console_write("Seneri OS: memory foundation passed\n");
     test_scenario = kernel_test_select(&context);
     kernel_test_run(test_scenario);
 
@@ -273,10 +273,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(pit_status_string(pit_status));
     }
 
-    console_write("Zenith OS: exception probes passed\n");
-    console_write("Zenith OS: PIC spurious paths passed\n");
-    console_write("Zenith OS: PIT delivered eight interrupts\n");
-    console_write("Zenith OS: never triple fault milestone passed\n");
+    console_write("Seneri OS: exception probes passed\n");
+    console_write("Seneri OS: PIC spurious paths passed\n");
+    console_write("Seneri OS: PIT delivered eight interrupts\n");
+    console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
         kernel_test_complete_normal();

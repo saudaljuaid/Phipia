@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
-#include <zenith/self_test.h>
+#include <seneri/boot.h>
+#include <seneri/self_test.h>
 
 struct empty_information {
     struct multiboot2_information_header header;
