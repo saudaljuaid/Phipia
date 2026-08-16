@@ -23,6 +23,7 @@
 static uint8_t master_mask = UINT8_MAX;
 static uint8_t slave_mask = UINT8_MAX;
 static bool initialized;
+static bool retired;
 
 static void write_masks(void)
 {
@@ -94,6 +95,14 @@ enum pic_status pic_set_mask(uint8_t irq, bool masked)
         return PIC_STATUS_INTERRUPTS_ENABLED;
     }
 
+    /*
+     * Retirement is one way. Refusing every later mask change is what makes
+     * "the 8259 pair delivers nothing" a property rather than a hope.
+     */
+    if (retired) {
+        return PIC_STATUS_RETIRED;
+    }
+
     if (irq >= PIC_IRQ_COUNT) {
         return PIC_STATUS_BAD_IRQ;
     }
@@ -163,6 +172,43 @@ void pic_send_eoi(uint8_t irq)
     cpu_out8(PIC_MASTER_COMMAND, PIC_OCW2_EOI);
 }
 
+/*
+ * Mask every line and refuse to unmask one again. The masks are read back from
+ * the interrupt mask registers rather than from Seneri's shadow copy, because
+ * the point of retirement is what the hardware holds, not what Seneri believes.
+ */
+enum pic_status pic_retire(void)
+{
+    if (!initialized) {
+        return PIC_STATUS_NOT_INITIALIZED;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return PIC_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (retired) {
+        return PIC_STATUS_RETIRED;
+    }
+
+    master_mask = UINT8_MAX;
+    slave_mask = UINT8_MAX;
+    write_masks();
+
+    if (cpu_in8(PIC_MASTER_DATA) != UINT8_MAX ||
+        cpu_in8(PIC_SLAVE_DATA) != UINT8_MAX) {
+        return PIC_STATUS_READBACK_MISMATCH;
+    }
+
+    retired = true;
+    return PIC_STATUS_OK;
+}
+
+bool pic_is_retired(void)
+{
+    return retired;
+}
+
 bool pic_is_initialized(void)
 {
     return initialized;
@@ -188,6 +234,10 @@ const char *pic_status_string(enum pic_status status)
         return "PIC cascade IRQ mask is derived from slave masks";
     case PIC_STATUS_INTERRUPTS_ENABLED:
         return "PIC mutation requires interrupts disabled";
+    case PIC_STATUS_RETIRED:
+        return "PIC is retired and cannot deliver interrupts again";
+    case PIC_STATUS_READBACK_MISMATCH:
+        return "PIC did not read back a fully masked state";
     default:
         return "unknown PIC status";
     }

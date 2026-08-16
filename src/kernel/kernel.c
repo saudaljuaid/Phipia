@@ -10,6 +10,7 @@
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
+#include <seneri/pic.h>
 #include <seneri/pit.h>
 #include <seneri/self_test.h>
 #include <seneri/test.h>
@@ -219,6 +220,32 @@ static void prove_timer_route(enum pit_route route)
     }
 }
 
+/*
+ * Retire the inherited interrupt path once the discovered one has been proved.
+ * The 8259 pair is masked and latched shut, and the local APIC stops carrying
+ * its output, so nothing can reach the processor except through the I/O APIC.
+ */
+static void retire_legacy_interrupt_path(void)
+{
+    const enum pic_status pic_status = pic_retire();
+    enum apic_status apic_status;
+
+    if (pic_status != PIC_STATUS_OK) {
+        console_panic(pic_status_string(pic_status));
+    }
+
+    apic_status = apic_retire_legacy_routing();
+
+    if (apic_status != APIC_STATUS_OK) {
+        console_panic(apic_status_string(apic_status));
+    }
+
+    if (pic_mask_snapshot() != UINT16_C(0xFFFF) ||
+        pic_set_mask(0U, false) != PIC_STATUS_RETIRED) {
+        console_panic("legacy PIC did not stay retired");
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -417,11 +444,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     prove_timer_route(PIT_ROUTE_LEGACY_PIC);
     prove_timer_route(PIT_ROUTE_IO_APIC);
+    retire_legacy_interrupt_path();
+    prove_timer_route(PIT_ROUTE_IO_APIC);
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
     console_write("Seneri OS: PIT delivered eight interrupts\n");
     console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
+    console_write("Seneri OS: legacy 8259 retired\n");
+    console_write("Seneri OS: timer survives legacy retirement\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

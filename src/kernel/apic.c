@@ -358,6 +358,35 @@ enum apic_status apic_bring_online(const struct acpi_topology *topology)
 }
 
 /*
+ * Virtual wire mode exists only to carry the 8259 pair's output. Once the pair
+ * is retired, an ExtINT LINT0 is a path for interrupts Seneri has decided not
+ * to accept, so it is masked like every other unused entry.
+ */
+enum apic_status apic_retire_legacy_routing(void)
+{
+    const uint32_t masked =
+        APIC_LVT_MASKED | APIC_LVT_DELIVERY_FIXED | APIC_SPURIOUS_VECTOR;
+
+    if (!state.online) {
+        return APIC_STATUS_NOT_ONLINE;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return APIC_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    apic_write(apic_lvt_offset(APIC_LVT_LINT0), masked);
+
+    if ((apic_read(apic_lvt_offset(APIC_LVT_LINT0)) & UINT32_C(0x1F7FF)) !=
+        masked) {
+        return APIC_STATUS_READBACK_MISMATCH;
+    }
+
+    state.legacy_interrupts_routed = false;
+    return APIC_STATUS_OK;
+}
+
+/*
  * Intel SDM volume 3A section 11.8.5 requires a zero write to acknowledge an
  * APIC-delivered interrupt. An offline APIC has no register window, and no
  * vector it owns can have been delivered, so the write is simply skipped.
@@ -522,6 +551,8 @@ const char *apic_status_string(enum apic_status status)
         return "local APIC could not register its spurious handler";
     case APIC_STATUS_READBACK_MISMATCH:
         return "local APIC did not read back its programmed state";
+    case APIC_STATUS_NOT_ONLINE:
+        return "local APIC is not online";
     default:
         return "unknown local APIC status";
     }

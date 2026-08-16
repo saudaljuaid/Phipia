@@ -26,8 +26,8 @@ entry plus PIT delivery, validates the firmware ACPI root, walks the checksummed
 system-description tables to the MADT, and parses that table's
 interrupt-controller records into a validated processor, I/O APIC, and
 interrupt-override topology, brings the bootstrap processor's local APIC online
-in virtual wire mode, and delivers the timer through a programmed I/O APIC
-redirection entry before halting safely.
+in virtual wire mode, delivers the timer through a programmed I/O APIC
+redirection entry, and retires the legacy 8259 pair before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -41,6 +41,8 @@ Seneri OS: ACPI topology verified
 Seneri OS: local APIC online
 Seneri OS: I/O APIC online
 Seneri OS: I/O APIC delivered eight interrupts
+Seneri OS: legacy 8259 retired
+Seneri OS: timer survives legacy retirement
 ```
 
 ## Build and prove it
@@ -56,7 +58,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run ten deterministic fault and interrupt scenarios
+make qemu-tests # run eleven deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -81,18 +83,19 @@ make hooks    # enforce verification in this local clone
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
 - `docs/IO_APIC.md` — redirection invariants, override routing, and proof.
+- `docs/LEGACY_RETIREMENT.md` — how the 8259 pair is latched shut, and proof.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
-Seneri's local APIC is online and the timer reaches it through a programmed I/O
-APIC redirection entry, but the 8259 pair is still initialized and still proves
-the legacy path on every boot; retiring it permanently is a later increment, as
-is level-triggered routing and an APIC timer. It still has a deliberately narrow
-single-core interrupt foundation, but no virtual-memory manager, heap,
-scheduler, userspace, filesystem, networking, graphics, or general hardware
-drivers. Those arrive only after the previous layer has an executable acceptance
-test.
+Every interrupt Seneri owns now arrives through discovered hardware: the timer
+is routed by a programmed I/O APIC redirection entry and the 8259 pair is
+latched shut. The timer itself is still the PIT rather than the local APIC
+timer, and level-triggered routing still needs I/O APIC directed EOI. It has a
+deliberately narrow single-core interrupt foundation, but no virtual-memory
+manager, heap, scheduler, userspace, filesystem, networking, graphics, or
+general hardware drivers. Those arrive only after the previous layer has an
+executable acceptance test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.
