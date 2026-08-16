@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_TEST_H
-#define ZENITH_TEST_H
+#ifndef SENERI_TEST_H
+#define SENERI_TEST_H
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <zenith/boot.h>
-#include <zenith/interrupts.h>
+#include <seneri/boot.h>
+#include <seneri/interrupts.h>
 
 enum kernel_test_scenario {
     KERNEL_TEST_NONE = 0,

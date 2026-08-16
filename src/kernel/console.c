@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/console.h>
+#include <seneri/console.h>
 
 #define VGA_WIDTH 80U
 #define VGA_HEIGHT 25U
@@ -179,7 +179,7 @@ _Noreturn void console_halt(void)
 
 _Noreturn void console_panic(const char *message)
 {
-    console_write("Zenith OS PANIC: ");
+    console_write("Seneri OS PANIC: ");
     console_write(message);
     console_putc('\n');
     console_halt();

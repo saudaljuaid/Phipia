@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/cpu.h>
-#include <zenith/interrupts.h>
-#include <zenith/pic.h>
+#include <seneri/cpu.h>
+#include <seneri/interrupts.h>
+#include <seneri/pic.h>
 
 extern const uint8_t interrupt_breakpoint_after[];
 

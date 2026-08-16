@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/zenith-logo.png" alt="Zenith OS logo" width="420">
+  <img src="assets/seneri-logo.png" alt="Seneri OS logo" width="420">
 </p>
 
-# Zenith OS
+# Seneri OS
 
-[![verify](https://github.com/saudaljuaid/Zenith-OS/actions/workflows/verify.yml/badge.svg)](https://github.com/saudaljuaid/Zenith-OS/actions/workflows/verify.yml)
+[![verify](https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml/badge.svg)](https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml)
 
-Zenith OS is a new, independent operating system built from first principles. It
+Seneri OS is a new, independent operating system built from first principles. It
 is not a Linux distribution and it does not currently promise application or
 hardware compatibility with an existing operating system.
 
@@ -15,7 +15,7 @@ x86_64 kernel seed—not a finished operating system and not a simulation.
 
 ## What boots today
 
-GRUB loads a Multiboot2-compliant ELF kernel in 32-bit protected mode. Zenith
+GRUB loads a Multiboot2-compliant ELF kernel in 32-bit protected mode. Seneri
 then validates the handoff and CPU, identity-maps the first 4 GiB, enables long
 mode, installs a known GDT and stack, and transfers control to freestanding C.
 The C kernel defensively validates every Multiboot2 tag, constructs a bounded
@@ -28,11 +28,11 @@ checksummed system-description tables to the MADT before halting safely.
 The day-one success contract is the serial line:
 
 ```text
-Zenith OS: day one passed
-Zenith OS: memory foundation passed
-Zenith OS: never triple fault milestone passed
-Zenith OS: ACPI root verified
-Zenith OS: ACPI MADT verified
+Seneri OS: day one passed
+Seneri OS: memory foundation passed
+Seneri OS: never triple fault milestone passed
+Seneri OS: ACPI root verified
+Seneri OS: ACPI MADT verified
 ```
 
 ## Build and prove it
@@ -71,10 +71,10 @@ make hooks    # enforce verification in this local clone
 
 ## Current boundaries
 
-Zenith now discovers but does not program APIC hardware. It still has a
+Seneri now discovers but does not program APIC hardware. It still has a
 deliberately narrow single-core interrupt foundation, but no virtual-memory
 manager, heap, scheduler, userspace, filesystem, networking, graphics, or
 general hardware drivers. Those arrive only after the previous layer has an
 executable acceptance test.
 
-Zenith OS is licensed under GPL-3.0; see `LICENSE`.
+Seneri OS is licensed under GPL-3.0; see `LICENSE`.

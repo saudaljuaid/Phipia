@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/acpi.h>
+#include <seneri/acpi.h>
 
 #define ACPI_RSDP_V1_SIZE 20U
 #define ACPI_RSDP_V2_SIZE 36U
@@ -146,7 +146,7 @@ enum acpi_status acpi_root_discover(
         return ACPI_STATUS_NULL_ROOT;
     }
 
-    if (address > ZENITH_EARLY_PHYSICAL_LIMIT - ACPI_ROOT_HEADER_SIZE) {
+    if (address > SENERI_EARLY_PHYSICAL_LIMIT - ACPI_ROOT_HEADER_SIZE) {
         root_reset(root);
         return ACPI_STATUS_ROOT_OUTSIDE_EARLY_MAP;
     }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_SELF_TEST_H
-#define ZENITH_SELF_TEST_H
+#ifndef SENERI_SELF_TEST_H
+#define SENERI_SELF_TEST_H
 
 #include <stdbool.h>
 

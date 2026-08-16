@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_CPU_H
-#define ZENITH_CPU_H
+#ifndef SENERI_CPU_H
+#define SENERI_CPU_H
 
 #include <stdbool.h>
 #include <stddef.h>

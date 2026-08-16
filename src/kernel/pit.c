@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <zenith/cpu.h>
-#include <zenith/interrupts.h>
-#include <zenith/pic.h>
-#include <zenith/pit.h>
+#include <seneri/cpu.h>
+#include <seneri/interrupts.h>
+#include <seneri/pic.h>
+#include <seneri/pit.h>
 
 #define PIT_INPUT_FREQUENCY UINT32_C(1193182)
 #define PIT_CHANNEL_ZERO UINT16_C(0x40)

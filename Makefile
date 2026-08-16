@@ -2,8 +2,8 @@ SHELL := /bin/sh
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
-KERNEL := $(BUILD_DIR)/zenith.elf
-ISO := $(BUILD_DIR)/zenith.iso
+KERNEL := $(BUILD_DIR)/seneri.elf
+ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected double-fault
@@ -22,7 +22,7 @@ CFLAGS := $(COMMON_FLAGS) -std=c11 -O2 -mno-red-zone -mno-mmx -mno-sse \
 	-Wstrict-prototypes -Wmissing-prototypes
 ASFLAGS := $(COMMON_FLAGS) -Wa,--fatal-warnings
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
-	--build-id=none -T linker.ld -Map=$(BUILD_DIR)/zenith.map
+	--build-id=none -T linker.ld -Map=$(BUILD_DIR)/seneri.map
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
@@ -77,23 +77,23 @@ verify: toolchain lint
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
-	cp $(KERNEL) $(ISO_ROOT)/boot/zenith.elf
+	cp $(KERNEL) $(ISO_ROOT)/boot/seneri.elf
 	cp grub/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(ISO_ROOT)
 
 iso: $(ISO)
 
-$(TEST_BUILD_DIR)/%/zenith.iso: $(KERNEL) Makefile
+$(TEST_BUILD_DIR)/%/seneri.iso: $(KERNEL) Makefile
 	rm -rf $(TEST_BUILD_DIR)/$*
 	mkdir -p $(TEST_BUILD_DIR)/$*/iso-root/boot/grub
-	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/zenith.elf
+	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/seneri.elf
 	printf '%s\n' 'set default=0' 'set timeout=0' '' \
-		'menuentry "Zenith OS test" {' \
-		'    multiboot2 /boot/zenith.elf zenith.test=$*' \
+		'menuentry "Seneri OS test" {' \
+		'    multiboot2 /boot/seneri.elf seneri.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
-qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
+qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
@@ -117,18 +117,18 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-no-reboot >"$$log" 2>&1; result=$$?; \
 	set -e; \
-	begin_count=$$(grep -Fxc 'ZT BEGIN $*' "$$log" || true); \
-	pass_count=$$(grep -Fxc 'ZT PASS $*' "$$log" || true); \
+	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
+	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
-		grep -Fq 'ZT FAIL' "$$log" || grep -Fq 'Zenith OS PANIC' "$$log"; then \
+		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Seneri OS PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		{ ! grep -Fq 'Zenith OS: ACPI root verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: ACPI MADT verified' "$$log" || \
-		  ! grep -Fq 'Zenith OS: never triple fault milestone passed' "$$log"; }; then \
+		{ ! grep -Fq 'Seneri OS: ACPI root verified' "$$log" || \
+		  ! grep -Fq 'Seneri OS: ACPI MADT verified' "$$log" || \
+		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \
@@ -145,7 +145,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/zenith.iso
 		unexpected) \
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
-			grep -Fq 'Zenith OS DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+			grep -Fq 'Seneri OS DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

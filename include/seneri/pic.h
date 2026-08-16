@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_PIC_H
-#define ZENITH_PIC_H
+#ifndef SENERI_PIC_H
+#define SENERI_PIC_H
 
 #include <stdbool.h>
 #include <stdint.h>

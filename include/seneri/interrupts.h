@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#ifndef ZENITH_INTERRUPTS_H
-#define ZENITH_INTERRUPTS_H
+#ifndef SENERI_INTERRUPTS_H
+#define SENERI_INTERRUPTS_H
 
 #include <stdbool.h>
 #include <stddef.h>
