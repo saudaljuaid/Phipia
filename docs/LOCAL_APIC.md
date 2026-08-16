@@ -95,8 +95,7 @@ times out. The routing is load-bearing and the scenario detects its absence.
 ## Deferred work
 
 Seneri now has a running local APIC that carries legacy interrupts unchanged.
-The next increment may program I/O APIC redirection entries from the discovered
-overrides and move one interrupt source off the 8259 pair, proving delivery
-through the I/O APIC before the PIC is masked permanently. Only after that may
-the local APIC timer replace the PIT proof, and only with its own calibration
-and acceptance test.
+`docs/IO_APIC.md` covers the next increment, which programs redirection entries
+from the discovered overrides and delivers the timer through the I/O APIC.
+Masking the 8259 pair permanently follows it, and only after that may the local
+APIC timer replace the PIT proof, with its own calibration and acceptance test.
