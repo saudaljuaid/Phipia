@@ -31,8 +31,12 @@ redirection entry, retires the legacy 8259 pair, discovers the ACPI power
 management timer from the FADT, calibrates both the local APIC timer and a
 time-stamp counter against that reference — whose rate is fixed by specification
 rather than measured — retires the 8254 and proves all three clocks still agree
-about an interval with it gone, then establishes a monotonic clock and deadline
-timers and sleeps on one, before halting safely.
+about an interval with it gone, establishes a monotonic clock and deadline
+timers and sleeps on one, then builds and installs its own four-level page
+tables — read-only executable text, read-only rodata, writable non-executable
+data, uncacheable APIC registers, an absent null page — walks them in software
+to prove no page is both writable and executable, and takes a page fault
+deliberately to prove the hardware agrees, before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -56,6 +60,9 @@ Seneri OS: PIT retired
 Seneri OS: clocks survive PIT retirement
 Seneri OS: deadline timers online
 Seneri OS: monotonic time established
+Seneri OS: kernel page tables installed
+Seneri OS: no writable executable mapping
+Seneri OS: virtual memory established
 ```
 
 ## Build and prove it
@@ -71,7 +78,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run sixteen deterministic fault and interrupt scenarios
+make qemu-tests # run seventeen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -96,7 +103,9 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/pm_timer.c` — ACPI PM timer, wrap folding, and bounded waiting.
 - `src/kernel/clock.c` — the monotonic clock and its one origin.
 - `src/kernel/timer.c` — deadline timers on the APIC timer's one-shot mode.
-- `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
+- `src/kernel/paging.c` — the kernel's own page tables and the W^X guarantee.
+- `linker.ld` — low-memory ELF layout with separate, page-aligned R, RX, and RW
+  segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
@@ -107,6 +116,7 @@ make hooks    # enforce verification in this local clone
 - `docs/PM_TIMER.md` — the first unmeasured reference, and the error it found.
 - `docs/PIT_RETIREMENT.md` — recalibrating on that reference, and losing the 8254.
 - `docs/MONOTONIC_TIME.md` — an instant, a deadline, and how bounded a sleep is.
+- `docs/VIRTUAL_MEMORY.md` — owning the tables, and making W^X true on the metal.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
@@ -125,17 +135,33 @@ Those rates are now usable time: one monotonic clock with a single origin, and
 deadlines armed on the APIC timer's one-shot mode, so code can ask to be woken at
 an instant rather than count ticks. Boot sleeps on one to prove it.
 
-What is missing sits above that layer. Nothing sleeps concurrently, because
-`timer_sleep_ns` halts the only thread of control there is — a second sleeper
-needs threads, and threads need the scheduler this layer exists to make possible.
-Pending deadlines live in fixed storage because there is no heap. There is no
+The kernel also owns its page tables. It used to run on the 4 GiB of huge pages
+`boot.S` builds before long mode, every one of them writable *and* executable,
+because `EFER.NXE` was never set — so for as long as `make verify` had been
+refusing an RWX load segment, the machine underneath had been entirely RWX. That
+check inspected the file. Seneri now builds a four-level hierarchy with per-page
+permissions, enables the no-execute bit and supervisor write protection, and
+walks the installed tables in software at boot to assert that no page is both
+writable and executable. The `paging` scenario writes to a page it just made
+read-only and passes only on the resulting fault, so the claim rests on the
+hardware refusing rather than on a table being read back.
+
+What is missing sits above that layer. There is still no heap — it is the next
+increment, and it needed these mappings first — so pending deadlines live in
+fixed storage and page tables, once allocated, are never reclaimed. Nothing
+sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
+there is; a second sleeper needs threads, and threads need the scheduler this
+layer exists to make possible. The kernel is still identity-mapped rather than
+higher-half, a 4 KiB change inside a 2 MiB mapping is refused rather than split,
+and the page-fault handler stays fatal: there is no demand paging. There is no
 wall-clock date, only time since boot. The supported target still reports no
 invariant counter, so the TSC's rate being correct is not the same as its rate
 being stable. Level-triggered I/O APIC routing still needs directed EOI, which
-gates PCI device interrupts. It has
-a deliberately narrow single-core interrupt foundation, but no virtual-memory
-manager, heap, scheduler, userspace, filesystem, networking, graphics, or
-general hardware drivers. Those arrive only after the previous layer has an
-executable acceptance test.
+gates PCI device interrupts. Everything here is verified under QEMU; the
+uncacheable APIC mappings in particular are the kind of change that fails only
+on real hardware. It has a deliberately narrow single-core foundation, but no
+heap, scheduler, userspace, filesystem, networking, graphics, or general
+hardware drivers. Those arrive only after the previous layer has an executable
+acceptance test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.

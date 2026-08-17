@@ -141,6 +141,87 @@ cpu_read_msr:
     ret
 .size cpu_read_msr, . - cpu_read_msr
 
+/*
+ * void cpu_write_msr(uint32_t msr, uint64_t value)
+ * Intel SDM volume 3B section 10.3: WRMSR takes the register number in ECX and
+ * the value split across EDX:EAX, so the 64-bit argument in RSI is halved. The
+ * caller must have proved the register exists; WRMSR to an unimplemented
+ * register raises a general-protection fault rather than reporting a status.
+ */
+.global cpu_write_msr
+.type cpu_write_msr, @function
+cpu_write_msr:
+    movl %edi, %ecx
+    movl %esi, %eax
+    movq %rsi, %rdx
+    shrq $32, %rdx
+    wrmsr
+    ret
+.size cpu_write_msr, . - cpu_write_msr
+
+.global cpu_read_cr0
+.type cpu_read_cr0, @function
+cpu_read_cr0:
+    movq %cr0, %rax
+    ret
+.size cpu_read_cr0, . - cpu_read_cr0
+
+/*
+ * void cpu_write_cr0(uint64_t value)
+ * Seneri changes exactly one bit through this, CR0.WP, and only while the
+ * boot page tables still mark every page writable, so the write cannot revoke
+ * a permission from under the instruction performing it.
+ */
+.global cpu_write_cr0
+.type cpu_write_cr0, @function
+cpu_write_cr0:
+    movq %rdi, %cr0
+    ret
+.size cpu_write_cr0, . - cpu_write_cr0
+
+.global cpu_read_cr3
+.type cpu_read_cr3, @function
+cpu_read_cr3:
+    movq %cr3, %rax
+    ret
+.size cpu_read_cr3, . - cpu_read_cr3
+
+.global cpu_read_cr4
+.type cpu_read_cr4, @function
+cpu_read_cr4:
+    movq %cr4, %rax
+    ret
+.size cpu_read_cr4, . - cpu_read_cr4
+
+/*
+ * void cpu_write_cr3(uint64_t value)
+ * Intel SDM volume 3A section 4.10.4.1: loading CR3 installs a new translation
+ * hierarchy and invalidates every TLB entry that is not global. Seneri sets the
+ * global bit in no entry, so this one instruction replaces the whole address
+ * space with no residue. The very next instruction fetch already uses the new
+ * hierarchy, so it must map the code executing here.
+ */
+.global cpu_write_cr3
+.type cpu_write_cr3, @function
+cpu_write_cr3:
+    movq %rdi, %cr3
+    ret
+.size cpu_write_cr3, . - cpu_write_cr3
+
+/*
+ * void cpu_invalidate_page(uintptr_t virtual_address)
+ * Intel SDM volume 3A section 4.10.4.1: INVLPG drops the cached translation for
+ * the page containing the operand. It is the cheap counterpart to a CR3 reload
+ * and is what every single-page permission change uses. This kernel is
+ * single-core, so no other processor holds a stale copy to shoot down.
+ */
+.global cpu_invalidate_page
+.type cpu_invalidate_page, @function
+cpu_invalidate_page:
+    invlpg (%rdi)
+    ret
+.size cpu_invalidate_page, . - cpu_invalidate_page
+
 .global cpu_read_cr2
 .type cpu_read_cr2, @function
 cpu_read_cr2:
