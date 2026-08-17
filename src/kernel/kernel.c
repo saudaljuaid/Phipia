@@ -655,9 +655,14 @@ static void prove_paging_lifecycle(void)
     volatile uint8_t *probe =
         (volatile uint8_t *)(uintptr_t)PAGING_PROBE_ADDRESS;
     struct paging_translation translation;
+    struct frame_allocator_stats before;
+    struct frame_allocator_stats after;
     uintptr_t frame;
-    enum frame_status frame_status = frame_allocate(&frame);
+    enum frame_status frame_status;
     enum paging_status status;
+
+    before = frame_allocator_get_stats();
+    frame_status = frame_allocate(&frame);
 
     if (frame_status != FRAME_STATUS_OK) {
         console_panic(frame_status_string(frame_status));
@@ -724,6 +729,18 @@ static void prove_paging_lifecycle(void)
 
     if (frame_status != FRAME_STATUS_OK) {
         console_panic(frame_status_string(frame_status));
+    }
+
+    /*
+     * Everything this proof took has been given back, including the interior
+     * page tables the mapping needed. An unmap that cleared its leaf but kept
+     * the table would show up here as a frame that never came home, which is
+     * the leak the reclamation exists to close.
+     */
+    after = frame_allocator_get_stats();
+
+    if (after.free_frames != before.free_frames) {
+        console_panic("mapping a page and undoing it did not return every frame");
     }
 }
 

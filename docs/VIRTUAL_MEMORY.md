@@ -344,14 +344,65 @@ No control hung. The two that could have — the ones where a permission silentl
 fails to take — both fail with a status, because `paging_probe_write` returns
 when its store succeeds.
 
+## Reclaiming interior tables
+
+`paging_unmap` used to clear a leaf and stop, leaving an emptied page table
+mapped forever. That was tolerable while the only unmap in the kernel ran once
+at boot. `docs/KERNEL_HEAP.md` changed that: the heap's growth rollback unmaps
+pages in ordinary operation, so a repeated grow-and-fail cycle would have leaked
+a table frame at a time, and the frame allocator would eventually have run dry
+and blamed whoever asked last.
+
+An unmap now gives back any interior table it empties, and then the table above
+it if removing that one empties it in turn. **The root is never reclaimed** —
+CR3 points at it, and a hierarchy with no root is not a hierarchy. The climb
+stops at the first table that still holds an entry, because everything above it
+is reachable through that entry.
+
+Only a 4 KiB leaf can empty a page table. A 2 MiB leaf lives in a page directory
+the identity map keeps populated, and this kernel never unmaps one.
+
+`table_is_empty` scans a table's 512 entries and exits on the first present one,
+so the cost is trivial except on the unmap that actually empties a table.
+
+`paging_get_state().table_frames` is now taken from the hierarchy after every
+mutation rather than fixed at install, and `paging_verify` checks the two agree
+and that the count never reaches zero.
+
+### Proof
+
+`test_table_reclamation` drives a private hierarchy: one page needs three
+interior tables; a second page in the same table needs none; emptying half the
+table reclaims nothing and leaves the other page translating; emptying the last
+entry collapses the whole path back to the root alone; the root's own entry is
+cleared rather than left pointing at a freed page; and a 2 MiB leaf then
+installs where the page table used to be, which is reclamation's whole point.
+Two pages in different page tables under one directory prove the climb stops at
+the directory while it still holds the other.
+
+`prove_paging_lifecycle` compares the frame allocator's free count before and
+after a complete map-write-protect-unmap-release cycle on every boot. The
+`paging` scenario runs sixty-four such cycles and requires both the frame count
+and the table count to be identical afterwards — one leaked table per cycle is
+invisible in a single pass and fatal over a long-running kernel.
+
+| Breakage | Observed failure |
+| --- | --- |
+| reclamation never runs (the original leak) | `PANIC: mapping a page and undoing it did not return every frame` |
+| a table is freed while it still holds entries | `PANIC: page table arithmetic self-test failed` |
+| the table is freed but the parent entry keeps pointing at it | `PANIC: page table arithmetic self-test failed` |
+| the root is reclaimed too | `PANIC: page table arithmetic self-test failed` |
+
+The first three could not be produced by simply deleting the code: `-Werror`
+rejected the build for an unused function or an unused variable before any test
+ran, which is a small proof of its own. Each was neutralised in a way the
+compiler accepts instead.
+
 ## Deferred work
 
 - **The kernel heap.** It needs this increment first; it is the increment after.
   `paging_map` at a fresh virtual address with frames from the allocator is
   exactly what it will be built on.
-- **Reclaiming table frames.** `paging_unmap` clears leaves but never frees a
-  page table, so an interior table, once allocated, is permanent. Reclaiming one
-  needs a per-table occupancy count, which arrives with the heap.
 - **Splitting a huge leaf.** A 4 KiB change inside a 2 MiB mapping is refused,
   not performed. Splitting means allocating a page table, populating 512 entries
   from the huge entry, and swapping it in under a live translation.

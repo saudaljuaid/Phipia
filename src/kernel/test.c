@@ -40,6 +40,9 @@
 #define PAGING_TEST_FAULT_ERROR_CODE UINT64_C(0x03)
 #define PAGING_TEST_PATTERN UINT8_C(0x5A)
 
+/* Enough repetitions that one leaked table per cycle is unmistakable. */
+#define PAGING_TEST_CYCLES 64U
+
 /* An address inside the bulk 2 MiB identity map, above the linked image. */
 #define PAGING_TEST_HUGE_ADDRESS UINT64_C(0x0000000000A00000)
 
@@ -1163,6 +1166,8 @@ static void paging_scenario(void)
     struct paging_translation translation;
     struct paging_state paging;
     struct paging_audit audit;
+    size_t frames_before;
+    size_t tables_before;
     uintptr_t frame;
 
     if (!paging_is_active()) {
@@ -1284,6 +1289,54 @@ static void paging_scenario(void)
     /* Reading is still permitted, and the contents survived the change. */
     if (*probe != PAGING_TEST_PATTERN) {
         kernel_test_fail("a read-only mapping lost the page contents");
+    }
+
+    /*
+     * Map and undo the same page many times over. One leaked interior table
+     * per cycle is invisible in a single pass and fatal over a long-running
+     * kernel, so the check that matters is that the frame count is identical
+     * after sixty-four cycles - and the paging state's own table count with it.
+     */
+    if (paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+        PAGING_STATUS_OK) {
+        kernel_test_fail("the probe page would not unmap before the cycle");
+    }
+
+    frames_before = frame_allocator_get_stats().free_frames;
+    tables_before = paging_get_state().table_frames;
+
+    for (size_t cycle = 0; cycle < PAGING_TEST_CYCLES; ++cycle) {
+        uintptr_t cycle_frame;
+
+        if (frame_allocate(&cycle_frame) != FRAME_STATUS_OK ||
+            paging_map(PAGING_PROBE_ADDRESS, cycle_frame, SENERI_PAGE_SIZE,
+                PAGING_WRITE) != PAGING_STATUS_OK ||
+            paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+                PAGING_STATUS_OK ||
+            frame_release(cycle_frame) != FRAME_STATUS_OK) {
+            kernel_test_fail("a map and unmap cycle did not complete");
+        }
+    }
+
+    if (frame_allocator_get_stats().free_frames != frames_before) {
+        kernel_test_fail("repeated mapping leaked a physical frame");
+    }
+
+    if (paging_get_state().table_frames != tables_before) {
+        kernel_test_fail("repeated mapping leaked a page table");
+    }
+
+    if (paging_verify() != PAGING_STATUS_OK) {
+        kernel_test_fail("the hierarchy did not survive repeated mapping");
+    }
+
+    /* Put the probe page back so the fault below has something to narrow. */
+    if (frame_allocate(&frame) != FRAME_STATUS_OK ||
+        paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_OK ||
+        paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+            PAGING_STATUS_OK) {
+        kernel_test_fail("the probe page would not come back read-only");
     }
 
     console_write("ST INFO paging: read-only write to ");
