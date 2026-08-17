@@ -12,6 +12,7 @@
 #include <seneri/pic.h>
 #include <seneri/pit.h>
 #include <seneri/test.h>
+#include <seneri/tsc.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -20,6 +21,7 @@
 #define PIT_TEST_TICKS UINT64_C(8)
 #define APIC_TIMER_TEST_FREQUENCY UINT32_C(100)
 #define APIC_TIMER_TEST_TICKS UINT64_C(20)
+#define TSC_MONOTONIC_READS 64U
 
 volatile uint8_t kernel_test_double_fault_armed;
 static enum kernel_test_scenario active_scenario;
@@ -128,6 +130,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_APIC_TIMER;
     }
 
+    if (token_equals(value, length, "tsc")) {
+        return KERNEL_TEST_TSC;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -158,6 +164,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1A);
     case KERNEL_TEST_APIC_TIMER:
         return UINT8_C(0x1B);
+    case KERNEL_TEST_TSC:
+        return UINT8_C(0x1C);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -494,6 +502,86 @@ static void apic_timer_scenario(void)
     }
 }
 
+/*
+ * Establish the time-stamp counter as a second reference and check it against
+ * the first. Two clocks calibrated from the same ruler must agree about the
+ * same interval; a clock that only agrees with itself proves nothing.
+ */
+static void tsc_scenario(void)
+{
+    struct tsc_state tsc;
+    uint64_t previous;
+    uint64_t start;
+    uint64_t measured_ns;
+    uint64_t expected_ns;
+    enum tsc_status status;
+
+    if (tsc_is_calibrated()) {
+        kernel_test_fail("TSC was already calibrated");
+    }
+
+    if (tsc_span_nanoseconds(0U, UINT64_C(1000)) != 0U) {
+        kernel_test_fail("uncalibrated TSC reported a duration");
+    }
+
+    status = tsc_calibrate();
+
+    if (status != TSC_STATUS_OK) {
+        kernel_test_fail(tsc_status_string(status));
+    }
+
+    tsc = tsc_get_state();
+
+    if (!tsc.present || tsc.frequency_hz == 0U) {
+        kernel_test_fail("TSC calibrated to an unusable rate");
+    }
+
+    if (tsc_calibrate() != TSC_STATUS_ALREADY_CALIBRATED) {
+        kernel_test_fail("TSC accepted a second calibration");
+    }
+
+    /* A counter that steps backwards cannot order anything. */
+    previous = tsc_read();
+
+    for (size_t index = 0; index < TSC_MONOTONIC_READS; ++index) {
+        const uint64_t current = tsc_read();
+
+        if (current < previous) {
+            kernel_test_fail("TSC ran backwards between reads");
+        }
+
+        previous = current;
+    }
+
+    if (apic_timer_calibrate() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("second clock would not calibrate");
+    }
+
+    if (apic_timer_start(APIC_TIMER_TEST_FREQUENCY) != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("second clock would not start");
+    }
+
+    start = tsc_read();
+
+    if (apic_timer_wait_for_ticks(APIC_TIMER_TEST_TICKS) !=
+        APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("second clock stopped delivering");
+    }
+
+    measured_ns = tsc_span_nanoseconds(start, tsc_read());
+
+    if (apic_timer_stop() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("second clock would not stop");
+    }
+
+    expected_ns = APIC_TIMER_TEST_TICKS * UINT64_C(1000000000) /
+        APIC_TIMER_TEST_FREQUENCY;
+
+    if (measured_ns < expected_ns / 2U || measured_ns > expected_ns * 2U) {
+        kernel_test_fail("TSC and local APIC timer disagree about an interval");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -563,6 +651,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_APIC_TIMER:
         apic_timer_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_TSC:
+        tsc_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -648,6 +739,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "retired";
     case KERNEL_TEST_APIC_TIMER:
         return "apic-timer";
+    case KERNEL_TEST_TSC:
+        return "tsc";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
