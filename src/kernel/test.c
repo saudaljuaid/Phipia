@@ -10,6 +10,7 @@
 #include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
+#include <seneri/heap.h>
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
@@ -41,6 +42,15 @@
 
 /* An address inside the bulk 2 MiB identity map, above the linked image. */
 #define PAGING_TEST_HUGE_ADDRESS UINT64_C(0x0000000000A00000)
+
+/*
+ * A supervisor write to an absent page is P=0 W=1 U=0. That is a third distinct
+ * error code: the page-fault scenario reads an absent page at P=0 W=0 U=0, and
+ * the paging scenario writes a present read-only page at P=1 W=1 U=0. No two of
+ * the three scenarios can pass on each other's fault.
+ */
+#define HEAP_TEST_FAULT_ERROR_CODE UINT64_C(0x02)
+#define HEAP_TEST_PATTERN UINT8_C(0xC3)
 
 /*
  * Ten milliseconds of the ACPI timer, which counts at 3.579545 MHz, and the
@@ -187,6 +197,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_PAGING;
     }
 
+    if (token_equals(value, length, "heap")) {
+        return KERNEL_TEST_HEAP;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -227,6 +241,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1F);
     case KERNEL_TEST_PAGING:
         return UINT8_C(0x20);
+    case KERNEL_TEST_HEAP:
+        return UINT8_C(0x21);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -1283,6 +1299,194 @@ static void paging_scenario(void)
     paging_probe_write(probe, (uint8_t)~PAGING_TEST_PATTERN);
 }
 
+/*
+ * Prove the heap hands out memory that is actually distinct, that it refuses
+ * everything it should, and that its guard pages are enforced by the processor.
+ *
+ * The refusals matter more here than anywhere else in the kernel. An allocator
+ * that accepts a pointer it never returned will happily mark a live block free
+ * and hand the same bytes to two callers, and nothing downstream can detect
+ * that. So every wrong pointer this scenario can construct - interior, below
+ * the window, above the window, unaligned, already freed - is checked by name.
+ */
+static void heap_scenario(void)
+{
+    volatile uint8_t *bytes;
+    struct paging_translation translation;
+    struct heap_state heap;
+    uint64_t committed_before;
+    size_t pages_before;
+    enum heap_status status;
+    void *first = NULL;
+    void *second = NULL;
+    void *third = NULL;
+
+    if (!heap_is_active() || !paging_is_active()) {
+        kernel_test_fail("kernel heap is not online");
+    }
+
+    if (heap_initialize() != HEAP_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("heap accepted a second initialization");
+    }
+
+    status = heap_verify();
+
+    if (status != HEAP_STATUS_OK) {
+        kernel_test_fail(heap_status_string(status));
+    }
+
+    /* Malformed requests, each refused by its own name. */
+    if (heap_allocate(0U, &first) != HEAP_STATUS_ZERO_SIZE || first != NULL ||
+        heap_allocate(HEAP_SIZE + 1U, &first) != HEAP_STATUS_TOO_LARGE ||
+        first != NULL ||
+        heap_allocate(16U, NULL) != HEAP_STATUS_NULL_ARGUMENT) {
+        kernel_test_fail("a malformed allocation request was accepted");
+    }
+
+    if (heap_allocate(64U, &first) != HEAP_STATUS_OK || first == NULL ||
+        heap_allocate(64U, &second) != HEAP_STATUS_OK || second == NULL ||
+        first == second) {
+        kernel_test_fail("the heap would not produce two distinct blocks");
+    }
+
+    if (((uint64_t)(uintptr_t)first & (HEAP_ALIGNMENT - 1U)) != 0U ||
+        ((uint64_t)(uintptr_t)second & (HEAP_ALIGNMENT - 1U)) != 0U) {
+        kernel_test_fail("the heap returned a misaligned allocation");
+    }
+
+    /* Both blocks must lie inside the window, between the guards. */
+    if ((uint64_t)(uintptr_t)first < HEAP_BASE ||
+        (uint64_t)(uintptr_t)second >= HEAP_GUARD_ABOVE) {
+        kernel_test_fail("the heap returned a block outside its window");
+    }
+
+    /* Every wrong pointer this scenario can construct. */
+    if (heap_free(NULL) != HEAP_STATUS_NULL_ARGUMENT ||
+        heap_free((void *)((uintptr_t)first + 1U)) !=
+            HEAP_STATUS_BAD_POINTER ||
+        heap_free((void *)((uintptr_t)first + HEAP_ALIGNMENT)) !=
+            HEAP_STATUS_BAD_POINTER ||
+        heap_free((void *)(uintptr_t)HEAP_GUARD_BELOW) !=
+            HEAP_STATUS_BAD_POINTER ||
+        heap_free((void *)(uintptr_t)HEAP_GUARD_ABOVE) !=
+            HEAP_STATUS_BAD_POINTER) {
+        kernel_test_fail("the heap accepted a pointer it never returned");
+    }
+
+    if (heap_free(first) != HEAP_STATUS_OK ||
+        heap_free(first) != HEAP_STATUS_DOUBLE_FREE) {
+        kernel_test_fail("the heap accepted a double free");
+    }
+
+    /*
+     * The freed block is the best fit for the same size again, so a heap that
+     * reuses its free space hands back the identical address. A heap that only
+     * ever grew would return something new here and slowly exhaust the window.
+     */
+    if (heap_allocate(64U, &third) != HEAP_STATUS_OK || third != first) {
+        kernel_test_fail("the heap did not reuse a freed block");
+    }
+
+    bytes = (volatile uint8_t *)third;
+
+    for (uint64_t index = 0; index < 64U; ++index) {
+        bytes[index] = HEAP_TEST_PATTERN;
+    }
+
+    for (uint64_t index = 0; index < 64U; ++index) {
+        if (bytes[index] != HEAP_TEST_PATTERN) {
+            kernel_test_fail("a heap block did not hold what was written");
+        }
+    }
+
+    if (heap_free(third) != HEAP_STATUS_OK ||
+        heap_free(second) != HEAP_STATUS_OK) {
+        kernel_test_fail("the heap refused to release its own allocation");
+    }
+
+    heap = heap_get_state();
+
+    if (heap.live_allocations != 0U || heap.allocated_bytes != 0U ||
+        heap.block_count != 1U) {
+        kernel_test_fail("the heap did not coalesce back to one free block");
+    }
+
+    status = heap_verify();
+
+    if (status != HEAP_STATUS_OK) {
+        kernel_test_fail(heap_status_string(status));
+    }
+
+    /*
+     * Ask for the entire window in one allocation. Which way this goes depends
+     * on the machine, and both ways are worth checking, so the scenario asks
+     * what happened rather than assuming how much memory it has.
+     *
+     * With more free memory than the window, growth commits every page and the
+     * next byte requested must be refused at the window bound. With less, the
+     * growth runs out of frames part way through, which is the only path that
+     * exercises rollback - and then what matters is that the heap is left
+     * exactly as it was, with every page that had been mapped given back.
+     */
+    committed_before = heap.committed_bytes;
+    pages_before = heap.mapped_pages;
+    status = heap_allocate(HEAP_SIZE, &first);
+
+    if (status == HEAP_STATUS_OUT_OF_MEMORY) {
+        heap = heap_get_state();
+
+        if (first != NULL || heap_verify() != HEAP_STATUS_OK ||
+            heap.committed_bytes != committed_before ||
+            heap.mapped_pages != pages_before ||
+            heap.live_allocations != 0U) {
+            kernel_test_fail("a failed heap growth did not roll back");
+        }
+
+        console_write("ST INFO heap: growth rolled back at the frame limit\n");
+    } else if (status == HEAP_STATUS_OK) {
+        heap = heap_get_state();
+
+        if (first == NULL || heap.committed_bytes != HEAP_SIZE ||
+            heap.mapped_pages != HEAP_SIZE / PAGING_PAGE_SIZE) {
+            kernel_test_fail("committing the window did not map every page");
+        }
+
+        if (heap_allocate(HEAP_ALIGNMENT, &second) !=
+                HEAP_STATUS_OUT_OF_MEMORY ||
+            second != NULL) {
+            kernel_test_fail("a full heap accepted another allocation");
+        }
+
+        /* The guards survive the window being fully committed against them. */
+        if (heap_verify() != HEAP_STATUS_OK ||
+            heap_free(first) != HEAP_STATUS_OK ||
+            heap_verify() != HEAP_STATUS_OK) {
+            kernel_test_fail("heap invariants do not hold at full commitment");
+        }
+    } else {
+        kernel_test_fail(heap_status_string(status));
+    }
+
+    /*
+     * The guard page above the window is absent and stays absent. Its address
+     * is one past the last byte the heap can ever hand out, so this is exactly
+     * the write a caller running off the end of its last allocation would make.
+     */
+    if (paging_translate(HEAP_GUARD_ABOVE, &translation) !=
+        PAGING_STATUS_NOT_MAPPED) {
+        kernel_test_fail("the upper heap guard page is mapped");
+    }
+
+    console_write("ST INFO heap: guard write to ");
+    console_write_hex(HEAP_GUARD_ABOVE);
+    console_write(" expecting P=0 W=1 U=0\n");
+
+    paging_probe_write(
+        (volatile uint8_t *)(uintptr_t)HEAP_GUARD_ABOVE,
+        HEAP_TEST_PATTERN
+    );
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -1368,6 +1572,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
     case KERNEL_TEST_PAGING:
         paging_scenario();
         kernel_test_fail("a read-only page accepted a supervisor write");
+    case KERNEL_TEST_HEAP:
+        heap_scenario();
+        kernel_test_fail("a heap guard page accepted a supervisor write");
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -1416,6 +1623,12 @@ bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
         matches = frame->vector == 14U &&
             frame->error_code == PAGING_TEST_FAULT_ERROR_CODE &&
             frame->cr2 == PAGING_PROBE_ADDRESS &&
+            frame->rip == (uintptr_t)(const void *)paging_probe_write_site;
+        break;
+    case KERNEL_TEST_HEAP:
+        matches = frame->vector == 14U &&
+            frame->error_code == HEAP_TEST_FAULT_ERROR_CODE &&
+            frame->cr2 == HEAP_GUARD_ABOVE &&
             frame->rip == (uintptr_t)(const void *)paging_probe_write_site;
         break;
     default:
@@ -1468,6 +1681,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "timers";
     case KERNEL_TEST_PAGING:
         return "paging";
+    case KERNEL_TEST_HEAP:
+        return "heap";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

@@ -8,7 +8,7 @@ SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
 	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers \
-	paging
+	paging heap
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -129,6 +129,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		pit-retired) expected=61 ;; \
 		timers) expected=63 ;; \
 		paging) expected=65 ;; \
+		heap) expected=67 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -179,6 +180,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: kernel page tables installed' "$$log" || \
 		  ! grep -Fq 'Seneri OS: no writable executable mapping' "$$log" || \
 		  ! grep -Fq 'Seneri OS: virtual memory established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: kernel heap online' "$$log" || \
+		  ! grep -Fq 'Seneri OS: heap coalesced to one free block' "$$log" || \
+		  ! grep -Fq 'Seneri OS: kernel heap established' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -201,6 +207,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000200000000' "$$log" && \
 			grep -Fq '  page-fault bits: P=1 W=1 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
+		heap) \
+			grep -Fq '  vector=14 name=page fault' "$$log" && \
+			grep -Fq '  cr2=0x0000000401000000' "$$log" && \
+			grep -Fq '  page-fault bits: P=0 W=1 U=0 RSVD=0 I=0' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
