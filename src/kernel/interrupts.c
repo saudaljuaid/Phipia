@@ -7,6 +7,7 @@
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
+#include <seneri/ioapic.h>
 #include <seneri/pic.h>
 #include <seneri/test.h>
 
@@ -434,14 +435,34 @@ void interrupt_dispatch(struct interrupt_frame *frame)
      * the local APIC itself, is acknowledged at the local APIC rather than the
      * 8259 pair. The end of interrupt follows the handler so a second interrupt
      * from the same source cannot arrive while the first is still running.
+     *
+     * A level-triggered source needs a second acknowledgement, directed at the
+     * I/O APIC that owns its redirection entry, because the local APIC's EOI
+     * register does not clear that entry's remote IRR and the pin cannot
+     * deliver again until it is clear. Both follow the handler and the I/O APIC
+     * goes first: while the local APIC still holds the vector in service the
+     * processor cannot accept it again, so a re-assertion the directed end of
+     * interrupt releases is queued rather than taken, and the local APIC's EOI
+     * remains the single instant at which the interrupt is finished.
      */
     if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_LOCAL_APIC_LIMIT) {
+        const bool level_triggered = ioapic_vector_is_level_triggered(vector);
+
         if (slot->handler == NULL) {
+            if (level_triggered) {
+                (void)ioapic_send_eoi(vector);
+            }
+
             apic_send_eoi();
             fatal_interrupt(frame);
         }
 
         slot->handler(frame, slot->context);
+
+        if (level_triggered) {
+            (void)ioapic_send_eoi(vector);
+        }
+
         apic_send_eoi();
         return;
     }

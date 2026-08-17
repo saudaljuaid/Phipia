@@ -7,8 +7,8 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers \
-	paging heap
+	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
+	pit-retired timers paging heap
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -130,6 +130,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		timers) expected=63 ;; \
 		paging) expected=65 ;; \
 		heap) expected=67 ;; \
+		ioapic-level) expected=69 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -157,9 +158,14 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: local APIC online' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC legacy routing LINT0 ExtINT' "$$log" || \
 		  ! grep -Fq 'Seneri OS: I/O APIC online' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight interrupts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: legacy 8259 retired' "$$log" || \
 		  ! grep -Fq 'Seneri OS: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low)$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
+		  ! grep -Fq 'Seneri OS: level-triggered routing established' "$$log" || \
 		  ! grep -Eq '^Seneri OS: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC timer delivered eight interrupts' "$$log" || \
 		  ! grep -Eq '^Seneri OS: TSC calibrated at [0-9]+ Hz' "$$log" || \

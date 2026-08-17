@@ -47,6 +47,18 @@
  */
 #define SLEEP_PROOF_NS UINT64_C(50000000)
 
+/*
+ * Eight level-triggered deliveries at 100 Hz, so 80 ms of timer. Eight rather
+ * than one because a level-triggered pin that is never acknowledged at the I/O
+ * APIC delivers exactly once and then wedges: a single delivery would prove
+ * nothing this increment is about. The two-second bound is 25 times what the
+ * eight should take, and short enough to stay inside one wrap of the reference
+ * counter that measures it.
+ */
+#define LEVEL_PROOF_FREQUENCY UINT32_C(100)
+#define LEVEL_PROOF_TICKS UINT64_C(8)
+#define LEVEL_PROOF_BOUND_NS UINT64_C(2000000000)
+
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
 /*
@@ -238,7 +250,148 @@ static void report_ioapic(const struct ioapic_state *ioapic)
         console_write_u64(unit->entry_count);
         console_write(" base GSI ");
         console_write_u64(unit->interrupt_base);
+        console_write(" directed EOI ");
+        console_write(unit->directed_eoi ? "yes" : "no");
         console_putc('\n');
+    }
+}
+
+/*
+ * The first interrupt this kernel accepts as a level rather than an edge.
+ *
+ * Everything routed so far has been edge triggered, which needs no
+ * acknowledgement at the I/O APIC at all: the pin is sampled on a transition
+ * and nothing is latched. A level-triggered entry latches remote IRR when it
+ * delivers, and until an end of interrupt directed at the I/O APIC clears it
+ * the pin cannot deliver again - so the failure this proof exists to catch is a
+ * line that fires once and then stops, which one delivery could not tell apart
+ * from success. Eight are counted, and the interval they take is measured,
+ * because a line that is acknowledged before its source is quiet fails the
+ * other way: it re-delivers as fast as the processor will accept it.
+ */
+static void prove_level_route(void)
+{
+    struct ioapic_redirection entry;
+    struct ioapic_state ioapic = ioapic_get_state();
+    uint64_t elapsed_ns = 0U;
+    const uint64_t expected_ns = LEVEL_PROOF_TICKS * UINT64_C(1000000000) /
+        LEVEL_PROOF_FREQUENCY;
+    enum ioapic_status ioapic_status;
+    enum pit_status pit_status;
+
+    /*
+     * The version check, ahead of the routing that depends on it, so a machine
+     * whose I/O APIC predates the directed end-of-interrupt register is told
+     * why it cannot have level-triggered routing rather than being told that
+     * some redirection entry would not program.
+     */
+    if (ioapic.count == 0U || !ioapic.units[0].directed_eoi) {
+        console_panic(ioapic_status_string(IOAPIC_STATUS_NO_DIRECTED_EOI));
+    }
+
+    pit_status = pit_start(LEVEL_PROOF_FREQUENCY, PIT_ROUTE_IO_APIC_LEVEL);
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    ioapic_status = ioapic_read_redirection(pit_active_vector(), &entry);
+
+    if (ioapic_status != IOAPIC_STATUS_OK) {
+        console_panic(ioapic_status_string(ioapic_status));
+    }
+
+    console_write("Seneri OS: I/O APIC level route id ");
+    console_write_u64(entry.unit_identifier);
+    console_write(" GSI ");
+    console_write_u64(entry.global_interrupt);
+    console_write(" vector ");
+    console_write_u64(entry.vector);
+    console_write(" active ");
+    console_write(entry.active_low ? "low" : "high");
+    console_putc('\n');
+
+    /*
+     * Read off the hardware rather than off Seneri's record of it. An entry
+     * programmed edge triggered while the kernel believed it level triggered
+     * would deliver perfectly well here and never latch anything, and this is
+     * the check that says so.
+     */
+    if (!entry.level_triggered || entry.masked ||
+        !ioapic_vector_is_level_triggered(pit_active_vector())) {
+        console_panic("level route did not read back level triggered");
+    }
+
+    pit_status = pit_wait_for_ticks_bounded(
+        LEVEL_PROOF_TICKS,
+        LEVEL_PROOF_BOUND_NS,
+        &elapsed_ns
+    );
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    ioapic = ioapic_get_state();
+    console_write("Seneri OS: I/O APIC level deliveries ");
+    console_write_u64(pit_ticks());
+    console_write(" remote IRR ");
+    console_write_u64(ioapic.remote_irr_observed);
+    console_write(" directed EOI ");
+    console_write_u64(ioapic.directed_eoi_count);
+    console_write(" in ");
+    console_write_u64(elapsed_ns);
+    console_write(" ns\n");
+
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    if (pit_ticks() < LEVEL_PROOF_TICKS) {
+        console_panic("level-triggered route delivered too few interrupts");
+    }
+
+    /*
+     * A pin acknowledged while its source is still asserting re-delivers inside
+     * the acknowledgement, and counts thousands of interrupts in the time eight
+     * should take. That is the opposite failure to a line that stops, and it
+     * needs its own ceiling to be named rather than inferred from the interval.
+     */
+    if (pit_ticks() > LEVEL_PROOF_TICKS * 2U) {
+        console_panic("level-triggered route delivered without stopping");
+    }
+
+    /*
+     * Every delivery must have latched remote IRR and every one must have been
+     * acknowledged at the I/O APIC. A count short on either side means the
+     * entry is not behaving as a level-triggered entry, however many interrupts
+     * happen to have arrived.
+     */
+    if (ioapic.remote_irr_observed < LEVEL_PROOF_TICKS ||
+        ioapic.directed_eoi_count < LEVEL_PROOF_TICKS ||
+        ioapic.remote_irr_missing != 0U) {
+        console_panic("a level-triggered delivery did not latch remote IRR");
+    }
+
+    /*
+     * And they must have taken the time eight ticks take. A pin acknowledged
+     * while its source is still asserted re-delivers immediately, which counts
+     * eight interrupts in almost no time at all and would otherwise pass.
+     */
+    if (!pm_timer_durations_agree(
+            elapsed_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        console_panic("level-triggered deliveries did not take a timer period");
+    }
+
+    /* Stopping the route puts the entry back under the mask it started at. */
+    if (ioapic_vector_is_level_triggered(pit_active_vector()) ||
+        ioapic_get_state().level_routes != 0U) {
+        console_panic("a stopped level route is still routed");
     }
 }
 
@@ -249,13 +402,25 @@ static void report_ioapic(const struct ioapic_state *ioapic)
  */
 static void prove_timer_route(enum pit_route route)
 {
-    enum pit_status pit_status = pit_start(UINT32_C(100), route);
+    uint64_t elapsed_ns = 0U;
+    enum pit_status pit_status = pit_start(LEVEL_PROOF_FREQUENCY, route);
 
     if (pit_status != PIT_STATUS_OK) {
         console_panic(pit_status_string(pit_status));
     }
 
-    pit_status = pit_wait_for_ticks(UINT64_C(8));
+    /*
+     * Bounded rather than halting. Every route proved here depends on the
+     * dispatcher acknowledging the interrupt, and an acknowledgement that stops
+     * working stops delivery: halting for the next interrupt would wait for one
+     * that is never coming and hand whoever runs this a timeout instead of a
+     * reason.
+     */
+    pit_status = pit_wait_for_ticks_bounded(
+        UINT64_C(8),
+        LEVEL_PROOF_BOUND_NS,
+        &elapsed_ns
+    );
 
     if (pit_status != PIT_STATUS_OK) {
         console_panic(pit_status_string(pit_status));
@@ -1201,6 +1366,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_timer_route(PIT_ROUTE_IO_APIC);
 
     /*
+     * Level-triggered delivery is proved with the 8259 pair already retired, so
+     * nothing but the I/O APIC can be carrying it, and before the PIT retires,
+     * because the 8254 is the source being sampled as a level.
+     */
+    prove_level_route();
+
+    /*
      * Establish the reference before anything is calibrated from it, calibrate
      * both derived clocks against it, then retire the 8254 and prove the three
      * still agree with it gone. The order is the argument: the PIT may only be
@@ -1237,6 +1409,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
     console_write("Seneri OS: legacy 8259 retired\n");
     console_write("Seneri OS: timer survives legacy retirement\n");
+    console_write(
+        "Seneri OS: I/O APIC delivered eight level-triggered interrupts\n"
+    );
+    console_write("Seneri OS: level-triggered routing established\n");
     console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
     console_write("Seneri OS: TSC reference established\n");
     console_write("Seneri OS: PM timer independent reference established\n");

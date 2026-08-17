@@ -27,7 +27,10 @@ system-description tables to the MADT, parses that table's
 interrupt-controller records into a validated processor, I/O APIC, and
 interrupt-override topology, brings the bootstrap processor's local APIC online
 in virtual wire mode, delivers the timer through a programmed I/O APIC
-redirection entry, retires the legacy 8259 pair, discovers the ACPI power
+redirection entry, retires the legacy 8259 pair, routes that same timer again as
+a level-triggered source — quieting the device, clearing remote IRR with an
+end of interrupt directed at the I/O APIC, and only then ending it at the local
+APIC — discovers the ACPI power
 management timer from the FADT, calibrates both the local APIC timer and a
 time-stamp counter against that reference — whose rate is fixed by specification
 rather than measured — retires the 8254 and proves all three clocks still agree
@@ -54,6 +57,8 @@ Seneri OS: I/O APIC online
 Seneri OS: I/O APIC delivered eight interrupts
 Seneri OS: legacy 8259 retired
 Seneri OS: timer survives legacy retirement
+Seneri OS: I/O APIC delivered eight level-triggered interrupts
+Seneri OS: level-triggered routing established
 Seneri OS: local APIC timer delivered eight interrupts
 Seneri OS: TSC reference established
 Seneri OS: ACPI FADT verified
@@ -84,7 +89,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run eighteen deterministic fault and interrupt scenarios
+make qemu-tests # run nineteen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -103,7 +108,8 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/acpi_madt.c` — bounded MADT record walking and interrupt topology.
 - `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
 - `src/kernel/apic.c` — local APIC bring-up, virtual wire routing, and identity.
-- `src/kernel/ioapic.c` — I/O APIC redirection entries and ISA override routing.
+- `src/kernel/ioapic.c` — I/O APIC redirection entries, ISA override routing,
+  and the directed end of interrupt a level-triggered pin needs.
 - `src/kernel/apic_timer.c` — local APIC timer calibration and periodic ticks.
 - `src/kernel/tsc.c` — time-stamp counter calibration and duration arithmetic.
 - `src/kernel/pm_timer.c` — ACPI PM timer, wrap folding, and bounded waiting.
@@ -116,7 +122,8 @@ make hooks    # enforce verification in this local clone
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
 - `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
-- `docs/IO_APIC.md` — redirection invariants, override routing, and proof.
+- `docs/IO_APIC.md` — redirection invariants, override routing, level-triggered
+  acknowledgement, and proof.
 - `docs/LEGACY_RETIREMENT.md` — how the 8259 pair is latched shut, and proof.
 - `docs/APIC_TIMER.md` — why the APIC timer needs calibration, and its proof.
 - `docs/TSC.md` — the second clock, why it exists, and what it cannot claim.
@@ -138,6 +145,22 @@ masked and latched shut, and the three clocks are proved to still agree about an
 interval with it gone. Getting here took finding that the PIT had been delivering
 two interrupts per programmed period, which had left both calibrated clocks
 running at half their true rate while still agreeing with each other.
+
+Those interrupts can now be level triggered as well as edge triggered, which is
+the shape every PCI device uses. A level-triggered redirection entry latches
+remote IRR when it delivers and will not deliver again until an end of interrupt
+directed at the I/O APIC — not the local APIC's EOI register — clears it, so
+until this existed Seneri refused such a source by name rather than route one
+that would fire once and wedge. The dispatcher now sends both acknowledgements,
+in that order, after the handler has quieted the device. The register that
+carries the directed one arrived with I/O APIC version 0x20, so the version is
+read and a level-triggered entry is refused on anything older rather than
+programmed hopefully; the mask-and-unmask fallback older parts need is
+deliberately not implemented, because no machine here could execute it.
+Proving it took the 8254 in mode 0, whose output holds until software puts it
+down: a line that fires exactly once looks identical to success until you count
+past one, so the `ioapic-level` scenario counts eight, times them, and refuses
+both too few and too many.
 
 Those rates are now usable time: one monotonic clock with a single origin, and
 deadlines armed on the APIC timer's one-shot mode, so code can ask to be woken at
@@ -173,12 +196,14 @@ higher-half, a 4 KiB change inside a 2 MiB mapping is refused rather than split,
 and the page-fault handler stays fatal: there is no demand paging. There is no
 wall-clock date, only time since boot. The supported target still reports no
 invariant counter, so the TSC's rate being correct is not the same as its rate
-being stable. Level-triggered I/O APIC routing still needs directed EOI, which
-gates PCI device interrupts. Everything here is verified under QEMU; the
-uncacheable APIC mappings in particular are the kind of change that fails only
-on real hardware. It has a deliberately narrow single-core foundation, but no
-heap, scheduler, userspace, filesystem, networking, graphics, or general
-hardware drivers. Those arrive only after the previous layer has an executable
-acceptance test.
+being stable. Level-triggered routing exists but has no real device on it yet:
+every PCI line is one, and reaching them needs PCI enumeration, which is its own
+increment. Message-signalled interrupts, which remove the I/O APIC from the path
+entirely, are another. Everything here is verified under QEMU; the uncacheable
+APIC mappings and the remote IRR behaviour in particular are the kind of thing
+that fails only on real hardware. It has a deliberately narrow single-core
+foundation, but no scheduler, userspace, filesystem, networking, graphics, or
+general hardware drivers. Those arrive only after the previous layer has an
+executable acceptance test.
 
 Seneri OS is licensed under GPL-3.0; see `LICENSE`.

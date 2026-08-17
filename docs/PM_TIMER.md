@@ -253,7 +253,8 @@ quarter of the counter's period is refused rather than accumulated. A monotonic
 clock and deadline-based timers are what turn these rates into something a
 scheduler can use, and neither exists yet.
 
-Level-triggered I/O APIC routing still needs directed EOI. Nothing here is
+~~Level-triggered I/O APIC routing still needs directed EOI.~~ **Fixed**, in
+`docs/IO_APIC.md`. Nothing here is
 per-processor; the ACPI timer is a single platform-wide counter, which is an
 advantage a second processor will want, but no part of this kernel is multi-core
 yet.
