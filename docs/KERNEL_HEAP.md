@@ -223,10 +223,12 @@ control names the guard.
 - **First fit, linear scan.** Fine for a boot-time handful of blocks and
   deliberately predictable, so the self-test can pin exact offsets. It becomes a
   size-bucketed free list when something allocates in a loop.
-- **Nothing else uses it yet.** The fixed tables in `timer.c`, `acpi_madt.c` and
-  `interrupts.c` are still fixed. Moving each one onto the heap is a separate
-  change per subsystem, and each needs its own proof that the bound it removes
-  was the bound that mattered.
+- **`timer.c` is the first consumer**, and the pattern it sets is the one the
+  others should follow: one allocation at start, released at stop, never per
+  operation, because the subsystem is reachable from interrupt context. The
+  fixed tables in `acpi_madt.c` and `interrupts.c` are still fixed and are the
+  next candidates — though both are populated once at boot and never resized, so
+  the bound they remove is smaller than the timer's.
 - **Not reentrant, and not interrupt-safe.** Growth maps pages in a transaction
   that must not be interrupted, and nothing in Seneri allocates from an
   interrupt handler. A heap that could would need a lock, and a lock needs

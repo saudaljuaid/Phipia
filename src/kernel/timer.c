@@ -6,6 +6,7 @@
 #include <seneri/apic_timer.h>
 #include <seneri/clock.h>
 #include <seneri/cpu.h>
+#include <seneri/heap.h>
 #include <seneri/timer.h>
 
 /*
@@ -32,7 +33,15 @@ struct timer_entry {
     bool in_use;
 };
 
-static struct timer_entry entries[TIMER_MAX_PENDING];
+/*
+ * The pending-deadline table: one heap allocation, obtained once by timer_start
+ * and released by timer_stop. Every loop below is bounded by `capacity`, so a
+ * table that has not been obtained is a capacity of zero and every scan is
+ * simply empty. That is what makes a null `entries` safe rather than a hazard,
+ * and it is why none of these helpers needs a null check of its own.
+ */
+static struct timer_entry *entries;
+static size_t capacity;
 static uint64_t next_identifier = 1U;
 static volatile uint64_t expiry_counter __attribute__((aligned(8)));
 static bool started;
@@ -51,28 +60,28 @@ static volatile bool sleep_expired;
 static size_t slot_of(uint64_t identifier)
 {
     if (identifier == 0U) {
-        return TIMER_MAX_PENDING;
+        return capacity;
     }
 
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < capacity; ++index) {
         if (entries[index].in_use &&
             entries[index].identifier == identifier) {
             return index;
         }
     }
 
-    return TIMER_MAX_PENDING;
+    return capacity;
 }
 
 static size_t free_slot(void)
 {
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < capacity; ++index) {
         if (!entries[index].in_use) {
             return index;
         }
     }
 
-    return TIMER_MAX_PENDING;
+    return capacity;
 }
 
 /*
@@ -83,7 +92,7 @@ static bool earliest_deadline(uint64_t *deadline_ns)
 {
     bool found = false;
 
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < capacity; ++index) {
         if (!entries[index].in_use) {
             continue;
         }
@@ -101,7 +110,7 @@ static size_t pending_slots(void)
 {
     size_t count = 0;
 
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < capacity; ++index) {
         if (entries[index].in_use) {
             ++count;
         }
@@ -121,22 +130,22 @@ static size_t expire_reached(uint64_t now_ns)
     size_t fired = 0;
 
     for (;;) {
-        size_t chosen = TIMER_MAX_PENDING;
+        size_t chosen = capacity;
         struct timer_entry due;
 
-        for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+        for (size_t index = 0; index < capacity; ++index) {
             if (!entries[index].in_use ||
                 entries[index].deadline_ns > now_ns) {
                 continue;
             }
 
-            if (chosen == TIMER_MAX_PENDING ||
+            if (chosen == capacity ||
                 entries[index].deadline_ns < entries[chosen].deadline_ns) {
                 chosen = index;
             }
         }
 
-        if (chosen == TIMER_MAX_PENDING) {
+        if (chosen == capacity) {
             return fired;
         }
 
@@ -198,7 +207,20 @@ static void on_expiry(void *context)
 
 enum timer_status timer_start(void)
 {
+    void *table = NULL;
+
     if (started) {
+        return TIMER_STATUS_ALREADY_STARTED;
+    }
+
+    /*
+     * Not started must mean no table held. Anything else is a subsystem that
+     * already owns memory it does not know about, and starting over the top of
+     * it would lose that block for the life of the kernel. This is the check
+     * that catches a self-test which borrowed the table and forgot to give it
+     * back, which is otherwise invisible.
+     */
+    if (entries != NULL || capacity != 0U) {
         return TIMER_STATUS_ALREADY_STARTED;
     }
 
@@ -210,7 +232,22 @@ enum timer_status timer_start(void)
         return TIMER_STATUS_NO_CLOCK;
     }
 
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    /*
+     * The one heap allocation this subsystem makes, and it is made here rather
+     * than per arm because timer_arm runs inside the timer interrupt when a
+     * callback arms a fresh deadline, and the heap must not be entered from
+     * there. Obtained before the hardware handler is installed, so a heap that
+     * cannot supply it leaves the timer exactly as it was.
+     */
+    if (heap_allocate(sizeof(struct timer_entry) * TIMER_MAX_PENDING, &table) !=
+        HEAP_STATUS_OK) {
+        return TIMER_STATUS_NO_MEMORY;
+    }
+
+    entries = (struct timer_entry *)table;
+    capacity = TIMER_MAX_PENDING;
+
+    for (size_t index = 0; index < capacity; ++index) {
         entries[index].in_use = false;
         entries[index].callback = NULL;
         entries[index].context = NULL;
@@ -220,6 +257,9 @@ enum timer_status timer_start(void)
 
     if (apic_timer_set_expiry_handler(on_expiry, NULL) !=
         APIC_TIMER_STATUS_OK) {
+        (void)heap_free(entries);
+        entries = NULL;
+        capacity = 0U;
         return TIMER_STATUS_HARDWARE_FAILURE;
     }
 
@@ -242,7 +282,7 @@ enum timer_status timer_stop(void)
         return TIMER_STATUS_HARDWARE_FAILURE;
     }
 
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < capacity; ++index) {
         entries[index].in_use = false;
         entries[index].callback = NULL;
         entries[index].context = NULL;
@@ -250,10 +290,21 @@ enum timer_status timer_stop(void)
         entries[index].deadline_ns = 0U;
     }
 
+    /*
+     * The handler goes before the table does. Releasing memory the expiry path
+     * can still be entered through would leave an interrupt walking a table the
+     * heap has already handed to somebody else.
+     */
     if (apic_timer_set_expiry_handler(NULL, NULL) != APIC_TIMER_STATUS_OK) {
         return TIMER_STATUS_HARDWARE_FAILURE;
     }
 
+    if (heap_free(entries) != HEAP_STATUS_OK) {
+        return TIMER_STATUS_NO_MEMORY;
+    }
+
+    entries = NULL;
+    capacity = 0U;
     started = false;
     return TIMER_STATUS_OK;
 }
@@ -297,7 +348,7 @@ enum timer_status timer_arm(
 
     slot = free_slot();
 
-    if (slot == TIMER_MAX_PENDING) {
+    if (slot == capacity) {
         return TIMER_STATUS_NO_CAPACITY;
     }
 
@@ -329,7 +380,7 @@ enum timer_status timer_cancel(uint64_t identifier)
         return TIMER_STATUS_NOT_STARTED;
     }
 
-    if (slot == TIMER_MAX_PENDING) {
+    if (slot == capacity) {
         return TIMER_STATUS_UNKNOWN_TIMER;
     }
 
@@ -404,6 +455,11 @@ enum timer_status timer_sleep_ns(uint64_t nanoseconds)
     return TIMER_STATUS_OK;
 }
 
+size_t timer_capacity(void)
+{
+    return capacity;
+}
+
 size_t timer_pending_count(void)
 {
     return pending_slots();
@@ -414,6 +470,15 @@ uint64_t timer_expiry_count(void)
     return expiry_counter;
 }
 
+/*
+ * The self-test runs during early boot, long before the heap exists, so it
+ * lends the table operations a private static table for the duration and puts
+ * them back afterwards. Eight entries rather than TIMER_MAX_PENDING because the
+ * full-table cases scan the whole thing and nothing here is timing sensitive.
+ */
+#define TIMER_SELF_TEST_CAPACITY 8U
+
+static struct timer_entry self_test_entries[TIMER_SELF_TEST_CAPACITY];
 static uint64_t self_test_fired_mask;
 
 static void self_test_callback(uint64_t deadline_ns, void *context)
@@ -431,15 +496,12 @@ static void self_test_callback(uint64_t deadline_ns, void *context)
  * This runs before timer_start, so it also pins down what the subsystem does
  * before it has a clock.
  */
-bool timer_self_test(void)
+static bool test_refusals_before_start(void)
 {
-    static const uint8_t indices[3] = {0U, 1U, 2U};
+    static const uint8_t indices[1] = {0U};
     uint64_t identifier = 0U;
-    uint64_t deadline_ns = 0U;
 
-    if (started) {
-        return false;
-    }
+    (void)indices;
 
     /* Nothing works before the subsystem is started, and nothing pretends to. */
     if (timer_is_started() || timer_pending_count() != 0U ||
@@ -453,16 +515,21 @@ bool timer_self_test(void)
     }
 
     /* Null arguments are refused ahead of the started check, being worse. */
-    if (timer_arm(UINT64_C(1000000), NULL, NULL, &identifier) !=
-            TIMER_STATUS_NULL_ARGUMENT ||
-        timer_arm(UINT64_C(1000000), self_test_callback, NULL, NULL) !=
-            TIMER_STATUS_NULL_ARGUMENT) {
-        return false;
-    }
+    return timer_arm(UINT64_C(1000000), NULL, NULL, &identifier) ==
+            TIMER_STATUS_NULL_ARGUMENT &&
+        timer_arm(UINT64_C(1000000), self_test_callback, NULL, NULL) ==
+            TIMER_STATUS_NULL_ARGUMENT &&
+        timer_capacity() == 0U;
+}
+
+static bool test_table_operations(void)
+{
+    static const uint8_t indices[3] = {0U, 1U, 2U};
+    uint64_t deadline_ns = 0U;
 
     /* An empty table has no next deadline and no slot for any identifier. */
-    if (earliest_deadline(&deadline_ns) || slot_of(0U) != TIMER_MAX_PENDING ||
-        slot_of(1U) != TIMER_MAX_PENDING || free_slot() != 0U ||
+    if (earliest_deadline(&deadline_ns) || slot_of(0U) != TIMER_SELF_TEST_CAPACITY ||
+        slot_of(1U) != TIMER_SELF_TEST_CAPACITY || free_slot() != 0U ||
         pending_slots() != 0U) {
         return false;
     }
@@ -487,7 +554,7 @@ bool timer_self_test(void)
     if (!earliest_deadline(&deadline_ns) || deadline_ns != UINT64_C(100) ||
         pending_slots() != 3U || free_slot() != 3U ||
         slot_of(UINT64_C(12)) != 1U || slot_of(UINT64_C(13)) != 2U ||
-        slot_of(UINT64_C(99)) != TIMER_MAX_PENDING) {
+        slot_of(UINT64_C(99)) != TIMER_SELF_TEST_CAPACITY) {
         return false;
     }
 
@@ -503,7 +570,7 @@ bool timer_self_test(void)
     if (expire_reached(UINT64_C(100)) != 1U ||
         self_test_fired_mask != UINT64_C(2) ||
         pending_slots() != 2U ||
-        slot_of(UINT64_C(12)) != TIMER_MAX_PENDING) {
+        slot_of(UINT64_C(12)) != TIMER_SELF_TEST_CAPACITY) {
         return false;
     }
 
@@ -516,7 +583,7 @@ bool timer_self_test(void)
     }
 
     /* A full table refuses a further entry rather than overwriting one. */
-    for (size_t index = 0; index < TIMER_MAX_PENDING; ++index) {
+    for (size_t index = 0; index < TIMER_SELF_TEST_CAPACITY; ++index) {
         entries[index].deadline_ns = UINT64_C(1000) + index;
         entries[index].identifier = UINT64_C(100) + index;
         entries[index].callback = NULL;
@@ -524,15 +591,15 @@ bool timer_self_test(void)
         entries[index].in_use = true;
     }
 
-    if (free_slot() != TIMER_MAX_PENDING ||
-        pending_slots() != TIMER_MAX_PENDING ||
+    if (free_slot() != TIMER_SELF_TEST_CAPACITY ||
+        pending_slots() != TIMER_SELF_TEST_CAPACITY ||
         !earliest_deadline(&deadline_ns) ||
         deadline_ns != UINT64_C(1000)) {
         return false;
     }
 
     /* An entry with no callback is still released, and counted as fired. */
-    if (expire_reached(UINT64_MAX) != TIMER_MAX_PENDING ||
+    if (expire_reached(UINT64_MAX) != TIMER_SELF_TEST_CAPACITY ||
         pending_slots() != 0U || free_slot() != 0U) {
         return false;
     }
@@ -555,6 +622,44 @@ bool timer_self_test(void)
     return pending_slots() == 0U;
 }
 
+/*
+ * The table decides which deadline is next and which have been reached, and a
+ * mistake there is silent: a timer fires at the wrong moment, or never, and the
+ * caller waits. All of it is provable from synthetic entries with no hardware
+ * and no timing, which is why the table is kept separate from the arming.
+ *
+ * This runs before timer_start and before the heap exists, so it also pins down
+ * what the subsystem does with no table at all.
+ */
+bool timer_self_test(void)
+{
+    bool passed;
+
+    if (started || entries != NULL || capacity != 0U) {
+        return false;
+    }
+
+    if (!test_refusals_before_start()) {
+        return false;
+    }
+
+    entries = self_test_entries;
+    capacity = TIMER_SELF_TEST_CAPACITY;
+    passed = test_table_operations();
+
+    for (size_t index = 0; index < TIMER_SELF_TEST_CAPACITY; ++index) {
+        self_test_entries[index].in_use = false;
+        self_test_entries[index].callback = NULL;
+        self_test_entries[index].context = NULL;
+        self_test_entries[index].identifier = 0U;
+        self_test_entries[index].deadline_ns = 0U;
+    }
+
+    entries = NULL;
+    capacity = 0U;
+    return passed;
+}
+
 const char *timer_status_string(enum timer_status status)
 {
     switch (status) {
@@ -570,6 +675,8 @@ const char *timer_status_string(enum timer_status status)
         return "deadline timers require a started monotonic clock";
     case TIMER_STATUS_NO_CAPACITY:
         return "deadline timer table is full";
+    case TIMER_STATUS_NO_MEMORY:
+        return "deadline timer table could not be obtained from the heap";
     case TIMER_STATUS_BAD_INTERVAL:
         return "deadline is in the past or too near to program";
     case TIMER_STATUS_UNKNOWN_TIMER:
