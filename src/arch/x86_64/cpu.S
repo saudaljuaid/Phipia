@@ -51,6 +51,20 @@ cpu_in8:
     ret
 .size cpu_in8, . - cpu_in8
 
+/*
+ * uint32_t cpu_in32(uint16_t port)
+ * The ACPI power management timer block is a single 32-bit register, and
+ * ACPI 6.x section 4.8.3.3 gives no meaning to reading it in narrower pieces,
+ * so it needs a read of its own width rather than four cpu_in8 calls.
+ */
+.global cpu_in32
+.type cpu_in32, @function
+cpu_in32:
+    movw %di, %dx
+    inl %dx, %eax
+    ret
+.size cpu_in32, . - cpu_in32
+
 .global cpu_out8
 .type cpu_out8, @function
 cpu_out8:

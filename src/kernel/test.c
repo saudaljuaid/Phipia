@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <seneri/acpi.h>
+#include <seneri/acpi_util.h>
 #include <seneri/apic.h>
 #include <seneri/apic_timer.h>
 #include <seneri/console.h>
@@ -11,6 +13,7 @@
 #include <seneri/ioapic.h>
 #include <seneri/pic.h>
 #include <seneri/pit.h>
+#include <seneri/pm_timer.h>
 #include <seneri/test.h>
 #include <seneri/tsc.h>
 
@@ -22,6 +25,16 @@
 #define APIC_TIMER_TEST_FREQUENCY UINT32_C(100)
 #define APIC_TIMER_TEST_TICKS UINT64_C(20)
 #define TSC_MONOTONIC_READS 64U
+
+/*
+ * Ten milliseconds of the ACPI timer, which counts at 3.579545 MHz, and the
+ * 200 ms interval the local APIC timer defines by counting twenty of its own
+ * ticks at 100 Hz. Two hundred milliseconds is 4.3% of the narrowest counter's
+ * period, so the measurement stays far inside a single wrap.
+ */
+#define PM_TIMER_TEST_TICKS UINT32_C(35795)
+#define PM_TIMER_TEST_FREQUENCY UINT32_C(100)
+#define PM_TIMER_TEST_APIC_TICKS UINT64_C(20)
 
 volatile uint8_t kernel_test_double_fault_armed;
 static enum kernel_test_scenario active_scenario;
@@ -134,6 +147,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_TSC;
     }
 
+    if (token_equals(value, length, "pm-timer")) {
+        return KERNEL_TEST_PM_TIMER;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -166,6 +183,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1B);
     case KERNEL_TEST_TSC:
         return UINT8_C(0x1C);
+    case KERNEL_TEST_PM_TIMER:
+        return UINT8_C(0x1D);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -582,6 +601,135 @@ static void tsc_scenario(void)
     }
 }
 
+/*
+ * Establish the ACPI power management timer as an independent reference, then
+ * check the two calibrated clocks against it.
+ *
+ * The local APIC timer and the TSC were both measured against the PIT, so they
+ * agree with each other even if that shared measurement was wrong. This timer's
+ * rate is fixed by the ACPI specification and is measured against nothing, so
+ * one interval described by all three is the first evidence that the PIT
+ * measurement itself was right. Retiring the PIT is the increment after this
+ * one, and only on the strength of this agreement.
+ */
+static void pm_timer_scenario(void)
+{
+    struct pm_timer_state pm;
+    struct acpi_fadt probe;
+    uint64_t waited_ticks = 0U;
+    uint64_t tsc_start;
+    uint64_t measured_ns;
+    uint64_t reference_ns;
+    uint64_t expected_ns;
+    uint32_t start;
+    uint32_t end;
+    uint32_t span = 0U;
+
+    if (!pm_timer_is_present()) {
+        kernel_test_fail("ACPI PM timer was not discovered during boot");
+    }
+
+    pm = pm_timer_get_state();
+
+    if (pm.port == 0U ||
+        (pm.counter_bits != ACPI_PM_TIMER_BASE_BITS &&
+         pm.counter_bits != ACPI_PM_TIMER_EXTENDED_BITS)) {
+        kernel_test_fail("ACPI PM timer reported an unusable description");
+    }
+
+    /*
+     * The timer is discovered once. A second description is refused before any
+     * of its fields are read, so a zeroed one is enough to prove the refusal.
+     */
+    acpi_bytes_zero(&probe, sizeof(probe));
+
+    if (pm_timer_initialize(&probe) != PM_TIMER_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("ACPI PM timer accepted a second description");
+    }
+
+    /* The counter has to advance on its own before it can time anything. */
+    if (pm_timer_wait(PM_TIMER_TEST_TICKS, &waited_ticks) !=
+        PM_TIMER_STATUS_OK) {
+        kernel_test_fail("ACPI PM timer did not advance within its bound");
+    }
+
+    if (waited_ticks < PM_TIMER_TEST_TICKS) {
+        kernel_test_fail("ACPI PM timer wait returned early");
+    }
+
+    if (tsc_calibrate() != TSC_STATUS_OK) {
+        kernel_test_fail("time-stamp counter would not calibrate");
+    }
+
+    if (apic_timer_calibrate() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not calibrate");
+    }
+
+    if (apic_timer_start(PM_TIMER_TEST_FREQUENCY) != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not start");
+    }
+
+    /*
+     * One interval, three opinions. The APIC timer defines it by counting its
+     * own ticks; the PM timer and the TSC each measure it without being told.
+     */
+    start = pm_timer_read();
+    tsc_start = tsc_read();
+
+    if (apic_timer_wait_for_ticks(PM_TIMER_TEST_APIC_TICKS) !=
+        APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer stopped delivering");
+    }
+
+    end = pm_timer_read();
+    reference_ns = tsc_span_nanoseconds(tsc_start, tsc_read());
+
+    if (apic_timer_stop() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not stop");
+    }
+
+    if (pm_timer_span(start, end, &span) != PM_TIMER_STATUS_OK) {
+        kernel_test_fail("ACPI PM timer span is not a duration");
+    }
+
+    measured_ns = pm_timer_ticks_to_nanoseconds(span);
+    expected_ns = PM_TIMER_TEST_APIC_TICKS * UINT64_C(1000000000) /
+        PM_TIMER_TEST_FREQUENCY;
+
+    console_write("ST INFO pm-timer: PM ");
+    console_write_u64(measured_ns);
+    console_write(" ns, APIC timer ");
+    console_write_u64(expected_ns);
+    console_write(" ns, TSC ");
+    console_write_u64(reference_ns);
+    console_write(" ns\n");
+
+    /*
+     * The local APIC timer is held to the tight bound: it and the PIT it was
+     * calibrated against are driven from the same source under emulation, so
+     * this comparison is the one that must catch a rate wrong by a factor.
+     */
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        kernel_test_fail("PM timer and local APIC timer disagree on interval");
+    }
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            reference_ns,
+            PM_TIMER_TOLERANCE_HALF
+        )) {
+        kernel_test_fail("PM timer and TSC disagree about an interval");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -654,6 +802,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_TSC:
         tsc_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_PM_TIMER:
+        pm_timer_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -741,6 +892,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "apic-timer";
     case KERNEL_TEST_TSC:
         return "tsc";
+    case KERNEL_TEST_PM_TIMER:
+        return "pm-timer";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

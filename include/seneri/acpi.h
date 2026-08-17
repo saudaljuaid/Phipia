@@ -11,6 +11,28 @@
 /* ACPI 6.6 section 5.2.12 defines the MADT flag field. */
 #define ACPI_MADT_PCAT_COMPAT UINT32_C(1)
 
+/*
+ * ACPI 6.6 table 5.10 defines the fixed ACPI description table's flags. Bit 8,
+ * TMR_VAL_EXT, is clear when the power management timer counter is 24 bits wide
+ * and set when it is 32.
+ */
+#define ACPI_FADT_TMR_VAL_EXT UINT32_C(0x00000100)
+
+/*
+ * ACPI 6.6 section 5.2.9 fixes the power management timer block at four bytes.
+ * Any other length means the platform does not implement the timer.
+ */
+#define ACPI_PM_TIMER_BLOCK_LENGTH UINT8_C(4)
+
+/*
+ * ACPI 6.6 section 4.8.3.3: the power management timer counter is 24 bits wide,
+ * or 32 when TMR_VAL_EXT is set. The register the counter is read through is a
+ * 32-bit port either way, whichever part of it the counter occupies.
+ */
+#define ACPI_PM_TIMER_BASE_BITS UINT8_C(24)
+#define ACPI_PM_TIMER_EXTENDED_BITS UINT8_C(32)
+#define ACPI_PM_TIMER_REGISTER_BITS UINT8_C(32)
+
 enum acpi_root_kind {
     ACPI_ROOT_NONE = 0,
     ACPI_ROOT_RSDT,
@@ -56,7 +78,14 @@ enum acpi_status {
     ACPI_STATUS_DUPLICATE_OVERRIDE_SOURCE,
     ACPI_STATUS_DUPLICATE_APIC_ADDRESS_OVERRIDE,
     ACPI_STATUS_MISSING_BOOT_PROCESSOR,
-    ACPI_STATUS_MISSING_IO_APIC
+    ACPI_STATUS_MISSING_IO_APIC,
+    ACPI_STATUS_MISSING_FADT,
+    ACPI_STATUS_DUPLICATE_FADT,
+    ACPI_STATUS_BAD_FADT_LENGTH,
+    ACPI_STATUS_BAD_PM_TIMER_LENGTH,
+    ACPI_STATUS_MISSING_PM_TIMER,
+    ACPI_STATUS_BAD_PM_TIMER_BLOCK,
+    ACPI_STATUS_BAD_PM_TIMER_PORT
 };
 
 struct acpi_root {
@@ -73,6 +102,24 @@ struct acpi_madt {
     uint32_t flags;
     size_t root_entry_count;
     uint8_t revision;
+    char oem_id[7];
+    char oem_table_id[9];
+};
+
+/*
+ * The fixed ACPI description table, reduced to the one facility Seneri uses
+ * from it. The power management timer is the only clock on this machine whose
+ * frequency is stated by a specification rather than measured against another
+ * clock, which is what makes it worth reading this table for.
+ */
+struct acpi_fadt {
+    uint64_t physical_address;
+    uint32_t length;
+    uint32_t flags;
+    uint16_t pm_timer_port;
+    uint8_t pm_timer_counter_bits;
+    uint8_t revision;
+    bool pm_timer_extended_address;
     char oem_id[7];
     char oem_table_id[9];
 };
@@ -135,6 +182,10 @@ enum acpi_status acpi_root_discover(
 enum acpi_status acpi_madt_discover(
     const struct acpi_root *root,
     struct acpi_madt *madt
+);
+enum acpi_status acpi_fadt_discover(
+    const struct acpi_root *root,
+    struct acpi_fadt *fadt
 );
 enum acpi_status acpi_topology_discover(
     const struct acpi_madt *madt,
