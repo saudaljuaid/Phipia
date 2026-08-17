@@ -12,6 +12,8 @@
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
+#include <seneri/memory.h>
+#include <seneri/paging.h>
 #include <seneri/pic.h>
 #include <seneri/pit.h>
 #include <seneri/pm_timer.h>
@@ -27,6 +29,18 @@
 #define APIC_TIMER_TEST_FREQUENCY UINT32_C(100)
 #define APIC_TIMER_TEST_TICKS UINT64_C(20)
 #define TSC_MONOTONIC_READS 64U
+
+/*
+ * Intel SDM volume 3A section 4.7 defines the page-fault error code: bit 0 is
+ * P, bit 1 is W/R and bit 2 is U/S. A supervisor write to a present read-only
+ * page is therefore P=1 W=1 U=0. That is what distinguishes this scenario's
+ * fault from the page-fault scenario's absent page, which is P=0 W=0 U=0.
+ */
+#define PAGING_TEST_FAULT_ERROR_CODE UINT64_C(0x03)
+#define PAGING_TEST_PATTERN UINT8_C(0x5A)
+
+/* An address inside the bulk 2 MiB identity map, above the linked image. */
+#define PAGING_TEST_HUGE_ADDRESS UINT64_C(0x0000000000A00000)
 
 /*
  * Ten milliseconds of the ACPI timer, which counts at 3.579545 MHz, and the
@@ -169,6 +183,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_TIMERS;
     }
 
+    if (token_equals(value, length, "paging")) {
+        return KERNEL_TEST_PAGING;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -207,6 +225,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1E);
     case KERNEL_TEST_TIMERS:
         return UINT8_C(0x1F);
+    case KERNEL_TEST_PAGING:
+        return UINT8_C(0x20);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -1092,6 +1112,177 @@ static void timers_scenario(void)
     }
 }
 
+/*
+ * Written through a volatile pointer inside the scenario and read back after a
+ * permission change, so the compiler cannot cache either side of it or assume
+ * it knows what a page it never mapped contains.
+ */
+static volatile uint8_t paging_scratch;
+
+/* Larger than early boot should place on the 16 KiB kernel stack. */
+static struct acpi_topology paging_probe_topology;
+
+/*
+ * Prove the permissions are enforced by the processor rather than merely
+ * recorded in a table.
+ *
+ * `make verify` has always refused an RWX load segment, and until this
+ * increment that assertion was the only thing standing behind Seneri's W^X
+ * claim - and it inspects the ELF file, not the machine the kernel runs on.
+ * Everything below the rejections is the part a file check can never do: a
+ * fresh frame is mapped writable, written, narrowed to read-only, and written
+ * again, and the scenario passes only if the processor refuses the second write
+ * with the exact fault a supervisor write to a present read-only page produces.
+ *
+ * The probe returns if the store succeeds, so a permission that quietly failed
+ * to take shows up as a scenario failure rather than as a timeout.
+ */
+static void paging_scenario(void)
+{
+    volatile uint8_t *probe =
+        (volatile uint8_t *)(uintptr_t)PAGING_PROBE_ADDRESS;
+    const uint64_t text = (uint64_t)(uintptr_t)(const void *)
+        paging_probe_write_site;
+    const uint64_t data = (uint64_t)(uintptr_t)(const void *)&paging_scratch;
+    struct paging_translation translation;
+    struct paging_state paging;
+    struct paging_audit audit;
+    uintptr_t frame;
+
+    if (!paging_is_active()) {
+        kernel_test_fail("kernel page tables are not installed");
+    }
+
+    paging = paging_get_state();
+
+    if (!paging.no_execute_active || !paging.write_protect_active) {
+        kernel_test_fail("W^X is not enforceable on this processor");
+    }
+
+    if (paging.root_physical_address == 0U || paging.table_frames == 0U ||
+        paging_verify() != PAGING_STATUS_OK) {
+        kernel_test_fail("installed page tables do not match their intent");
+    }
+
+    /* The whole point of the increment, read back off the live hierarchy. */
+    if (paging_audit_hierarchy(&audit) != PAGING_STATUS_OK ||
+        audit.leaf_count == 0U || audit.executable_leaves == 0U ||
+        audit.write_execute_leaves != 0U || audit.user_leaves != 0U) {
+        kernel_test_fail("a live mapping is writable and executable");
+    }
+
+    if (paging_translate(text, &translation) != PAGING_STATUS_OK ||
+        translation.permissions != PAGING_EXECUTE ||
+        translation.physical_address != text) {
+        kernel_test_fail("kernel text is not read-only and executable");
+    }
+
+    if (paging_translate(data, &translation) != PAGING_STATUS_OK ||
+        translation.permissions != PAGING_WRITE ||
+        translation.physical_address != data) {
+        kernel_test_fail("kernel data is not writable and non-executable");
+    }
+
+    /* The null page is absent, so a null dereference cannot read low memory. */
+    if (paging_translate(0U, &translation) != PAGING_STATUS_NOT_MAPPED ||
+        translation.level != 0U) {
+        kernel_test_fail("the null page is mapped");
+    }
+
+    /* Every refusal, through the public interface, against the live tables. */
+    if (paging_map(PAGING_PROBE_ADDRESS + 1U, 0U, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_UNALIGNED_ADDRESS ||
+        paging_map(PAGING_PROBE_ADDRESS, 0U, 0U, PAGING_WRITE) !=
+            PAGING_STATUS_ZERO_LENGTH ||
+        paging_map(UINT64_C(0x0000800000000000), 0U, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_NONCANONICAL_ADDRESS ||
+        paging_map(PAGING_PROBE_ADDRESS, 0U, SENERI_PAGE_SIZE,
+            PAGING_WRITE | PAGING_EXECUTE) !=
+            PAGING_STATUS_WRITABLE_AND_EXECUTABLE) {
+        kernel_test_fail("a malformed mapping request was accepted");
+    }
+
+    if (paging_map(text & ~(SENERI_PAGE_SIZE - 1U), 0U, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED ||
+        paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+            PAGING_STATUS_NOT_MAPPED ||
+        paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+            PAGING_STATUS_NOT_MAPPED) {
+        kernel_test_fail("an impossible mapping change was accepted");
+    }
+
+    /*
+     * The bulk identity map uses 2 MiB leaves, and splitting one is deferred,
+     * so a 4 KiB change inside one is refused rather than silently applied to
+     * the whole 2 MiB.
+     */
+    if (paging_protect(PAGING_TEST_HUGE_ADDRESS, SENERI_PAGE_SIZE,
+            PAGING_READ) != PAGING_STATUS_HUGE_PAGE_PRESENT ||
+        paging_unmap(PAGING_TEST_HUGE_ADDRESS, SENERI_PAGE_SIZE) !=
+            PAGING_STATUS_HUGE_PAGE_PRESENT) {
+        kernel_test_fail("a 2 MiB mapping accepted a 4 KiB change");
+    }
+
+    if (paging_initialize(&paging_probe_topology) !=
+        PAGING_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("page tables accepted a second installation");
+    }
+
+    if (frame_allocate(&frame) != FRAME_STATUS_OK) {
+        kernel_test_fail("no frame was available for the probe page");
+    }
+
+    if (paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_OK ||
+        paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+            PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED) {
+        kernel_test_fail("the probe page would not map exactly once");
+    }
+
+    *probe = PAGING_TEST_PATTERN;
+
+    if (*probe != PAGING_TEST_PATTERN) {
+        kernel_test_fail("a writable mapping did not hold a write");
+    }
+
+    if (paging_translate(PAGING_PROBE_ADDRESS, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.physical_address != (uint64_t)frame ||
+        translation.permissions != PAGING_WRITE ||
+        translation.level != 1U) {
+        kernel_test_fail("the probe page does not translate to its frame");
+    }
+
+    if (paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+        PAGING_STATUS_OK) {
+        kernel_test_fail("the probe page would not narrow to read-only");
+    }
+
+    if (paging_translate(PAGING_PROBE_ADDRESS, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.permissions != PAGING_READ ||
+        translation.physical_address != (uint64_t)frame) {
+        kernel_test_fail("narrowing a mapping changed what it points at");
+    }
+
+    /* Reading is still permitted, and the contents survived the change. */
+    if (*probe != PAGING_TEST_PATTERN) {
+        kernel_test_fail("a read-only mapping lost the page contents");
+    }
+
+    console_write("ST INFO paging: read-only write to ");
+    console_write_hex(PAGING_PROBE_ADDRESS);
+    console_write(" expecting P=1 W=1 U=0\n");
+
+    /*
+     * The store that must fault. If the processor takes it, control returns
+     * here and kernel_test_run reports the failure; if it faults,
+     * kernel_test_handle_fatal_interrupt matches the vector, the error code,
+     * CR2 and the faulting instruction, and passes.
+     */
+    paging_probe_write(probe, (uint8_t)~PAGING_TEST_PATTERN);
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -1174,6 +1365,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
     case KERNEL_TEST_TIMERS:
         timers_scenario();
         kernel_test_pass();
+    case KERNEL_TEST_PAGING:
+        paging_scenario();
+        kernel_test_fail("a read-only page accepted a supervisor write");
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -1217,6 +1411,12 @@ bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
         break;
     case KERNEL_TEST_UNEXPECTED:
         matches = frame->vector == UINT64_C(0x80) && frame->error_code == 0U;
+        break;
+    case KERNEL_TEST_PAGING:
+        matches = frame->vector == 14U &&
+            frame->error_code == PAGING_TEST_FAULT_ERROR_CODE &&
+            frame->cr2 == PAGING_PROBE_ADDRESS &&
+            frame->rip == (uintptr_t)(const void *)paging_probe_write_site;
         break;
     default:
         return false;
@@ -1266,6 +1466,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "pit-retired";
     case KERNEL_TEST_TIMERS:
         return "timers";
+    case KERNEL_TEST_PAGING:
+        return "paging";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

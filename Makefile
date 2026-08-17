@@ -7,7 +7,8 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers
+	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers \
+	paging
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -75,9 +76,18 @@ verify: toolchain lint
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'iretq'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'lidt'
+	# This inspects the ELF file, and for a long time it was the only thing
+	# behind Seneri's W^X claim - while the kernel ran on boot.S's huge pages
+	# with no NX bit enabled at all. It is kept because it catches a bad link
+	# before anything boots, but the guarantee now rests on paging.c walking
+	# the installed tables at runtime; see docs/VIRTUAL_MEMORY.md.
 	@if readelf -W -l $(KERNEL) | grep -Eq 'LOAD[[:space:]].*RWE'; then \
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
+	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
+	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
+	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __rodata_start$$'
+	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -118,6 +128,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		pm-timer) expected=59 ;; \
 		pit-retired) expected=61 ;; \
 		timers) expected=63 ;; \
+		paging) expected=65 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -163,6 +174,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Eq '^Seneri OS: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: deadline timers online' "$$log" || \
 		  ! grep -Fq 'Seneri OS: monotonic time established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: kernel page tables installed' "$$log" || \
+		  ! grep -Fq 'Seneri OS: no writable executable mapping' "$$log" || \
+		  ! grep -Fq 'Seneri OS: virtual memory established' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -181,6 +197,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
 			grep -Fq 'Seneri OS DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+		paging) \
+			grep -Fq '  vector=14 name=page fault' "$$log" && \
+			grep -Fq '  cr2=0x0000000200000000' "$$log" && \
+			grep -Fq '  page-fault bits: P=1 W=1 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

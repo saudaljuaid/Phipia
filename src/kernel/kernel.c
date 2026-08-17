@@ -12,6 +12,7 @@
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
+#include <seneri/paging.h>
 #include <seneri/pic.h>
 #include <seneri/pit.h>
 #include <seneri/pm_timer.h>
@@ -556,6 +557,175 @@ static void prove_monotonic_time(void)
     }
 }
 
+/*
+ * Take ownership of the page tables.
+ *
+ * Everything before this ran on the hierarchy boot.S builds in 32-bit mode:
+ * 2048 huge pages covering the first 4 GiB, every one of them present, writable
+ * and executable, because EFER.NXE is never set there and so the no-execute bit
+ * does not exist on the processor. linker.ld has carried separate R, RX and RW
+ * segments since day one and `make verify` has refused an RWX load segment for
+ * just as long. Neither fact ever reached the hardware, and nothing noticed.
+ *
+ * This is the third property Seneri has found to be verified in name only,
+ * after the QEMU suite that never ran and the PIT that delivered twice per
+ * period. The pattern each time is the same: the check was necessary and was
+ * never sufficient.
+ */
+static void install_page_tables(const struct acpi_topology *topology)
+{
+    struct paging_state paging;
+    struct paging_audit audit;
+    enum paging_status status = paging_initialize(topology);
+
+    if (status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(status));
+    }
+
+    paging = paging_get_state();
+    status = paging_audit_hierarchy(&audit);
+
+    if (status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(status));
+    }
+
+    console_write("Seneri OS: paging root ");
+    console_write_hex(paging.root_physical_address);
+    console_write(" table frames ");
+    console_write_u64(paging.table_frames);
+    console_write(" regions ");
+    console_write_u64(paging.fine_regions);
+    console_write(" NX ");
+    console_write(paging.no_execute_active ? "yes" : "no");
+    console_write(" write protect ");
+    console_write(paging.write_protect_active ? "yes" : "no");
+    console_putc('\n');
+
+    console_write("Seneri OS: paging leaves ");
+    console_write_u64(audit.leaf_count);
+    console_write(" writable ");
+    console_write_u64(audit.writable_leaves);
+    console_write(" executable ");
+    console_write_u64(audit.executable_leaves);
+    console_write(" both ");
+    console_write_u64(audit.write_execute_leaves);
+    console_putc('\n');
+
+    /*
+     * The check `make verify` cannot make. Its assertion reads the ELF file;
+     * this one walks the tables the processor is now translating through.
+     */
+    if (audit.write_execute_leaves != 0U) {
+        console_panic("an installed page is writable and executable");
+    }
+
+    if (audit.user_leaves != 0U) {
+        console_panic("an installed page is reachable from user mode");
+    }
+
+    /*
+     * Without either bit the permissions above are decoration: no-execute needs
+     * EFER.NXE to exist at all, and a read-only page is writable from ring zero
+     * unless CR0.WP is set. Reporting a guarantee neither could enforce is the
+     * exact failure this increment exists to end.
+     */
+    if (!paging.no_execute_active || !paging.write_protect_active) {
+        console_panic("W^X cannot be enforced on this processor");
+    }
+
+    console_write("Seneri OS: kernel page tables installed\n");
+    console_write("Seneri OS: no writable executable mapping\n");
+}
+
+/*
+ * The mapping counterpart to prove_frame_lifecycle. A frame the allocator just
+ * handed out is mapped outside the identity window, written and read back,
+ * narrowed to read-only, read back again, then unmapped and released. Nothing
+ * here faults, so it runs on every boot; the fault that proves the narrowing is
+ * enforced by the hardware belongs to the paging scenario.
+ */
+static void prove_paging_lifecycle(void)
+{
+    /*
+     * The page is written and read back through a volatile pointer so the
+     * compiler cannot assume it knows what a freshly mapped frame holds, and
+     * cannot drop the read that proves the write reached memory.
+     */
+    volatile uint8_t *probe =
+        (volatile uint8_t *)(uintptr_t)PAGING_PROBE_ADDRESS;
+    struct paging_translation translation;
+    uintptr_t frame;
+    enum frame_status frame_status = frame_allocate(&frame);
+    enum paging_status status;
+
+    if (frame_status != FRAME_STATUS_OK) {
+        console_panic(frame_status_string(frame_status));
+    }
+
+    status = paging_map(
+        PAGING_PROBE_ADDRESS,
+        frame,
+        SENERI_PAGE_SIZE,
+        PAGING_WRITE
+    );
+
+    if (status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(status));
+    }
+
+    *probe = UINT8_C(0xA5);
+
+    if (*probe != UINT8_C(0xA5)) {
+        console_panic("a writable mapping did not hold a write");
+    }
+
+    if (paging_translate(PAGING_PROBE_ADDRESS, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.physical_address != (uint64_t)frame ||
+        translation.permissions != PAGING_WRITE ||
+        translation.level != 1U) {
+        console_panic("a fresh mapping does not translate to its frame");
+    }
+
+    status = paging_protect(
+        PAGING_PROBE_ADDRESS,
+        SENERI_PAGE_SIZE,
+        PAGING_READ
+    );
+
+    if (status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(status));
+    }
+
+    if (paging_translate(PAGING_PROBE_ADDRESS, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.permissions != PAGING_READ ||
+        translation.physical_address != (uint64_t)frame) {
+        console_panic("narrowing a mapping changed what it points at");
+    }
+
+    if (*probe != UINT8_C(0xA5)) {
+        console_panic("a read-only mapping lost the page contents");
+    }
+
+    status = paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE);
+
+    if (status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(status));
+    }
+
+    if (paging_translate(PAGING_PROBE_ADDRESS, &translation) !=
+        PAGING_STATUS_NOT_MAPPED) {
+        console_panic("an unmapped page still translates");
+    }
+
+    frame_status = frame_release(frame);
+
+    if (frame_status != FRAME_STATUS_OK) {
+        console_panic(frame_status_string(frame_status));
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -628,6 +798,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
+    enum paging_status paging_status;
     enum pm_timer_status pm_timer_status;
 
     console_initialize();
@@ -689,6 +860,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!timer_self_test()) {
         console_panic("deadline timer table self-test failed");
+    }
+
+    if (!paging_self_test()) {
+        console_panic("page table arithmetic self-test failed");
     }
 
     console_write("Seneri OS: parser rejection tests passed\n");
@@ -774,6 +949,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("frame lifecycle leaked a physical frame");
     }
 
+    /*
+     * The tables come from the frame allocator, so this cannot run earlier than
+     * here. It has to run before the scenarios, because every one of them now
+     * executes on the kernel's own hierarchy rather than on boot.S's.
+     */
+    install_page_tables(&boot_topology);
+    prove_paging_lifecycle();
+
     console_write("Seneri OS: day one passed\n");
     console_write("Seneri OS: memory foundation passed\n");
     test_scenario = kernel_test_select(&context);
@@ -809,6 +992,18 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_clocks_without_pit();
     prove_monotonic_time();
 
+    /*
+     * Re-walk the installed hierarchy at the end of boot. Everything between
+     * the switch and here ran on it, including three subsystems that write
+     * device memory through it, so this is what proves none of them corrupted
+     * a table or turned a permission back off.
+     */
+    paging_status = paging_verify();
+
+    if (paging_status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(paging_status));
+    }
+
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
     console_write("Seneri OS: PIT delivered eight interrupts\n");
@@ -822,6 +1017,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: clocks survive PIT retirement\n");
     console_write("Seneri OS: deadline timers online\n");
     console_write("Seneri OS: monotonic time established\n");
+    console_write("Seneri OS: virtual memory established\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
