@@ -446,6 +446,90 @@ static enum paging_status entry_for(
     return PAGING_STATUS_OK;
 }
 
+static bool table_is_empty(uint64_t table)
+{
+    const uint64_t *entries = table_at(table);
+
+    for (size_t index = 0; index < PAGING_ENTRIES_PER_TABLE; ++index) {
+        if ((entries[index] & PAGE_PRESENT) != 0U) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/*
+ * Hand a table frame back. The live hierarchy returns it to the frame
+ * allocator; the private hierarchy the self-test builds draws from a
+ * bump-allocated arena that has nowhere to return it to, so there the frame is
+ * simply dropped and only the count moves.
+ */
+static void release_table(struct page_hierarchy *hierarchy, uint64_t physical)
+{
+    if (hierarchy->arena_capacity == 0U) {
+        (void)frame_release((uintptr_t)physical);
+    }
+
+    --hierarchy->table_frames;
+}
+
+/*
+ * Give back any interior table an unmap has just emptied, and then the table
+ * above it if removing that one emptied it in turn.
+ *
+ * Without this an unmap leaves a fully empty page table mapped forever. That
+ * was tolerable while the only unmap in the kernel ran once at boot; the heap's
+ * growth rollback unmaps pages in ordinary operation, so a repeated
+ * grow-and-fail cycle would leak a table frame at a time with nothing to
+ * notice. The frame allocator would run dry and blame whoever asked last.
+ *
+ * The root is never reclaimed: CR3 points at it, and a hierarchy with no root
+ * is not a hierarchy.
+ */
+static void reclaim_empty_tables(
+    struct page_hierarchy *hierarchy,
+    uint64_t virtual_address
+)
+{
+    /* Indexed by level, so entry zero is unused and the root sits at four. */
+    uint64_t tables[PAGING_LEVEL_COUNT + 1U] = {0U, 0U, 0U, 0U, 0U};
+
+    tables[PAGING_LEVEL_COUNT] = hierarchy->root;
+
+    for (unsigned int level = PAGING_LEVEL_COUNT; level > 1U; --level) {
+        const uint64_t entry =
+            table_at(tables[level])[table_index(virtual_address, level)];
+
+        /*
+         * A larger leaf on the path means there is no page table below it to
+         * reclaim, and an absent entry means it has already gone.
+         */
+        if ((entry & PAGE_PRESENT) == 0U || (entry & PAGE_HUGE) != 0U) {
+            return;
+        }
+
+        tables[level - 1U] = entry & PAGE_FRAME_MASK;
+    }
+
+    /*
+     * Walk back up. The first table that still holds an entry stops the climb,
+     * because everything above it is reachable through that entry.
+     */
+    for (unsigned int level = 1U; level < PAGING_LEVEL_COUNT; ++level) {
+        uint64_t *parent;
+
+        if (!table_is_empty(tables[level])) {
+            return;
+        }
+
+        parent = &table_at(tables[level + 1U])
+            [table_index(virtual_address, level + 1U)];
+        *parent = 0U;
+        release_table(hierarchy, tables[level]);
+    }
+}
+
 static void clear_range(
     struct page_hierarchy *hierarchy,
     uint64_t virtual_address,
@@ -465,6 +549,15 @@ static void clear_range(
 
         *entry = 0U;
         invalidate(hierarchy, virtual_address + offset);
+
+        /*
+         * Only a 4 KiB leaf can empty a page table. A 2 MiB leaf lives in a
+         * page directory that the identity map keeps populated, and this
+         * kernel never unmaps one.
+         */
+        if (level == 1U) {
+            reclaim_empty_tables(hierarchy, virtual_address + offset);
+        }
     }
 }
 
@@ -1258,21 +1351,34 @@ enum paging_status paging_map(
     uint32_t permissions
 )
 {
+    enum paging_status status;
+
     if (!state.active) {
         return PAGING_STATUS_NOT_INITIALIZED;
     }
 
-    return map_range(&live_hierarchy, virtual_address, physical_address, length,
-        permissions, 1U);
+    status = map_range(&live_hierarchy, virtual_address, physical_address,
+        length, permissions, 1U);
+    state.table_frames = live_hierarchy.table_frames;
+    return status;
 }
 
 enum paging_status paging_unmap(uint64_t virtual_address, uint64_t length)
 {
+    enum paging_status status;
+
     if (!state.active) {
         return PAGING_STATUS_NOT_INITIALIZED;
     }
 
-    return unmap_range(&live_hierarchy, virtual_address, length);
+    status = unmap_range(&live_hierarchy, virtual_address, length);
+
+    /*
+     * An unmap can hand interior tables back, so the reported count is taken
+     * from the hierarchy after every mutation rather than fixed at install.
+     */
+    state.table_frames = live_hierarchy.table_frames;
+    return status;
 }
 
 enum paging_status paging_protect(
@@ -1353,7 +1459,9 @@ enum paging_status paging_verify(void)
         return PAGING_STATUS_NOT_INITIALIZED;
     }
 
-    if ((cpu_read_cr3() & PAGE_FRAME_MASK) != state.root_physical_address) {
+    if ((cpu_read_cr3() & PAGE_FRAME_MASK) != state.root_physical_address ||
+        state.table_frames != live_hierarchy.table_frames ||
+        live_hierarchy.table_frames == 0U) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
 
@@ -1616,23 +1724,23 @@ static bool test_hierarchy_operations(void)
         return false;
     }
 
+    /*
+     * A page directory entry that already points at a page table is a present
+     * entry, so installing a 2 MiB leaf over it while a 4 KiB page still lives
+     * under it would orphan that table, and is refused.
+     */
+    if (map_range(&hierarchy, address, PAGING_HUGE_PAGE_SIZE,
+            PAGING_HUGE_PAGE_SIZE, PAGING_WRITE, 2U) !=
+        PAGING_STATUS_ALREADY_MAPPED) {
+        return false;
+    }
+
     if (unmap_range(&hierarchy, address, PAGING_PAGE_SIZE) !=
             PAGING_STATUS_OK ||
         translate_address(&hierarchy, address, &translation) !=
             PAGING_STATUS_NOT_MAPPED ||
         unmap_range(&hierarchy, address, PAGING_PAGE_SIZE) !=
             PAGING_STATUS_NOT_MAPPED) {
-        return false;
-    }
-
-    /*
-     * A page directory entry that already points at a page table is a present
-     * entry, so installing a 2 MiB leaf over it would orphan that table and is
-     * refused. The huge leaf therefore goes in the next slot along.
-     */
-    if (map_range(&hierarchy, address, PAGING_HUGE_PAGE_SIZE,
-            PAGING_HUGE_PAGE_SIZE, PAGING_WRITE, 2U) !=
-        PAGING_STATUS_ALREADY_MAPPED) {
         return false;
     }
 
@@ -1727,6 +1835,105 @@ static bool test_hierarchy_operations(void)
 
     return audit.leaf_count == 1U && audit.write_execute_leaves == 0U &&
         audit.executable_leaves == 0U && audit.user_leaves == 0U;
+}
+
+/*
+ * An unmap must give back the interior tables it emptied, and must give back
+ * nothing while an entry remains. Getting the first half wrong leaks a table
+ * frame per unmap; getting the second half wrong frees a table that other
+ * mappings are still reached through, which is unrecoverable.
+ */
+static bool test_table_reclamation(void)
+{
+    const uint64_t first = UINT64_C(0x0000000040000000);
+    const uint64_t second = first + PAGING_PAGE_SIZE;
+    const uint64_t far = first + PAGING_HUGE_PAGE_SIZE;
+    struct page_hierarchy hierarchy;
+    struct paging_translation translation;
+
+    reset_test_hierarchy(&hierarchy, PAGING_TEST_ARENA_PAGES);
+
+    if (allocate_table(&hierarchy, &hierarchy.root) != PAGING_STATUS_OK ||
+        hierarchy.table_frames != 1U) {
+        return false;
+    }
+
+    /* One 4 KiB page needs a PDPT, a page directory and a page table. */
+    if (map_range(&hierarchy, first, 0U, PAGING_PAGE_SIZE, PAGING_WRITE, 1U) !=
+            PAGING_STATUS_OK ||
+        hierarchy.table_frames != 4U) {
+        return false;
+    }
+
+    /* A second page in the same table needs no table of its own. */
+    if (map_range(&hierarchy, second, PAGING_PAGE_SIZE, PAGING_PAGE_SIZE,
+            PAGING_WRITE, 1U) != PAGING_STATUS_OK ||
+        hierarchy.table_frames != 4U) {
+        return false;
+    }
+
+    /* Emptying half a table reclaims nothing. */
+    if (unmap_range(&hierarchy, first, PAGING_PAGE_SIZE) != PAGING_STATUS_OK ||
+        hierarchy.table_frames != 4U ||
+        translate_address(&hierarchy, second, &translation) !=
+            PAGING_STATUS_OK) {
+        return false;
+    }
+
+    /* Emptying the last entry reclaims the table, and everything above it. */
+    if (unmap_range(&hierarchy, second, PAGING_PAGE_SIZE) != PAGING_STATUS_OK ||
+        hierarchy.table_frames != 1U) {
+        return false;
+    }
+
+    /* The root's own entry must be cleared, not left pointing at a free page. */
+    if ((table_at(hierarchy.root)[table_index(first, PAGING_LEVEL_COUNT)] &
+        PAGE_PRESENT) != 0U) {
+        return false;
+    }
+
+    /*
+     * And the slot is genuinely free again: a 2 MiB leaf now installs where a
+     * page table used to be. Before tables were reclaimed the directory entry
+     * stayed present forever and this was refused for the life of the kernel.
+     */
+    if (map_range(&hierarchy, first, PAGING_HUGE_PAGE_SIZE,
+            PAGING_HUGE_PAGE_SIZE, PAGING_WRITE, 2U) != PAGING_STATUS_OK ||
+        translate_address(&hierarchy, first, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.level != 2U) {
+        return false;
+    }
+
+    /*
+     * Two pages under one page directory but in different page tables. Undoing
+     * one must release its page table and stop there, because the directory
+     * still holds the other.
+     */
+    reset_test_hierarchy(&hierarchy, PAGING_TEST_ARENA_PAGES);
+
+    if (allocate_table(&hierarchy, &hierarchy.root) != PAGING_STATUS_OK ||
+        map_range(&hierarchy, first, 0U, PAGING_PAGE_SIZE, PAGING_WRITE, 1U) !=
+            PAGING_STATUS_OK ||
+        map_range(&hierarchy, far, 0U, PAGING_PAGE_SIZE, PAGING_WRITE, 1U) !=
+            PAGING_STATUS_OK ||
+        hierarchy.table_frames != 5U) {
+        return false;
+    }
+
+    if (unmap_range(&hierarchy, far, PAGING_PAGE_SIZE) != PAGING_STATUS_OK ||
+        hierarchy.table_frames != 4U ||
+        translate_address(&hierarchy, first, &translation) !=
+            PAGING_STATUS_OK) {
+        return false;
+    }
+
+    /* And undoing the last one collapses the rest of the path. */
+    return unmap_range(&hierarchy, first, PAGING_PAGE_SIZE) ==
+            PAGING_STATUS_OK &&
+        hierarchy.table_frames == 1U &&
+        translate_address(&hierarchy, far, &translation) ==
+            PAGING_STATUS_NOT_MAPPED;
 }
 
 static bool test_table_supply(void)
@@ -1846,7 +2053,8 @@ bool paging_self_test(void)
 
     if (!test_indices_and_canonical_form() || !test_entry_composition() ||
         !test_range_validation() || !test_hierarchy_operations() ||
-        !test_table_supply() || !test_layout_and_processor_checks()) {
+        !test_table_reclamation() || !test_table_supply() ||
+        !test_layout_and_processor_checks()) {
         return false;
     }
 
