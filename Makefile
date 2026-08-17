@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired
+	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -117,6 +117,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		tsc) expected=57 ;; \
 		pm-timer) expected=59 ;; \
 		pit-retired) expected=61 ;; \
+		timers) expected=63 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -158,6 +159,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Eq '^Seneri OS: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: PIT retired' "$$log" || \
 		  ! grep -Fq 'Seneri OS: clocks survive PIT retirement' "$$log" || \
+		  ! grep -Fq 'Seneri OS: monotonic clock on time-stamp counter' "$$log" || \
+		  ! grep -Eq '^Seneri OS: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: deadline timers online' "$$log" || \
+		  ! grep -Fq 'Seneri OS: monotonic time established' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \

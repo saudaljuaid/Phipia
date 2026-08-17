@@ -7,6 +7,7 @@
 #include <seneri/acpi_util.h>
 #include <seneri/apic.h>
 #include <seneri/apic_timer.h>
+#include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
@@ -15,6 +16,7 @@
 #include <seneri/pit.h>
 #include <seneri/pm_timer.h>
 #include <seneri/test.h>
+#include <seneri/timer.h>
 #include <seneri/tsc.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
@@ -35,6 +37,14 @@
 #define PM_TIMER_TEST_TICKS UINT32_C(35795)
 #define PM_TIMER_TEST_FREQUENCY UINT32_C(100)
 #define PM_TIMER_TEST_APIC_TICKS UINT64_C(20)
+
+/*
+ * Three deadlines, 20 ms apart. Far enough apart that the fixed cost of
+ * reprogramming between them cannot reorder them, and short enough that the
+ * whole scenario stays well inside its QEMU timeout.
+ */
+#define TIMERS_TEST_COUNT 3U
+#define TIMERS_TEST_STEP_NS UINT64_C(20000000)
 
 volatile uint8_t kernel_test_double_fault_armed;
 static enum kernel_test_scenario active_scenario;
@@ -155,6 +165,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_PIT_RETIRED;
     }
 
+    if (token_equals(value, length, "timers")) {
+        return KERNEL_TEST_TIMERS;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -191,6 +205,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1D);
     case KERNEL_TEST_PIT_RETIRED:
         return UINT8_C(0x1E);
+    case KERNEL_TEST_TIMERS:
+        return UINT8_C(0x1F);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -878,6 +894,204 @@ static void pit_retired_scenario(void)
     }
 }
 
+/*
+ * Written by timer callbacks inside the timer interrupt and read by the scenario
+ * outside it, so the compiler must not keep either in a register across the halt
+ * inside a sleep.
+ */
+static volatile uint32_t timers_fired[TIMERS_TEST_COUNT];
+static volatile size_t timers_fired_count;
+
+static void timers_record(uint64_t deadline_ns, void *context)
+{
+    (void)deadline_ns;
+
+    if (timers_fired_count < TIMERS_TEST_COUNT) {
+        timers_fired[timers_fired_count] = *(const uint32_t *)context;
+        ++timers_fired_count;
+    }
+}
+
+/*
+ * Establish the monotonic clock and deadline timers, and prove the two things
+ * that make them usable: the clock never steps backwards, and a deadline arrives
+ * after the instant it named rather than before it.
+ *
+ * A sleep that returns early is the failure worth hunting. It would not look
+ * like a failure - the call returns, the callback ran - and every wait built on
+ * it would be silently short. So the scenario checks the elapsed time against
+ * the clock rather than trusting that the callback fired.
+ */
+static void timers_scenario(void)
+{
+    static const uint32_t labels[TIMERS_TEST_COUNT] = {1U, 2U, 3U};
+    uint64_t identifiers[TIMERS_TEST_COUNT] = {0U, 0U, 0U};
+    uint64_t previous;
+    uint64_t start;
+    uint64_t slept_ns;
+    uint64_t spare = 0U;
+    uint64_t now;
+
+    /* Before the clock has an origin it reports nothing rather than garbage. */
+    if (clock_is_started() || clock_monotonic_ns() != 0U) {
+        kernel_test_fail("monotonic clock was already started");
+    }
+
+    if (clock_start() != CLOCK_STATUS_NO_SOURCE) {
+        kernel_test_fail("clock started without a calibrated counter");
+    }
+
+    if (tsc_calibrate() != TSC_STATUS_OK) {
+        kernel_test_fail("TSC would not calibrate");
+    }
+
+    if (apic_timer_calibrate() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not calibrate");
+    }
+
+    if (clock_start() != CLOCK_STATUS_OK) {
+        kernel_test_fail("monotonic clock would not start");
+    }
+
+    if (clock_start() != CLOCK_STATUS_ALREADY_STARTED) {
+        kernel_test_fail("monotonic clock started twice");
+    }
+
+    /* A clock that steps backwards cannot order anything. */
+    previous = clock_monotonic_ns();
+
+    for (size_t index = 0; index < TSC_MONOTONIC_READS; ++index) {
+        now = clock_monotonic_ns();
+
+        if (now < previous) {
+            kernel_test_fail("monotonic clock stepped backwards");
+        }
+
+        previous = now;
+    }
+
+    if (clock_get_state().backward_steps != 0U) {
+        kernel_test_fail("monotonic clock had to repair a reading");
+    }
+
+    /* Deadlines need the clock, and refuse to run without it. */
+    if (timer_arm(previous + TIMERS_TEST_STEP_NS, timers_record, NULL, &spare) !=
+        TIMER_STATUS_NOT_STARTED) {
+        kernel_test_fail("deadline armed before the timers were started");
+    }
+
+    if (timer_start() != TIMER_STATUS_OK) {
+        kernel_test_fail("deadline timers would not start");
+    }
+
+    if (timer_start() != TIMER_STATUS_ALREADY_STARTED) {
+        kernel_test_fail("deadline timers started twice");
+    }
+
+    /* A deadline already gone, and one too near to program, are both refused. */
+    now = clock_monotonic_ns();
+
+    if (timer_arm(0U, timers_record, NULL, &spare) !=
+            TIMER_STATUS_BAD_INTERVAL ||
+        spare != 0U ||
+        timer_arm(now + 1U, timers_record, NULL, &spare) !=
+            TIMER_STATUS_BAD_INTERVAL) {
+        kernel_test_fail("a deadline in the past was accepted");
+    }
+
+    if (timer_cancel(0U) != TIMER_STATUS_UNKNOWN_TIMER ||
+        timer_cancel(UINT64_MAX) != TIMER_STATUS_UNKNOWN_TIMER) {
+        kernel_test_fail("cancelling an unknown deadline was accepted");
+    }
+
+    /* Three deadlines, armed out of order, must fire in time order. */
+    timers_fired_count = 0U;
+    start = clock_monotonic_ns();
+
+    for (size_t index = 0; index < TIMERS_TEST_COUNT; ++index) {
+        const size_t reversed = TIMERS_TEST_COUNT - 1U - index;
+
+        if (timer_arm(
+                start + TIMERS_TEST_STEP_NS * (uint64_t)(reversed + 1U),
+                timers_record,
+                (void *)&labels[reversed],
+                &identifiers[reversed]
+            ) != TIMER_STATUS_OK ||
+            identifiers[reversed] == 0U) {
+            kernel_test_fail("a deadline would not arm");
+        }
+    }
+
+    if (timer_pending_count() != TIMERS_TEST_COUNT) {
+        kernel_test_fail("deadline timer table lost an entry");
+    }
+
+    /* Sleeping past all three collects them; the sleep is itself a deadline. */
+    slept_ns = clock_monotonic_ns();
+
+    if (timer_sleep_ns(TIMERS_TEST_STEP_NS * (TIMERS_TEST_COUNT + 1U)) !=
+        TIMER_STATUS_OK) {
+        kernel_test_fail("sleep did not complete");
+    }
+
+    slept_ns = clock_monotonic_ns() - slept_ns;
+
+    if (timers_fired_count != TIMERS_TEST_COUNT) {
+        kernel_test_fail("not every deadline fired");
+    }
+
+    for (size_t index = 0; index < TIMERS_TEST_COUNT; ++index) {
+        if (timers_fired[index] != labels[index]) {
+            kernel_test_fail("deadlines fired out of order");
+        }
+    }
+
+    if (slept_ns < TIMERS_TEST_STEP_NS * (TIMERS_TEST_COUNT + 1U)) {
+        kernel_test_fail("sleep returned before its deadline");
+    }
+
+    if (timer_pending_count() != 0U || timer_expiry_count() == 0U) {
+        kernel_test_fail("deadline timer table did not settle");
+    }
+
+    /* A cancelled deadline must not fire, and its identifier must go stale. */
+    timers_fired_count = 0U;
+    now = clock_monotonic_ns();
+
+    if (timer_arm(
+            now + TIMERS_TEST_STEP_NS,
+            timers_record,
+            (void *)&labels[0],
+            &spare
+        ) != TIMER_STATUS_OK) {
+        kernel_test_fail("a deadline would not arm for cancellation");
+    }
+
+    if (timer_cancel(spare) != TIMER_STATUS_OK ||
+        timer_cancel(spare) != TIMER_STATUS_UNKNOWN_TIMER ||
+        timer_pending_count() != 0U) {
+        kernel_test_fail("cancelling a deadline did not release it");
+    }
+
+    if (timer_sleep_ns(TIMERS_TEST_STEP_NS * 2U) != TIMER_STATUS_OK) {
+        kernel_test_fail("sleep after a cancellation did not complete");
+    }
+
+    if (timers_fired_count != 0U) {
+        kernel_test_fail("a cancelled deadline fired anyway");
+    }
+
+    if (timer_stop() != TIMER_STATUS_OK ||
+        timer_is_started() ||
+        timer_stop() != TIMER_STATUS_NOT_STARTED) {
+        kernel_test_fail("deadline timers would not stop");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -956,6 +1170,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_PIT_RETIRED:
         pit_retired_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_TIMERS:
+        timers_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -1047,6 +1264,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "pm-timer";
     case KERNEL_TEST_PIT_RETIRED:
         return "pit-retired";
+    case KERNEL_TEST_TIMERS:
+        return "timers";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
