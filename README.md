@@ -35,8 +35,10 @@ about an interval with it gone, establishes a monotonic clock and deadline
 timers and sleeps on one, then builds and installs its own four-level page
 tables — read-only executable text, read-only rodata, writable non-executable
 data, uncacheable APIC registers, an absent null page — walks them in software
-to prove no page is both writable and executable, and takes a page fault
-deliberately to prove the hardware agrees, before halting safely.
+to prove no page is both writable and executable, takes a page fault
+deliberately to prove the hardware agrees, and finally opens a guarded, bounded
+kernel heap on that address space, growing it a page at a time and proving the
+memory it hands out is real and disjoint, before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -63,6 +65,9 @@ Seneri OS: monotonic time established
 Seneri OS: kernel page tables installed
 Seneri OS: no writable executable mapping
 Seneri OS: virtual memory established
+Seneri OS: kernel heap online
+Seneri OS: heap coalesced to one free block
+Seneri OS: kernel heap established
 ```
 
 ## Build and prove it
@@ -78,7 +83,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run seventeen deterministic fault and interrupt scenarios
+make qemu-tests # run eighteen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -104,6 +109,7 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/clock.c` — the monotonic clock and its one origin.
 - `src/kernel/timer.c` — deadline timers on the APIC timer's one-shot mode.
 - `src/kernel/paging.c` — the kernel's own page tables and the W^X guarantee.
+- `src/kernel/heap.c` — the guarded, bounded, transactional kernel heap.
 - `linker.ld` — low-memory ELF layout with separate, page-aligned R, RX, and RW
   segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
@@ -117,6 +123,7 @@ make hooks    # enforce verification in this local clone
 - `docs/PIT_RETIREMENT.md` — recalibrating on that reference, and losing the 8254.
 - `docs/MONOTONIC_TIME.md` — an instant, a deadline, and how bounded a sleep is.
 - `docs/VIRTUAL_MEMORY.md` — owning the tables, and making W^X true on the metal.
+- `docs/KERNEL_HEAP.md` — the first allocator that is not a fixed array.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
@@ -146,9 +153,17 @@ writable and executable. The `paging` scenario writes to a page it just made
 read-only and passes only on the resulting fault, so the claim rests on the
 hardware refusing rather than on a table being read back.
 
-What is missing sits above that layer. There is still no heap — it is the next
-increment, and it needed these mappings first — so pending deadlines live in
-fixed storage and page tables, once allocated, are never reclaimed. Nothing
+The address space now carries a heap. `heap_allocate` and `heap_free` work in
+bytes rather than 4 KiB frames, inside a 16 MiB window with an unmapped guard
+page on each side, grown one page at a time and backed by frames that need not
+be contiguous. Its metadata lives outside the memory it manages, so an overrun
+cannot corrupt the allocator, and the `heap` scenario proves the guard by
+walking off the end and taking the fault.
+
+What is missing sits above that layer. The heap exists but nothing has been
+moved onto it yet: pending deadlines, the ACPI topology and the interrupt tables
+are all still fixed arrays, and converting each is its own change. The heap never
+shrinks, page tables are still never reclaimed, and nothing
 sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
 there is; a second sleeper needs threads, and threads need the scheduler this
 layer exists to make possible. The kernel is still identity-mapped rather than

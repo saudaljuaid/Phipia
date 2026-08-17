@@ -9,6 +9,7 @@
 #include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
+#include <seneri/heap.h>
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
@@ -726,6 +727,189 @@ static void prove_paging_lifecycle(void)
     }
 }
 
+/*
+ * Turn the address space into memory a caller can ask for by the byte.
+ *
+ * Everything below this layer deals in whole 4 KiB frames and fixed static
+ * storage: the deadline table, the ACPI topology, the interrupt handler table
+ * are all sized by a compile-time policy bound because there was nowhere else
+ * to put them. The heap is what replaces those bounds, and it could not exist
+ * before the previous increment - it needs a virtual window it can grow into
+ * one page at a time, which is exactly what paging_map now provides.
+ */
+static void bring_up_heap(void)
+{
+    struct heap_state heap;
+    enum heap_status status = heap_initialize();
+
+    if (status != HEAP_STATUS_OK) {
+        console_panic(heap_status_string(status));
+    }
+
+    heap = heap_get_state();
+    console_write("Seneri OS: heap window ");
+    console_write_hex(heap.base_address);
+    console_write(" size ");
+    console_write_u64(heap.size);
+    console_write(" guards ");
+    console_write_hex(HEAP_GUARD_BELOW);
+    console_putc(' ');
+    console_write_hex(HEAP_GUARD_ABOVE);
+    console_putc('\n');
+}
+
+/*
+ * The same shape of proof as the frame and paging lifecycles, one layer up.
+ * Three allocations that must not overlap, written and read back so an overlap
+ * would corrupt a pattern rather than merely look wrong in a table, then freed
+ * in an order that forces a coalesce from both sides. Nothing here faults; the
+ * fault that proves the guard pages belongs to the heap scenario.
+ */
+static void prove_heap_lifecycle(void)
+{
+    /*
+     * Written and read back through volatile pointers so the compiler cannot
+     * assume it knows what memory it has never seen holds, and cannot drop the
+     * reads that prove the three blocks are actually disjoint.
+     */
+    volatile uint8_t *first;
+    volatile uint8_t *second;
+    volatile uint8_t *third;
+    struct heap_state heap;
+    void *pointers[3] = {NULL, NULL, NULL};
+    static const uint64_t sizes[3] = {64U, 4000U, 17U};
+    enum heap_status status;
+
+    for (size_t index = 0; index < 3U; ++index) {
+        status = heap_allocate(sizes[index], &pointers[index]);
+
+        if (status != HEAP_STATUS_OK) {
+            console_panic(heap_status_string(status));
+        }
+
+        if (((uint64_t)(uintptr_t)pointers[index] & (HEAP_ALIGNMENT - 1U)) !=
+            0U) {
+            console_panic("heap returned a misaligned allocation");
+        }
+    }
+
+    first = (volatile uint8_t *)pointers[0];
+    second = (volatile uint8_t *)pointers[1];
+    third = (volatile uint8_t *)pointers[2];
+
+    for (uint64_t index = 0; index < sizes[0]; ++index) {
+        first[index] = UINT8_C(0x11);
+    }
+
+    for (uint64_t index = 0; index < sizes[1]; ++index) {
+        second[index] = UINT8_C(0x22);
+    }
+
+    for (uint64_t index = 0; index < sizes[2]; ++index) {
+        third[index] = UINT8_C(0x33);
+    }
+
+    /*
+     * Read every byte back after all three have been written. Checking each
+     * block as it is filled would not catch a later allocation overlapping an
+     * earlier one, which is the failure worth hunting here.
+     */
+    for (uint64_t index = 0; index < sizes[0]; ++index) {
+        if (first[index] != UINT8_C(0x11)) {
+            console_panic("heap allocations overlap");
+        }
+    }
+
+    for (uint64_t index = 0; index < sizes[1]; ++index) {
+        if (second[index] != UINT8_C(0x22)) {
+            console_panic("heap allocations overlap");
+        }
+    }
+
+    for (uint64_t index = 0; index < sizes[2]; ++index) {
+        if (third[index] != UINT8_C(0x33)) {
+            console_panic("heap allocations overlap");
+        }
+    }
+
+    heap = heap_get_state();
+    console_write("Seneri OS: heap committed ");
+    console_write_u64(heap.committed_bytes);
+    console_write(" bytes in ");
+    console_write_u64(heap.mapped_pages);
+    console_write(" pages, live ");
+    console_write_u64(heap.live_allocations);
+    console_putc('\n');
+
+    if (heap.live_allocations != 3U || heap.committed_bytes == 0U) {
+        console_panic("heap did not account for its live allocations");
+    }
+
+    /*
+     * Free the outer two first and the middle one last, so the final free has a
+     * free neighbour on each side and has to merge in both directions. A heap
+     * that only ever merges forwards passes every other check and fragments.
+     */
+    if (heap_free(pointers[0]) != HEAP_STATUS_OK) {
+        console_panic("heap refused to release its own allocation");
+    }
+
+    /*
+     * Released while both its neighbours are still live, so the block is still
+     * there to be found and freeing it again is named for what it is.
+     */
+    if (heap_free(pointers[0]) != HEAP_STATUS_DOUBLE_FREE) {
+        console_panic("heap failed to reject a double free");
+    }
+
+    if (heap_free(pointers[2]) != HEAP_STATUS_OK ||
+        heap_free(pointers[1]) != HEAP_STATUS_OK) {
+        console_panic("heap refused to release its own allocation");
+    }
+
+    heap = heap_get_state();
+
+    if (heap.live_allocations != 0U || heap.allocated_bytes != 0U) {
+        console_panic("heap lifecycle leaked an allocation");
+    }
+
+    /*
+     * Everything is free again, so complete coalescing means exactly one block
+     * covering the whole committed region. Checked before anything below, so a
+     * heap that quietly stopped merging is named for that rather than for
+     * whichever later expectation it happens to break first.
+     */
+    if (heap.block_count != 1U) {
+        console_panic("heap did not coalesce back to one free block");
+    }
+
+    status = heap_verify();
+
+    if (status != HEAP_STATUS_OK) {
+        console_panic(heap_status_string(status));
+    }
+
+    /*
+     * The same two pointers once everything has merged into one block, and the
+     * one place this heap's refusals are not interchangeable.
+     *
+     * The merged block starts at offset zero, which is where the first
+     * allocation started, so that pointer still names a block and freeing it
+     * again is still a double free. The middle allocation's start was swallowed
+     * by the merge and now names nothing, so it is refused as a pointer the
+     * heap never returned. Both refuse and neither corrupts anything, but the
+     * name depends on what the neighbours did; docs/KERNEL_HEAP.md says so
+     * rather than leaving a caller to discover it.
+     */
+    if (heap_free(pointers[0]) != HEAP_STATUS_DOUBLE_FREE ||
+        heap_free(pointers[1]) != HEAP_STATUS_BAD_POINTER) {
+        console_panic("heap accepted a pointer it had already merged away");
+    }
+
+    console_write("Seneri OS: kernel heap online\n");
+    console_write("Seneri OS: heap coalesced to one free block\n");
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -798,6 +982,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
+    enum heap_status heap_status;
     enum paging_status paging_status;
     enum pm_timer_status pm_timer_status;
 
@@ -864,6 +1049,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (!paging_self_test()) {
         console_panic("page table arithmetic self-test failed");
+    }
+
+    if (!heap_self_test()) {
+        console_panic("kernel heap block table self-test failed");
     }
 
     console_write("Seneri OS: parser rejection tests passed\n");
@@ -956,6 +1145,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
      */
     install_page_tables(&boot_topology);
     prove_paging_lifecycle();
+    bring_up_heap();
+    prove_heap_lifecycle();
 
     console_write("Seneri OS: day one passed\n");
     console_write("Seneri OS: memory foundation passed\n");
@@ -1004,6 +1195,12 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(paging_status_string(paging_status));
     }
 
+    heap_status = heap_verify();
+
+    if (heap_status != HEAP_STATUS_OK) {
+        console_panic(heap_status_string(heap_status));
+    }
+
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
     console_write("Seneri OS: PIT delivered eight interrupts\n");
@@ -1018,6 +1215,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: deadline timers online\n");
     console_write("Seneri OS: monotonic time established\n");
     console_write("Seneri OS: virtual memory established\n");
+    console_write("Seneri OS: kernel heap established\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

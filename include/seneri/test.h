@@ -27,6 +27,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_PIT_RETIRED,
     KERNEL_TEST_TIMERS,
     KERNEL_TEST_PAGING,
+    KERNEL_TEST_HEAP,
     KERNEL_TEST_INVALID
 };
 
