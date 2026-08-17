@@ -73,5 +73,8 @@ through hardware Seneri believed it had retired.
 
 `docs/APIC_TIMER.md` covers the next increment, which calibrates the local APIC
 timer against the PIT and runs the timer interrupt on the processor itself. The
-PIT stays on as that calibration reference. Level triggered routing still needs
-I/O APIC directed EOI.
+PIT stayed on as that calibration reference, and `docs/PIT_RETIREMENT.md` covers
+the increment that finally removed it: the 8254 is now stopped, masked and
+latched shut in the same way the 8259 pair is here, once both derived clocks have
+been recalibrated against the ACPI power management timer. Level triggered
+routing still needs I/O APIC directed EOI.

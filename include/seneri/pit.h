@@ -14,7 +14,8 @@ enum pit_status {
     PIT_STATUS_INTERRUPT_FAILURE,
     PIT_STATUS_PIC_FAILURE,
     PIT_STATUS_BAD_ROUTE,
-    PIT_STATUS_IOAPIC_FAILURE
+    PIT_STATUS_IOAPIC_FAILURE,
+    PIT_STATUS_RETIRED
 };
 
 /*
@@ -29,6 +30,16 @@ enum pit_route {
 enum pit_status pit_start(uint32_t frequency_hz, enum pit_route route);
 enum pit_route pit_active_route(void);
 enum pit_status pit_stop(void);
+
+/*
+ * Take the 8254 off the machine for good. Nothing measures time against it any
+ * more - the ACPI power management timer does that, and both derived clocks are
+ * calibrated from it - so the counter is stopped, its redirection entry masked,
+ * and the subsystem latched shut. Every later mutation is refused rather than
+ * quietly re-arming a timer the kernel no longer reasons about.
+ */
+enum pit_status pit_retire(void);
+bool pit_is_retired(void);
 uint64_t pit_ticks(void);
 uint32_t pit_frequency(void);
 bool pit_is_running(void);
