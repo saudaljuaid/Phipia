@@ -24,6 +24,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_APIC_TIMER,
     KERNEL_TEST_TSC,
     KERNEL_TEST_PM_TIMER,
+    KERNEL_TEST_PIT_RETIRED,
     KERNEL_TEST_INVALID
 };
 

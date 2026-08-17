@@ -240,15 +240,20 @@ was built to detect, and the scenario detects it.
 
 ## Deferred work
 
-The PIT still exists and the APIC timer and the TSC are still calibrated against
-it. Retiring it and recalibrating both against this timer is the next increment,
-and it is now founded on evidence rather than on assumption: three clocks agree
-about one interval, and one of them was never told how long the interval was.
+The PIT still existed when this was written, and the APIC timer and the TSC were
+still calibrated against it. `docs/PIT_RETIREMENT.md` covers the increment that
+followed: both clocks recalibrated against this timer, and the 8254 stopped,
+masked and latched shut. It was founded on the evidence this increment produced
+rather than on assumption — three clocks agreeing about one interval, one of which
+was never told how long the interval was.
 
-This timer is not yet a general time base either. It is read by polling, so
-nothing here delivers an interrupt or maintains a running clock, and a duration
-longer than a quarter of the counter's period is refused rather than
-accumulated. Level-triggered I/O APIC routing still needs directed EOI. Nothing
-here is per-processor; the ACPI timer is a single platform-wide counter, which
-is an advantage a second processor will want, but no part of this kernel is
-multi-core yet.
+This timer is not yet a general time base. It is read by polling, so nothing here
+delivers an interrupt or maintains a running clock, and a duration longer than a
+quarter of the counter's period is refused rather than accumulated. A monotonic
+clock and deadline-based timers are what turn these rates into something a
+scheduler can use, and neither exists yet.
+
+Level-triggered I/O APIC routing still needs directed EOI. Nothing here is
+per-processor; the ACPI timer is a single platform-wide counter, which is an
+advantage a second processor will want, but no part of this kernel is multi-core
+yet.

@@ -151,6 +151,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_PM_TIMER;
     }
 
+    if (token_equals(value, length, "pit-retired")) {
+        return KERNEL_TEST_PIT_RETIRED;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -185,6 +189,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x1C);
     case KERNEL_TEST_PM_TIMER:
         return UINT8_C(0x1D);
+    case KERNEL_TEST_PIT_RETIRED:
+        return UINT8_C(0x1E);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -446,6 +452,10 @@ static void apic_timer_scenario(void)
 {
     enum apic_timer_status status;
     uint64_t elapsed_ticks;
+    uint64_t measured_ns;
+    uint64_t expected_ns;
+    uint32_t start;
+    uint32_t span = 0U;
 
     if (!apic_is_online()) {
         kernel_test_fail("local APIC is not online");
@@ -486,33 +496,43 @@ static void apic_timer_scenario(void)
     }
 
     /*
-     * Measure the APIC timer against the same PIT it was calibrated from. Both
-     * are asked for the same interval, so a rate that is wrong by more than a
-     * quarter shows up as a tick count that disagrees.
+     * Let the timer count out a known number of its own ticks and measure how
+     * long that took on the ACPI timer it was calibrated from. Checking the
+     * duration rather than a tick count catches the failure a tick count cannot:
+     * a timer whose rate is wrong still delivers every tick it is asked for, it
+     * just takes the wrong amount of time doing it.
      */
-    if (pit_start(APIC_TIMER_TEST_FREQUENCY, PIT_ROUTE_IO_APIC) !=
-        PIT_STATUS_OK) {
-        kernel_test_fail("reference timer would not start");
-    }
+    start = pm_timer_read();
 
-    if (pit_wait_for_ticks(APIC_TIMER_TEST_TICKS) != PIT_STATUS_OK) {
-        kernel_test_fail("reference timer stopped delivering");
+    if (apic_timer_wait_for_ticks(APIC_TIMER_TEST_TICKS) !=
+        APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer stopped delivering");
     }
 
     elapsed_ticks = apic_timer_ticks();
-
-    if (pit_stop() != PIT_STATUS_OK) {
-        kernel_test_fail("reference timer would not stop");
-    }
-
     status = apic_timer_stop();
 
     if (status != APIC_TIMER_STATUS_OK) {
         kernel_test_fail(apic_timer_status_string(status));
     }
 
-    if (elapsed_ticks < APIC_TIMER_TEST_TICKS / 2U ||
-        elapsed_ticks > APIC_TIMER_TEST_TICKS * 2U) {
+    if (pm_timer_span(start, pm_timer_read(), &span) != PM_TIMER_STATUS_OK) {
+        kernel_test_fail("reference clock reported no duration");
+    }
+
+    if (elapsed_ticks < APIC_TIMER_TEST_TICKS) {
+        kernel_test_fail("local APIC timer delivered too few interrupts");
+    }
+
+    measured_ns = pm_timer_ticks_to_nanoseconds(span);
+    expected_ns = APIC_TIMER_TEST_TICKS * UINT64_C(1000000000) /
+        APIC_TIMER_TEST_FREQUENCY;
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
         kernel_test_fail("local APIC timer rate disagrees with its reference");
     }
 
@@ -730,6 +750,134 @@ static void pm_timer_scenario(void)
     }
 }
 
+/*
+ * Retire the 8254 and prove the machine keeps its clocks.
+ *
+ * This is the mirror of the `retired` scenario, which proved the machine keeps
+ * its timer after the 8259 pair is latched shut. Here the timer itself goes: the
+ * PIT is proved working, retired, and then refuses every further mutation, and
+ * both derived clocks are calibrated and cross-checked with it dead. Calibration
+ * used to spin the PIT, so a retirement that broke that path would show up here
+ * as a clock that will not calibrate at all rather than as one running slow.
+ */
+static void pit_retired_scenario(void)
+{
+    struct pm_timer_state pm;
+    uint64_t tsc_start;
+    uint64_t measured_ns;
+    uint64_t reference_ns;
+    uint64_t expected_ns;
+    uint32_t start;
+    uint32_t span = 0U;
+
+    if (!pm_timer_is_present()) {
+        kernel_test_fail("ACPI PM timer was not discovered during boot");
+    }
+
+    pm = pm_timer_get_state();
+
+    if (pm.port == 0U) {
+        kernel_test_fail("ACPI PM timer reported an unusable description");
+    }
+
+    /* The PIT still works at this point, and is proved so before it goes. */
+    if (pit_is_retired()) {
+        kernel_test_fail("PIT was already retired");
+    }
+
+    if (pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC) != PIT_STATUS_OK) {
+        kernel_test_fail("PIT would not start before its retirement");
+    }
+
+    if (pit_wait_for_ticks(PIT_TEST_TICKS) != PIT_STATUS_OK) {
+        kernel_test_fail("PIT would not deliver before its retirement");
+    }
+
+    if (pit_retire() != PIT_STATUS_OK) {
+        kernel_test_fail("PIT refused to retire");
+    }
+
+    /* A retired PIT is latched: running, restarting and re-retiring all fail. */
+    if (!pit_is_retired() || pit_is_running()) {
+        kernel_test_fail("PIT is not fully retired");
+    }
+
+    if (pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC) !=
+            PIT_STATUS_RETIRED ||
+        pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_LEGACY_PIC) !=
+            PIT_STATUS_RETIRED ||
+        pit_retire() != PIT_STATUS_RETIRED) {
+        kernel_test_fail("retired PIT accepted a further mutation");
+    }
+
+    /* Both derived clocks must calibrate with no PIT to lean on. */
+    if (tsc_calibrate() != TSC_STATUS_OK) {
+        kernel_test_fail("TSC would not calibrate without the PIT");
+    }
+
+    if (apic_timer_calibrate() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not calibrate without the PIT");
+    }
+
+    if (apic_timer_counts_per_second() == 0U || tsc_frequency() == 0U) {
+        kernel_test_fail("a clock calibrated to an unusable rate");
+    }
+
+    if (apic_timer_start(PM_TIMER_TEST_FREQUENCY) != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not start");
+    }
+
+    start = pm_timer_read();
+    tsc_start = tsc_read();
+
+    if (apic_timer_wait_for_ticks(PM_TIMER_TEST_APIC_TICKS) !=
+        APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer stopped delivering");
+    }
+
+    reference_ns = tsc_span_nanoseconds(tsc_start, tsc_read());
+
+    if (apic_timer_stop() != APIC_TIMER_STATUS_OK) {
+        kernel_test_fail("local APIC timer would not stop");
+    }
+
+    if (pm_timer_span(start, pm_timer_read(), &span) != PM_TIMER_STATUS_OK) {
+        kernel_test_fail("ACPI PM timer span is not a duration");
+    }
+
+    measured_ns = pm_timer_ticks_to_nanoseconds(span);
+    expected_ns = PM_TIMER_TEST_APIC_TICKS * UINT64_C(1000000000) /
+        PM_TIMER_TEST_FREQUENCY;
+
+    console_write("ST INFO pit-retired: PM ");
+    console_write_u64(measured_ns);
+    console_write(" ns, APIC timer ");
+    console_write_u64(expected_ns);
+    console_write(" ns, TSC ");
+    console_write_u64(reference_ns);
+    console_write(" ns\n");
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        kernel_test_fail("clocks disagree on an interval without the PIT");
+    }
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            reference_ns,
+            PM_TIMER_TOLERANCE_HALF
+        )) {
+        kernel_test_fail("PM timer and TSC disagree without the PIT");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
 void kernel_test_run(enum kernel_test_scenario scenario)
 {
     enum pit_status pit_status;
@@ -805,6 +953,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
         kernel_test_pass();
     case KERNEL_TEST_PM_TIMER:
         pm_timer_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_PIT_RETIRED:
+        pit_retired_scenario();
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -894,6 +1045,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "tsc";
     case KERNEL_TEST_PM_TIMER:
         return "pm-timer";
+    case KERNEL_TEST_PIT_RETIRED:
+        return "pit-retired";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

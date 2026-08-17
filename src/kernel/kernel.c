@@ -27,6 +27,15 @@
  */
 #define PM_TIMER_PROOF_TICKS UINT32_C(35795)
 
+/*
+ * The interval the post-retirement proof compares: twenty local APIC timer ticks
+ * at 100 Hz, so 200 ms. Wide enough that the PM timer and the TSC both resolve
+ * it comfortably, and 4.3% of the narrowest PM timer counter's period, so the
+ * measurement stays far inside a single wrap.
+ */
+#define CLOCK_PROOF_FREQUENCY UINT32_C(100)
+#define CLOCK_PROOF_TICKS UINT64_C(20)
+
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
 /*
@@ -279,9 +288,9 @@ static void retire_legacy_interrupt_path(void)
 }
 
 /*
- * Calibrate the local APIC timer against the PIT and run it. The PIT stays for
- * exactly this reason: the APIC timer's input clock rate is not reported
- * anywhere, so it can only become a clock by being counted against one.
+ * Calibrate the local APIC timer against the ACPI power management timer and run
+ * it. The APIC timer's input clock rate is not reported anywhere, so it can only
+ * become a clock by being counted against one whose rate is known.
  */
 static void prove_apic_timer(void)
 {
@@ -320,8 +329,8 @@ static void prove_apic_timer(void)
 
 /*
  * Calibrate the time-stamp counter against the same reference the APIC timer
- * used. Two independently calibrated clocks that agree are what will let the
- * PIT retire; one clock, however carefully measured, cannot check itself.
+ * used. Both now derive from a rate the specification states rather than one
+ * this kernel measured, which is what lets the PIT retire.
  */
 static void prove_tsc(void)
 {
@@ -341,42 +350,122 @@ static void prove_tsc(void)
 }
 
 /*
- * The first time reference on this machine that was not measured against
- * another clock. Its rate is fixed by the ACPI specification, so an interval it
- * reports is an opinion the PIT had no part in forming, and comparing it with
- * the time-stamp counter is a real check of the reference both derived clocks
- * were calibrated from rather than two views of the same measurement.
+ * Establish the reference the other two clocks are now built on. Its rate is
+ * fixed by the ACPI specification rather than measured, so it is asked only to
+ * demonstrate that its counter actually advances; there is nothing left on this
+ * machine that could independently check it, and the whole point of the timer is
+ * that it does not need checking.
  *
- * This increment only establishes the agreement. Retiring the PIT and
- * recalibrating against this timer is the increment after it.
+ * This runs before either calibration, because both now depend on it.
  */
 static void prove_pm_timer(void)
 {
     uint64_t elapsed_ticks = 0U;
-    uint64_t measured_ns;
-    uint64_t reference_ns;
-    uint64_t start;
     enum pm_timer_status status;
 
     if (!pm_timer_is_present()) {
         console_panic(pm_timer_status_string(PM_TIMER_STATUS_ABSENT));
     }
 
-    start = cpu_read_tsc();
     status = pm_timer_wait(PM_TIMER_PROOF_TICKS, &elapsed_ticks);
 
     if (status != PM_TIMER_STATUS_OK) {
         console_panic(pm_timer_status_string(status));
     }
 
-    measured_ns = pm_timer_ticks_to_nanoseconds(elapsed_ticks);
-    reference_ns = tsc_span_nanoseconds(start, cpu_read_tsc());
+    console_write("Seneri OS: PM timer counted ");
+    console_write_u64(elapsed_ticks);
+    console_write(" ticks in ");
+    console_write_u64(pm_timer_ticks_to_nanoseconds(elapsed_ticks));
+    console_write(" ns\n");
+}
 
-    console_write("Seneri OS: PM timer measured ");
+/*
+ * Take the 8254 off the machine. Nothing measures time against it any more, so
+ * it is stopped, masked at the I/O APIC and latched shut. This is the increment
+ * the PM timer existed to make possible: the reference that replaced it is not
+ * calibrated against anything, so retiring the PIT loses no accuracy - it
+ * removes the source of a factor-of-two error the kernel could not see.
+ */
+static void retire_pit(void)
+{
+    const enum pit_status status = pit_retire();
+
+    if (status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(status));
+    }
+
+    if (!pit_is_retired() ||
+        pit_start(UINT32_C(100), PIT_ROUTE_IO_APIC) != PIT_STATUS_RETIRED) {
+        console_panic("PIT did not stay retired");
+    }
+}
+
+/*
+ * Prove time survives the retirement. The local APIC timer defines an interval
+ * by counting its own ticks, and the PM timer and the TSC each measure it
+ * without being told what it should be. All three are now derived from, or are,
+ * a rate no part of this kernel measured, and the 8254 is latched shut while
+ * they do it.
+ */
+static void prove_clocks_without_pit(void)
+{
+    uint64_t tsc_start;
+    uint64_t measured_ns;
+    uint64_t reference_ns;
+    uint64_t expected_ns;
+    uint32_t start;
+    uint32_t span = 0U;
+    enum apic_timer_status timer_status;
+
+    if (!pit_is_retired()) {
+        console_panic("clock proof ran before the PIT was retired");
+    }
+
+    timer_status = apic_timer_start(CLOCK_PROOF_FREQUENCY);
+
+    if (timer_status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(timer_status));
+    }
+
+    start = pm_timer_read();
+    tsc_start = cpu_read_tsc();
+    timer_status = apic_timer_wait_for_ticks(CLOCK_PROOF_TICKS);
+
+    if (timer_status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(timer_status));
+    }
+
+    reference_ns = tsc_span_nanoseconds(tsc_start, cpu_read_tsc());
+    timer_status = apic_timer_stop();
+
+    if (timer_status != APIC_TIMER_STATUS_OK) {
+        console_panic(apic_timer_status_string(timer_status));
+    }
+
+    if (pm_timer_span(start, pm_timer_read(), &span) != PM_TIMER_STATUS_OK) {
+        console_panic("PM timer span is not a duration");
+    }
+
+    measured_ns = pm_timer_ticks_to_nanoseconds(span);
+    expected_ns = CLOCK_PROOF_TICKS * UINT64_C(1000000000) /
+        CLOCK_PROOF_FREQUENCY;
+
+    console_write("Seneri OS: clocks agree: PM ");
     console_write_u64(measured_ns);
-    console_write(" ns against TSC ");
+    console_write(" ns, APIC timer ");
+    console_write_u64(expected_ns);
+    console_write(" ns, TSC ");
     console_write_u64(reference_ns);
     console_write(" ns\n");
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        console_panic("PM timer and local APIC timer disagree on interval");
+    }
 
     if (!pm_timer_durations_agree(
             measured_ns,
@@ -618,9 +707,18 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_timer_route(PIT_ROUTE_IO_APIC);
     retire_legacy_interrupt_path();
     prove_timer_route(PIT_ROUTE_IO_APIC);
+
+    /*
+     * Establish the reference before anything is calibrated from it, calibrate
+     * both derived clocks against it, then retire the 8254 and prove the three
+     * still agree with it gone. The order is the argument: the PIT may only be
+     * retired after something that does not depend on it can time an interval.
+     */
+    prove_pm_timer();
     prove_apic_timer();
     prove_tsc();
-    prove_pm_timer();
+    retire_pit();
+    prove_clocks_without_pit();
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
@@ -631,6 +729,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
     console_write("Seneri OS: TSC reference established\n");
     console_write("Seneri OS: PM timer independent reference established\n");
+    console_write("Seneri OS: PIT retired\n");
+    console_write("Seneri OS: clocks survive PIT retirement\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
