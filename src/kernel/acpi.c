@@ -270,12 +270,19 @@ const char *acpi_status_string(enum acpi_status status)
         "ACPI MADT overrides one interrupt source twice",
         "ACPI MADT overrides the local APIC address twice",
         "ACPI MADT declares no enabled processor",
-        "ACPI MADT declares no I/O APIC"
+        "ACPI MADT declares no I/O APIC",
+        "ACPI root table does not contain a FADT",
+        "ACPI root table contains duplicate FADTs",
+        "ACPI FADT is shorter than its ACPI 1.0 fields",
+        "ACPI FADT declares no usable timer block length",
+        "ACPI FADT declares no power management timer address",
+        "ACPI FADT extended timer block is malformed",
+        "ACPI power management timer port is outside the I/O space"
     };
 
     _Static_assert(
         sizeof(messages) / sizeof(messages[0]) ==
-            (size_t)ACPI_STATUS_MISSING_IO_APIC + 1U,
+            (size_t)ACPI_STATUS_BAD_PM_TIMER_PORT + 1U,
         "ACPI status messages are out of sync"
     );
 

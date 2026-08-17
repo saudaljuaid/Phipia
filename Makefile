@@ -7,7 +7,7 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired apic-timer tsc
+	double-fault apic ioapic retired apic-timer tsc pm-timer
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -115,6 +115,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		retired) expected=53 ;; \
 		apic-timer) expected=55 ;; \
 		tsc) expected=57 ;; \
+		pm-timer) expected=59 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -149,6 +150,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: local APIC timer delivered eight interrupts' "$$log" || \
 		  ! grep -Eq '^Seneri OS: TSC calibrated at [0-9]+ Hz' "$$log" || \
 		  ! grep -Fq 'Seneri OS: TSC reference established' "$$log" || \
+		  ! grep -Fq 'Seneri OS: ACPI FADT verified' "$$log" || \
+		  ! grep -Eq '^Seneri OS: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: PM timer measured [0-9]+ ns against TSC [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: PM timer independent reference established' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \

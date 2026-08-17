@@ -52,6 +52,7 @@ bool cpu_interrupts_enabled(void);
 void cpu_halt_once(void);
 void cpu_enable_and_halt(void);
 uint8_t cpu_in8(uint16_t port);
+uint32_t cpu_in32(uint16_t port);
 void cpu_out8(uint16_t port, uint8_t value);
 void cpu_out32(uint16_t port, uint32_t value);
 void cpu_io_wait(void);
