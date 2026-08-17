@@ -217,11 +217,9 @@ control names the guard.
   owned, even when the whole window is free. Returning them means deciding when
   a page is worth unmapping, which is a policy question with no callers to
   inform it yet.
-- **Page tables are still never reclaimed.** Inherited from
-  `docs/VIRTUAL_MEMORY.md`: `paging_unmap` clears leaves but never frees a table.
-  Heap rollback unmaps pages, so this is now reachable in ordinary operation
-  rather than only at boot, and it is the first thing the next memory increment
-  should fix.
+- ~~Page tables are never reclaimed.~~ **Fixed.** `paging_unmap` now gives back
+  any interior table it empties, so heap growth rollback no longer leaks a table
+  frame per failed attempt; see `docs/VIRTUAL_MEMORY.md`.
 - **First fit, linear scan.** Fine for a boot-time handful of blocks and
   deliberately predictable, so the self-test can pin exact offsets. It becomes a
   size-bucketed free list when something allocates in a loop.

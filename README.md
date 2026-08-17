@@ -163,8 +163,8 @@ walking off the end and taking the fault.
 What is missing sits above that layer. The heap exists but nothing has been
 moved onto it yet: pending deadlines, the ACPI topology and the interrupt tables
 are all still fixed arrays, and converting each is its own change. The heap never
-shrinks, page tables are still never reclaimed, and nothing
-sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
+shrinks — though the page tables underneath it are now reclaimed when an unmap
+empties them — and nothing sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
 there is; a second sleeper needs threads, and threads need the scheduler this
 layer exists to make possible. The kernel is still identity-mapped rather than
 higher-half, a 4 KiB change inside a 2 MiB mapping is refused rather than split,
