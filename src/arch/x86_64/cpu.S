@@ -98,6 +98,23 @@ cpu_cpuid:
     ret
 .size cpu_cpuid, . - cpu_cpuid
 
+/*
+ * uint64_t cpu_read_tsc(void) - RDTSC returns EDX:EAX.
+ * RDTSC is not a serializing instruction, so a read may be reordered by a few
+ * instructions around it. Every interval Seneri measures with it is at least
+ * milliseconds wide, far larger than that window. A primitive for short precise
+ * intervals would need its own fenced variant.
+ */
+.global cpu_read_tsc
+.type cpu_read_tsc, @function
+cpu_read_tsc:
+    rdtsc
+    shlq $32, %rdx
+    movl %eax, %eax
+    orq %rdx, %rax
+    ret
+.size cpu_read_tsc, . - cpu_read_tsc
+
 /* uint64_t cpu_read_msr(uint32_t msr) - RDMSR returns EDX:EAX. */
 .global cpu_read_msr
 .type cpu_read_msr, @function

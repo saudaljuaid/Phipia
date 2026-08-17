@@ -57,6 +57,7 @@ void cpu_out32(uint16_t port, uint32_t value);
 void cpu_io_wait(void);
 void cpu_cpuid(uint32_t leaf, uint32_t subleaf, struct cpuid_result *result);
 uint64_t cpu_read_msr(uint32_t msr);
+uint64_t cpu_read_tsc(void);
 uint64_t cpu_read_cr2(void);
 uint16_t cpu_read_cs(void);
 uint16_t cpu_read_task_register(void);
