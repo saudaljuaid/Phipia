@@ -964,6 +964,7 @@ static void timers_record(uint64_t deadline_ns, void *context)
 static void timers_scenario(void)
 {
     static const uint32_t labels[TIMERS_TEST_COUNT] = {1U, 2U, 3U};
+    size_t heap_live_before;
     uint64_t identifiers[TIMERS_TEST_COUNT] = {0U, 0U, 0U};
     uint64_t previous;
     uint64_t start;
@@ -1019,8 +1020,23 @@ static void timers_scenario(void)
         kernel_test_fail("deadline armed before the timers were started");
     }
 
+    /*
+     * The deadline table is a heap allocation now, not a static array, so
+     * starting must take exactly one block and report the capacity it got.
+     */
+    heap_live_before = heap_get_state().live_allocations;
+
+    if (timer_capacity() != 0U) {
+        kernel_test_fail("deadline timers held a table before starting");
+    }
+
     if (timer_start() != TIMER_STATUS_OK) {
         kernel_test_fail("deadline timers would not start");
+    }
+
+    if (timer_capacity() != TIMER_MAX_PENDING ||
+        heap_get_state().live_allocations != heap_live_before + 1U) {
+        kernel_test_fail("starting did not take one table from the heap");
     }
 
     if (timer_start() != TIMER_STATUS_ALREADY_STARTED) {
@@ -1124,6 +1140,20 @@ static void timers_scenario(void)
         timer_is_started() ||
         timer_stop() != TIMER_STATUS_NOT_STARTED) {
         kernel_test_fail("deadline timers would not stop");
+    }
+
+    /*
+     * And stopping gives it back. A subsystem that took heap memory once per
+     * start and never returned it would look perfectly correct in every other
+     * check here and exhaust the heap over a long-running kernel.
+     */
+    if (timer_capacity() != 0U ||
+        heap_get_state().live_allocations != heap_live_before) {
+        kernel_test_fail("stopping did not return the table to the heap");
+    }
+
+    if (heap_verify() != HEAP_STATUS_OK) {
+        kernel_test_fail("the heap did not survive the deadline table");
     }
 
     if (apic_spurious_count() != 0U) {

@@ -518,6 +518,19 @@ static void prove_monotonic_time(void)
         console_panic(timer_status_string(timer_status));
     }
 
+    /*
+     * The first fixed array in this kernel to stop being one. Its capacity is
+     * now whatever timer_start obtained from the heap rather than an array
+     * bound the compiler fixed.
+     */
+    console_write("Seneri OS: deadline table of ");
+    console_write_u64(timer_capacity());
+    console_write(" entries on the heap\n");
+
+    if (timer_capacity() == 0U) {
+        console_panic("deadline timers started without a table");
+    }
+
     before = clock_monotonic_ns();
     timer_status = timer_sleep_ns(SLEEP_PROOF_NS);
 
