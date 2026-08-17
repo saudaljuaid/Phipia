@@ -138,17 +138,13 @@ being weak — so the control was aimed at the scale factor instead.
 
 ## Deferred work
 
-Phase 0 is not finished. What remains is the part that turns three calibrated
-rates into something a kernel can actually use:
+`docs/MONOTONIC_TIME.md` covers the increment that completes Phase 0, turning
+these three calibrated rates into something a kernel can use: a monotonic clock
+with a single origin, and deadlines armed on the local APIC timer's one-shot mode.
 
-- **a monotonic clock**: nanoseconds since boot, from the best available source,
-  so callers stop passing raw counter samples around;
-- **deadline-based timers**: a one-shot APIC timer and a timer wheel, so code can
-  sleep until a point in time rather than spin or count periodic ticks. A
-  scheduler needs this before it needs anything else.
-
-Both PM timer waits are still polling spins, so nothing here delivers an
-interrupt from the ACPI timer or maintains a clock between calls.
+Both PM timer waits here are still polling spins, so nothing on this page
+delivers an interrupt from the ACPI timer or maintains a clock between calls;
+that is what the clock above is for.
 
 Beyond that: the supported target still reports no invariant TSC, so the
 time-stamp counter remains untrustworthy across power states even though its rate

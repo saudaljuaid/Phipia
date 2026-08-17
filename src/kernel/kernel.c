@@ -6,6 +6,7 @@
 #include <seneri/apic.h>
 #include <seneri/apic_timer.h>
 #include <seneri/boot.h>
+#include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
@@ -16,6 +17,7 @@
 #include <seneri/pm_timer.h>
 #include <seneri/self_test.h>
 #include <seneri/test.h>
+#include <seneri/timer.h>
 #include <seneri/tsc.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
@@ -35,6 +37,13 @@
  */
 #define CLOCK_PROOF_FREQUENCY UINT32_C(100)
 #define CLOCK_PROOF_TICKS UINT64_C(20)
+
+/*
+ * The deadline the boot sleep asks for: 50 ms. Long enough that the fixed cost
+ * of programming the timer is a small fraction of it, so the measured sleep can
+ * be held to a tight tolerance rather than a generous one.
+ */
+#define SLEEP_PROOF_NS UINT64_C(50000000)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -476,6 +485,77 @@ static void prove_clocks_without_pit(void)
     }
 }
 
+/*
+ * Turn three calibrated rates into time a kernel can use. Everything before this
+ * could measure an interval that had already happened; nothing could name an
+ * instant or ask to be woken at one. The clock supplies the instant and the
+ * deadline timers supply the waking, and a sleep proves both at once: it can
+ * only return on time if the clock's origin, the conversion, the one-shot count
+ * and the expiry path are all right together.
+ */
+static void prove_monotonic_time(void)
+{
+    struct clock_state clock;
+    uint64_t before;
+    uint64_t slept_ns;
+    enum clock_status clock_status = clock_start();
+    enum timer_status timer_status;
+
+    if (clock_status != CLOCK_STATUS_OK) {
+        console_panic(clock_status_string(clock_status));
+    }
+
+    clock = clock_get_state();
+    console_write("Seneri OS: monotonic clock on ");
+    console_write(clock_source_string(clock.source));
+    console_putc('\n');
+
+    timer_status = timer_start();
+
+    if (timer_status != TIMER_STATUS_OK) {
+        console_panic(timer_status_string(timer_status));
+    }
+
+    before = clock_monotonic_ns();
+    timer_status = timer_sleep_ns(SLEEP_PROOF_NS);
+
+    if (timer_status != TIMER_STATUS_OK) {
+        console_panic(timer_status_string(timer_status));
+    }
+
+    slept_ns = clock_monotonic_ns() - before;
+
+    console_write("Seneri OS: slept ");
+    console_write_u64(slept_ns);
+    console_write(" ns for a ");
+    console_write_u64(SLEEP_PROOF_NS);
+    console_write(" ns deadline\n");
+
+    /*
+     * A sleep may overshoot and must never undershoot: returning early is the
+     * failure that would silently break every caller built on it.
+     */
+    if (slept_ns < SLEEP_PROOF_NS) {
+        console_panic("sleep returned before its deadline");
+    }
+
+    if (!pm_timer_durations_agree(
+            slept_ns,
+            SLEEP_PROOF_NS,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        console_panic("sleep overshot its deadline");
+    }
+
+    if (timer_expiry_count() == 0U || timer_pending_count() != 0U) {
+        console_panic("deadline timer table did not settle after a sleep");
+    }
+
+    if (clock_get_state().backward_steps != 0U) {
+        console_panic("monotonic clock had to repair a backwards reading");
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -603,6 +683,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("ACPI PM timer arithmetic self-test failed");
     }
 
+    if (!clock_self_test()) {
+        console_panic("monotonic clock self-test failed");
+    }
+
+    if (!timer_self_test()) {
+        console_panic("deadline timer table self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -719,6 +807,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_tsc();
     retire_pit();
     prove_clocks_without_pit();
+    prove_monotonic_time();
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
@@ -731,6 +820,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: PM timer independent reference established\n");
     console_write("Seneri OS: PIT retired\n");
     console_write("Seneri OS: clocks survive PIT retirement\n");
+    console_write("Seneri OS: deadline timers online\n");
+    console_write("Seneri OS: monotonic time established\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
