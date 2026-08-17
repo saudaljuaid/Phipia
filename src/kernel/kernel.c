@@ -15,6 +15,7 @@
 #include <seneri/pit.h>
 #include <seneri/self_test.h>
 #include <seneri/test.h>
+#include <seneri/tsc.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
 
@@ -287,6 +288,28 @@ static void prove_apic_timer(void)
     }
 }
 
+/*
+ * Calibrate the time-stamp counter against the same reference the APIC timer
+ * used. Two independently calibrated clocks that agree are what will let the
+ * PIT retire; one clock, however carefully measured, cannot check itself.
+ */
+static void prove_tsc(void)
+{
+    const enum tsc_status status = tsc_calibrate();
+    struct tsc_state tsc;
+
+    if (status != TSC_STATUS_OK) {
+        console_panic(tsc_status_string(status));
+    }
+
+    tsc = tsc_get_state();
+    console_write("Seneri OS: TSC calibrated at ");
+    console_write_u64(tsc.frequency_hz);
+    console_write(" Hz, invariant ");
+    console_write(tsc.invariant ? "yes" : "no");
+    console_putc('\n');
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -403,6 +426,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("local APIC timer calibration self-test failed");
     }
 
+    if (!tsc_self_test()) {
+        console_panic("TSC conversion self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -492,6 +519,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     retire_legacy_interrupt_path();
     prove_timer_route(PIT_ROUTE_IO_APIC);
     prove_apic_timer();
+    prove_tsc();
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
@@ -500,6 +528,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: legacy 8259 retired\n");
     console_write("Seneri OS: timer survives legacy retirement\n");
     console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
+    console_write("Seneri OS: TSC reference established\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

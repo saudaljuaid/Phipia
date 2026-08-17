@@ -78,9 +78,10 @@ its reference`, rather than passing because the timer ticked at all.
 
 ## Deferred work
 
-The PIT remains as the calibration reference. Removing it needs a second
-reference Seneri can trust, which on this target means the TSC with its
-invariant-rate CPUID leaf, or the ACPI power management timer, and that is its
-own increment with its own proof. Level-triggered I/O APIC routing still needs
-directed EOI. Nothing here is per-processor yet: a second processor would need
-its own calibration, since the local APIC timer is core-local.
+The PIT remains as the calibration reference. `docs/TSC.md` covers the next
+increment, which adds a second independently calibrated clock so the two can be
+compared, and records that the supported target does not report an invariant
+counter, so the PIT cannot retire on its evidence yet. Level-triggered I/O APIC
+routing still needs directed EOI. Nothing here is per-processor: a second
+processor would need its own calibration, since the local APIC timer is
+core-local.
