@@ -68,6 +68,7 @@ Seneri OS: virtual memory established
 Seneri OS: kernel heap online
 Seneri OS: heap coalesced to one free block
 Seneri OS: kernel heap established
+Seneri OS: deadline table of 32 entries on the heap
 ```
 
 ## Build and prove it
@@ -160,9 +161,10 @@ be contiguous. Its metadata lives outside the memory it manages, so an overrun
 cannot corrupt the allocator, and the `heap` scenario proves the guard by
 walking off the end and taking the fault.
 
-What is missing sits above that layer. The heap exists but nothing has been
-moved onto it yet: pending deadlines, the ACPI topology and the interrupt tables
-are all still fixed arrays, and converting each is its own change. The heap never
+What is missing sits above that layer. The heap has its first consumer — the
+deadline table is obtained from it at `timer_start` and returned at
+`timer_stop` — but the ACPI topology and the interrupt tables are still fixed
+arrays, and converting each is its own change. The heap never
 shrinks — though the page tables underneath it are now reclaimed when an unmap
 empties them — and nothing sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
 there is; a second sleeper needs threads, and threads need the scheduler this

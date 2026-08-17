@@ -45,10 +45,30 @@ power transition rather than a formality.
 monotonic instant. `timer_cancel(id)` withdraws it. `timer_sleep_ns(ns)` blocks
 until the clock has advanced that far.
 
-Pending deadlines live in a fixed table of `TIMER_MAX_PENDING` entries. That is a
-Seneri policy bound, not an architectural one: there is no heap yet, and a linear
-scan of thirty-two entries costs less than the interrupt that delivers the
-expiry. A heap and a bucketed wheel replace it once a heap exists.
+Pending deadlines live in a table `timer_start` obtains from the kernel heap and
+`timer_stop` gives back. It is no longer a static array: `TIMER_MAX_PENDING` is
+the capacity requested, `timer_capacity()` reports what was obtained, and every
+scan is bounded by that runtime value rather than by an array size the compiler
+fixed. This is the heap's first consumer; see `docs/KERNEL_HEAP.md`.
+
+**The table is allocated once, not per arm, and that is deliberate.** `timer_arm`
+is reachable from inside the timer interrupt, because a callback is allowed to
+arm a fresh deadline, and the heap is not reentrant. Allocating per arm would
+put a heap transaction inside an interrupt handler. Growing the table on demand
+is deferred for the same reason.
+
+A table that has not been obtained is a capacity of zero, and every loop is
+bounded by capacity, so a null table makes every scan simply empty. That is what
+makes the null pointer safe rather than a hazard, and it is why none of the
+table helpers carries a null check of its own.
+
+**Not started must mean no table held.** `timer_start` refuses if a table is
+already present even when `started` is false, because that combination is a
+subsystem holding memory it does not know about, and starting over the top of it
+would lose that block for the life of the kernel.
+
+A bucketed wheel still replaces the linear scan once something arms deadlines in
+bulk.
 
 Identifiers are never zero, so a caller can hold zero as "no timer" without a
 separate flag.
@@ -153,6 +173,23 @@ Three deliberate breakages, each reverted afterwards:
 | the monotonic clamp removed | `PANIC: monotonic clock self-test failed`, before boot reaches hardware |
 | the sleep's deadline halved | `PANIC: sleep returned before its deadline`, reporting `slept 25534838 ns for a 50000000 ns deadline`; `ST FAIL timers: not every deadline fired` |
 | the expiry path stopped rearming | `ST FAIL timers: sleep did not complete` |
+| stop never returns the table to the heap | `ST FAIL timers: stopping did not return the table to the heap` |
+| start reports success without obtaining a table | `PANIC: deadline timers started without a table` |
+| the self-test borrows the table and never puts it back | `PANIC: deadline timers were started twice` |
+
+The third of those did not fail on the first attempt. A stale table pointer left
+behind by the self-test is simply overwritten by the next `timer_start`, so
+nothing observed it and the suite stayed green. The response was to add the
+invariant that was missing rather than to accept the non-result: `timer_start`
+now refuses to run while a table is held, and the control fails.
+
+A fourth control — freeing the table before removing the expiry handler, rather
+than after — **also failed to fail, and was left as a non-result.** `timer_stop`
+requires interrupts disabled and is only reached with nothing armed, so the
+window where an interrupt could walk a freed table is unreachable in this
+kernel. The ordering is defence in depth for a future where stop can race, not
+something any scenario here can observe, and it is recorded rather than dressed
+up as tested.
 
 The third is the one that justifies the armed check in the sleep loop. Without
 it, that breakage does not fail — it hangs, and a hang in a QEMU scenario is a

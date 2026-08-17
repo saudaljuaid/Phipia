@@ -14,10 +14,16 @@
  */
 
 /*
- * Seneri early-boot policy bound. Pending deadlines live in fixed storage
- * because there is no heap yet, and a linear scan of this many entries costs
- * less than the interrupt that delivers the expiry. It is not an architectural
- * limit; a heap and a bucketed wheel replace it once one exists.
+ * How many pending deadlines timer_start asks the kernel heap for. This is no
+ * longer an array bound: the table is one heap allocation made once at start and
+ * released at stop, and the capacity lives in a variable. It stays a compile-time
+ * default only because nothing yet has an opinion about how many deadlines it
+ * needs; timer_capacity reports what was actually obtained.
+ *
+ * The table cannot be grown on demand, and that is deliberate rather than
+ * unfinished. timer_arm is reachable from inside the timer interrupt, because a
+ * callback is allowed to arm a fresh deadline, and the heap is not reentrant.
+ * Allocating per arm would put a heap transaction inside an interrupt handler.
  */
 #define TIMER_MAX_PENDING 32U
 
@@ -35,6 +41,7 @@ enum timer_status {
     TIMER_STATUS_ALREADY_STARTED,
     TIMER_STATUS_NO_CLOCK,
     TIMER_STATUS_NO_CAPACITY,
+    TIMER_STATUS_NO_MEMORY,
     TIMER_STATUS_BAD_INTERVAL,
     TIMER_STATUS_UNKNOWN_TIMER,
     TIMER_STATUS_HARDWARE_FAILURE,
@@ -70,6 +77,7 @@ enum timer_status timer_cancel(uint64_t identifier);
 enum timer_status timer_sleep_ns(uint64_t nanoseconds);
 
 size_t timer_pending_count(void);
+size_t timer_capacity(void);
 uint64_t timer_expiry_count(void);
 bool timer_self_test(void);
 const char *timer_status_string(enum timer_status status);

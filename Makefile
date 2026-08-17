@@ -185,6 +185,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: kernel heap online' "$$log" || \
 		  ! grep -Fq 'Seneri OS: heap coalesced to one free block' "$$log" || \
 		  ! grep -Fq 'Seneri OS: kernel heap established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
