@@ -6,14 +6,17 @@ does not answer for itself: how fast does the local APIC timer count?
 
 ## Why calibration is unavoidable
 
-The PIT's rate is fixed by its own crystal, so a divisor turns into a known
-frequency by arithmetic alone. The local APIC timer counts the processor's bus
-or core crystal clock, whose rate is not reported by CPUID on the processors
-Seneri targets and is not described by ACPI. A count is therefore meaningless
-until it has been measured against a reference whose rate is known.
+The local APIC timer counts the processor's bus or core crystal clock, whose rate
+is not reported by CPUID on the processors Seneri targets and is not described by
+ACPI. A count is therefore meaningless until it has been measured against a
+reference whose rate is known.
 
-That is the whole reason the PIT survives this increment. It is no longer the
-kernel's timer; it is the ruler the kernel measures its timer with.
+The PIT served as that reference when this increment was written, which is why it
+survived it. It no longer does: `docs/PIT_RETIREMENT.md` moves the calibration
+onto the ACPI power management timer and retires the 8254. Read that document
+before trusting the numbers below — the PIT's tick accounting turned out to be
+wrong by a factor of two, so every rate calibrated against it, including the one
+described here, was half its true value until it was corrected.
 
 ## How the measurement is taken
 
@@ -22,9 +25,11 @@ from exhausting the 32-bit counter while leaving far more resolution than the
 interval needs. The timer is loaded with the maximum count while its local
 vector table entry is masked, so calibration raises no interrupt.
 
-The PIT then runs for ten ticks at 100 Hz, one tenth of a second, and the APIC
-timer's current count is read before and after. The rate is the elapsed count
-scaled to a second.
+The reference then runs for a tenth of a second and the APIC timer's current
+count is read before and after. The rate is the elapsed count scaled to a second.
+Since `docs/PIT_RETIREMENT.md` that reference is the ACPI power management timer
+and the span is scaled by the ticks it actually advanced rather than the ticks
+requested, so a bounded wait's overshoot stays out of the rate.
 
 Three outcomes are refused rather than recorded:
 
@@ -78,13 +83,14 @@ its reference`, rather than passing because the timer ticked at all.
 
 ## Deferred work
 
-The PIT remains as the calibration reference. `docs/TSC.md` covers the next
-increment, which adds a second independently calibrated clock so the two can be
-compared, and records that the supported target does not report an invariant
-counter, so the PIT cannot retire on its evidence yet. `docs/PM_TIMER.md` covers
-the increment after it, which found that the reference described on this page
-was delivering two interrupts per programmed period; the rate measured here was
-half its true value until that was corrected. Level-triggered I/O APIC
+The PIT was the calibration reference when this was written and no longer is.
+`docs/TSC.md` covers the next increment, which adds a second independently
+calibrated clock so the two can be compared. `docs/PM_TIMER.md` covers the one
+after it, which found that the reference described on this page was delivering two
+interrupts per programmed period, so the rate measured here was half its true
+value until that was corrected. `docs/PIT_RETIREMENT.md` covers the increment that
+moved this calibration onto the ACPI power management timer and retired the 8254
+altogether. Level-triggered I/O APIC
 routing still needs directed EOI. Nothing here is per-processor: a second
 processor would need its own calibration, since the local APIC timer is
 core-local.

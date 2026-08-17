@@ -35,6 +35,7 @@
 static volatile uint64_t tick_counter __attribute__((aligned(8)));
 static uint32_t configured_frequency;
 static bool running;
+static bool retired;
 static enum pit_route active_route;
 
 static void pit_interrupt_handler(struct interrupt_frame *frame, void *context)
@@ -94,6 +95,10 @@ enum pit_status pit_start(uint32_t frequency_hz, enum pit_route route)
     uint8_t vector;
     enum interrupt_status interrupt_status;
     enum pit_status status;
+
+    if (retired) {
+        return PIT_STATUS_RETIRED;
+    }
 
     if (running) {
         return PIT_STATUS_ALREADY_RUNNING;
@@ -187,6 +192,45 @@ enum pit_status pit_stop(void)
     return PIT_STATUS_OK;
 }
 
+/*
+ * Retirement is one way. The counter is stopped if it was running, then its
+ * redirection entry is masked even if it never ran, because firmware may have
+ * left the line unmasked and a retired timer must not be able to deliver. The
+ * 8259 is masked by its own retirement, so only the discovered route is touched
+ * here; a machine whose I/O APIC was never initialized has no route to mask.
+ */
+enum pit_status pit_retire(void)
+{
+    if (retired) {
+        return PIT_STATUS_RETIRED;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return PIT_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (running) {
+        const enum pit_status status = pit_stop();
+
+        if (status != PIT_STATUS_OK) {
+            return status;
+        }
+    }
+
+    if (ioapic_is_initialized() &&
+        ioapic_mask_isa_irq((uint8_t)PIT_IRQ) != IOAPIC_STATUS_OK) {
+        return PIT_STATUS_IOAPIC_FAILURE;
+    }
+
+    retired = true;
+    return PIT_STATUS_OK;
+}
+
+bool pit_is_retired(void)
+{
+    return retired;
+}
+
 uint64_t pit_ticks(void)
 {
     return tick_counter;
@@ -253,6 +297,8 @@ const char *pit_status_string(enum pit_status status)
         return "PIT was given an unknown interrupt route";
     case PIT_STATUS_IOAPIC_FAILURE:
         return "PIT could not route its interrupt through the I/O APIC";
+    case PIT_STATUS_RETIRED:
+        return "PIT is retired and no longer accepts mutation";
     default:
         return "unknown PIT status";
     }

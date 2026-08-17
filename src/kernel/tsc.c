@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include <seneri/cpu.h>
-#include <seneri/pit.h>
+#include <seneri/pm_timer.h>
 #include <seneri/tsc.h>
 
 /* Intel SDM volume 3B section 18.17: CPUID.01H:EDX[4] reports a TSC. */
@@ -20,9 +20,13 @@
 #define CPUID_EXTENDED_POWER UINT32_C(0x80000007)
 #define CPUID_INVARIANT_TSC UINT32_C(0x00000100)
 
-/* The PIT reference interval: ten ticks at 100 Hz, one tenth of a second. */
-#define REFERENCE_FREQUENCY UINT32_C(100)
-#define REFERENCE_TICKS UINT64_C(10)
+/*
+ * The reference interval: a tenth of a second of the ACPI power management
+ * timer, whose rate the ACPI specification fixes rather than one this kernel
+ * measured. The PIT used to serve here, and it was wrong by a factor of two for
+ * as long as it did; see docs/PIT_RETIREMENT.md.
+ */
+#define REFERENCE_PM_TICKS (PM_TIMER_FREQUENCY_HZ / 10U)
 
 #define NANOSECONDS_PER_SECOND UINT64_C(1000000000)
 
@@ -122,13 +126,20 @@ uint64_t tsc_read(void)
     return cpu_read_tsc();
 }
 
+/*
+ * Measure the counter against the ACPI power management timer, whose rate is
+ * fixed by specification rather than measured. The span is scaled by the ticks
+ * the reference actually advanced rather than by the ticks requested, so a
+ * bounded wait's overshoot stays out of the rate.
+ */
 enum tsc_status tsc_calibrate(void)
 {
     uint64_t start;
     uint64_t end;
     uint64_t rate = 0U;
+    uint64_t reference_ticks = 0U;
     enum tsc_status status;
-    enum pit_status pit_status;
+    enum pm_timer_status pm_status;
 
     detect_features();
 
@@ -144,32 +155,23 @@ enum tsc_status tsc_calibrate(void)
         return TSC_STATUS_ALREADY_CALIBRATED;
     }
 
-    pit_status = pit_start(REFERENCE_FREQUENCY, PIT_ROUTE_IO_APIC);
-
-    if (pit_status != PIT_STATUS_OK) {
+    if (!pm_timer_is_present()) {
         return TSC_STATUS_REFERENCE_FAILURE;
     }
 
     start = cpu_read_tsc();
-    pit_status = pit_wait_for_ticks(REFERENCE_TICKS);
+    pm_status = pm_timer_wait(REFERENCE_PM_TICKS, &reference_ticks);
     end = cpu_read_tsc();
 
-    if (pit_status != PIT_STATUS_OK) {
-        (void)pit_stop();
-        return TSC_STATUS_REFERENCE_FAILURE;
-    }
-
-    pit_status = pit_stop();
-
-    if (pit_status != PIT_STATUS_OK) {
+    if (pm_status != PM_TIMER_STATUS_OK) {
         return TSC_STATUS_REFERENCE_FAILURE;
     }
 
     status = rate_from_span(
         start,
         end,
-        REFERENCE_FREQUENCY,
-        REFERENCE_TICKS,
+        PM_TIMER_FREQUENCY_HZ,
+        reference_ticks,
         &rate
     );
 
@@ -214,12 +216,33 @@ bool tsc_self_test(void)
 {
     uint64_t rate = 0U;
 
-    /* A tenth of a second of a 2 GHz counter is 200 million ticks. */
+    /*
+     * One full second of the reference is PM_TIMER_FREQUENCY_HZ of its ticks, so
+     * a 2 GHz counter advances two billion times across it. Expressing the
+     * interval as exactly one second keeps the expected rate exact.
+     */
     if (rate_from_span(
             UINT64_C(1000),
-            UINT64_C(1000) + UINT64_C(200000000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            UINT64_C(1000) + UINT64_C(2000000000),
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
+            &rate
+        ) != TSC_STATUS_OK ||
+        rate != UINT64_C(2000000000)) {
+        return false;
+    }
+
+    /*
+     * Twice the reference span means the same count implies half the rate. Two
+     * seconds is used rather than half a second because the reference rate is
+     * odd, so halving it would truncate and the expectation would stop being
+     * exact; doubling it cannot.
+     */
+    if (rate_from_span(
+            0U,
+            UINT64_C(4000000000),
+            PM_TIMER_FREQUENCY_HZ,
+            (uint64_t)PM_TIMER_FREQUENCY_HZ * 2U,
             &rate
         ) != TSC_STATUS_OK ||
         rate != UINT64_C(2000000000)) {
@@ -229,8 +252,8 @@ bool tsc_self_test(void)
     if (rate_from_span(
             UINT64_C(1000),
             UINT64_C(1000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != TSC_STATUS_NOT_COUNTING) {
         return false;
@@ -239,8 +262,8 @@ bool tsc_self_test(void)
     if (rate_from_span(
             UINT64_C(2000),
             UINT64_C(1000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != TSC_STATUS_WENT_BACKWARDS) {
         return false;
@@ -250,18 +273,42 @@ bool tsc_self_test(void)
     if (rate_from_span(
             0U,
             UINT64_C(100000000000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ / 10U,
             &rate
         ) != TSC_STATUS_RATE_OUT_OF_RANGE) {
         return false;
     }
 
+    /*
+     * A span so wide that scaling it by the reference rate would overflow. At
+     * the PIT's old rate of a hundred this branch needed a span no counter could
+     * produce; against a 3.579545 MHz reference it is reachable, so it is
+     * tested.
+     */
+    if (rate_from_span(
+            0U,
+            UINT64_MAX / PM_TIMER_FREQUENCY_HZ + 1U,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
+            &rate
+        ) != TSC_STATUS_RATE_OUT_OF_RANGE) {
+        return false;
+    }
+
+    /* A reference reporting no rate, and one reporting no elapsed ticks. */
     if (rate_from_span(
             0U,
             UINT64_C(1000),
             0U,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            &rate
+        ) != TSC_STATUS_NOT_COUNTING ||
+        rate_from_span(
+            0U,
+            UINT64_C(1000),
+            PM_TIMER_FREQUENCY_HZ,
+            0U,
             &rate
         ) != TSC_STATUS_NOT_COUNTING) {
         return false;

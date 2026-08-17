@@ -7,7 +7,7 @@
 #include <seneri/apic_timer.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
-#include <seneri/pit.h>
+#include <seneri/pm_timer.h>
 
 /* Intel SDM volume 3A table 11-1 places the timer registers at these offsets. */
 #define APIC_REGISTER_LVT_TIMER UINT32_C(0x0320)
@@ -29,9 +29,21 @@
 #define APIC_TIMER_DIVISOR 16U
 #define APIC_TIMER_MAX_COUNT UINT32_C(0xFFFFFFFF)
 
-/* The PIT reference interval: ten ticks of a 100 Hz timer, so one tenth of a second. */
-#define REFERENCE_FREQUENCY UINT32_C(100)
-#define REFERENCE_TICKS UINT64_C(10)
+/*
+ * The reference interval: a tenth of a second of the ACPI power management
+ * timer, whose rate the ACPI specification fixes rather than one this kernel
+ * measured. The PIT used to serve here, and its own tick accounting was wrong by
+ * a factor of two for as long as it did; see docs/PIT_RETIREMENT.md.
+ */
+#define REFERENCE_PM_TICKS (PM_TIMER_FREQUENCY_HZ / 10U)
+
+/*
+ * The countdown is a 32-bit register, so the widest span the rate arithmetic can
+ * be handed is UINT32_MAX. Scaling that by the reference rate must not overflow;
+ * proving it here removes the need for a guard no test could reach.
+ */
+_Static_assert(UINT64_MAX / PM_TIMER_FREQUENCY_HZ >= UINT32_MAX,
+               "an APIC timer countdown scaled by the PM timer rate overflows");
 
 static volatile uint64_t tick_counter __attribute__((aligned(8)));
 static uint64_t counts_per_second;
@@ -115,18 +127,25 @@ static void stop_counting(void)
 }
 
 /*
- * Measure the local APIC timer against the PIT. The APIC timer's input is the
- * processor's bus or core crystal clock, whose rate Seneri is not told, so the
- * only honest way to use it as a clock is to count it against a reference whose
- * rate is fixed by its own hardware.
+ * Measure the local APIC timer against the ACPI power management timer. The APIC
+ * timer's input is the processor's bus or core crystal clock, whose rate Seneri
+ * is not told, so the only honest way to use it as a clock is to count it
+ * against a reference whose rate is known. The PM timer's rate is stated by
+ * the ACPI specification and measured against nothing, which is what makes it
+ * a reference rather than another opinion.
+ *
+ * The span is scaled by the ticks the reference actually advanced, not by the
+ * ticks that were requested. A bounded wait may overshoot, and using the
+ * observed span keeps the overshoot out of the rate instead of inflating it.
  */
 enum apic_timer_status apic_timer_calibrate(void)
 {
     uint32_t start;
     uint32_t end;
     uint64_t rate = 0U;
+    uint64_t reference_ticks = 0U;
     enum apic_timer_status status;
-    enum pit_status pit_status;
+    enum pm_timer_status pm_status;
 
     if (!apic_is_online()) {
         return APIC_TIMER_STATUS_APIC_OFFLINE;
@@ -140,9 +159,7 @@ enum apic_timer_status apic_timer_calibrate(void)
         return APIC_TIMER_STATUS_ALREADY_CALIBRATED;
     }
 
-    pit_status = pit_start(REFERENCE_FREQUENCY, PIT_ROUTE_IO_APIC);
-
-    if (pit_status != PIT_STATUS_OK) {
+    if (!pm_timer_is_present()) {
         return APIC_TIMER_STATUS_REFERENCE_FAILURE;
     }
 
@@ -155,26 +172,19 @@ enum apic_timer_status apic_timer_calibrate(void)
     apic_register_write(APIC_REGISTER_TIMER_INITIAL_COUNT, APIC_TIMER_MAX_COUNT);
     start = apic_register_read(APIC_REGISTER_TIMER_CURRENT_COUNT);
 
-    pit_status = pit_wait_for_ticks(REFERENCE_TICKS);
+    pm_status = pm_timer_wait(REFERENCE_PM_TICKS, &reference_ticks);
     end = apic_register_read(APIC_REGISTER_TIMER_CURRENT_COUNT);
     stop_counting();
 
-    if (pit_status != PIT_STATUS_OK) {
-        (void)pit_stop();
-        return APIC_TIMER_STATUS_REFERENCE_FAILURE;
-    }
-
-    pit_status = pit_stop();
-
-    if (pit_status != PIT_STATUS_OK) {
+    if (pm_status != PM_TIMER_STATUS_OK) {
         return APIC_TIMER_STATUS_REFERENCE_FAILURE;
     }
 
     status = rate_from_countdown(
         start,
         end,
-        REFERENCE_FREQUENCY,
-        REFERENCE_TICKS,
+        PM_TIMER_FREQUENCY_HZ,
+        reference_ticks,
         &rate
     );
 
@@ -329,15 +339,37 @@ bool apic_timer_self_test(void)
     uint64_t rate = 0U;
     uint32_t count = 0U;
 
-    /* A tenth of a second of a 62.5 MHz count is 6.25 million ticks. */
+    /*
+     * One full second of the reference is PM_TIMER_FREQUENCY_HZ of its ticks, so
+     * a 62.5 MHz count advances 62.5 million times across it. Expressing the
+     * interval as exactly one second keeps the expected rate exact rather than
+     * truncated, which is what makes this an assertion rather than an estimate.
+     */
     if (rate_from_countdown(
             UINT32_C(0xFFFFFFFF),
-            UINT32_C(0xFFFFFFFF) - UINT32_C(6250000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            UINT32_C(0xFFFFFFFF) - UINT32_C(62500000),
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != APIC_TIMER_STATUS_OK ||
         rate != UINT64_C(62500000)) {
+        return false;
+    }
+
+    /*
+     * Twice the reference span means the same count implies half the rate. Two
+     * seconds is used rather than half a second because the reference rate is
+     * odd, so halving it would truncate and the expectation would stop being
+     * exact; doubling it cannot.
+     */
+    if (rate_from_countdown(
+            UINT32_C(0xFFFFFFFF),
+            UINT32_C(0xFFFFFFFF) - UINT32_C(62500000),
+            PM_TIMER_FREQUENCY_HZ,
+            (uint64_t)PM_TIMER_FREQUENCY_HZ * 2U,
+            &rate
+        ) != APIC_TIMER_STATUS_OK ||
+        rate != UINT64_C(31250000)) {
         return false;
     }
 
@@ -345,8 +377,8 @@ bool apic_timer_self_test(void)
     if (rate_from_countdown(
             UINT32_C(0xFFFFFFFF),
             UINT32_C(0xFFFFFFFF),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != APIC_TIMER_STATUS_NOT_COUNTING) {
         return false;
@@ -356,8 +388,8 @@ bool apic_timer_self_test(void)
     if (rate_from_countdown(
             UINT32_C(1000),
             UINT32_C(2000),
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != APIC_TIMER_STATUS_NOT_COUNTING) {
         return false;
@@ -367,18 +399,30 @@ bool apic_timer_self_test(void)
     if (rate_from_countdown(
             UINT32_C(0xFFFFFFFF),
             0U,
-            REFERENCE_FREQUENCY,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            PM_TIMER_FREQUENCY_HZ,
             &rate
         ) != APIC_TIMER_STATUS_COUNTER_EXHAUSTED) {
         return false;
     }
 
+    /*
+     * A reference that reports no rate, and one that reports no elapsed ticks.
+     * The second is why calibration scales by the observed span: a wait that
+     * returned without the counter moving must not divide by zero.
+     */
     if (rate_from_countdown(
             UINT32_C(0xFFFFFFFF),
             UINT32_C(0xFFFFFFF0),
             0U,
-            REFERENCE_TICKS,
+            PM_TIMER_FREQUENCY_HZ,
+            &rate
+        ) != APIC_TIMER_STATUS_BAD_FREQUENCY ||
+        rate_from_countdown(
+            UINT32_C(0xFFFFFFFF),
+            UINT32_C(0xFFFFFFF0),
+            PM_TIMER_FREQUENCY_HZ,
+            0U,
             &rate
         ) != APIC_TIMER_STATUS_BAD_FREQUENCY) {
         return false;

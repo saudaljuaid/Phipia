@@ -27,11 +27,11 @@ system-description tables to the MADT, parses that table's
 interrupt-controller records into a validated processor, I/O APIC, and
 interrupt-override topology, brings the bootstrap processor's local APIC online
 in virtual wire mode, delivers the timer through a programmed I/O APIC
-redirection entry, retires the legacy 8259 pair, calibrates and runs the local
-APIC timer, establishes a time-stamp counter that agrees with it, discovers the
-ACPI power management timer from the FADT, and confirms that reference — whose
-rate is fixed by specification rather than measured — agrees with both
-calibrated clocks before halting safely.
+redirection entry, retires the legacy 8259 pair, discovers the ACPI power
+management timer from the FADT, calibrates both the local APIC timer and a
+time-stamp counter against that reference — whose rate is fixed by specification
+rather than measured — then retires the 8254 and proves all three clocks still
+agree about an interval with it gone, before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -51,6 +51,8 @@ Seneri OS: local APIC timer delivered eight interrupts
 Seneri OS: TSC reference established
 Seneri OS: ACPI FADT verified
 Seneri OS: PM timer independent reference established
+Seneri OS: PIT retired
+Seneri OS: clocks survive PIT retirement
 ```
 
 ## Build and prove it
@@ -66,7 +68,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run fourteen deterministic fault and interrupt scenarios
+make qemu-tests # run fifteen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -98,23 +100,27 @@ make hooks    # enforce verification in this local clone
 - `docs/APIC_TIMER.md` — why the APIC timer needs calibration, and its proof.
 - `docs/TSC.md` — the second clock, why it exists, and what it cannot claim.
 - `docs/PM_TIMER.md` — the first unmeasured reference, and the error it found.
+- `docs/PIT_RETIREMENT.md` — recalibrating on that reference, and losing the 8254.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
 Every interrupt Seneri owns now arrives through discovered hardware, the timer
-interrupt originates in the processor's own local APIC, and three clocks agree
-about how long an interval lasted — one of them the ACPI power management timer,
-whose rate is fixed by specification and measured against nothing. That
-agreement is new: the PM timer's first act was to prove the PIT had been
-delivering two interrupts per programmed period, which had left both calibrated
-clocks running at half their true rate while still agreeing with each other. The
-PIT remains as the reference the other two are calibrated against, and retiring
-it comes next. The PM timer is read by polling, so it is not yet a time base
-that keeps a clock or delivers an interrupt, and the supported target does not
-report an invariant counter. Level-triggered I/O APIC routing still needs
-directed EOI. It has
+interrupt originates in the processor's own local APIC, and both derived clocks
+are calibrated against the ACPI power management timer, whose rate is fixed by
+specification and measured against nothing. The 8254 is retired: it is stopped,
+masked and latched shut, and the three clocks are proved to still agree about an
+interval with it gone. Getting here took finding that the PIT had been delivering
+two interrupts per programmed period, which had left both calibrated clocks
+running at half their true rate while still agreeing with each other.
+
+What the clocks are not yet is usable. All three are read by sampling a counter,
+so there is no monotonic clock, no notion of time since boot, and no way to sleep
+until a deadline — a scheduler needs the last of those before it needs anything
+else. The supported target still reports no invariant counter, so the TSC's rate
+being correct is not the same as its rate being stable. Level-triggered I/O APIC
+routing still needs directed EOI, which gates PCI device interrupts. It has
 a deliberately narrow single-core interrupt foundation, but no virtual-memory
 manager, heap, scheduler, userspace, filesystem, networking, graphics, or
 general hardware drivers. Those arrive only after the previous layer has an

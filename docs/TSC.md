@@ -25,9 +25,12 @@ variant of their own.
 
 ## Calibration and its refusals
 
-Calibration measures the counter across ten PIT ticks at 100 Hz, the same
-reference interval the APIC timer used, and scales the span to a second. Unlike
-the APIC timer the counter runs up rather than down, so the refusals differ:
+Calibration measures the counter across a tenth of a second of the same reference
+the APIC timer used and scales the span to a second. That reference was ten PIT
+ticks at 100 Hz when this was written; since `docs/PIT_RETIREMENT.md` it is the
+ACPI power management timer, and the span is scaled by the ticks the reference
+actually advanced rather than the ticks requested. Unlike the APIC timer the
+counter runs up rather than down, so the refusals differ:
 
 - an end at or below the start means the counter never advanced;
 - an end below the start means it ran backwards, which no time base may do;
@@ -56,7 +59,7 @@ and thermal transitions, in `CPUID.80000007H:EDX[8]`. On the supported QEMU
 target that bit is **not** set, and Seneri reports it rather than assuming it:
 
 ```text
-Seneri OS: TSC calibrated at 2806852220 Hz, invariant no
+Seneri OS: TSC calibrated at 2802032223 Hz, invariant no
 ```
 
 So the counter is usable here as a second opinion about an interval measured
@@ -95,15 +98,19 @@ interval`, rather than passing because the counter advanced at all.
 
 ## Deferred work
 
-Retiring the PIT needs a reference trustworthy on its own, as above.
-`docs/PM_TIMER.md` covers the increment that supplies one: the ACPI power
+Retiring the PIT needed a reference trustworthy on its own, as above.
+`docs/PM_TIMER.md` covers the increment that supplied one: the ACPI power
 management timer, whose rate is fixed by specification rather than measured.
 Read it for the correction it forced here — the PIT was delivering two
 interrupts per programmed period, so the rate on this page was calibrated at
 half its true value, and the two clocks that were meant to check each other
-could not see it because they were wrong by the same factor. Retiring the PIT
-and recalibrating both clocks against the ACPI timer is the increment after
-that one.
+could not see it because they were wrong by the same factor.
+`docs/PIT_RETIREMENT.md` covers the increment that followed, which moved this
+calibration onto the ACPI timer and retired the 8254.
+
+The counter is still not a time base to trust across power states, because the
+supported target still reports no invariant TSC. Its rate being correct and its
+rate being stable are different claims, and only the first has been established.
 
 Nothing here is per-processor: a second processor's counter would need its own
 calibration and its own agreement check, since neither synchronisation nor a
