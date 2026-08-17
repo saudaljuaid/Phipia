@@ -13,7 +13,21 @@
 #define PIT_INPUT_FREQUENCY UINT32_C(1193182)
 #define PIT_CHANNEL_ZERO UINT16_C(0x40)
 #define PIT_COMMAND UINT16_C(0x43)
-#define PIT_CHANNEL_ZERO_MODE_THREE UINT8_C(0x36)
+/*
+ * Intel 8254 datasheet, control word: channel 0, lobyte/hibyte access, mode 2,
+ * binary counting. Mode 2 is the rate generator, which drives its output low
+ * for one input clock once per programmed period.
+ *
+ * Mode 3, the square wave generator, was programmed here until the ACPI power
+ * management timer arrived. Mode 3 toggles its output twice per period, once at
+ * the half count and once at the full count, so an edge-triggered handler
+ * counts two interrupts for every period the divisor describes. Every interval
+ * this kernel measured in PIT ticks was therefore half the length it believed,
+ * and both clocks calibrated against it ran at half their true rate. Nothing
+ * caught it, because they were wrong by the same factor and still agreed with
+ * each other. See docs/PM_TIMER.md.
+ */
+#define PIT_CHANNEL_ZERO_MODE_RATE_GENERATOR UINT8_C(0x34)
 #define PIT_IRQ 0U
 #define PIT_VECTOR INTERRUPT_PIC_MASTER_BASE
 #define PIT_IOAPIC_VECTOR (INTERRUPT_IOAPIC_BASE + PIT_IRQ)
@@ -118,7 +132,7 @@ enum pit_status pit_start(uint32_t frequency_hz, enum pit_route route)
         return PIT_STATUS_INTERRUPT_FAILURE;
     }
 
-    cpu_out8(PIT_COMMAND, PIT_CHANNEL_ZERO_MODE_THREE);
+    cpu_out8(PIT_COMMAND, PIT_CHANNEL_ZERO_MODE_RATE_GENERATOR);
     cpu_out8(PIT_CHANNEL_ZERO, (uint8_t)(divisor & UINT32_C(0xFF)));
     cpu_out8(PIT_CHANNEL_ZERO, (uint8_t)((divisor >> 8U) & UINT32_C(0xFF)));
 

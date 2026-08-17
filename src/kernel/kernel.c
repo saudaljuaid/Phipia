@@ -13,11 +13,19 @@
 #include <seneri/memory.h>
 #include <seneri/pic.h>
 #include <seneri/pit.h>
+#include <seneri/pm_timer.h>
 #include <seneri/self_test.h>
 #include <seneri/test.h>
 #include <seneri/tsc.h>
 
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
+
+/*
+ * Ten milliseconds of the ACPI power management timer, whose rate the ACPI
+ * specification fixes at 3.579545 MHz. Short enough not to lengthen boot,
+ * and long enough that the time-stamp counter's opinion of it is meaningful.
+ */
+#define PM_TIMER_PROOF_TICKS UINT32_C(35795)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -108,6 +116,28 @@ static void report_acpi_madt(const struct acpi_madt *madt)
     console_write_n(madt->oem_id, 6U);
     console_putc(' ');
     console_write_n(madt->oem_table_id, 8U);
+    console_putc('\n');
+}
+
+static void report_acpi_fadt(const struct acpi_fadt *fadt)
+{
+    console_write("Seneri OS: ACPI FADT at ");
+    console_write_hex(fadt->physical_address);
+    console_write(" revision ");
+    console_write_u64(fadt->revision);
+    console_write(" flags ");
+    console_write_hex(fadt->flags);
+    console_putc('\n');
+}
+
+static void report_pm_timer(const struct pm_timer_state *pm_timer)
+{
+    console_write("Seneri OS: ACPI PM timer port ");
+    console_write_hex(pm_timer->port);
+    console_write(" width ");
+    console_write_u64(pm_timer->counter_bits);
+    console_write(" bits address ");
+    console_write(pm_timer->extended_address ? "extended" : "fixed");
     console_putc('\n');
 }
 
@@ -310,6 +340,53 @@ static void prove_tsc(void)
     console_putc('\n');
 }
 
+/*
+ * The first time reference on this machine that was not measured against
+ * another clock. Its rate is fixed by the ACPI specification, so an interval it
+ * reports is an opinion the PIT had no part in forming, and comparing it with
+ * the time-stamp counter is a real check of the reference both derived clocks
+ * were calibrated from rather than two views of the same measurement.
+ *
+ * This increment only establishes the agreement. Retiring the PIT and
+ * recalibrating against this timer is the increment after it.
+ */
+static void prove_pm_timer(void)
+{
+    uint64_t elapsed_ticks = 0U;
+    uint64_t measured_ns;
+    uint64_t reference_ns;
+    uint64_t start;
+    enum pm_timer_status status;
+
+    if (!pm_timer_is_present()) {
+        console_panic(pm_timer_status_string(PM_TIMER_STATUS_ABSENT));
+    }
+
+    start = cpu_read_tsc();
+    status = pm_timer_wait(PM_TIMER_PROOF_TICKS, &elapsed_ticks);
+
+    if (status != PM_TIMER_STATUS_OK) {
+        console_panic(pm_timer_status_string(status));
+    }
+
+    measured_ns = pm_timer_ticks_to_nanoseconds(elapsed_ticks);
+    reference_ns = tsc_span_nanoseconds(start, cpu_read_tsc());
+
+    console_write("Seneri OS: PM timer measured ");
+    console_write_u64(measured_ns);
+    console_write(" ns against TSC ");
+    console_write_u64(reference_ns);
+    console_write(" ns\n");
+
+    if (!pm_timer_durations_agree(
+            measured_ns,
+            reference_ns,
+            PM_TIMER_TOLERANCE_HALF
+        )) {
+        console_panic("PM timer and TSC disagree about an interval");
+    }
+}
+
 static void prove_frame_lifecycle(void)
 {
     uintptr_t first_frame;
@@ -367,12 +444,14 @@ static void prove_frame_lifecycle(void)
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
+    struct acpi_fadt acpi_fadt;
     struct acpi_madt acpi_madt;
     struct acpi_root acpi_root;
     struct apic_state apic_state;
     struct boot_context context;
     struct frame_allocator_stats stats;
     struct ioapic_state ioapic_state;
+    struct pm_timer_state pm_timer_state;
     enum boot_status boot_status;
     enum acpi_status acpi_status;
     enum apic_status apic_status;
@@ -380,6 +459,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     enum frame_status frame_status;
     enum interrupt_status interrupt_status;
     enum kernel_test_scenario test_scenario;
+    enum pm_timer_status pm_timer_status;
 
     console_initialize();
     interrupt_status = interrupts_initialize();
@@ -430,6 +510,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("TSC conversion self-test failed");
     }
 
+    if (!pm_timer_self_test()) {
+        console_panic("ACPI PM timer arithmetic self-test failed");
+    }
+
     console_write("Seneri OS: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
@@ -456,13 +540,29 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(acpi_status_string(acpi_status));
     }
 
+    acpi_status = acpi_fadt_discover(&acpi_root, &acpi_fadt);
+
+    if (acpi_status != ACPI_STATUS_OK) {
+        console_panic(acpi_status_string(acpi_status));
+    }
+
+    pm_timer_status = pm_timer_initialize(&acpi_fadt);
+
+    if (pm_timer_status != PM_TIMER_STATUS_OK) {
+        console_panic(pm_timer_status_string(pm_timer_status));
+    }
+
     report_boot_context(&context);
     report_acpi_root(&acpi_root);
     report_acpi_madt(&acpi_madt);
     report_acpi_topology(&boot_topology);
+    pm_timer_state = pm_timer_get_state();
+    report_acpi_fadt(&acpi_fadt);
+    report_pm_timer(&pm_timer_state);
     console_write("Seneri OS: ACPI root verified\n");
     console_write("Seneri OS: ACPI MADT verified\n");
     console_write("Seneri OS: ACPI topology verified\n");
+    console_write("Seneri OS: ACPI FADT verified\n");
     apic_status = apic_bring_online(&boot_topology);
 
     if (apic_status != APIC_STATUS_OK) {
@@ -520,6 +620,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_timer_route(PIT_ROUTE_IO_APIC);
     prove_apic_timer();
     prove_tsc();
+    prove_pm_timer();
 
     console_write("Seneri OS: exception probes passed\n");
     console_write("Seneri OS: PIC spurious paths passed\n");
@@ -529,6 +630,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: timer survives legacy retirement\n");
     console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
     console_write("Seneri OS: TSC reference established\n");
+    console_write("Seneri OS: PM timer independent reference established\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {

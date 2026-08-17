@@ -28,8 +28,10 @@ interrupt-controller records into a validated processor, I/O APIC, and
 interrupt-override topology, brings the bootstrap processor's local APIC online
 in virtual wire mode, delivers the timer through a programmed I/O APIC
 redirection entry, retires the legacy 8259 pair, calibrates and runs the local
-APIC timer, and establishes a time-stamp counter that agrees with it before
-halting safely.
+APIC timer, establishes a time-stamp counter that agrees with it, discovers the
+ACPI power management timer from the FADT, and confirms that reference — whose
+rate is fixed by specification rather than measured — agrees with both
+calibrated clocks before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -47,6 +49,8 @@ Seneri OS: legacy 8259 retired
 Seneri OS: timer survives legacy retirement
 Seneri OS: local APIC timer delivered eight interrupts
 Seneri OS: TSC reference established
+Seneri OS: ACPI FADT verified
+Seneri OS: PM timer independent reference established
 ```
 
 ## Build and prove it
@@ -62,7 +66,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run thirteen deterministic fault and interrupt scenarios
+make qemu-tests # run fourteen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -77,13 +81,14 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/multiboot2.c` — bounded parser for the boot information contract.
 - `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
 - `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
-- `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking and MADT discovery.
+- `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking, MADT and FADT discovery.
 - `src/kernel/acpi_madt.c` — bounded MADT record walking and interrupt topology.
 - `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
 - `src/kernel/apic.c` — local APIC bring-up, virtual wire routing, and identity.
 - `src/kernel/ioapic.c` — I/O APIC redirection entries and ISA override routing.
 - `src/kernel/apic_timer.c` — local APIC timer calibration and periodic ticks.
 - `src/kernel/tsc.c` — time-stamp counter calibration and duration arithmetic.
+- `src/kernel/pm_timer.c` — ACPI PM timer, wrap folding, and bounded waiting.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
@@ -92,17 +97,24 @@ make hooks    # enforce verification in this local clone
 - `docs/LEGACY_RETIREMENT.md` — how the 8259 pair is latched shut, and proof.
 - `docs/APIC_TIMER.md` — why the APIC timer needs calibration, and its proof.
 - `docs/TSC.md` — the second clock, why it exists, and what it cannot claim.
+- `docs/PM_TIMER.md` — the first unmeasured reference, and the error it found.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
 ## Current boundaries
 
 Every interrupt Seneri owns now arrives through discovered hardware, the timer
-interrupt originates in the processor's own local APIC, and a time-stamp counter
-independently agrees with it about how long an interval lasted. The PIT remains
-as the reference both are calibrated against; the supported target does not
-report an invariant counter, so nothing here is yet a time base to trust across
-power states. Level-triggered I/O APIC routing still needs directed EOI. It has
+interrupt originates in the processor's own local APIC, and three clocks agree
+about how long an interval lasted — one of them the ACPI power management timer,
+whose rate is fixed by specification and measured against nothing. That
+agreement is new: the PM timer's first act was to prove the PIT had been
+delivering two interrupts per programmed period, which had left both calibrated
+clocks running at half their true rate while still agreeing with each other. The
+PIT remains as the reference the other two are calibrated against, and retiring
+it comes next. The PM timer is read by polling, so it is not yet a time base
+that keeps a clock or delivers an interrupt, and the supported target does not
+report an invariant counter. Level-triggered I/O APIC routing still needs
+directed EOI. It has
 a deliberately narrow single-core interrupt foundation, but no virtual-memory
 manager, heap, scheduler, userspace, filesystem, networking, graphics, or
 general hardware drivers. Those arrive only after the previous layer has an

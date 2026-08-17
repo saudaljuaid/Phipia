@@ -56,7 +56,7 @@ and thermal transitions, in `CPUID.80000007H:EDX[8]`. On the supported QEMU
 target that bit is **not** set, and Seneri reports it rather than assuming it:
 
 ```text
-Seneri OS: TSC calibrated at 1053607800 Hz, invariant no
+Seneri OS: TSC calibrated at 2806852220 Hz, invariant no
 ```
 
 So the counter is usable here as a second opinion about an interval measured
@@ -95,8 +95,17 @@ interval`, rather than passing because the counter advanced at all.
 
 ## Deferred work
 
-Retiring the PIT needs a reference trustworthy on its own, as above. Nothing
-here is per-processor: a second processor's counter would need its own
+Retiring the PIT needs a reference trustworthy on its own, as above.
+`docs/PM_TIMER.md` covers the increment that supplies one: the ACPI power
+management timer, whose rate is fixed by specification rather than measured.
+Read it for the correction it forced here — the PIT was delivering two
+interrupts per programmed period, so the rate on this page was calibrated at
+half its true value, and the two clocks that were meant to check each other
+could not see it because they were wrong by the same factor. Retiring the PIT
+and recalibrating both clocks against the ACPI timer is the increment after
+that one.
+
+Nothing here is per-processor: a second processor's counter would need its own
 calibration and its own agreement check, since neither synchronisation nor a
 shared rate may be assumed. Level-triggered I/O APIC routing still needs
 directed EOI.

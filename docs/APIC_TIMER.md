@@ -81,7 +81,10 @@ its reference`, rather than passing because the timer ticked at all.
 The PIT remains as the calibration reference. `docs/TSC.md` covers the next
 increment, which adds a second independently calibrated clock so the two can be
 compared, and records that the supported target does not report an invariant
-counter, so the PIT cannot retire on its evidence yet. Level-triggered I/O APIC
+counter, so the PIT cannot retire on its evidence yet. `docs/PM_TIMER.md` covers
+the increment after it, which found that the reference described on this page
+was delivering two interrupts per programmed period; the rate measured here was
+half its true value until that was corrected. Level-triggered I/O APIC
 routing still needs directed EOI. Nothing here is per-processor: a second
 processor would need its own calibration, since the local APIC timer is
 core-local.
