@@ -267,6 +267,26 @@ interrupt_page_fault_site:
     jmp .page_fault_returned
 .size interrupt_trigger_page_fault, . - interrupt_trigger_page_fault
 
+/*
+ * void paging_probe_write(volatile uint8_t *target, uint8_t value)
+ * A supervisor byte store at an instruction address a test can name, so the
+ * paging scenario can match the faulting RIP exactly the way the page-fault
+ * scenario does. It lives with the other fault probes because it is one: a
+ * compiler is free to move, duplicate, widen or delete an equivalent C store,
+ * and none of those would still fault at a predictable address.
+ *
+ * Unlike the probes above it returns when the store succeeds, so a permission
+ * that failed to take shows up as a scenario failure rather than as a hang.
+ */
+.global paging_probe_write
+.type paging_probe_write, @function
+paging_probe_write:
+.global paging_probe_write_site
+paging_probe_write_site:
+    movb %sil, (%rdi)
+    ret
+.size paging_probe_write, . - paging_probe_write
+
 .global interrupt_trigger_unexpected
 .type interrupt_trigger_unexpected, @function
 interrupt_trigger_unexpected:

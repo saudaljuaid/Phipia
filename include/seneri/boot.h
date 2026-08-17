@@ -9,6 +9,19 @@
 #define MULTIBOOT2_BOOT_MAGIC UINT32_C(0x36D76289)
 #define MULTIBOOT2_TAG_ALIGNMENT 8U
 #define MULTIBOOT2_MAX_INFORMATION_SIZE (16U * 1024U * 1024U)
+
+/*
+ * The promise that every physical address below 4 GiB is reachable at the same
+ * virtual address. src/arch/x86_64/boot.S makes it before long mode and
+ * src/kernel/paging.c keeps it afterwards, which is why the constant survived
+ * the kernel taking ownership of its own page tables.
+ *
+ * Three things depend on it: the frame allocator addresses exactly this range,
+ * acpi_span_is_early_mapped gates every firmware table read against it, and
+ * paging.c reads each of its own tables through the table's physical address.
+ * Narrowing it means re-pointing all three, so it is deliberately unchanged
+ * here; docs/VIRTUAL_MEMORY.md records why.
+ */
 #define SENERI_EARLY_PHYSICAL_LIMIT UINT64_C(0x100000000)
 
 enum multiboot2_tag_type {
