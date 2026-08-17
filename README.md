@@ -30,8 +30,9 @@ in virtual wire mode, delivers the timer through a programmed I/O APIC
 redirection entry, retires the legacy 8259 pair, discovers the ACPI power
 management timer from the FADT, calibrates both the local APIC timer and a
 time-stamp counter against that reference — whose rate is fixed by specification
-rather than measured — then retires the 8254 and proves all three clocks still
-agree about an interval with it gone, before halting safely.
+rather than measured — retires the 8254 and proves all three clocks still agree
+about an interval with it gone, then establishes a monotonic clock and deadline
+timers and sleeps on one, before halting safely.
 
 The day-one success contract is the serial line:
 
@@ -53,6 +54,8 @@ Seneri OS: ACPI FADT verified
 Seneri OS: PM timer independent reference established
 Seneri OS: PIT retired
 Seneri OS: clocks survive PIT retirement
+Seneri OS: deadline timers online
+Seneri OS: monotonic time established
 ```
 
 ## Build and prove it
@@ -68,7 +71,7 @@ Then run:
 ```sh
 make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
 make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run fifteen deterministic fault and interrupt scenarios
+make qemu-tests # run sixteen deterministic fault and interrupt scenarios
 make run      # optional interactive boot
 make hooks    # enforce verification in this local clone
 ```
@@ -91,6 +94,8 @@ make hooks    # enforce verification in this local clone
 - `src/kernel/apic_timer.c` — local APIC timer calibration and periodic ticks.
 - `src/kernel/tsc.c` — time-stamp counter calibration and duration arithmetic.
 - `src/kernel/pm_timer.c` — ACPI PM timer, wrap folding, and bounded waiting.
+- `src/kernel/clock.c` — the monotonic clock and its one origin.
+- `src/kernel/timer.c` — deadline timers on the APIC timer's one-shot mode.
 - `linker.ld` — low-memory ELF layout with separate R, RX, and RW segments.
 - `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
 - `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
@@ -101,6 +106,7 @@ make hooks    # enforce verification in this local clone
 - `docs/TSC.md` — the second clock, why it exists, and what it cannot claim.
 - `docs/PM_TIMER.md` — the first unmeasured reference, and the error it found.
 - `docs/PIT_RETIREMENT.md` — recalibrating on that reference, and losing the 8254.
+- `docs/MONOTONIC_TIME.md` — an instant, a deadline, and how bounded a sleep is.
 - `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
 - `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
 
@@ -115,12 +121,18 @@ interval with it gone. Getting here took finding that the PIT had been deliverin
 two interrupts per programmed period, which had left both calibrated clocks
 running at half their true rate while still agreeing with each other.
 
-What the clocks are not yet is usable. All three are read by sampling a counter,
-so there is no monotonic clock, no notion of time since boot, and no way to sleep
-until a deadline — a scheduler needs the last of those before it needs anything
-else. The supported target still reports no invariant counter, so the TSC's rate
-being correct is not the same as its rate being stable. Level-triggered I/O APIC
-routing still needs directed EOI, which gates PCI device interrupts. It has
+Those rates are now usable time: one monotonic clock with a single origin, and
+deadlines armed on the APIC timer's one-shot mode, so code can ask to be woken at
+an instant rather than count ticks. Boot sleeps on one to prove it.
+
+What is missing sits above that layer. Nothing sleeps concurrently, because
+`timer_sleep_ns` halts the only thread of control there is — a second sleeper
+needs threads, and threads need the scheduler this layer exists to make possible.
+Pending deadlines live in fixed storage because there is no heap. There is no
+wall-clock date, only time since boot. The supported target still reports no
+invariant counter, so the TSC's rate being correct is not the same as its rate
+being stable. Level-triggered I/O APIC routing still needs directed EOI, which
+gates PCI device interrupts. It has
 a deliberately narrow single-core interrupt foundation, but no virtual-memory
 manager, heap, scheduler, userspace, filesystem, networking, graphics, or
 general hardware drivers. Those arrive only after the previous layer has an
