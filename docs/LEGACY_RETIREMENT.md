@@ -76,5 +76,6 @@ timer against the PIT and runs the timer interrupt on the processor itself. The
 PIT stayed on as that calibration reference, and `docs/PIT_RETIREMENT.md` covers
 the increment that finally removed it: the 8254 is now stopped, masked and
 latched shut in the same way the 8259 pair is here, once both derived clocks have
-been recalibrated against the ACPI power management timer. Level triggered
-routing still needs I/O APIC directed EOI.
+been recalibrated against the ACPI power management timer. ~~Level triggered
+routing still needs I/O APIC directed EOI.~~ **Fixed**: the directed end of
+interrupt and the routing it makes possible are in `docs/IO_APIC.md`.

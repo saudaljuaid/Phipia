@@ -90,7 +90,8 @@ after it, which found that the reference described on this page was delivering t
 interrupts per programmed period, so the rate measured here was half its true
 value until that was corrected. `docs/PIT_RETIREMENT.md` covers the increment that
 moved this calibration onto the ACPI power management timer and retired the 8254
-altogether. Level-triggered I/O APIC
-routing still needs directed EOI. Nothing here is per-processor: a second
+altogether. ~~Level-triggered I/O APIC
+routing still needs directed EOI.~~ **Fixed**, in `docs/IO_APIC.md`. Nothing
+here is per-processor: a second
 processor would need its own calibration, since the local APIC timer is
 core-local.
