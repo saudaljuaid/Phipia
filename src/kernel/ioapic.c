@@ -5,6 +5,7 @@
 
 #include <seneri/acpi.h>
 #include <seneri/acpi_util.h>
+#include <seneri/apic.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
@@ -221,6 +222,14 @@ static bool version_has_directed_eoi(uint8_t version)
     return version >= IOAPIC_VERSION_DIRECTED_EOI;
 }
 
+static bool can_select_directed_eoi(
+    bool local_apic_suppression_supported,
+    bool ioapic_directed_eoi_supported
+)
+{
+    return local_apic_suppression_supported && ioapic_directed_eoi_supported;
+}
+
 static void mask_entry(const struct ioapic_unit *unit, uint32_t entry)
 {
     /*
@@ -374,6 +383,7 @@ static void forget_entry(uint8_t unit_index, uint32_t entry)
 
 /* The routed topology is kept so masking can find the entry again. */
 static const struct acpi_topology *routing_topology;
+static bool level_eoi_mode_selected;
 
 enum ioapic_status ioapic_initialize(const struct acpi_topology *topology)
 {
@@ -494,13 +504,30 @@ enum ioapic_status ioapic_route_isa_irq_as(
         return IOAPIC_STATUS_UNROUTABLE_INTERRUPT;
     }
 
-    /*
-     * A level-triggered entry latches remote IRR on every delivery and will
-     * never deliver again until an end of interrupt directed at this unit
-     * clears it. Without that register there is nothing to send, so the entry
-     * is refused rather than programmed into a pin that fires exactly once.
-     */
-    if (source.level_triggered && !unit->directed_eoi) {
+    if (source.level_triggered && !level_eoi_mode_selected) {
+        const struct apic_state apic = apic_get_state();
+
+        /*
+         * Directed EOI is selected only when both ends advertise it. Otherwise
+         * the architected local-APIC broadcast remains the acknowledgement.
+         * The choice is global and permanent because SVR bit 12 is global too.
+         */
+        if (can_select_directed_eoi(
+                apic.eoi_broadcast_suppression_supported,
+                unit->directed_eoi
+            )) {
+            if (apic_suppress_eoi_broadcasts() != APIC_STATUS_OK) {
+                return IOAPIC_STATUS_LOCAL_EOI_SUPPRESSION_FAILURE;
+            }
+
+            state.directed_eoi_mode = true;
+        }
+
+        level_eoi_mode_selected = true;
+    }
+
+    if (source.level_triggered && state.directed_eoi_mode &&
+        !unit->directed_eoi) {
         return IOAPIC_STATUS_NO_DIRECTED_EOI;
     }
 
@@ -672,8 +699,18 @@ enum ioapic_status ioapic_send_eoi(uint8_t vector)
         ++state.remote_irr_missing;
     }
 
-    ioapic_write_eoi(unit, vector);
-    ++state.directed_eoi_count;
+    /*
+     * Intel SDM volume 3A section 13.8.5 orders the directed protocol: local
+     * APIC EOI first, then the generating I/O APIC's directed EOI. When local
+     * broadcast suppression is unavailable, that first write is itself what
+     * clears remote IRR and no redundant directed write is sent.
+     */
+    apic_send_eoi();
+
+    if (state.directed_eoi_mode) {
+        ioapic_write_eoi(unit, vector);
+        ++state.directed_eoi_count;
+    }
 
     /*
      * The entry is deliberately not read back afterwards. A line that is still
@@ -816,7 +853,11 @@ static bool directed_eoi_is_gated_on_version(void)
         !version_has_directed_eoi(UINT8_C(0x1F)) &&
         version_has_directed_eoi(IOAPIC_VERSION_DIRECTED_EOI) &&
         version_has_directed_eoi(UINT8_C(0x21)) &&
-        version_has_directed_eoi(UINT8_C(0xFF));
+        version_has_directed_eoi(UINT8_C(0xFF)) &&
+        !can_select_directed_eoi(false, false) &&
+        !can_select_directed_eoi(false, true) &&
+        !can_select_directed_eoi(true, false) &&
+        can_select_directed_eoi(true, true);
 }
 
 static bool source_matches(
@@ -1030,50 +1071,58 @@ bool ioapic_self_test(void)
 
 const char *ioapic_status_string(enum ioapic_status status)
 {
-    switch (status) {
-    case IOAPIC_STATUS_OK:
-        return "ok";
-    case IOAPIC_STATUS_NULL_ARGUMENT:
-        return "null I/O APIC argument";
-    case IOAPIC_STATUS_ALREADY_INITIALIZED:
-        return "I/O APIC was initialized twice";
-    case IOAPIC_STATUS_NOT_INITIALIZED:
-        return "I/O APIC is not initialized";
-    case IOAPIC_STATUS_INTERRUPTS_ENABLED:
-        return "I/O APIC mutation requires interrupts disabled";
-    case IOAPIC_STATUS_MISSING_IO_APIC:
-        return "ACPI described no I/O APIC to program";
-    case IOAPIC_STATUS_ID_DISAGREES_WITH_ACPI:
-        return "I/O APIC identifier disagrees with the ACPI MADT";
-    case IOAPIC_STATUS_TOO_FEW_ENTRIES:
-        return "I/O APIC cannot redirect the sixteen ISA interrupts";
-    case IOAPIC_STATUS_OVERLAPPING_INTERRUPT_BASE:
-        return "two I/O APICs claim the same global interrupt";
-    case IOAPIC_STATUS_BAD_IRQ:
-        return "interrupt request is outside the ISA range";
-    case IOAPIC_STATUS_BAD_VECTOR:
-        return "vector is outside the I/O APIC delivery range";
-    case IOAPIC_STATUS_BAD_DESTINATION:
-        return "destination does not fit the redirection entry";
-    case IOAPIC_STATUS_BAD_TRIGGER:
-        return "unknown I/O APIC trigger mode request";
-    case IOAPIC_STATUS_RESERVED_POLARITY:
-        return "ACPI declared a reserved interrupt polarity";
-    case IOAPIC_STATUS_RESERVED_TRIGGER:
-        return "ACPI declared a reserved interrupt trigger mode";
-    case IOAPIC_STATUS_UNROUTABLE_INTERRUPT:
-        return "no I/O APIC owns that global system interrupt";
-    case IOAPIC_STATUS_NO_DIRECTED_EOI:
-        return "I/O APIC predates the directed end-of-interrupt register";
-    case IOAPIC_STATUS_VECTOR_IN_USE:
-        return "that vector already carries a different redirection entry";
-    case IOAPIC_STATUS_VECTOR_NOT_ROUTED:
-        return "no redirection entry carries that vector";
-    case IOAPIC_STATUS_NOT_LEVEL_TRIGGERED:
-        return "an edge-triggered vector has no remote IRR to clear";
-    case IOAPIC_STATUS_READBACK_MISMATCH:
-        return "I/O APIC did not read back its programmed entry";
-    default:
+    static const char *const messages[IOAPIC_STATUS_COUNT] = {
+        [IOAPIC_STATUS_OK] = "ok",
+        [IOAPIC_STATUS_NULL_ARGUMENT] = "null I/O APIC argument",
+        [IOAPIC_STATUS_ALREADY_INITIALIZED] =
+            "I/O APIC was initialized twice",
+        [IOAPIC_STATUS_NOT_INITIALIZED] = "I/O APIC is not initialized",
+        [IOAPIC_STATUS_INTERRUPTS_ENABLED] =
+            "I/O APIC mutation requires interrupts disabled",
+        [IOAPIC_STATUS_MISSING_IO_APIC] =
+            "ACPI described no I/O APIC to program",
+        [IOAPIC_STATUS_ID_DISAGREES_WITH_ACPI] =
+            "I/O APIC identifier disagrees with the ACPI MADT",
+        [IOAPIC_STATUS_TOO_FEW_ENTRIES] =
+            "I/O APIC cannot redirect the sixteen ISA interrupts",
+        [IOAPIC_STATUS_OVERLAPPING_INTERRUPT_BASE] =
+            "two I/O APICs claim the same global interrupt",
+        [IOAPIC_STATUS_BAD_IRQ] = "interrupt request is outside the ISA range",
+        [IOAPIC_STATUS_BAD_VECTOR] =
+            "vector is outside the I/O APIC delivery range",
+        [IOAPIC_STATUS_BAD_DESTINATION] =
+            "destination does not fit the redirection entry",
+        [IOAPIC_STATUS_BAD_TRIGGER] =
+            "unknown I/O APIC trigger mode request",
+        [IOAPIC_STATUS_RESERVED_POLARITY] =
+            "ACPI declared a reserved interrupt polarity",
+        [IOAPIC_STATUS_RESERVED_TRIGGER] =
+            "ACPI declared a reserved interrupt trigger mode",
+        [IOAPIC_STATUS_UNROUTABLE_INTERRUPT] =
+            "no I/O APIC owns that global system interrupt",
+        [IOAPIC_STATUS_NO_DIRECTED_EOI] =
+            "I/O APIC predates the directed end-of-interrupt register",
+        [IOAPIC_STATUS_VECTOR_IN_USE] =
+            "that vector already carries a different redirection entry",
+        [IOAPIC_STATUS_VECTOR_NOT_ROUTED] =
+            "no redirection entry carries that vector",
+        [IOAPIC_STATUS_NOT_LEVEL_TRIGGERED] =
+            "an edge-triggered vector has no remote IRR to clear",
+        [IOAPIC_STATUS_READBACK_MISMATCH] =
+            "I/O APIC did not read back its programmed entry",
+        [IOAPIC_STATUS_LOCAL_EOI_SUPPRESSION_FAILURE] =
+            "local APIC could not enable EOI-broadcast suppression"
+    };
+
+    _Static_assert(
+        sizeof(messages) / sizeof(messages[0]) == IOAPIC_STATUS_COUNT,
+        "I/O APIC status table must cover every enumerator"
+    );
+
+    if ((unsigned int)status >= IOAPIC_STATUS_COUNT ||
+        messages[status] == NULL) {
         return "unknown I/O APIC status";
     }
+
+    return messages[status];
 }

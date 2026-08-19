@@ -235,6 +235,14 @@ static void report_apic(const struct apic_state *apic)
     console_write("Seneri OS: local APIC legacy routing ");
     console_write(apic->legacy_interrupts_routed ? "LINT0 ExtINT" : "masked");
     console_putc('\n');
+
+    console_write("Seneri OS: local APIC EOI-broadcast suppression ");
+    console_write(
+        apic->eoi_broadcast_suppression_supported ? "supported" : "unsupported"
+    );
+    console_write(" active ");
+    console_write(apic->eoi_broadcasts_suppressed ? "yes" : "no");
+    console_putc('\n');
 }
 
 static void report_ioapic(const struct ioapic_state *ioapic)
@@ -279,14 +287,8 @@ static void prove_level_route(void)
     enum ioapic_status ioapic_status;
     enum pit_status pit_status;
 
-    /*
-     * The version check, ahead of the routing that depends on it, so a machine
-     * whose I/O APIC predates the directed end-of-interrupt register is told
-     * why it cannot have level-triggered routing rather than being told that
-     * some redirection entry would not program.
-     */
-    if (ioapic.count == 0U || !ioapic.units[0].directed_eoi) {
-        console_panic(ioapic_status_string(IOAPIC_STATUS_NO_DIRECTED_EOI));
+    if (ioapic.count == 0U) {
+        console_panic(ioapic_status_string(IOAPIC_STATUS_MISSING_IO_APIC));
     }
 
     pit_status = pit_start(LEVEL_PROOF_FREQUENCY, PIT_ROUTE_IO_APIC_LEVEL);
@@ -309,6 +311,8 @@ static void prove_level_route(void)
     console_write_u64(entry.vector);
     console_write(" active ");
     console_write(entry.active_low ? "low" : "high");
+    console_write(" acknowledgement ");
+    console_write(ioapic_get_state().directed_eoi_mode ? "directed" : "broadcast");
     console_putc('\n');
 
     /*
@@ -370,8 +374,11 @@ static void prove_level_route(void)
      * happen to have arrived.
      */
     if (ioapic.remote_irr_observed < LEVEL_PROOF_TICKS ||
-        ioapic.directed_eoi_count < LEVEL_PROOF_TICKS ||
-        ioapic.remote_irr_missing != 0U) {
+        ioapic.remote_irr_missing != 0U ||
+        (ioapic.directed_eoi_mode &&
+         (ioapic.directed_eoi_count < LEVEL_PROOF_TICKS ||
+          !apic_get_state().eoi_broadcasts_suppressed)) ||
+        (!ioapic.directed_eoi_mode && ioapic.directed_eoi_count != 0U)) {
         console_panic("a level-triggered delivery did not latch remote IRR");
     }
 

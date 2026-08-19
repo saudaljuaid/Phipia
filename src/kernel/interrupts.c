@@ -436,34 +436,41 @@ void interrupt_dispatch(struct interrupt_frame *frame)
      * 8259 pair. The end of interrupt follows the handler so a second interrupt
      * from the same source cannot arrive while the first is still running.
      *
-     * A level-triggered source needs a second acknowledgement, directed at the
-     * I/O APIC that owns its redirection entry, because the local APIC's EOI
-     * register does not clear that entry's remote IRR and the pin cannot
-     * deliver again until it is clear. Both follow the handler and the I/O APIC
-     * goes first: while the local APIC still holds the vector in service the
-     * processor cannot accept it again, so a re-assertion the directed end of
-     * interrupt releases is queued rather than taken, and the local APIC's EOI
-     * remains the single instant at which the interrupt is finished.
+     * A level-triggered source is completed by ioapic_send_eoi. It observes the
+     * live remote IRR, sends the local EOI, and—only when broadcasts have been
+     * suppressed—follows it with the generating I/O APIC's directed EOI. That
+     * is the ordering required by Intel SDM volume 3A section 13.8.5.
      */
     if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_LOCAL_APIC_LIMIT) {
         const bool level_triggered = ioapic_vector_is_level_triggered(vector);
+        enum ioapic_status ioapic_status;
 
         if (slot->handler == NULL) {
             if (level_triggered) {
-                (void)ioapic_send_eoi(vector);
+                ioapic_status = ioapic_send_eoi(vector);
+
+                if (ioapic_status != IOAPIC_STATUS_OK) {
+                    console_panic(ioapic_status_string(ioapic_status));
+                }
+            } else {
+                apic_send_eoi();
             }
 
-            apic_send_eoi();
             fatal_interrupt(frame);
         }
 
         slot->handler(frame, slot->context);
 
         if (level_triggered) {
-            (void)ioapic_send_eoi(vector);
+            ioapic_status = ioapic_send_eoi(vector);
+
+            if (ioapic_status != IOAPIC_STATUS_OK) {
+                console_panic(ioapic_status_string(ioapic_status));
+            }
+        } else {
+            apic_send_eoi();
         }
 
-        apic_send_eoi();
         return;
     }
 

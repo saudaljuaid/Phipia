@@ -38,7 +38,9 @@ enum ioapic_status {
     IOAPIC_STATUS_VECTOR_IN_USE,
     IOAPIC_STATUS_VECTOR_NOT_ROUTED,
     IOAPIC_STATUS_NOT_LEVEL_TRIGGERED,
-    IOAPIC_STATUS_READBACK_MISMATCH
+    IOAPIC_STATUS_READBACK_MISMATCH,
+    IOAPIC_STATUS_LOCAL_EOI_SUPPRESSION_FAILURE,
+    IOAPIC_STATUS_COUNT
 };
 
 /*
@@ -68,6 +70,7 @@ struct ioapic_unit {
 struct ioapic_state {
     size_t count;
     size_t level_routes;
+    bool directed_eoi_mode;
     uint64_t directed_eoi_count;
     uint64_t remote_irr_observed;
     uint64_t remote_irr_missing;
@@ -77,8 +80,10 @@ struct ioapic_state {
 /*
  * One redirection entry, decomposed into the fields Seneri reasons about, and
  * the two that say which pin on which unit it is. Remote IRR is the device's to
- * set: it latches on every level-triggered delivery and only a directed end of
- * interrupt puts it down.
+ * set: it latches on every level-triggered delivery and only an end-of-
+ * interrupt indication puts it down, either as the normal local-APIC broadcast
+ * or through the optional directed-EOI register after broadcasts were
+ * suppressed.
  */
 struct ioapic_redirection {
     uint32_t unit_identifier;
@@ -110,11 +115,10 @@ enum ioapic_status ioapic_route_isa_irq_as(
 enum ioapic_status ioapic_mask_isa_irq(uint8_t irq);
 
 /*
- * Acknowledge a level-triggered delivery at the I/O APIC that owns it, by
- * writing the vector to the directed end-of-interrupt register. Nothing else
- * clears the entry's remote IRR, and until it is clear the pin cannot deliver
- * again. Edge-triggered and unrouted vectors are refused rather than
- * acknowledged, because neither has a remote IRR to clear.
+ * Complete a level-triggered delivery. The live remote IRR is observed first,
+ * then the local APIC EOI is sent. If local EOI broadcasts were explicitly
+ * suppressed, the vector is finally written to the owning I/O APIC's directed
+ * EOI register. Edge-triggered and unrouted vectors are refused by name.
  */
 enum ioapic_status ioapic_send_eoi(uint8_t vector);
 

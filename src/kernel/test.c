@@ -480,18 +480,6 @@ static void ioapic_level_scenario(void)
         kernel_test_fail("I/O APIC is not initialized");
     }
 
-    /*
-     * The version check, against the hardware rather than against a synthetic
-     * value. Without the directed end-of-interrupt register there is nothing
-     * that could clear a remote IRR, and Seneri refuses to program a
-     * level-triggered entry at all on such a unit.
-     */
-    if (!ioapic_get_state().units[0].directed_eoi) {
-        kernel_test_fail(
-            ioapic_status_string(IOAPIC_STATUS_NO_DIRECTED_EOI)
-        );
-    }
-
     if (pic_mask_snapshot() != UINT16_C(0xFFFF)) {
         kernel_test_fail("a legacy PIC line was left unmasked");
     }
@@ -591,6 +579,8 @@ static void ioapic_level_scenario(void)
     console_write_u64(after.remote_irr_observed);
     console_write(", directed EOI ");
     console_write_u64(after.directed_eoi_count);
+    console_write(", mode ");
+    console_write(after.directed_eoi_mode ? "directed" : "broadcast");
     console_write(", in ");
     console_write_u64(elapsed_ns);
     console_write(" ns\n");
@@ -617,9 +607,13 @@ static void ioapic_level_scenario(void)
      */
     if (after.remote_irr_observed - before.remote_irr_observed <
             IOAPIC_LEVEL_TEST_TICKS ||
-        after.directed_eoi_count - before.directed_eoi_count <
-            IOAPIC_LEVEL_TEST_TICKS ||
-        after.remote_irr_missing != 0U) {
+        after.remote_irr_missing != 0U ||
+        (after.directed_eoi_mode &&
+         (after.directed_eoi_count - before.directed_eoi_count <
+              IOAPIC_LEVEL_TEST_TICKS ||
+          !apic_get_state().eoi_broadcasts_suppressed)) ||
+        (!after.directed_eoi_mode &&
+         after.directed_eoi_count != before.directed_eoi_count)) {
         kernel_test_fail("a level-triggered delivery did not latch remote IRR");
     }
 
