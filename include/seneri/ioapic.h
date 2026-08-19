@@ -11,9 +11,9 @@
 /*
  * Intel 82093AA section 3.2.2 reports the I/O APIC version in the low byte of
  * register 0x01. The directed end-of-interrupt register at memory offset 0x40
- * exists from version 0x20 onwards; on anything older a level-triggered entry
- * cannot be acknowledged at the I/O APIC at all, so Seneri refuses to program
- * one rather than assume the register is there.
+ * exists from version 0x20 onwards. Older units still receive the normal local-
+ * APIC EOI broadcast, so only directed-mode selection and writes to offset 0x40
+ * are gated on this threshold; level-triggered routing itself remains valid.
  */
 #define IOAPIC_VERSION_DIRECTED_EOI UINT8_C(0x20)
 
