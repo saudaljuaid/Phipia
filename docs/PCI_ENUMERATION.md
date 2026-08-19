@@ -258,8 +258,9 @@ on an idle host:
 | base commit | 25 | 50.48 ms | 50.57 ms | 50.80 ms | 0 |
 | this tree | 25 | 50.49 ms | 50.57 ms | 50.75 ms | 0 |
 
-The two distributions are indistinguishable: a 1% overshoot, with the tolerance
-at 25%. Across all thirty-five boots of this tree taken during the work, two
+The two distributions are indistinguishable, and both medians sit about 1% over
+the 50 ms deadline against a 25% tolerance. Across all thirty-five boots of this
+tree taken during the work, two
 were outliers — 78 ms and 60 ms — and **both occurred while the host was also
 rebuilding**, one of them in the first scenario after a clean `make verify`.
 Neither the base commit nor this tree produced one on an idle host.

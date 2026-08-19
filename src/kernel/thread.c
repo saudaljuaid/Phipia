@@ -13,7 +13,8 @@
 #include <seneri/timer.h>
 
 /*
- * More than one thread of control, on one core, cooperatively scheduled.
+ * More than one thread of control, on one core. Scheduling is cooperative until
+ * thread_enable_preemption arms the first quantum, and preemptive after that.
  *
  * The whole layer rests on one observation: a call to thread_switch_context
  * leaves its return address on the stack it was called on, so changing the
@@ -21,10 +22,10 @@
  * that is not running is sitting inside that one function, and resuming it is
  * letting it finish.
  *
- * What is deliberately not here: preemption, priorities, blocking, and any
- * notion of a second processor. The run queue is a linear scan over a fixed
- * table because that is predictable enough for a self-test to pin exact
- * rotations, exactly as heap.c's first fit is.
+ * What is deliberately not here: priorities, blocking, and any notion of a
+ * second processor. The run queue is a linear scan over a fixed table because
+ * that is predictable enough for a self-test to pin exact rotations, exactly
+ * as heap.c's first fit is.
  */
 
 /*
@@ -94,7 +95,7 @@ static uint64_t next_identifier;
  * Volatile because the only thing ordering those two is the hardware.
  */
 static volatile bool reschedule_pending;
-static uint64_t quantum_identifier;
+static volatile uint64_t quantum_identifier;
 
 static void quantum_expired(uint64_t deadline_ns, void *context);
 
@@ -203,6 +204,7 @@ static void clear_slot(struct thread *thread)
 static enum thread_status map_stack(size_t slot)
 {
     const uint64_t base = slot_stack_base(slot);
+    enum thread_status failure = THREAD_STATUS_OK;
     size_t mapped = 0U;
 
     for (size_t page = 0; page < THREAD_STACK_PAGES; ++page) {
@@ -210,12 +212,14 @@ static enum thread_status map_stack(size_t slot)
         uintptr_t frame = 0U;
 
         if (frame_allocate(&frame) != FRAME_STATUS_OK) {
+            failure = THREAD_STATUS_OUT_OF_FRAMES;
             break;
         }
 
         if (paging_map(address, (uint64_t)frame, PAGING_PAGE_SIZE,
                 PAGING_WRITE) != PAGING_STATUS_OK) {
             (void)frame_release(frame);
+            failure = THREAD_STATUS_MAPPING_FAILURE;
             break;
         }
 
@@ -233,7 +237,7 @@ static enum thread_status map_stack(size_t slot)
             }
         }
 
-        return THREAD_STATUS_OUT_OF_FRAMES;
+        return failure;
     }
 
     state.stack_frames += THREAD_STACK_PAGES;
@@ -486,13 +490,15 @@ void thread_yield(void)
 static enum thread_status arm_quantum(void)
 {
     const uint64_t deadline = clock_monotonic_ns() + THREAD_QUANTUM_NS;
+    uint64_t identifier = THREAD_ID_NONE;
 
-    if (timer_arm(deadline, quantum_expired, NULL, &quantum_identifier) !=
+    if (timer_arm(deadline, quantum_expired, NULL, &identifier) !=
         TIMER_STATUS_OK) {
         quantum_identifier = THREAD_ID_NONE;
         return THREAD_STATUS_NO_QUANTUM;
     }
 
+    quantum_identifier = identifier;
     return THREAD_STATUS_OK;
 }
 
@@ -617,6 +623,8 @@ _Noreturn void thread_exit(void)
         console_panic("a thread exited before threads were started");
     }
 
+    /* The run-queue mutation must not be preempted on the exiting stack. */
+    cpu_interrupt_disable();
     previous = current_slot;
 
     /*
@@ -910,24 +918,27 @@ const char *thread_state_string(enum thread_state thread_state)
 const char *thread_status_string(enum thread_status status)
 {
     static const char *const messages[] = {
-        "ok",
-        "null thread argument",
-        "threads are already started",
-        "threads are not started",
-        "thread operation needs interrupts disabled",
-        "threads need the kernel heap and page tables",
-        "thread table could not be allocated",
-        "thread capacity is exhausted",
-        "no physical frame for a thread stack",
-        "a thread stack could not be mapped",
-        "no thread carries that identifier",
-        "only the boot thread may stop the scheduler",
-        "a thread is still runnable",
-        "preemption needs the deadline timer started",
-        "the scheduler could not arm a quantum",
-        "preemption is already enabled",
-        "preemption is not enabled",
-        "thread table does not match the address space"
+        [THREAD_STATUS_OK] = "ok",
+        [THREAD_STATUS_NULL_ARGUMENT] = "null thread argument",
+        [THREAD_STATUS_ALREADY_STARTED] = "threads are already started",
+        [THREAD_STATUS_NOT_STARTED] = "threads are not started",
+        [THREAD_STATUS_INTERRUPTS_ENABLED] =
+            "thread operation needs interrupts disabled",
+        [THREAD_STATUS_NO_HEAP] = "threads need the kernel heap and page tables",
+        [THREAD_STATUS_NO_MEMORY] = "thread table could not be allocated",
+        [THREAD_STATUS_NO_CAPACITY] = "thread capacity is exhausted",
+        [THREAD_STATUS_OUT_OF_FRAMES] = "no physical frame for a thread stack",
+        [THREAD_STATUS_MAPPING_FAILURE] = "a thread stack could not be mapped",
+        [THREAD_STATUS_BAD_IDENTIFIER] = "no thread carries that identifier",
+        [THREAD_STATUS_NOT_THE_BOOT_THREAD] =
+            "only the boot thread may stop the scheduler",
+        [THREAD_STATUS_THREADS_STILL_RUNNABLE] = "a thread is still runnable",
+        [THREAD_STATUS_NO_TIMER] = "preemption needs the deadline timer started",
+        [THREAD_STATUS_NO_QUANTUM] = "the scheduler could not arm a quantum",
+        [THREAD_STATUS_ALREADY_PREEMPTIVE] = "preemption is already enabled",
+        [THREAD_STATUS_NOT_PREEMPTIVE] = "preemption is not enabled",
+        [THREAD_STATUS_VALIDATION_FAILURE] =
+            "thread table does not match the address space"
     };
 
     _Static_assert(
@@ -1092,6 +1103,7 @@ static bool refusals_are_named(void)
 {
     const struct thread_system_state saved_state = state;
     struct thread *const saved_threads = threads;
+    const size_t saved_current_slot = current_slot;
     struct thread_state_report report;
     uint64_t identifier = UINT64_C(0xFFFF);
     bool correct;
@@ -1153,6 +1165,7 @@ static bool refusals_are_named(void)
 
     threads = saved_threads;
     state = saved_state;
+    current_slot = saved_current_slot;
     return correct;
 }
 

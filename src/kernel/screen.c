@@ -228,6 +228,10 @@ enum screen_status screen_initialize(void)
         return SCREEN_STATUS_CELL_TOO_LARGE;
     }
 
+    if (width > FONT_MAX_CELL_WIDTH) {
+        return SCREEN_STATUS_CELL_TOO_LARGE;
+    }
+
     const struct framebuffer_state framebuffer = framebuffer_get_state();
     uint32_t columns = 0U;
     uint32_t rows = 0U;

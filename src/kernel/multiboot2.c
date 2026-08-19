@@ -234,7 +234,8 @@ static enum boot_status decode_framebuffer(
      * placed it above 4 GiB has given this kernel something it cannot reach.
      * Refused here rather than discovered as a fault at a plausible address.
      */
-    if (size == 0U || address > SENERI_EARLY_PHYSICAL_LIMIT - size) {
+    if (size == 0U || size > SENERI_EARLY_PHYSICAL_LIMIT ||
+        address > SENERI_EARLY_PHYSICAL_LIMIT - size) {
         return BOOT_STATUS_FRAMEBUFFER_OUTSIDE_EARLY_MAP;
     }
 

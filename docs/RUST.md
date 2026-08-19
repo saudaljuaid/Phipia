@@ -49,10 +49,11 @@ that will really need it exist.
 whose header, run lengths and pixel count are, in principle, attacker
 controlled, and it refuses eight distinct malformations by name.
 
-`src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`, and each
-contains **exactly one `unsafe` block**, at the single place a C pointer becomes
-a Rust slice, with the caller's obligation written above it. Past that line
-everything is safe Rust and every index is checked.
+`src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
+blocks appear only where an ABI function turns validated C pointers into Rust
+slices or writes through validated C pointers, with the caller's obligation
+written above each boundary. Past those lines everything is safe Rust and every
+index is checked.
 
 `src/rust/lib.rs` — the crate root and the panic handler.
 

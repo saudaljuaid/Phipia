@@ -16,10 +16,10 @@
  * timer_sleep_ns halts rather than yields, and why no driver can own a device
  * that takes milliseconds to answer. A thread is what a wait can belong to.
  *
- * This layer is cooperative: a thread runs until it calls thread_yield or
- * returns. Preemption is the increment after, and the context switch here saves
- * the flags register precisely so that adding it does not silently change
- * whether a resumed thread has interrupts enabled.
+ * A thread runs until it calls thread_yield, returns, or - after
+ * thread_enable_preemption - exhausts its quantum. Scheduling is cooperative
+ * until then and preemptive afterwards. The context switch saves the flags
+ * register so a resumed thread keeps the interrupt state it was suspended with.
  */
 
 /*

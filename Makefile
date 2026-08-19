@@ -101,9 +101,16 @@ toolchain:
 	@for tool in gcc ld grub-file readelf nm objdump rustc python3; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
+	@version=$$($(RUSTC) --version | awk '{ print $$2 }'); \
+		echo "$$version" | awk -F'[.-]' \
+			'{ exit !($$1 > 1 || ($$1 == 1 && $$2 >= 85)) }' || \
+		{ echo "rustc 1.85.0 or newer is required (found $$version)"; exit 1; }
 	@$(RUSTC) --print target-list | grep -Fxq '$(RUST_TARGET)' || \
 		{ echo 'rustc does not know $(RUST_TARGET)'; exit 1; }
-	@$(RUSTC) --target $(RUST_TARGET) --print target-libdir >/dev/null 2>&1 || \
+	@libdir=$$($(RUSTC) --target $(RUST_TARGET) --print target-libdir 2>/dev/null) || \
+		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }; \
+		set -- "$$libdir"/libcore-*.rlib; \
+		test -f "$$1" || \
 		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }
 
 lint:
@@ -118,6 +125,10 @@ verify: toolchain lint
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
 	readelf -h $(KERNEL) | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64'
 	@test -z "$$($(NM) -u $(KERNEL))" || { $(NM) -u $(KERNEL); exit 1; }
+	@if readelf -W -r $(KERNEL) | grep -Eq 'R_X86_64_'; then \
+		echo 'kernel contains unresolved relocation records'; \
+		readelf -W -r $(KERNEL); exit 1; \
+	fi
 	@test "$$($(NM) $(KERNEL) | grep -Ec ' [tT] interrupt_vector_[0-9]+$$')" -eq 256
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'iretq'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
@@ -196,14 +207,16 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		surface) expected=87 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
-	# Only pci-ecam departs from the default machine. i440fx publishes no \
-	# MCFG, so every other scenario - including pci - proves the path that \
-	# has nothing but the I/O ports. q35 is the only machine here with a \
-	# PCI Express host bridge, and the root port is what gives the \
-	# enumeration a second bus to find. \
-	case '$*' in \
-		pci-ecam) \
-			hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
+		# Only pci-ecam departs from the default machine. i440fx publishes no \
+		# MCFG, so every other scenario - including pci - proves the path that \
+		# has nothing but the I/O ports. q35 is the only machine here with a \
+		# PCI Express host bridge, and the root port is what gives the \
+		# enumeration a second bus to find. Both PCI scenarios name their \
+		# network device explicitly instead of relying on QEMU defaults. \
+		case '$*' in \
+			pci) hardware='-device e1000e' ;; \
+			pci-ecam) \
+				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
 		*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \

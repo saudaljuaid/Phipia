@@ -84,6 +84,12 @@ On Ubuntu 24.04 or a compatible Debian-based environment, install:
 
 ```sh
 sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+```
+
+Install Rust through `rustup` first (the exact procedure is in `docs/RUST.md`),
+then add the freestanding target:
+
+```sh
 rustup target add x86_64-unknown-none
 ```
 

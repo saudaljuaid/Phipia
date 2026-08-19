@@ -2786,7 +2786,7 @@ static void keyboard_scenario(void)
     cpu_interrupt_disable();
     after = keyboard_get_state();
 
-    if (after.queued > 64U) {
+    if (after.queued >= KEYBOARD_QUEUE_SIZE) {
         kernel_test_fail("the keyboard queue grew past its bound");
     }
 

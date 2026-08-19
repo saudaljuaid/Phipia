@@ -5,8 +5,8 @@ costs. This document decides direction; it implements nothing.
 
 The short version: **for applications, copy Linux's interface and none of its
 code. For drivers, build the standardised class drivers, which cover most
-hardware with one implementation each, and put drivers in userspace so a
-driver's licence and a driver's bugs both stay outside the kernel.** Borrowing
+hardware with one implementation each, and put drivers in userspace so faults
+are contained and licensing boundaries can be reviewed explicitly.** Borrowing
 Linux driver source is possible more often than it first looks - much of it is
 dual-licensed - but almost never for the drivers you would most want it for, and
 section 3 explains why.
@@ -35,24 +35,23 @@ an earlier draft of this document overstated it. The correct statement is:
 
 Section 3 works that correction through on the case where it matters most.
 
-It is worth being precise about why the obvious counter-example does not apply.
-FreeBSD runs Linux Wi-Fi drivers through LinuxKPI, and that works because the
-FreeBSD kernel is BSD-licensed. A permissive kernel can absorb a GPL-2 driver
-and ship the result under GPL-2 terms for those files. A **GPL-3** kernel cannot,
-because GPL-2-only forbids adding GPL-3's terms and GPL-3 forbids dropping them.
-The direction of the incompatibility is what matters, and it points the wrong
-way for Seneri.
+FreeBSD's LinuxKPI is not evidence that GPL-2.0-only driver code may be absorbed
+wholesale. The compatibility layer and imported drivers carry their own
+permissive or dual licences, and the usable answer still comes from the SPDX
+identifier and dependencies of each file. Seneri requires that review for every
+file; a GPL-2.0-only dependency remains incompatible with this GPL-3.0-only
+kernel.
 
 Three ways out, and only the third needs no permission:
 
 1. **Relicense Seneri** to GPL-2.0-or-later, or dual-license it. This is a
    decision only the copyright holder can make, it is effectively irreversible,
    and it should not be made to acquire a driver.
-2. **Keep the driver out of the kernel's licence domain.** A driver in its own
-   address space, talking to the kernel over a documented IPC boundary, is a far
-   more defensible separate work than one linked into `seneri.elf`. This is the
-   userspace-driver argument in section 5, and it happens to be the right
-   architecture regardless of licensing.
+2. **Separate the driver architecturally.** A driver in its own address space,
+   talking over a documented IPC boundary, is more plausibly a separate work
+   than one linked into `seneri.elf`, but placement in userspace is not an
+   automatic licence exemption. Review each driver, dependency, transport, and
+   shared-memory interface on its actual coupling.
 3. **Check the SPDX line before assuming either way.** A dual-licensed
    `GPL-2.0 OR BSD-3-Clause` file may be taken under its BSD option; a
    GPL-2.0-only file may not. Then ask the second question, which is usually the
@@ -236,8 +235,8 @@ in ring 3, in its own address space, reaching its device through a mapping the
 kernel granted and talking to the rest of the system over a documented IPC
 boundary, is:
 
-- **outside the kernel's licence domain**, which makes a third-party or
-  differently-licensed driver possible at all;
+- **separately reviewable for licensing**, though not automatically outside the
+  kernel's licence domain merely because it runs in ring 3;
 - **restartable** — a driver fault is a dead process and a re-initialised device,
   not the deterministic panic this kernel currently guarantees for everything;
 - **containable**, once there is an IOMMU, even against a driver that programs
@@ -245,8 +244,10 @@ boundary, is:
 
 The cost is IPC on the data path. It is real, and it is the reason the design has
 to be shared-memory rings with the kernel only involved in interrupt delivery and
-mapping — not a message per packet. That is a design constraint to accept up
-front rather than a tax to discover later.
+mapping — not a message per packet. A tightly coupled shared-memory protocol may
+also look more like dynamic linking than an ordinary process boundary, so the
+architecture, driver, and transport each need their own licensing review. This
+document records engineering direction, not legal advice.
 
 The kernel keeps only what cannot be delegated: enumeration, address-space and
 BAR mapping, interrupt vector allocation and delivery, DMA-capable memory

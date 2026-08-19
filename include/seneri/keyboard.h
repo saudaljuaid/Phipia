@@ -6,6 +6,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* A power-of-two ring with one slot reserved to distinguish full from empty. */
+#define KEYBOARD_QUEUE_SIZE 64U
+
 /*
  * The PS/2 keyboard, through the 8042 controller.
  *

@@ -210,7 +210,9 @@ be true.
 
 Normal boot creates three workers whose entire body is
 
-    while (!preempt_stop) { preempt_work[index] += 1; }
+```c
+while (!preempt_stop) { preempt_work[index] += 1; }
+```
 
 There is no `thread_yield` in there, no sleep, and no call that could reach the
 scheduler. The boot thread spins on the same terms. All four make progress:
@@ -290,32 +292,16 @@ shape of them rather than a gap worth papering over. Both leave exactly one
 quantum's worth of preemption: the switch happens, a spinning worker gets the
 processor, and no further quantum arrives — so the boot thread that would have
 noticed and reported the timeout never runs again. The harness catches it as a
-timeout, which is a failure but not a diagnosis. `docs/THREADS.md` records the
-same shape for the context-switch controls, for the same reason: the code that
-would report is not the code that is running.
+timeout, which is a failure but not a diagnosis. The earlier context-switch
+controls have the same shape, for the same reason: the code that would report is
+not the code that is running.
 
 The second one is the one to keep. The bug it restores is a real one this layer
 shipped with, and it is now caught by an assertion at boot rather than by a hang
 several layers later.
 
-### Deferred work
-
-- **No priorities and no fairness beyond round robin.** Every thread gets one
-  quantum in turn. There is nothing yet whose latency matters more than
-  another's.
-- **`timer_sleep_ns` still halts.** Preemption makes a blocking sleep possible;
-  it does not make it exist. A sleeping thread should leave the run queue and be
-  woken by its deadline, and that is the next increment on this layer.
-- **No lock of any kind.** The run queue is protected by disabling interrupts,
-  which is sufficient for one core and is exactly the thing that stops being
-  sufficient for two.
-- **A quantum is fixed at 2 ms** and nothing can change it at runtime.
-- **The idle case is a spin.** With one runnable thread the quantum still fires,
-  finds nothing to switch to, and re-arms. A real idle thread would halt.
-
 ## Deferred work
 
-- ~~**No preemption.**~~ **Done**; see above.
 - **`timer_sleep_ns` still halts.** It is the reason this layer exists, and
   turning a sleep into a block that yields is the increment that finally makes
   `docs/MONOTONIC_TIME.md`'s "nothing sleeps concurrently" false.
@@ -328,6 +314,11 @@ several layers later.
   an IST for the page fault.
 - **No priorities, no fairness beyond round robin, no blocking primitives.**
   There is nothing to contend for yet: no lock, no queue, no device.
+- **No lock of any kind.** The run queue is protected by disabling interrupts,
+  which is sufficient for one core and insufficient for two.
+- **A quantum is fixed at 2 ms** and nothing can change it at runtime.
+- **The idle case is a spin.** With one runnable thread the quantum still fires,
+  finds nothing to switch to, and re-arms. A real idle thread would halt.
 - **Fixed stack size.** Four pages each, chosen because it is what `boot.S`
   gives the thread this kernel starts on. A thread that needs more has no way to
   say so and will meet its guard.

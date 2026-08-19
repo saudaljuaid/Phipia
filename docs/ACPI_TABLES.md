@@ -118,9 +118,9 @@ one kernel, two machines, two different answers, both correct.
 
 ## Deferred work
 
-- **Nothing reads the window yet.** `acpi_mcfg_discover` describes memory it
-  never touches. Mapping it uncacheable and reading configuration space through
-  it is `docs/PCI_ENUMERATION.md`.
+- **Discovery itself does not read the window.** `acpi_mcfg_discover` records it;
+  `pci_initialize` maps it uncacheable and reads configuration space through it.
+  See `docs/PCI_ENUMERATION.md` for that consumer.
 - **A window above 4 GiB is described but unusable.** Discovery does not require
   the window to fall inside the early identity map, because describing it and
   reaching it are different questions. The consumer is what has to refuse.

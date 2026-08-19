@@ -902,10 +902,9 @@ const char *pci_status_string(enum pci_status status)
 }
 
 /*
- * Everything below is arithmetic and list walking, driven by synthetic values.
- * It touches no hardware, so it runs on every boot before the machine is read,
- * and a wrong address composition is named here rather than found as a device
- * that is not there.
+ * Everything below is arithmetic and list walking over synthetic values except
+ * the accepted upper-bound port read in refusals_are_named. That one drives
+ * 0xCF8/0xCFC and clears the address latch afterwards.
  */
 
 /* A synthetic configuration space the capability walk is driven over. */
@@ -1237,6 +1236,8 @@ static bool refusals_are_named(void)
         ) != PCI_STATUS_OK) {
         return false;
     }
+
+    cpu_out32(PCI_CONFIG_ADDRESS_PORT, 0U);
 
     /* A segment group the ports cannot carry at all. */
     address.segment = 1U;

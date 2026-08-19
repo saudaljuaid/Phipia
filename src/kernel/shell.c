@@ -650,7 +650,6 @@ bool shell_self_test(void)
      * statistics are already a lie.
      */
     state = saved;
-    state.active = saved.active;
     state.length = 0U;
     line[0] = '\0';
     return true;

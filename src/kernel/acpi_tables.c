@@ -127,6 +127,17 @@ struct acpi_test_mcfg {
     uint8_t body[ACPI_TEST_MCFG_SIZE - ACPI_SDT_HEADER_SIZE];
 } __attribute__((packed));
 
+#define ACPI_TEST_OVERSIZED_MCFG_ALLOCATIONS \
+    (ACPI_MAX_ECAM_ALLOCATIONS + 1U)
+#define ACPI_TEST_OVERSIZED_MCFG_SIZE \
+    (ACPI_MCFG_FIXED_SIZE + ACPI_TEST_OVERSIZED_MCFG_ALLOCATIONS * \
+        ACPI_MCFG_ALLOCATION_SIZE)
+
+struct acpi_test_oversized_mcfg {
+    struct acpi_sdt_header header;
+    uint8_t body[ACPI_TEST_OVERSIZED_MCFG_SIZE - ACPI_SDT_HEADER_SIZE];
+} __attribute__((packed));
+
 struct acpi_test_xsdt {
     struct acpi_sdt_header header;
     uint64_t entries[4];
@@ -162,6 +173,10 @@ _Static_assert(sizeof(struct acpi_test_fadt) == ACPI_TEST_FADT_SIZE,
                "ACPI FADT fixture no longer spans the extended timer address");
 _Static_assert(sizeof(struct acpi_test_mcfg) == ACPI_TEST_MCFG_SIZE,
                "ACPI MCFG fixture no longer spans its allocation structures");
+_Static_assert(
+    sizeof(struct acpi_test_oversized_mcfg) == ACPI_TEST_OVERSIZED_MCFG_SIZE,
+    "oversized ACPI MCFG fixture no longer reaches the allocation limit"
+);
 
 static const char rsdt_signature[4] = {'R', 'S', 'D', 'T'};
 static const char xsdt_signature[4] = {'X', 'S', 'D', 'T'};
@@ -1357,6 +1372,30 @@ static bool mcfg_rejections_are_named(void)
 
     if (acpi_mcfg_discover(&root, &mcfg) != ACPI_STATUS_NO_ECAM_ALLOCATIONS) {
         return false;
+    }
+
+    /* One more complete allocation than the public result can represent. */
+    {
+        struct acpi_test_oversized_mcfg oversized;
+        struct acpi_test_xsdt xsdt;
+        const size_t xsdt_size = ACPI_SDT_HEADER_SIZE + sizeof(uint64_t);
+
+        acpi_bytes_zero(&oversized, sizeof(oversized));
+        initialize_header(&oversized.header, mcfg_signature, sizeof(oversized));
+        set_checksum(&oversized, sizeof(oversized));
+
+        acpi_bytes_zero(&xsdt, sizeof(xsdt));
+        initialize_header(&xsdt.header, xsdt_signature, xsdt_size);
+        xsdt.entries[0] = (uint64_t)(uintptr_t)(void *)&oversized;
+        set_checksum(&xsdt, xsdt_size);
+
+        root.kind = ACPI_ROOT_XSDT;
+        root.physical_address = (uint64_t)(uintptr_t)(void *)&xsdt;
+
+        if (acpi_mcfg_discover(&root, &mcfg) !=
+            ACPI_STATUS_TOO_MANY_ECAM_ALLOCATIONS) {
+            return false;
+        }
     }
 
     /* A window whose last bus precedes its first. */

@@ -7,8 +7,9 @@
 //! C callee. So the boundary is kept as small as it can be - raw pointers turn
 //! into slices immediately, once, and everything past that point is safe Rust.
 //!
-//! That is also why there is exactly one `unsafe` block per entry point, each
-//! with the condition the caller has to have met written above it.
+//! Unsafe blocks appear only where validated C pointers become Rust slices or
+//! where results are written back through validated C pointers. Each one states
+//! the condition the caller has to meet.
 
 use crate::font;
 use crate::logo::{self, Format, Status};
@@ -37,7 +38,7 @@ pub extern "C" fn seneri_logo_size() -> usize {
 ///
 /// # Safety
 ///
-/// `width` and `height` must each be null or point at a writable `u32`.
+/// `width` and `height` must both be non-null and point at writable `u32` values.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn seneri_logo_geometry(
     width: *mut u32,

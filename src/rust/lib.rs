@@ -12,8 +12,9 @@
 //! writing them in Rust would wrap every line in `unsafe` and buy nothing but
 //! a second language in the boot path. `docs/RUST.md` argues that split.
 //!
-//! The whole crate compiles with no heap, no operating system, and exactly one
-//! `unsafe` block - the place a C pointer becomes a Rust slice.
+//! The whole crate compiles with no heap and no operating system. Unsafe code is
+//! confined to ABI entry points that turn validated C pointers into Rust slices
+//! or write results through validated C pointers.
 
 #![no_std]
 #![deny(warnings)]

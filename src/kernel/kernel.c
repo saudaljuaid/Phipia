@@ -331,7 +331,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
      * before this, so there is nothing else holding it back.
      */
     prove_keyboard();
-    prove_shell();
+
+    if (framebuffer_is_active()) {
+        prove_shell();
+    }
 
     console_write("Seneri OS: day one passed\n");
     console_write("Seneri OS: memory foundation passed\n");
@@ -435,11 +438,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: PCI enumeration established\n");
     console_write("Seneri OS: kernel threads passed\n");
     console_write("Seneri OS: preemption passed\n");
-    console_write("Seneri OS: framebuffer passed\n");
-    console_write("Seneri OS: logo passed\n");
-    console_write("Seneri OS: screen console passed\n");
+    if (framebuffer_is_active()) {
+        console_write("Seneri OS: framebuffer passed\n");
+        console_write("Seneri OS: logo passed\n");
+        console_write("Seneri OS: screen console passed\n");
+        console_write("Seneri OS: shell passed\n");
+    }
     console_write("Seneri OS: keyboard passed\n");
-    console_write("Seneri OS: shell passed\n");
     console_write("Seneri OS: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
