@@ -1,209 +1,98 @@
 <p align="center">
-  <img src="assets/seneri-logo.png" alt="Seneri OS logo" width="420">
+  <img src="assets/seneri-logo.png" alt="Seneri OS logo" width="150">
 </p>
 
-# Seneri OS
+<p align="center">
+  <img src="assets/seneri-wordmark.svg" alt="Seneri OS — from first principles" width="560">
+</p>
 
-[![verify](https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml/badge.svg)](https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml)
+<p align="center">
+  <strong>A small x86_64 operating system built from first principles.</strong><br>
+  Hardware-aware, proof-driven, and growing into a graphical interactive system.
+</p>
 
-Seneri OS is a new, independent operating system built from first principles. It
-is not a Linux distribution and it does not currently promise application or
-hardware compatibility with an existing operating system.
+<p align="center">
+  <a href="https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Seneri-OS/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
+  <img src="https://img.shields.io/badge/architecture-x86__64-6f42c1" alt="x86_64">
+  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-2f81f7" alt="C11 and assembly">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-2ea44f" alt="GPL-3.0-only"></a>
+</p>
 
-The repository is at its foundation stage. It contains a deliberately small
-x86_64 kernel seed—not a finished operating system and not a simulation.
+<p align="center">
+  <img src="assets/seneri-shell.png" alt="Seneri OS graphical console at the interactive shell" width="820">
+</p>
 
-## What boots today
+<p align="center"><sub>A real 1024×768 Seneri development build in QEMU. The graphical stack is landing through reviewed increments.</sub></p>
 
-GRUB loads a Multiboot2-compliant ELF kernel in 32-bit protected mode. Seneri
-then validates the handoff and CPU, identity-maps the first 4 GiB, enables long
-mode, installs a known GDT and stack, and transfers control to freestanding C.
-The C kernel defensively validates every Multiboot2 tag, constructs a bounded
-physical-frame allocator from the firmware memory map, proves allocation and
-release, installs a complete IDT and production GDT/TSS, routes fatal CPU
-exceptions through deterministic diagnostics, proves recoverable interrupt
-entry plus PIT delivery, validates the firmware ACPI root, walks the checksummed
-system-description tables to the MADT, parses that table's
-interrupt-controller records into a validated processor, I/O APIC, and
-interrupt-override topology, brings the bootstrap processor's local APIC online
-in virtual wire mode, delivers the timer through a programmed I/O APIC
-redirection entry, retires the legacy 8259 pair, routes that same timer again as
-a level-triggered source — quieting the device, clearing remote IRR with an
-end of interrupt directed at the I/O APIC, and only then ending it at the local
-APIC — discovers the ACPI power
-management timer from the FADT, calibrates both the local APIC timer and a
-time-stamp counter against that reference — whose rate is fixed by specification
-rather than measured — retires the 8254 and proves all three clocks still agree
-about an interval with it gone, establishes a monotonic clock and deadline
-timers and sleeps on one, then builds and installs its own four-level page
-tables — read-only executable text, read-only rodata, writable non-executable
-data, uncacheable APIC registers, an absent null page — walks them in software
-to prove no page is both writable and executable, takes a page fault
-deliberately to prove the hardware agrees, and finally opens a guarded, bounded
-kernel heap on that address space, growing it a page at a time and proving the
-memory it hands out is real and disjoint, before halting safely.
+## ✦ What is Seneri?
 
-The day-one success contract is the serial line:
+Seneri is an independent, freestanding operating-system kernel—not a Linux
+distribution and not a userspace simulation. It boots through Multiboot2,
+constructs its own x86_64 environment, discovers platform hardware, owns its
+interrupt and timekeeping paths, and builds a protected memory foundation from
+first principles.
 
-```text
-Seneri OS: day one passed
-Seneri OS: memory foundation passed
-Seneri OS: never triple fault milestone passed
-Seneri OS: ACPI root verified
-Seneri OS: ACPI MADT verified
-Seneri OS: ACPI topology verified
-Seneri OS: local APIC online
-Seneri OS: I/O APIC online
-Seneri OS: I/O APIC delivered eight interrupts
-Seneri OS: legacy 8259 retired
-Seneri OS: timer survives legacy retirement
-Seneri OS: I/O APIC delivered eight level-triggered interrupts
-Seneri OS: level-triggered routing established
-Seneri OS: local APIC timer delivered eight interrupts
-Seneri OS: TSC reference established
-Seneri OS: ACPI FADT verified
-Seneri OS: PM timer independent reference established
-Seneri OS: PIT retired
-Seneri OS: clocks survive PIT retirement
-Seneri OS: deadline timers online
-Seneri OS: monotonic time established
-Seneri OS: kernel page tables installed
-Seneri OS: no writable executable mapping
-Seneri OS: virtual memory established
-Seneri OS: kernel heap online
-Seneri OS: heap coalesced to one free block
-Seneri OS: kernel heap established
-Seneri OS: deadline table of 32 entries on the heap
-```
+Correctness is part of the architecture: important claims are checked at boot,
+exercised by deterministic QEMU scenarios, and challenged with deliberate
+negative controls.
 
-## Build and prove it
+## ⚙️ What works today
 
-On Ubuntu 24.04 or a compatible Debian-based environment, install:
+| Area | Current capability |
+| --- | --- |
+| Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics |
+| Memory | Firmware memory map, physical frames, four-level paging, W^X, guarded heap and stacks |
+| Interrupts and time | Local APIC, I/O APIC, retired PIC/PIT paths, PM timer, TSC, deadlines |
+| Hardware discovery | Checksummed ACPI root, MADT topology, interrupt overrides, and FADT |
+| Proof | Boot-time invariants, deliberate fault probes, and 18 deterministic QEMU scenarios |
+
+Graphical output, PCI discovery, kernel threads, keyboard input, and the shell
+shown above are active integration work and land only after their dependency
+chain is reviewed and green.
+
+## 🚀 Build and run
+
+Ubuntu 24.04 or a compatible Debian-based environment is the reference host:
 
 ```sh
-sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools \
+    qemu-system-x86 xorriso
+make hooks
 ```
 
-Then run:
+Then choose the level of proof you want:
 
 ```sh
-make verify   # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make smoke      # run the strict normal-boot QEMU protocol
-make qemu-tests # run nineteen deterministic fault and interrupt scenarios
-make run      # optional interactive boot
-make hooks    # enforce verification in this local clone
+make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
+make qemu-tests   # all deterministic fault, memory, device, and kernel scenarios
+make smoke        # strict normal-boot contract
+make run          # interactive graphical boot
 ```
 
-## Repository map
+## 🧭 Find your way around
 
-- `src/arch/x86_64/boot.S` — Multiboot2 header and 32-to-64-bit transition.
-- `src/arch/x86_64/interrupts.S` — normalized interrupt entry and fatal probes.
-- `src/kernel/interrupts.c` — IDT ownership, dispatch, and fault diagnostics.
-- `src/kernel/cpu.c` — permanent GDT, TSS, and emergency IST stacks.
-- `src/kernel/pic.c` and `pit.c` — legacy IRQ routing and timer proof.
-- `src/kernel/multiboot2.c` — bounded parser for the boot information contract.
-- `src/kernel/physical_memory.c` — 4 KiB physical-frame ownership and allocation.
-- `src/kernel/acpi.c` — defensive ACPI RSDP validation and root discovery.
-- `src/kernel/acpi_tables.c` — bounded RSDT/XSDT walking, MADT and FADT discovery.
-- `src/kernel/acpi_madt.c` — bounded MADT record walking and interrupt topology.
-- `src/kernel/acpi_util.c` — shared firmware-table primitives and wire sizes.
-- `src/kernel/apic.c` — local APIC bring-up, virtual wire routing, and identity.
-- `src/kernel/ioapic.c` — I/O APIC redirection entries, ISA override routing,
-  and the directed end of interrupt a level-triggered pin needs.
-- `src/kernel/apic_timer.c` — local APIC timer calibration and periodic ticks.
-- `src/kernel/tsc.c` — time-stamp counter calibration and duration arithmetic.
-- `src/kernel/pm_timer.c` — ACPI PM timer, wrap folding, and bounded waiting.
-- `src/kernel/clock.c` — the monotonic clock and its one origin.
-- `src/kernel/timer.c` — deadline timers on the APIC timer's one-shot mode.
-- `src/kernel/paging.c` — the kernel's own page tables and the W^X guarantee.
-- `src/kernel/heap.c` — the guarded, bounded, transactional kernel heap.
-- `linker.ld` — low-memory ELF layout with separate, page-aligned R, RX, and RW
-  segments.
-- `docs/ACPI_TABLES.md` — firmware-table bounds, invariants, and test protocol.
-- `docs/ACPI_TOPOLOGY.md` — interrupt-topology invariants and test protocol.
-- `docs/LOCAL_APIC.md` — local APIC invariants, virtual wire mode, and proof.
-- `docs/IO_APIC.md` — redirection invariants, override routing, level-triggered
-  acknowledgement, and proof.
-- `docs/LEGACY_RETIREMENT.md` — how the 8259 pair is latched shut, and proof.
-- `docs/APIC_TIMER.md` — why the APIC timer needs calibration, and its proof.
-- `docs/TSC.md` — the second clock, why it exists, and what it cannot claim.
-- `docs/PM_TIMER.md` — the first unmeasured reference, and the error it found.
-- `docs/PIT_RETIREMENT.md` — recalibrating on that reference, and losing the 8254.
-- `docs/MONOTONIC_TIME.md` — an instant, a deadline, and how bounded a sleep is.
-- `docs/VIRTUAL_MEMORY.md` — owning the tables, and making W^X true on the metal.
-- `docs/KERNEL_HEAP.md` — the first allocator that is not a fixed array.
-- `docs/NEVER_TRIPLE_FAULT.md` — interrupt ABI, invariants, and test protocol.
-- `CONTRIBUTING.md` — non-negotiable engineering and commit rules.
+- [`docs/DAY_ONE.md`](docs/DAY_ONE.md) — the boot contract and first verified milestone.
+- [`docs/VIRTUAL_MEMORY.md`](docs/VIRTUAL_MEMORY.md) — page-table ownership and W^X proof.
+- [`docs/IO_APIC.md`](docs/IO_APIC.md) — discovered interrupt routing and its controls.
+- [`docs/MONOTONIC_TIME.md`](docs/MONOTONIC_TIME.md) — clocks, deadlines, and bounded waits.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — project rules and submission expectations.
 
-## Current boundaries
+Every substantial subsystem has its own document under [`docs/`](docs/), where
+the invariants, processor rules, failure modes, measurements, and negative
+controls live. The README stays an introduction; the documentation carries the
+proof.
 
-Every interrupt Seneri owns now arrives through discovered hardware, the timer
-interrupt originates in the processor's own local APIC, and both derived clocks
-are calibrated against the ACPI power management timer, whose rate is fixed by
-specification and measured against nothing. The 8254 is retired: it is stopped,
-masked and latched shut, and the three clocks are proved to still agree about an
-interval with it gone. Getting here took finding that the PIT had been delivering
-two interrupts per programmed period, which had left both calibrated clocks
-running at half their true rate while still agreeing with each other.
+## 🚧 Current boundaries
 
-Those interrupts can now be level triggered as well as edge triggered, which is
-the shape every PCI device uses. A level-triggered redirection entry latches
-remote IRR when it delivers and will not deliver again until an end of interrupt
-directed at the I/O APIC — not the local APIC's EOI register — clears it, so
-until this existed Seneri refused such a source by name rather than route one
-that would fire once and wedge. The dispatcher now sends both acknowledgements,
-in that order, after the handler has quieted the device. The register that
-carries the directed one arrived with I/O APIC version 0x20, so the version is
-read and a level-triggered entry is refused on anything older rather than
-programmed hopefully; the mask-and-unmask fallback older parts need is
-deliberately not implemented, because no machine here could execute it.
-Proving it took the 8254 in mode 0, whose output holds until software puts it
-down: a line that fires exactly once looks identical to success until you count
-past one, so the `ioapic-level` scenario counts eight, times them, and refuses
-both too few and too many.
+Seneri is still a foundation-stage kernel. The current `main` branch is
+single-core and kernel-only; it has no userspace, scheduler, filesystem, storage
+or network driver, process isolation, or general application ABI. Hardware
+evidence is strongest in QEMU, with bare-metal coverage still an explicit goal.
 
-Those rates are now usable time: one monotonic clock with a single origin, and
-deadlines armed on the APIC timer's one-shot mode, so code can ask to be woken at
-an instant rather than count ticks. Boot sleeps on one to prove it.
+## 💚 Contributing
 
-The kernel also owns its page tables. It used to run on the 4 GiB of huge pages
-`boot.S` builds before long mode, every one of them writable *and* executable,
-because `EFER.NXE` was never set — so for as long as `make verify` had been
-refusing an RWX load segment, the machine underneath had been entirely RWX. That
-check inspected the file. Seneri now builds a four-level hierarchy with per-page
-permissions, enables the no-execute bit and supervisor write protection, and
-walks the installed tables in software at boot to assert that no page is both
-writable and executable. The `paging` scenario writes to a page it just made
-read-only and passes only on the resulting fault, so the claim rests on the
-hardware refusing rather than on a table being read back.
+Small, reviewable increments are welcome. Start with
+[`CONTRIBUTING.md`](CONTRIBUTING.md), install the hooks, and keep every new loop
+bounded and every new refusal named.
 
-The address space now carries a heap. `heap_allocate` and `heap_free` work in
-bytes rather than 4 KiB frames, inside a 16 MiB window with an unmapped guard
-page on each side, grown one page at a time and backed by frames that need not
-be contiguous. Its metadata lives outside the memory it manages, so an overrun
-cannot corrupt the allocator, and the `heap` scenario proves the guard by
-walking off the end and taking the fault.
-
-What is missing sits above that layer. The heap has its first consumer — the
-deadline table is obtained from it at `timer_start` and returned at
-`timer_stop` — but the ACPI topology and the interrupt tables are still fixed
-arrays, and converting each is its own change. The heap never
-shrinks — though the page tables underneath it are now reclaimed when an unmap
-empties them — and nothing sleeps concurrently, because `timer_sleep_ns` halts the only thread of control
-there is; a second sleeper needs threads, and threads need the scheduler this
-layer exists to make possible. The kernel is still identity-mapped rather than
-higher-half, a 4 KiB change inside a 2 MiB mapping is refused rather than split,
-and the page-fault handler stays fatal: there is no demand paging. There is no
-wall-clock date, only time since boot. The supported target still reports no
-invariant counter, so the TSC's rate being correct is not the same as its rate
-being stable. Level-triggered routing exists but has no real device on it yet:
-every PCI line is one, and reaching them needs PCI enumeration, which is its own
-increment. Message-signalled interrupts, which remove the I/O APIC from the path
-entirely, are another. Everything here is verified under QEMU; the uncacheable
-APIC mappings and the remote IRR behaviour in particular are the kind of thing
-that fails only on real hardware. It has a deliberately narrow single-core
-foundation, but no scheduler, userspace, filesystem, networking, graphics, or
-general hardware drivers. Those arrive only after the previous layer has an
-executable acceptance test.
-
-Seneri OS is licensed under GPL-3.0; see `LICENSE`.
+Seneri OS is licensed under [GPL-3.0-only](LICENSE).
