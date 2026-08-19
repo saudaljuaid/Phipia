@@ -32,6 +32,16 @@
 #define TSC_MONOTONIC_READS 64U
 
 /*
+ * Eight level-triggered deliveries at 100 Hz. The failure this scenario exists
+ * to catch is a pin that delivers once and stops, so one delivery would prove
+ * nothing; eight of them cannot happen by accident. The bound is 25 times the
+ * 80 ms they should take, so a line that dies is a named status rather than a
+ * hang, and it stays well inside one wrap of the reference counter.
+ */
+#define IOAPIC_LEVEL_TEST_TICKS UINT64_C(8)
+#define IOAPIC_LEVEL_TEST_BOUND_NS UINT64_C(2000000000)
+
+/*
  * Intel SDM volume 3A section 4.7 defines the page-fault error code: bit 0 is
  * P, bit 1 is W/R and bit 2 is U/S. A supervisor write to a present read-only
  * page is therefore P=1 W=1 U=0. That is what distinguishes this scenario's
@@ -172,6 +182,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_IOAPIC;
     }
 
+    if (token_equals(value, length, "ioapic-level")) {
+        return KERNEL_TEST_IOAPIC_LEVEL;
+    }
+
     if (token_equals(value, length, "retired")) {
         return KERNEL_TEST_RETIRED;
     }
@@ -246,6 +260,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x20);
     case KERNEL_TEST_HEAP:
         return UINT8_C(0x21);
+    case KERNEL_TEST_IOAPIC_LEVEL:
+        return UINT8_C(0x22);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -427,6 +443,235 @@ static void ioapic_scenario(void)
 
     if (pit_ticks() < PIT_TEST_TICKS) {
         kernel_test_fail("I/O APIC delivered too few timer interrupts");
+    }
+
+    if (apic_spurious_count() != 0U) {
+        kernel_test_fail("local APIC raised a spurious interrupt");
+    }
+}
+
+/*
+ * Prove a level-triggered redirection entry delivers more than once.
+ *
+ * Every other route in this kernel is edge triggered, and an edge needs no
+ * acknowledgement at the I/O APIC: the pin is sampled on a transition and
+ * nothing is latched. A level-triggered entry latches remote IRR when it
+ * delivers and cannot deliver again until an end of interrupt directed at the
+ * I/O APIC clears it, so the failure worth hunting is a line that fires exactly
+ * once and then goes quiet. One delivery cannot tell that apart from success,
+ * which is why this counts eight.
+ *
+ * The opposite failure is just as silent. Acknowledging a pin whose source is
+ * still asserting re-delivers immediately, so a route that never quiets its
+ * device counts its eight interrupts in microseconds and looks perfect. The
+ * scenario therefore measures how long the eight took as well as that they
+ * arrived, and holds it to the interval eight ticks of a 100 Hz timer take.
+ */
+static void ioapic_level_scenario(void)
+{
+    struct ioapic_redirection entry;
+    struct ioapic_state before;
+    struct ioapic_state after;
+    uint64_t elapsed_ns = 0U;
+    const uint64_t expected_ns = IOAPIC_LEVEL_TEST_TICKS * UINT64_C(1000000000) /
+        PIT_TEST_FREQUENCY;
+
+    if (!ioapic_is_initialized() || ioapic_get_state().count == 0U) {
+        kernel_test_fail("I/O APIC is not initialized");
+    }
+
+    if (pic_mask_snapshot() != UINT16_C(0xFFFF)) {
+        kernel_test_fail("a legacy PIC line was left unmasked");
+    }
+
+    /* Nothing is routed yet, so every acknowledgement is refused by name. */
+    if (ioapic_send_eoi(INTERRUPT_IOAPIC_BASE) !=
+            IOAPIC_STATUS_VECTOR_NOT_ROUTED ||
+        ioapic_send_eoi(INTERRUPT_IOAPIC_BASE - 1U) !=
+            IOAPIC_STATUS_BAD_VECTOR ||
+        ioapic_send_eoi(INTERRUPT_LOCAL_APIC_BASE) !=
+            IOAPIC_STATUS_BAD_VECTOR ||
+        ioapic_read_redirection(INTERRUPT_IOAPIC_BASE, NULL) !=
+            IOAPIC_STATUS_NULL_ARGUMENT ||
+        ioapic_read_redirection(INTERRUPT_IOAPIC_BASE, &entry) !=
+            IOAPIC_STATUS_VECTOR_NOT_ROUTED) {
+        kernel_test_fail("an unrouted vector was acknowledged");
+    }
+
+    /* And every malformed routing request, through the public interface. */
+    if (ioapic_route_isa_irq_as(0U, INTERRUPT_IOAPIC_BASE, 0U,
+            (enum ioapic_trigger)7) != IOAPIC_STATUS_BAD_TRIGGER ||
+        ioapic_route_isa_irq_as(0U, INTERRUPT_IOAPIC_BASE, UINT8_MAX + 1U,
+            IOAPIC_TRIGGER_FORCE_LEVEL) != IOAPIC_STATUS_BAD_DESTINATION ||
+        ioapic_route_isa_irq_as(UINT8_C(16), INTERRUPT_IOAPIC_BASE, 0U,
+            IOAPIC_TRIGGER_FORCE_LEVEL) != IOAPIC_STATUS_BAD_IRQ) {
+        kernel_test_fail("a malformed routing request was accepted");
+    }
+
+    /* A wait needs a running timer, a target and a bound the clock can hold. */
+    if (pit_wait_for_ticks_bounded(1U, IOAPIC_LEVEL_TEST_BOUND_NS, NULL) !=
+            PIT_STATUS_NULL_ARGUMENT ||
+        pit_wait_for_ticks_bounded(1U, IOAPIC_LEVEL_TEST_BOUND_NS,
+            &elapsed_ns) != PIT_STATUS_NOT_RUNNING ||
+        elapsed_ns != 0U) {
+        kernel_test_fail("a bounded wait ran without a running timer");
+    }
+
+    if (pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC_LEVEL) !=
+        PIT_STATUS_OK) {
+        kernel_test_fail("the timer would not take the level-triggered route");
+    }
+
+    if (pit_active_route() != PIT_ROUTE_IO_APIC_LEVEL ||
+        pit_wait_for_ticks_bounded(0U, IOAPIC_LEVEL_TEST_BOUND_NS,
+            &elapsed_ns) != PIT_STATUS_BAD_INTERVAL ||
+        pit_wait_for_ticks_bounded(1U, PIT_MAX_WAIT_NS + 1U, &elapsed_ns) !=
+            PIT_STATUS_BAD_INTERVAL) {
+        kernel_test_fail("a bounded wait accepted an interval it cannot hold");
+    }
+
+    /*
+     * Read the entry off the hardware. An entry programmed edge triggered while
+     * Seneri's records called it level triggered would deliver every interrupt
+     * below and latch nothing, so this is the check that catches it.
+     */
+    if (ioapic_read_redirection(pit_active_vector(), &entry) !=
+            IOAPIC_STATUS_OK ||
+        !entry.level_triggered || entry.masked || entry.active_low ||
+        entry.vector != pit_active_vector() ||
+        entry.global_interrupt != 2U) {
+        kernel_test_fail("the level route did not read back level triggered");
+    }
+
+    if (!ioapic_vector_is_level_triggered(pit_active_vector()) ||
+        ioapic_get_state().level_routes != 1U) {
+        kernel_test_fail("the level route was not recorded as level triggered");
+    }
+
+    if (pic_mask_snapshot() != UINT16_C(0xFFFF)) {
+        kernel_test_fail("level routing unmasked a legacy PIC line");
+    }
+
+    /*
+     * A vector names one pin. Pointing this one at IRQ4's pin as well would
+     * leave the timer's entry unmasked and delivering a vector the dispatcher
+     * would acknowledge on the wrong unit, so it is refused by name.
+     */
+    if (ioapic_route_isa_irq(4U, pit_active_vector(), 0U) !=
+        IOAPIC_STATUS_VECTOR_IN_USE) {
+        kernel_test_fail("one vector was pointed at two redirection entries");
+    }
+
+    before = ioapic_get_state();
+
+    if (pit_wait_for_ticks_bounded(
+            IOAPIC_LEVEL_TEST_TICKS,
+            IOAPIC_LEVEL_TEST_BOUND_NS,
+            &elapsed_ns
+        ) != PIT_STATUS_OK) {
+        kernel_test_fail("the level-triggered line stopped delivering");
+    }
+
+    after = ioapic_get_state();
+    console_write("ST INFO ioapic-level: ");
+    console_write_u64(pit_ticks());
+    console_write(" deliveries, remote IRR ");
+    console_write_u64(after.remote_irr_observed);
+    console_write(", directed EOI ");
+    console_write_u64(after.directed_eoi_count);
+    console_write(", mode ");
+    console_write(after.directed_eoi_mode ? "directed" : "broadcast");
+    console_write(", in ");
+    console_write_u64(elapsed_ns);
+    console_write(" ns\n");
+
+    if (pit_ticks() < IOAPIC_LEVEL_TEST_TICKS) {
+        kernel_test_fail("a level-triggered line delivered too few interrupts");
+    }
+
+    /*
+     * And not far more than it was asked for. A pin acknowledged while its
+     * source is still asserting re-delivers inside the acknowledgement, so it
+     * counts thousands of interrupts in the time eight should take. The
+     * interval check below would fail on that too, but only after describing
+     * it as a timing problem; this names it for what it is.
+     */
+    if (pit_ticks() > IOAPIC_LEVEL_TEST_TICKS * 2U) {
+        kernel_test_fail("a level-triggered line delivered without stopping");
+    }
+
+    /*
+     * Every delivery latched remote IRR and every one was acknowledged at the
+     * I/O APIC. The counts are what say the entry behaved as a level-triggered
+     * entry rather than merely that interrupts arrived.
+     */
+    if (after.remote_irr_observed - before.remote_irr_observed <
+            IOAPIC_LEVEL_TEST_TICKS ||
+        after.remote_irr_missing != 0U ||
+        (after.directed_eoi_mode &&
+         (after.directed_eoi_count - before.directed_eoi_count <
+              IOAPIC_LEVEL_TEST_TICKS ||
+          !apic_get_state().eoi_broadcasts_suppressed)) ||
+        (!after.directed_eoi_mode &&
+         after.directed_eoi_count != before.directed_eoi_count)) {
+        kernel_test_fail("a level-triggered delivery did not latch remote IRR");
+    }
+
+    /* And they took the time eight ticks take, rather than no time at all. */
+    if (!pm_timer_durations_agree(
+            elapsed_ns,
+            expected_ns,
+            PM_TIMER_TOLERANCE_QUARTER
+        )) {
+        kernel_test_fail("level-triggered deliveries did not take a period");
+    }
+
+    if (pit_stop() != PIT_STATUS_OK) {
+        kernel_test_fail("the level route would not stop");
+    }
+
+    /* Stopping unroutes the entry, so its vector is nothing's again. */
+    if (ioapic_vector_is_level_triggered(pit_active_vector()) ||
+        ioapic_get_state().level_routes != 0U ||
+        ioapic_read_redirection(pit_active_vector(), &entry) !=
+            IOAPIC_STATUS_VECTOR_NOT_ROUTED) {
+        kernel_test_fail("a stopped level route is still routed");
+    }
+
+    /*
+     * The same pin, sampled as an edge again. An edge-triggered entry has no
+     * remote IRR to latch and nothing to acknowledge, so both counters must
+     * stand still across eight more deliveries. Without this, an
+     * implementation that treated every route as level triggered would pass
+     * everything above.
+     */
+    before = ioapic_get_state();
+
+    if (pit_start(PIT_TEST_FREQUENCY, PIT_ROUTE_IO_APIC) != PIT_STATUS_OK ||
+        ioapic_vector_is_level_triggered(pit_active_vector()) ||
+        ioapic_send_eoi(pit_active_vector()) !=
+            IOAPIC_STATUS_NOT_LEVEL_TRIGGERED) {
+        kernel_test_fail("an edge route was treated as level triggered");
+    }
+
+    if (pit_wait_for_ticks_bounded(
+            IOAPIC_LEVEL_TEST_TICKS,
+            IOAPIC_LEVEL_TEST_BOUND_NS,
+            &elapsed_ns
+        ) != PIT_STATUS_OK) {
+        kernel_test_fail("the edge-triggered line stopped delivering");
+    }
+
+    after = ioapic_get_state();
+
+    if (after.remote_irr_observed != before.remote_irr_observed ||
+        after.directed_eoi_count != before.directed_eoi_count ||
+        after.level_routes != 0U) {
+        kernel_test_fail("an edge-triggered delivery latched remote IRR");
+    }
+
+    if (pit_stop() != PIT_STATUS_OK) {
+        kernel_test_fail("the edge route would not stop");
     }
 
     if (apic_spurious_count() != 0U) {
@@ -1634,6 +1879,9 @@ void kernel_test_run(enum kernel_test_scenario scenario)
     case KERNEL_TEST_IOAPIC:
         ioapic_scenario();
         kernel_test_pass();
+    case KERNEL_TEST_IOAPIC_LEVEL:
+        ioapic_level_scenario();
+        kernel_test_pass();
     case KERNEL_TEST_RETIRED:
         retired_scenario();
         kernel_test_pass();
@@ -1750,6 +1998,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "apic";
     case KERNEL_TEST_IOAPIC:
         return "ioapic";
+    case KERNEL_TEST_IOAPIC_LEVEL:
+        return "ioapic-level";
     case KERNEL_TEST_RETIRED:
         return "retired";
     case KERNEL_TEST_APIC_TIMER:

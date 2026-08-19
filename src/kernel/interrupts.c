@@ -7,6 +7,7 @@
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/interrupts.h>
+#include <seneri/ioapic.h>
 #include <seneri/pic.h>
 #include <seneri/test.h>
 
@@ -434,15 +435,42 @@ void interrupt_dispatch(struct interrupt_frame *frame)
      * the local APIC itself, is acknowledged at the local APIC rather than the
      * 8259 pair. The end of interrupt follows the handler so a second interrupt
      * from the same source cannot arrive while the first is still running.
+     *
+     * A level-triggered source is completed by ioapic_send_eoi. It observes the
+     * live remote IRR, sends the local EOI, and—only when broadcasts have been
+     * suppressed—follows it with the generating I/O APIC's directed EOI. That
+     * is the ordering required by Intel SDM volume 3A section 13.8.5.
      */
     if (vector >= INTERRUPT_IOAPIC_BASE && vector < INTERRUPT_LOCAL_APIC_LIMIT) {
+        const bool level_triggered = ioapic_vector_is_level_triggered(vector);
+        enum ioapic_status ioapic_status;
+
         if (slot->handler == NULL) {
-            apic_send_eoi();
+            if (level_triggered) {
+                ioapic_status = ioapic_send_eoi(vector);
+
+                if (ioapic_status != IOAPIC_STATUS_OK) {
+                    console_panic(ioapic_status_string(ioapic_status));
+                }
+            } else {
+                apic_send_eoi();
+            }
+
             fatal_interrupt(frame);
         }
 
         slot->handler(frame, slot->context);
-        apic_send_eoi();
+
+        if (level_triggered) {
+            ioapic_status = ioapic_send_eoi(vector);
+
+            if (ioapic_status != IOAPIC_STATUS_OK) {
+                console_panic(ioapic_status_string(ioapic_status));
+            }
+        } else {
+            apic_send_eoi();
+        }
+
         return;
     }
 
