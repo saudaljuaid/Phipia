@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Turn assets/seneri-logo.png into the run-length asset the kernel draws.
+"""Turn assets/openseneri-logo.png into the run-length asset the kernel draws.
 
-The kernel cannot decode a PNG: the logo inflates to 16 MB, which is larger
-than the whole kernel heap, and a DEFLATE decoder is a lot of attack surface to
-run before anything else works.  So the expensive half happens here, at
-development time, and the kernel is left with a format it can validate in a
-single bounded pass.
+The kernel deliberately does not carry a PNG or DEFLATE parser.  The expensive
+and general-purpose half happens here, at development time, and the kernel is
+left with a small format it can validate in a single bounded pass.
 
 Run it only when the logo itself changes:
 
-    python3 tools/make-logo-asset.py assets/seneri-logo.png 256 build/logo.srl
+    python3 tools/make-logo-asset.py assets/openseneri-logo.png 256 build/logo.srl
 
 The result is a build artifact and is not committed; the kernel includes it at
 compile time.  The wire format is four magic bytes, a little-endian width and
@@ -74,15 +72,29 @@ def unfilter(raw, width, height):
     return out
 
 
-def downscale(pixels, width, height, target):
+def fit_within(width, height, maximum):
+    """Keep the source aspect ratio and never enlarge the supplied artwork."""
+    if maximum <= 0:
+        raise SystemExit('maximum dimension must be positive')
+    if width <= maximum and height <= maximum:
+        return width, height
+    if width >= height:
+        return maximum, max(1, (height * maximum + width // 2) // width)
+    return max(1, (width * maximum + height // 2) // height), maximum
+
+
+def downscale(pixels, width, height, out_width, out_height):
     """Box filter, averaging in premultiplied space so edges do not halo."""
-    out = bytearray(target * target * 4)
-    for y in range(target):
-        y0, y1 = y * height // target, max((y + 1) * height // target,
-                                           y * height // target + 1)
-        for x in range(target):
-            x0, x1 = x * width // target, max((x + 1) * width // target,
-                                              x * width // target + 1)
+    if out_width == width and out_height == height:
+        return pixels
+
+    out = bytearray(out_width * out_height * 4)
+    for y in range(out_height):
+        y0 = y * height // out_height
+        y1 = max((y + 1) * height // out_height, y0 + 1)
+        for x in range(out_width):
+            x0 = x * width // out_width
+            x1 = max((x + 1) * width // out_width, x0 + 1)
             r = g = b = a = n = 0
             for sy in range(y0, y1):
                 row = sy * width * 4
@@ -94,17 +106,17 @@ def downscale(pixels, width, height, target):
                     b += pixels[o + 2] * alpha
                     a += alpha
                     n += 1
-            o = (y * target + x) * 4
+            o = (y * out_width + x) * 4
             if a:
                 out[o], out[o + 1], out[o + 2] = r // a, g // a, b // a
             out[o + 3] = a // n
     return out
 
 
-def encode(pixels, size):
+def encode(pixels, width, height):
     """Runs of identical RGBA, at most 255 long, five bytes each."""
     body, run, index = bytearray(), None, 0
-    total = size * size
+    total = width * height
     while index < total:
         o = index * 4
         pixel = bytes(pixels[o:o + 4])
@@ -123,20 +135,21 @@ def encode(pixels, size):
 
 
 def main():
-    source = sys.argv[1] if len(sys.argv) > 1 else 'assets/seneri-logo.png'
-    size = int(sys.argv[2]) if len(sys.argv) > 2 else 256
+    source = sys.argv[1] if len(sys.argv) > 1 else 'assets/openseneri-logo.png'
+    maximum = int(sys.argv[2]) if len(sys.argv) > 2 else 256
     width, height, pixels = read_png(source)
-    scaled = downscale(pixels, width, height, size)
-    body = encode(scaled, size)
+    out_width, out_height = fit_within(width, height, maximum)
+    scaled = downscale(pixels, width, height, out_width, out_height)
+    body = encode(scaled, out_width, out_height)
     blob = bytearray(b'SRL1')
-    blob += struct.pack('<HH', size, size)
+    blob += struct.pack('<HH', out_width, out_height)
     blob += body
 
     destination = sys.argv[3] if len(sys.argv) > 3 else 'build/logo.srl'
     with open(destination, 'wb') as handle:
         handle.write(blob)
 
-    print(f'{source}: {width}x{height} -> {size}x{size}, '
+    print(f'{source}: {width}x{height} -> {out_width}x{out_height}, '
           f'{len(body) // 5} runs, {len(blob)} bytes -> {destination}',
           file=sys.stderr)
 

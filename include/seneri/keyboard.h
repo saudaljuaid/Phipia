@@ -12,7 +12,7 @@
 /*
  * The PS/2 keyboard, through the 8042 controller.
  *
- * This is the first device Seneri talks to that a person operates. Everything
+ * This is the first device OpenSeneri talks to that a person operates. Everything
  * before it was discovered, counted, or timed; this one waits.
  *
  * The 8042 is not a keyboard. It is a controller with two ports, a command
@@ -39,7 +39,7 @@ enum keyboard_status {
 };
 
 /*
- * One key event. Seneri reports both presses and releases rather than only the
+ * One key event. OpenSeneri reports both presses and releases rather than only the
  * characters that resulted, because a shell needs characters and anything that
  * ever draws a cursor or handles a held key needs the edges.
  */

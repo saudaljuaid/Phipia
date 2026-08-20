@@ -29,11 +29,11 @@
 #define PAGING_PROBE_ADDRESS UINT64_C(0x0000000200000000)
 
 /*
- * How much of a firmware-declared PCI Express configuration window Seneri makes
+ * How much of a firmware-declared PCI Express configuration window OpenSeneri makes
  * uncacheable and therefore readable as configuration space. One 2 MiB region,
  * because that is the unit the identity map is carved in: a device window is a
  * whole such region turned into 4 KiB pages, and one region is two buses of
- * configuration space, which is every bus any machine Seneri is tested on
+ * configuration space, which is every bus any machine OpenSeneri is tested on
  * populates. Reaching further needs the window mapped somewhere of its own, and
  * that is a later increment; src/kernel/pci.c reads no further than this.
  */
@@ -101,7 +101,7 @@ enum paging_memory_type {
  * access is implied by presence, so the absence of every flag is a read-only,
  * non-executable, write-back page. UNCACHED and WRITE_COMBINING are mutually
  * exclusive memory-type requests; naming both is refused rather than resolved
- * by precedence. There is deliberately no user flag: every entry Seneri writes
+ * by precedence. There is deliberately no user flag: every entry OpenSeneri writes
  * is supervisor-only, and a request naming an unknown bit is refused rather
  * than masked.
  */

@@ -6,7 +6,7 @@ and read it back, and it has no idea what a character, a window or a cursor is.
 
 ## Why this is where a project like this goes wrong
 
-`CONTRIBUTING.md` says screenshots are not proof. Nowhere else in Seneri is that
+`CONTRIBUTING.md` says screenshots are not proof. Nowhere else in OpenSeneri is that
 as tempting as here, because **a framebuffer looks right long before it is
 right**. A pitch mistaken for a width produces a picture that slants — and it is
 still a picture. An off-by-one in the height writes past the mapping. Two
@@ -49,7 +49,7 @@ own name:
 
 ## It is a WC store destination
 
-The framebuffer differs from a register window: Seneri writes long sequential
+The framebuffer differs from a register window: OpenSeneri writes long sequential
 pixel runs and does not use reads as device commands. `paging.c` carves every
 4 KiB page intersecting its bytes out of the identity map with `PAGING_WRITE |
 PAGING_WRITE_COMBINING`. `IA32_PAT` entry 1 gives that request an explicit WC
@@ -81,11 +81,11 @@ pitch check left the whole suite green — see the controls below.
 Normal boot reports:
 
 ```text
-Seneri OS: IA32_PAT before 0x0007040600070406 after 0x0007040600070106 entry 1 write-combining
-Seneri OS: framebuffer memory type write-combining pages 768
-Seneri OS: framebuffer 1024x768 at 0x00000000FD000000 pitch 4096 RGB 16/8/0
-Seneri OS: framebuffer verified 786432 pixels
-Seneri OS: framebuffer established
+OpenSeneri: IA32_PAT before 0x0007040600070406 after 0x0007040600070106 entry 1 write-combining
+OpenSeneri: framebuffer memory type write-combining pages 768
+OpenSeneri: framebuffer 1024x768 at 0x00000000FD000000 pitch 4096 RGB 16/8/0
+OpenSeneri: framebuffer verified 786432 pixels
+OpenSeneri: framebuffer established
 ```
 
 The `framebuffer` scenario adds the check normal boot cannot make. Boot proves

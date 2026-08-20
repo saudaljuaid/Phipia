@@ -1,4 +1,4 @@
-# Working on Seneri
+# Working on OpenSeneri
 
 This is for the person who owns this repository, working on it alone.
 
@@ -45,10 +45,10 @@ writable-and-executable segment, a section the linker script does not recognise.
 ## Starting a change
 
     git fetch origin
-    git switch -c seneri-os-<what-it-does> origin/main
+    git switch -c openseneri-<what-it-does> origin/main
 
-Branch names describe the change, not who made it. `seneri-os-pci-enumeration`,
-`seneri-os-pit-retirement`, `seneri-os-monotonic-clock`. Never a tool's name and
+Branch names describe the change, not who made it. `openseneri-pci-enumeration`,
+`openseneri-pit-retirement`, `openseneri-monotonic-clock`. Never a tool's name and
 never a person's.
 
 Always branch from `origin/main`, never from whatever your local `main` happens
@@ -77,7 +77,7 @@ the word "and", it is two commits.
 
 ## Pushing, and the pull request
 
-    git push -u origin seneri-os-<what-it-does>
+    git push -u origin openseneri-<what-it-does>
 
 Then open a pull request against `main` on GitHub. **You cannot push to `main`
 directly and you should not want to** — the branch is protected, and the point of

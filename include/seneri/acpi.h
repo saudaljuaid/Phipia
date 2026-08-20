@@ -52,8 +52,8 @@
 #define ACPI_ECAM_FUNCTION_SIZE UINT64_C(0x1000)
 
 /*
- * A Seneri early-boot policy bound on how many configuration windows firmware
- * may declare, not an architectural one. Every machine Seneri is tested on
+ * An OpenSeneri early-boot policy bound on how many configuration windows firmware
+ * may declare, not an architectural one. Every machine OpenSeneri is tested on
  * declares one. It keeps the discovered description in fixed storage.
  */
 #define ACPI_MAX_ECAM_ALLOCATIONS 8U
@@ -140,7 +140,7 @@ struct acpi_madt {
 };
 
 /*
- * The fixed ACPI description table, reduced to the one facility Seneri uses
+ * The fixed ACPI description table, reduced to the one facility OpenSeneri uses
  * from it. The power management timer is the only clock on this machine whose
  * frequency is stated by a specification rather than measured against another
  * clock, which is what makes it worth reading this table for.
@@ -187,7 +187,7 @@ struct acpi_mcfg {
 };
 
 /*
- * Seneri early-boot policy bounds on firmware-declared topology. They keep the
+ * OpenSeneri early-boot policy bounds on firmware-declared topology. They keep the
  * discovered description in fixed storage until a heap exists. They are not
  * ACPI architectural limits.
  */

@@ -2,8 +2,8 @@ SHELL := /bin/sh
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
-KERNEL := $(BUILD_DIR)/seneri.elf
-ISO := $(BUILD_DIR)/seneri.iso
+KERNEL := $(BUILD_DIR)/openseneri.elf
+ISO := $(BUILD_DIR)/openseneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
@@ -22,11 +22,11 @@ PYTHON := python3
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
-RUST_LIB := $(BUILD_DIR)/libseneri.a
+RUST_LIB := $(BUILD_DIR)/libopenseneri.a
 RUST_SOURCES := $(wildcard src/rust/*.rs)
-LOGO_SOURCE := assets/seneri-logo.png
+LOGO_SOURCE := assets/openseneri-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
-LOGO_SIZE := 256
+LOGO_MAX_DIMENSION := 256
 FONT_SOURCE := tools/font8x16.txt
 FONT_BLOB := $(BUILD_DIR)/font.snf
 
@@ -43,7 +43,7 @@ ASFLAGS := $(COMMON_FLAGS) -Wa,--fatal-warnings
 # the first time one was linked in. Now an unnamed section is a link error.
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error --build-id=none -T linker.ld \
-	-Map=$(BUILD_DIR)/seneri.map
+	-Map=$(BUILD_DIR)/openseneri.map
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
@@ -55,7 +55,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # to the stricter rule that an unsafe operation inside an unsafe function still
 # needs its own unsafe block naming why it is sound.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
-	--crate-name seneri -C panic=abort -C opt-level=2 \
+	--crate-name openseneri -C panic=abort -C opt-level=2 \
 	-C relocation-model=static -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
@@ -81,7 +81,7 @@ $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 # Regenerated only when the logo itself changes. The result is a build
 # artifact and is deliberately not committed; src/rust/abi.rs includes it.
 $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
-	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_SIZE) $@
+	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_MAX_DIMENSION) $@
 
 # Regenerated only when the glyph art changes. Also a build artifact; the
 # committed source is the ASCII art in $(FONT_SOURCE), so a clone needs nothing
@@ -90,8 +90,8 @@ $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-font-asset.py $(FONT_SOURCE) $@
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) | $(BUILD_DIR)
-	SENERI_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
-	SENERI_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
+	OPENSENERI_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	OPENSENERI_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
@@ -134,7 +134,7 @@ verify: toolchain lint
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'lidt'
 	# This inspects the ELF file, and for a long time it was the only thing
-	# behind Seneri's W^X claim - while the kernel ran on boot.S's huge pages
+	# behind OpenSeneri's W^X claim - while the kernel ran on boot.S's huge pages
 	# with no NX bit enabled at all. It is kept because it catches a bad link
 	# before anything boots, but the guarantee now rests on paging.c walking
 	# the installed tables at runtime; see docs/VIRTUAL_MEMORY.md.
@@ -154,23 +154,23 @@ verify: toolchain lint
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
-	cp $(KERNEL) $(ISO_ROOT)/boot/seneri.elf
+	cp $(KERNEL) $(ISO_ROOT)/boot/openseneri.elf
 	cp grub/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(ISO_ROOT)
 
 iso: $(ISO)
 
-$(TEST_BUILD_DIR)/%/seneri.iso: $(KERNEL) Makefile
+$(TEST_BUILD_DIR)/%/openseneri.iso: $(KERNEL) Makefile
 	rm -rf $(TEST_BUILD_DIR)/$*
 	mkdir -p $(TEST_BUILD_DIR)/$*/iso-root/boot/grub
-	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/seneri.elf
+	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/openseneri.elf
 	printf '%s\n' 'set default=0' 'set timeout=0' '' \
-		'menuentry "Seneri OS test" {' \
-		'    multiboot2 /boot/seneri.elf seneri.test=$*' \
+		'menuentry "OpenSeneri test" {' \
+		'    multiboot2 /boot/openseneri.elf openseneri.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
-qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
+qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
@@ -232,90 +232,90 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
-		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Seneri OS PANIC' "$$log"; then \
+		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'OpenSeneri PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		{ ! grep -Fq 'Seneri OS: ACPI root verified' "$$log" || \
-		  ! grep -Fq 'Seneri OS: ACPI MADT verified' "$$log" || \
-		  ! grep -Fq 'Seneri OS: ACPI topology verified' "$$log" || \
-		  ! grep -Eq '^Seneri OS: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
-		  ! grep -Fq 'Seneri OS: local APIC online' "$$log" || \
-		  ! grep -Fq 'Seneri OS: local APIC legacy routing LINT0 ExtINT' "$$log" || \
-		  ! grep -Eq '^Seneri OS: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: I/O APIC online' "$$log" || \
-		  ! grep -Eq '^Seneri OS: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight interrupts' "$$log" || \
-		  ! grep -Fq 'Seneri OS: legacy 8259 retired' "$$log" || \
-		  ! grep -Fq 'Seneri OS: timer survives legacy retirement' "$$log" || \
-		  ! grep -Eq '^Seneri OS: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
-		  ! grep -Fq 'Seneri OS: level-triggered routing established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
-		  ! grep -Fq 'Seneri OS: local APIC timer delivered eight interrupts' "$$log" || \
-		  ! grep -Eq '^Seneri OS: TSC calibrated at [0-9]+ Hz' "$$log" || \
-		  ! grep -Fq 'Seneri OS: TSC reference established' "$$log" || \
-		  ! grep -Fq 'Seneri OS: ACPI FADT verified' "$$log" || \
-		  ! grep -Fq 'Seneri OS: ACPI MCFG absent' "$$log" || \
-		  ! grep -Fq 'Seneri OS: ACPI configuration windows verified' "$$log" || \
-		  ! grep -Eq '^Seneri OS: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: PM timer independent reference established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: PIT retired' "$$log" || \
-		  ! grep -Fq 'Seneri OS: clocks survive PIT retirement' "$$log" || \
-		  ! grep -Fq 'Seneri OS: monotonic clock on time-stamp counter' "$$log" || \
-		  ! grep -Eq '^Seneri OS: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: deadline timers online' "$$log" || \
-		  ! grep -Fq 'Seneri OS: monotonic time established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: kernel page tables installed' "$$log" || \
-		  ! grep -Fq 'Seneri OS: no writable executable mapping' "$$log" || \
-		  ! grep -Eq '^Seneri OS: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: write-combining established' "$$log" || \
-		  ! grep -Fq 'Seneri OS: virtual memory established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: kernel heap online' "$$log" || \
-		  ! grep -Fq 'Seneri OS: heap coalesced to one free block' "$$log" || \
-		  ! grep -Fq 'Seneri OS: kernel heap established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: PCI mechanism 1 online, no window mapped$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
-		  ! grep -Fq 'Seneri OS: PCI configuration space enumerated' "$$log" || \
-		  ! grep -Fq 'Seneri OS: PCI enumeration established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
-		  ! grep -Fxq 'Seneri OS: thread rotation 123123123123' "$$log" || \
-		  ! grep -Eq '^Seneri OS: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: kernel threads established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
-		  ! grep -Fxq 'Seneri OS: framebuffer verified 786432 pixels' "$$log" || \
-		  ! grep -Fq 'Seneri OS: framebuffer established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: cached surface established' "$$log" || \
-		  ! grep -Eq '^Seneri OS: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^Seneri OS: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
-		  ! grep -Fq 'Seneri OS: screen console established' "$$log" || \
-		  ! grep -Fq 'Seneri OS: screen console passed' "$$log" || \
-		  ! grep -Eq '^Seneri OS: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
-		  ! grep -Fxq 'Seneri OS: keyboard decoded "hiI" from injected scancodes' "$$log" || \
-		  ! grep -Fq 'Seneri OS: keyboard established' "$$log" || \
-		  ! grep -Fq 'Seneri OS: keyboard passed' "$$log" || \
-		  ! grep -Fxq 'Seneri OS: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
-		  ! grep -Fq 'Seneri OS: shell output verified on screen' "$$log" || \
-		  ! grep -Fq 'Seneri OS: shell established' "$$log" || \
-		  ! grep -Fq 'Seneri OS: shell passed' "$$log" || \
-		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
+		{ ! grep -Fq 'OpenSeneri: ACPI root verified' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: ACPI MADT verified' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: ACPI topology verified' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: local APIC online' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: local APIC legacy routing LINT0 ExtINT' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: I/O APIC online' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: I/O APIC delivered eight interrupts' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: legacy 8259 retired' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: level-triggered routing established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: local APIC timer delivered eight interrupts' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: TSC calibrated at [0-9]+ Hz' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: TSC reference established' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: ACPI FADT verified' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: ACPI MCFG absent' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: ACPI configuration windows verified' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: PM timer independent reference established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: PIT retired' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: clocks survive PIT retirement' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: monotonic clock on time-stamp counter' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: deadline timers online' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: monotonic time established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: kernel page tables installed' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: no writable executable mapping' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: write-combining established' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: virtual memory established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: kernel heap online' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: heap coalesced to one free block' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: kernel heap established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: PCI mechanism 1 online, no window mapped$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: PCI configuration space enumerated' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: PCI enumeration established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
+		  ! grep -Fxq 'OpenSeneri: thread rotation 123123123123' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: kernel threads established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
+		  ! grep -Fxq 'OpenSeneri: framebuffer verified 786432 pixels' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: framebuffer established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: cached surface established' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: screen console established' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: screen console passed' "$$log" || \
+		  ! grep -Eq '^OpenSeneri: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
+		  ! grep -Fxq 'OpenSeneri: keyboard decoded "hiI" from injected scancodes' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: keyboard established' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: keyboard passed' "$$log" || \
+		  ! grep -Fxq 'OpenSeneri: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: shell output verified on screen' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: shell established' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: shell passed' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \
@@ -332,7 +332,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		unexpected) \
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
-			grep -Fq 'Seneri OS DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+			grep -Fq 'OpenSeneri DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
 		paging) \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000200000000' "$$log" && \
@@ -348,10 +348,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 				diagnostics_ok=false ;; \
 		pci) \
 			grep -Eq '^ST PCI ports functions [0-9]+ buses [0-9]+$$' "$$log" && \
-			! grep -Fq 'Seneri OS: ACPI MCFG at' "$$log" || \
+			! grep -Fq 'OpenSeneri: ACPI MCFG at' "$$log" || \
 				diagnostics_ok=false ;; \
 		pci-ecam) \
-			grep -Fq 'Seneri OS: ACPI MCFG at' "$$log" && \
+			grep -Fq 'OpenSeneri: ACPI MCFG at' "$$log" && \
 			grep -Eq '^ST PCI window agreed on [0-9]+ registers of [0-9]+ functions across [0-9]+ buses, [0-9]+ with MSI-X$$' "$$log" && \
 			! grep -Eq '^ST PCI window agreed on [0-9]+ registers of 0 functions' "$$log" || \
 				diagnostics_ok=false ;; \

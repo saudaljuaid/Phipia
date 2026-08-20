@@ -1,6 +1,6 @@
 # I/O APIC interrupt routing
 
-This increment delivers a real interrupt through hardware Seneri discovered
+This increment delivers a real interrupt through hardware OpenSeneri discovered
 rather than hardware the PC inherited. The timer now reaches the processor by
 two independent paths, and both are proved on every boot.
 
@@ -25,10 +25,10 @@ Firmware is held to its own description, as with the local APIC. The identifier
 in each I/O APIC's ID register must match what the MADT declared. A unit must
 be able to redirect at least the sixteen ISA interrupts. Two I/O APICs may not
 claim overlapping global system interrupts, because routing would then depend on
-which one Seneri happened to examine first.
+which one OpenSeneri happened to examine first.
 
 Initialization masks every redirection entry on every discovered unit. Firmware
-may leave entries unmasked, and none of them are Seneri's until Seneri programs
+may leave entries unmasked, and none of them are OpenSeneri's until OpenSeneri programs
 them.
 
 Every routed vector is recorded against the unit and pin it landed on, because
@@ -43,7 +43,7 @@ holds exactly one vector per ISA interrupt, and a `_Static_assert` ties the two
 bounds together, so a vector that passes the range check always has a record and
 the table cannot be overrun.
 
-Only the fields Seneri wrote are compared when an entry is read back. Delivery
+Only the fields OpenSeneri wrote are compared when an entry is read back. Delivery
 status at bit 12 and remote IRR at bit 14 belong to the device and either can be
 set the instant an unmasked pin asserts, so comparing the raw word would fail a
 correctly programmed level-triggered entry whenever its line happened to be
@@ -52,14 +52,14 @@ busy. A second `_Static_assert` keeps those two bits out of the writable mask.
 ## Routing a legacy interrupt
 
 An ISA IRQ is not its own global system interrupt. ACPI's interrupt source
-overrides say where it actually lands and how it is wired, and Seneri applies
+overrides say where it actually lands and how it is wired, and OpenSeneri applies
 them: the override's global system interrupt selects the redirection entry, and
 its MPS INTI flags select polarity and trigger mode. Without an override, ACPI
 section 5.2.12.5 makes an ISA IRQ identity mapped, edge triggered, and active
-high, which is what Seneri assumes and nothing more.
+high, which is what OpenSeneri assumes and nothing more.
 
 Both flag fields reserve one encoding. A reserved encoding describes electricals
-Seneri cannot program, so it is refused by name rather than read as the nearest
+OpenSeneri cannot program, so it is refused by name rather than read as the nearest
 thing that fits — a reserved polarity is not "active high because the bit that
 means active low is clear".
 
@@ -67,11 +67,11 @@ On the supported target this is not academic. Firmware overrides IRQ0 to global
 system interrupt 2, so a router that ignored the override would program a
 correct-looking entry for the wrong pin and receive nothing. The same firmware
 declares IRQ 5, 9, 10 and 11 level triggered and active high; those are the PCI
-link interrupts, and until this increment Seneri refused to route them at all.
+link interrupts, and until this increment OpenSeneri refused to route them at all.
 
 A redirection entry is written masked first, then its destination, then its
 unmasked vector, so no interrupt can be delivered against a half-written entry.
-The entry is read back afterwards, comparing only the fields Seneri wrote.
+The entry is read back afterwards, comparing only the fields OpenSeneri wrote.
 
 ## Level-triggered routing
 
@@ -88,7 +88,7 @@ Directed EOI is an optional replacement for that broadcast, not an additional
 unconditional write. Intel SDM volume 3A section 13.8.5 requires both ends to
 advertise it: local APIC version-register bit 24 reports EOI-broadcast
 suppression, and I/O APIC version 0x20 introduces the directed EOI register at
-offset 0x40. Seneri sets local APIC SVR bit 12 only when both are present, reads
+offset 0x40. OpenSeneri sets local APIC SVR bit 12 only when both are present, reads
 the bit back, and then commits to directed mode. A failed readback is named
 `IOAPIC_STATUS_LOCAL_EOI_SUPPRESSION_FAILURE`.
 
@@ -121,7 +121,7 @@ The first is the device's, not the interrupt controller's, and it must come
 first. A pin acknowledged while its source is still asserting is re-serviced
 inside the acknowledgement itself, so the interrupt arrives again immediately
 and the machine makes no progress. This is the discipline every level-triggered
-driver owes its hardware, and Seneri's one device is no exception: on this route
+driver owes its hardware, and OpenSeneri's one device is no exception: on this route
 the 8254 runs in mode 0, whose output goes high at the terminal count and stays
 high until a new count is written, so the handler writes one.
 
@@ -148,7 +148,7 @@ level triggered and puts the 8254 in mode 0 so its line holds. Exactly one
 controller can deliver IRQ0 at a time, so a duplicated tick would be a routing
 bug rather than a race.
 
-Firmware declares IRQ0 edge triggered, and Seneri's production routing honours
+Firmware declares IRQ0 edge triggered, and OpenSeneri's production routing honours
 that. Trigger mode is a property of how the I/O APIC samples a pin rather than
 of the pin itself, so the level route asks for it explicitly through
 `IOAPIC_TRIGGER_FORCE_LEVEL`. That override exists because the 8254 is the only
@@ -223,12 +223,12 @@ The `ioapic` scenario is unchanged and still proves the edge path.
 Normal boot additionally requires:
 
 ```text
-Seneri OS: I/O APIC id 0 version 0x0000000000000020 entries 24 base GSI 0 directed EOI yes
-Seneri OS: local APIC EOI-broadcast suppression unsupported active no
-Seneri OS: I/O APIC level route id 0 GSI 2 vector 48 active high acknowledgement broadcast
-Seneri OS: I/O APIC level deliveries 8 remote IRR 8 directed EOI 0 in 86602068 ns
-Seneri OS: I/O APIC delivered eight level-triggered interrupts
-Seneri OS: level-triggered routing established
+OpenSeneri: I/O APIC id 0 version 0x0000000000000020 entries 24 base GSI 0 directed EOI yes
+OpenSeneri: local APIC EOI-broadcast suppression unsupported active no
+OpenSeneri: I/O APIC level route id 0 GSI 2 vector 48 active high acknowledgement broadcast
+OpenSeneri: I/O APIC level deliveries 8 remote IRR 8 directed EOI 0 in 86602068 ns
+OpenSeneri: I/O APIC delivered eight level-triggered interrupts
+OpenSeneri: level-triggered routing established
 ```
 
 ## Negative controls
@@ -251,7 +251,7 @@ model and remains explicitly recorded as an evidence gap.
 
 QEMU reports local APIC version `0x00050014`: bit 24 is clear. It also truncates
 the spurious-vector register to the low nine bits, so SVR bit 12 cannot read
-back. Seneri therefore reports and proves broadcast mode there. Page-table or
+back. OpenSeneri therefore reports and proves broadcast mode there. Page-table or
 I/O-APIC version bits alone are not presented as proof that directed EOI ran.
 
 ## Deferred work

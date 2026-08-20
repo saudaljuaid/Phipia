@@ -50,7 +50,7 @@
 /*
  * Intel SDM volume 3A section 2.5: CR0.WP is bit 16. With it clear, supervisor
  * writes ignore the read-only bit entirely, so every permission this subsystem
- * installs would be advisory for ring 0 - which is the only ring Seneri has.
+ * installs would be advisory for ring 0 - which is the only ring OpenSeneri has.
  */
 #define CR0_WRITE_PROTECT (UINT64_C(1) << 16)
 
@@ -65,7 +65,7 @@
 /*
  * Intel SDM volume 3A section 14.8: IA32_PAT is MSR 0x277 and holds eight
  * one-byte memory types. The bootstrap hierarchy selects only entry 0. Existing
- * Seneri mappings select entry 0 for RAM and entry 3 for device registers, so
+ * OpenSeneri mappings select entry 0 for RAM and entry 3 for device registers, so
  * entry 1 can be changed without retyping a live mapping. PWT alone selects it
  * at every leaf size, avoiding the PAT bit whose position differs between 4 KiB
  * and large leaves. Entry 0 remains write-back and entry 3 uncacheable.
@@ -1169,13 +1169,13 @@ static void add_section(
  * Decide whether a firmware-declared configuration window can become a device
  * region, and return its base if it can. Three things have to be true, and none
  * of them failing is an error: a machine may declare no window at all, and a
- * window Seneri cannot carve out is one it reads through the I/O ports instead.
+ * window OpenSeneri cannot carve out is one it reads through the I/O ports instead.
  *
  * The window must start on a 2 MiB boundary, because a device region is one
  * whole region of the identity map and a window straddling two would need both.
  * It must lie inside the early identity window, because that is the only
  * physical memory this map covers. And only the first declared window is taken:
- * nothing in Seneri yet has a second segment group to address.
+ * nothing in OpenSeneri yet has a second segment group to address.
  */
 static uint64_t select_ecam_window(const struct acpi_mcfg *mcfg)
 {
@@ -1359,7 +1359,7 @@ static enum paging_status build_identity_map(struct page_hierarchy *hierarchy)
             enum paging_status status;
 
             /*
-             * The null page stays absent. Nothing in Seneri reads physical
+             * The null page stays absent. Nothing in OpenSeneri reads physical
              * address zero, and leaving it unmapped turns a null dereference
              * into a page fault naming CR2 = 0 instead of a silent read of the
              * real-mode interrupt vector table.

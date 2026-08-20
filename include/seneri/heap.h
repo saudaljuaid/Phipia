@@ -30,7 +30,7 @@
 #define HEAP_ALIGNMENT UINT64_C(16)
 
 /*
- * A Seneri policy bound on how many blocks the heap may be divided into, not an
+ * An OpenSeneri policy bound on how many blocks the heap may be divided into, not an
  * architectural one. The block table is fixed storage because the thing that
  * would replace it is a heap, and this is it.
  */

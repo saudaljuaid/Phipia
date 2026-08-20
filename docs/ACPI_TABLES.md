@@ -6,20 +6,20 @@ changing interrupt-controller state.
 
 ## System-description table invariants
 
-Seneri follows the RSDT only for an ACPI 1.0 root and otherwise follows the
+OpenSeneri follows the RSDT only for an ACPI 1.0 root and otherwise follows the
 XSDT selected during RSDP validation. The root signature must agree with that
 selection. Its declared length must include the 36-byte ACPI description header,
-fit within Seneri's current first-4-GiB identity map, and contain a whole number
+fit within OpenSeneri's current first-4-GiB identity map, and contain a whole number
 of 32-bit RSDT or 64-bit XSDT entries. The complete table checksum must be zero.
 
 Firmware controls every length and pointer in this path. Early discovery
 therefore limits a root to 256 entries and any individual table to 1 MiB. These
-are Seneri policy bounds, not ACPI architectural limits. They keep every loop
+are OpenSeneri policy bounds, not ACPI architectural limits. They keep every loop
 finite until the virtual-memory manager can map firmware tables individually.
 
 Each root entry is decoded from its little-endian byte representation so an
 XSDT's naturally four-byte-aligned 64-bit entries do not create an unaligned C
-access. Before Seneri examines a referenced signature, the address must be
+access. Before OpenSeneri examines a referenced signature, the address must be
 nonzero and the fixed header must fit in the early map. Before it consumes the
 table, the complete declared span and checksum must also be valid.
 
@@ -36,7 +36,7 @@ reserved, so the discovered table cannot be recycled after discovery.
 
 ## MCFG invariant
 
-The memory-mapped configuration table is the first table Seneri reads whose
+The memory-mapped configuration table is the first table OpenSeneri reads whose
 **absence is not a fault**. A machine with no PCI Express host bridge has no
 reason to publish one, so `acpi_mcfg_discover` returns
 `ACPI_STATUS_MISSING_MCFG` and the caller decides what that means. Everything
@@ -90,13 +90,13 @@ rejections mean anything.
 The normal QEMU scenario must also walk SeaBIOS's real ACPI tables and emit:
 
 ```text
-Seneri OS: ACPI MADT verified
-Seneri OS: ACPI configuration windows verified
+OpenSeneri: ACPI MADT verified
+OpenSeneri: ACPI configuration windows verified
 ```
 
 The default QEMU machine is i440fx, which has no PCI Express host bridge and
 publishes no MCFG, so the normal scenario proves the **absent** path on every
-run and reports `Seneri OS: ACPI MCFG absent`. The present path is proved by
+run and reports `OpenSeneri: ACPI MCFG absent`. The present path is proved by
 booting the same image on `-machine q35`, where firmware declares one window at
 `0xB0000000` covering all 256 buses of segment 0.
 
@@ -125,12 +125,12 @@ one kernel, two machines, two different answers, both correct.
   the window to fall inside the early identity map, because describing it and
   reaching it are different questions. The consumer is what has to refuse.
 - **Segment groups beyond the first are recorded and otherwise ignored.**
-  Nothing in Seneri yet has a second segment to address.
+  Nothing in OpenSeneri yet has a second segment to address.
 - **The eight reserved bytes are not checked for zero.** The specification calls
   them reserved; refusing on them would reject firmware over a field no reader
   uses, which is a refusal with no failure behind it.
 
 `docs/ACPI_TOPOLOGY.md` covers the next increment, which parses the MADT's
 variable-length records with the same bounded discipline. Only after that
-topology is proved may Seneri mask the legacy PIC permanently, route a timer
+topology is proved may OpenSeneri mask the legacy PIC permanently, route a timer
 through discovered APIC hardware, and retire the PIT proof.

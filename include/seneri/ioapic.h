@@ -78,7 +78,7 @@ struct ioapic_state {
 };
 
 /*
- * One redirection entry, decomposed into the fields Seneri reasons about, and
+ * One redirection entry, decomposed into the fields OpenSeneri reasons about, and
  * the two that say which pin on which unit it is. Remote IRR is the device's to
  * set: it latches on every level-triggered delivery and only an end-of-
  * interrupt indication puts it down, either as the normal local-APIC broadcast

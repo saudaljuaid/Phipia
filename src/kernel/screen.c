@@ -34,16 +34,17 @@
 #define REPLACEMENT_CHARACTER '?'
 
 /*
- * Background and foreground. Deliberately the same near-black the logo is
- * composited against, so text and image sit on one ground rather than two.
+ * Background and foreground. Deep ocean blue and warm paper give the console
+ * the quiet, familiar character of an older home computer without sacrificing
+ * contrast or readability.
  */
-#define SCREEN_BACKGROUND_RED UINT8_C(0x08)
-#define SCREEN_BACKGROUND_GREEN UINT8_C(0x0A)
-#define SCREEN_BACKGROUND_BLUE UINT8_C(0x0E)
+#define SCREEN_BACKGROUND_RED UINT8_C(0x13)
+#define SCREEN_BACKGROUND_GREEN UINT8_C(0x23)
+#define SCREEN_BACKGROUND_BLUE UINT8_C(0x2E)
 
-#define SCREEN_FOREGROUND_RED UINT8_C(0xC8)
-#define SCREEN_FOREGROUND_GREEN UINT8_C(0xD0)
-#define SCREEN_FOREGROUND_BLUE UINT8_C(0xDC)
+#define SCREEN_FOREGROUND_RED UINT8_C(0xE7)
+#define SCREEN_FOREGROUND_GREEN UINT8_C(0xD9)
+#define SCREEN_FOREGROUND_BLUE UINT8_C(0xB7)
 
 static struct screen_state state;
 static uint32_t background_pixel;

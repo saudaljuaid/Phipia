@@ -1,4 +1,4 @@
-# What Seneri owes
+# What OpenSeneri owes
 
 Every other document here ends with a *Deferred work* list, which is honest but
 local: each one knows what its own layer is missing and nothing knows what the
@@ -259,7 +259,7 @@ Measured, and healthy:
     wc -l src/kernel/*.c | sort -rn | head
     grep -c 'grep -F\|grep -E' Makefile
     grep -rn 'TODO\|FIXME\|XXX\|HACK' src/ include/ docs/ Makefile
-    nm -u build/seneri.elf
+    nm -u build/openseneri.elf
     git log --oneline origin/main..HEAD | wc -l
 
 And, for §1 — which branch still holds work that `main` does not:

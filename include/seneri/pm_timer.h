@@ -10,7 +10,7 @@
 /*
  * ACPI 6.6 section 4.8.3.3 fixes the power management timer at exactly
  * 3.579545 MHz, one third of the 10.7386 MHz colour burst frequency the
- * original PC clock chain was built from. Seneri does not measure this rate
+ * original PC clock chain was built from. OpenSeneri does not measure this rate
  * against anything, which is the entire reason the timer is worth having: it is
  * the first time reference here whose frequency is stated rather than derived.
  */
@@ -68,7 +68,7 @@ uint64_t pm_timer_ticks_to_nanoseconds(uint64_t ticks);
 uint64_t pm_timer_nanoseconds_to_ticks(uint64_t nanoseconds);
 
 /*
- * Seneri agreement policy, not an ACPI rule. Two measurements of one interval
+ * OpenSeneri agreement policy, not an ACPI rule. Two measurements of one interval
  * agree when they differ by at most one part in the tolerance divisor of the
  * reference.
  *

@@ -8,7 +8,7 @@
 /*
  * Text on the framebuffer.
  *
- * Until this existed, Seneri could draw pixels and could write words, but not
+ * Until this existed, OpenSeneri could draw pixels and could write words, but not
  * both: the console spoke to a serial port and a VGA text buffer, and the
  * framebuffer knew nothing about characters. This is the layer between them.
  *

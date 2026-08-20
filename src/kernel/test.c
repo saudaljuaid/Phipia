@@ -364,7 +364,7 @@ static _Noreturn void kernel_test_pass(void)
 
 enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
 {
-    static const char prefix[] = "seneri.test=";
+    static const char prefix[] = "openseneri.test=";
     enum kernel_test_scenario selected = KERNEL_TEST_NONE;
     size_t offset = 0;
 
@@ -609,7 +609,7 @@ static void ioapic_level_scenario(void)
 
     /*
      * Read the entry off the hardware. An entry programmed edge triggered while
-     * Seneri's records called it level triggered would deliver every interrupt
+     * OpenSeneri's records called it level triggered would deliver every interrupt
      * below and latch nothing, so this is the check that catches it.
      */
     if (ioapic_read_redirection(pit_active_vector(), &entry) !=
@@ -1503,7 +1503,7 @@ static struct acpi_topology paging_probe_topology;
  * recorded in a table.
  *
  * `make verify` has always refused an RWX load segment, and until this
- * increment that assertion was the only thing standing behind Seneri's W^X
+ * increment that assertion was the only thing standing behind OpenSeneri's W^X
  * claim - and it inspects the ELF file, not the machine the kernel runs on.
  * Everything below the rejections is the part a file check can never do: a
  * fresh frame is mapped writable, written, narrowed to read-only, and written
@@ -2305,7 +2305,7 @@ static void pci_ecam_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
     }
 
     /*
-     * A bus past what Seneri mapped is refused rather than folded back into the
+     * A bus past what OpenSeneri mapped is refused rather than folded back into the
      * window, which is the failure that would read one bus as another.
      */
     address.segment = 0U;
@@ -2892,7 +2892,7 @@ static void shell_scenario(void)
     }
 
     after = shell_get_state();
-    console_write("Seneri OS: shell scenario ran ");
+    console_write("OpenSeneri: shell scenario ran ");
     console_write_u64(after.commands);
     console_write(" commands and refused ");
     console_write_u64(after.unknown);
@@ -3053,7 +3053,7 @@ static void keyboard_scenario(void)
         kernel_test_fail("the keyboard lost events it never accounted for");
     }
 
-    console_write("Seneri OS: keyboard scenario queued ");
+    console_write("OpenSeneri: keyboard scenario queued ");
     console_write_u64((uint64_t)after.queued);
     console_write(" and dropped ");
     console_write_u64(after.dropped - before.dropped);
@@ -3170,7 +3170,7 @@ static void screen_scenario(void)
         }
     }
 
-    console_write("Seneri OS: screen scenario drew ");
+    console_write("OpenSeneri: screen scenario drew ");
     console_write_u64((uint64_t)count);
     console_write(" glyphs and read every one back\n");
 }
@@ -3769,7 +3769,7 @@ void kernel_test_run(
         interrupt_test_set_gate_present(14U, false);
         interrupt_trigger_page_fault();
     case KERNEL_TEST_INVALID:
-        kernel_test_fail("invalid or duplicate seneri.test argument");
+        kernel_test_fail("invalid or duplicate openseneri.test argument");
     case KERNEL_TEST_NONE:
     default:
         kernel_test_fail("unreachable test scenario");

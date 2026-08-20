@@ -39,7 +39,7 @@ corrupted allocator that hands the same bytes to two callers. Out-of-band
 metadata cannot be reached by a write through a heap pointer at all.
 
 The price is a fixed bound on how many blocks the heap can be divided into. That
-is a Seneri policy bound, like every other one in this kernel, and running into
+is an OpenSeneri policy bound, like every other one in this kernel, and running into
 it is a reported status rather than a corruption.
 
 ### The invariant
@@ -122,11 +122,11 @@ freed outermost-first so the last free has to merge in **both** directions, whic
 a heap that only ever merges forwards would fail.
 
 ```text
-Seneri OS: heap window 0x0000000400000000 size 16777216 guards 0x00000003FFFFF000 0x0000000401000000
-Seneri OS: heap committed 4096 bytes in 1 pages, live 3
-Seneri OS: kernel heap online
-Seneri OS: heap coalesced to one free block
-Seneri OS: kernel heap established
+OpenSeneri: heap window 0x0000000400000000 size 16777216 guards 0x00000003FFFFF000 0x0000000401000000
+OpenSeneri: heap committed 4096 bytes in 1 pages, live 3
+OpenSeneri: kernel heap online
+OpenSeneri: heap coalesced to one free block
+OpenSeneri: kernel heap established
 ```
 
 The three allocations total exactly 4096 bytes after rounding, so one page backs
@@ -235,7 +235,7 @@ control names the guard.
   next candidates — though both are populated once at boot and never resized, so
   the bound they remove is smaller than the timer's.
 - **Not reentrant, and not interrupt-safe.** Growth maps pages in a transaction
-  that must not be interrupted, and nothing in Seneri allocates from an
+  that must not be interrupted, and nothing in OpenSeneri allocates from an
   interrupt handler. A heap that could would need a lock, and a lock needs
   something to contend with it.
 - **No `realloc`, no calloc-style zeroing.** A returned block holds whatever the

@@ -11,7 +11,7 @@
 #define ACPI_MADT_FIXED_SIZE 44U
 
 /*
- * Seneri early-boot policy bound. Firmware controls every table length in this
+ * OpenSeneri early-boot policy bound. Firmware controls every table length in this
  * path, so no single table may exceed 1 MiB until the virtual-memory manager
  * can map firmware tables individually. This is not an ACPI limit.
  */

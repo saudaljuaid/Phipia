@@ -7,8 +7,8 @@ APIC without moving any interrupt source onto it.
 ## Why firmware is not trusted twice
 
 The MADT says where the local APIC is. `IA32_APIC_BASE` says where the processor
-thinks it is. Seneri requires both, and requires them to agree, because a
-disagreement means one of the two describes a machine Seneri is not running on,
+thinks it is. OpenSeneri requires both, and requires them to agree, because a
+disagreement means one of the two describes a machine OpenSeneri is not running on,
 and neither is then safe to program from. The same applies to identity: the
 running APIC's identifier must appear in the ACPI processor list as enabled.
 
@@ -16,9 +16,9 @@ Bring-up therefore rejects, rather than adapts to, a processor with no on-chip
 APIC, an APIC left hardware-disabled by firmware, an APIC already in x2APIC mode
 whose register window does not exist, a non-bootstrap processor, a null or
 out-of-map base, a base or identifier disagreeing with ACPI, a discrete 82489DX
-version, and a local vector table too short to hold the entries Seneri programs.
+version, and a local vector table too short to hold the entries OpenSeneri programs.
 
-Seneri does not write `IA32_APIC_BASE`. An APIC left hardware-disabled cannot be
+OpenSeneri does not write `IA32_APIC_BASE`. An APIC left hardware-disabled cannot be
 re-enabled without a reset on some processors, so a machine in that state is
 refused rather than coerced. Relocating the window or entering x2APIC mode
 belongs to a later increment that can prove the new mapping.
@@ -32,7 +32,7 @@ device exactly once in program order, which is what `volatile` expresses in
 here is one.
 
 The window's memory type is still whatever the firmware MTRRs describe, because
-Seneri's early identity map cannot yet express per-page cacheability. On the
+OpenSeneri's early identity map cannot yet express per-page cacheability. On the
 supported target that region is uncacheable. Pinning it explicitly belongs to
 the virtual-memory increment, and this file is the record that it is owed.
 
@@ -43,9 +43,9 @@ APIC takes the 8259 pair off the processor's direct interrupt path. Unless LINT0
 carries the PIC's output as `ExtINT`, every legacy interrupt silently stops
 arriving, including the PIT that currently proves interrupt delivery works.
 
-Seneri therefore programs LINT0 as `ExtINT` and LINT1 as NMI whenever the MADT's
+OpenSeneri therefore programs LINT0 as `ExtINT` and LINT1 as NMI whenever the MADT's
 `PCAT_COMPAT` flag reports a legacy PIC, and masks LINT0 when it does not. Every
-local vector table entry Seneri does not use is masked into a known state rather
+local vector table entry OpenSeneri does not use is masked into a known state rather
 than inherited from firmware, and a masked entry still carries a legal vector so
 an accidental unmask cannot raise an illegal-vector error. Entries beyond the
 count the version register reports are not touched.
@@ -58,7 +58,7 @@ Programming order matters: the APIC is software-enabled first, because the SDM
 forces every local vector table mask bit while it is software-disabled, so the
 entries must be written after the enable to take effect. Bring-up then reads
 back the spurious register, both LINT entries, and the identifier, comparing
-only the fields Seneri wrote, since delivery status and remote IRR belong to the
+only the fields OpenSeneri wrote, since delivery status and remote IRR belong to the
 processor.
 
 ## What this increment does not do
@@ -70,7 +70,7 @@ interrupts now arrive through the local APIC's LINT0 instead of the direct pin.
 
 ## Executable proof
 
-`apic_self_test` proves the decoders that reject a machine Seneri must not
+`apic_self_test` proves the decoders that reject a machine OpenSeneri must not
 program, driven by synthetic register values rather than hardware: a hardware
 disabled APIC, x2APIC mode, a non-bootstrap processor, a null base, a base
 outside the early map, a base disagreeing with ACPI, a discrete APIC version, a
@@ -84,8 +84,8 @@ its eight interrupts with the APIC enabled, and no spurious interrupt arrived.
 The normal scenario additionally requires:
 
 ```text
-Seneri OS: local APIC online
-Seneri OS: local APIC legacy routing LINT0 ExtINT
+OpenSeneri: local APIC online
+OpenSeneri: local APIC legacy routing LINT0 ExtINT
 ```
 
 The virtual wire invariant was confirmed by negative control: masking LINT0
@@ -94,7 +94,7 @@ times out. The routing is load-bearing and the scenario detects its absence.
 
 ## Deferred work
 
-Seneri now has a running local APIC that carries legacy interrupts unchanged.
+OpenSeneri now has a running local APIC that carries legacy interrupts unchanged.
 `docs/IO_APIC.md` covers the next increment, which programs redirection entries
 from the discovered overrides and delivers the timer through the I/O APIC.
 Masking the 8259 pair permanently follows it, and only after that may the local
