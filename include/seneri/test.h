@@ -42,6 +42,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_SURFACE,
     KERNEL_TEST_WRITE_COMBINING,
     KERNEL_TEST_DEVICE_WINDOWS,
+    KERNEL_TEST_BOOT_LEDGER,
     KERNEL_TEST_INVALID
 };
 
@@ -57,12 +58,18 @@ struct kernel_test_context {
     bool mcfg_present;
 };
 
-enum kernel_test_scenario kernel_test_select(const struct boot_context *context);
+enum kernel_test_scenario kernel_test_select(
+    const struct boot_information *information
+);
 void kernel_test_run(
     enum kernel_test_scenario scenario,
     const struct kernel_test_context *context
 );
 _Noreturn void kernel_test_complete_normal(void);
+struct boot_context;
+_Noreturn void kernel_test_complete_boot_ledger(
+    const struct boot_context *context
+);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

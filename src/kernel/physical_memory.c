@@ -195,7 +195,9 @@ static void recompute_stats(void)
     allocator_stats = stats;
 }
 
-static enum frame_status apply_memory_map(const struct boot_context *context)
+static enum frame_status apply_memory_map(
+    const struct boot_information *context
+)
 {
     for (size_t pass = 0; pass < 2U; ++pass) {
         for (size_t index = 0; index < context->memory_map_entry_count; ++index) {
@@ -205,7 +207,7 @@ static enum frame_status apply_memory_map(const struct boot_context *context)
             enum frame_status status;
             bool available;
 
-            if (!boot_memory_region_at(context, index, &region)) {
+            if (!boot_information_region_at(context, index, &region)) {
                 return FRAME_STATUS_BAD_MEMORY_MAP;
             }
 
@@ -250,7 +252,9 @@ static enum frame_status apply_memory_map(const struct boot_context *context)
     return FRAME_STATUS_OK;
 }
 
-enum frame_status frame_allocator_initialize(const struct boot_context *context)
+enum frame_status frame_allocator_initialize(
+    const struct boot_information *context
+)
 {
     enum frame_status status;
     uint64_t kernel_start;

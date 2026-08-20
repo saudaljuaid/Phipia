@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <seneri/clock.h>
+#include <seneri/boot_ledger.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
 #include <seneri/heap.h>
@@ -105,6 +106,7 @@ static void command_help(void)
     console_write("  pci       every function enumeration found\n");
     console_write("  keys      keyboard counters\n");
     console_write("  threads   scheduler counters\n");
+    console_write("  ledger    typed boot record\n");
     console_write("  version   what this is\n");
 }
 
@@ -217,6 +219,34 @@ static void command_version(void)
     console_write(" characters\n");
 }
 
+static void command_ledger(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+
+    if (ledger == NULL || !ledger->executed) {
+        console_write("boot ledger :: unavailable\n");
+        return;
+    }
+
+    console_write("boot ledger :: ");
+    console_write(ledger->degraded ? "DEGRADED" : "PASS");
+    console_putc('\n');
+    console_write("plan ");
+    console_write_u64(ledger->planned_count);
+    console_write("  run ");
+    console_write_u64(ledger->executed_count);
+    console_write("  skip ");
+    console_write_u64(ledger->optional_skip_count);
+    console_write("  caps ");
+    console_write_u64(ledger->established_capability_count);
+    console_write("  receipts ");
+    console_write_u64(ledger->receipt_count);
+    console_putc('\n');
+    console_write("fingerprint ");
+    console_write_hex(ledger->fingerprint);
+    console_putc('\n');
+}
+
 enum shell_status shell_execute(const char *text)
 {
     size_t start = 0U;
@@ -255,6 +285,8 @@ enum shell_status shell_execute(const char *text)
         command_keys();
     } else if (matches(text, "threads")) {
         command_threads();
+    } else if (matches(text, "ledger")) {
+        command_ledger();
     } else if (matches(text, "version")) {
         command_version();
     } else {

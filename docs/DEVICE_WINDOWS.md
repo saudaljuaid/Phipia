@@ -28,7 +28,8 @@ There are no page-table bits in the representation. Memory is requested as
 `PAGING_MEMORY_UNCACHEABLE`. Read access is implicit and the only additional
 device permission is write. Execute and user access cannot be represented.
 
-`kernel.c` owns construction. It adds VGA, the discovered local APIC, every
+The Boot Ledger's device-window stage in `boot_plan.c` owns construction. It
+adds VGA, the discovered local APIC, every
 bounded I/O APIC, and usable optional ECAM and framebuffer spans. Validation
 sorts a private bounded copy into canonical physical-address order, and paging
 copies that validated value when it installs the hierarchy. Consumers may read

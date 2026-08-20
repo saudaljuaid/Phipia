@@ -48,10 +48,18 @@ pretending is the part that rots.**
     pci       every function enumeration found
     keys      keyboard counters
     threads   scheduler counters
+    ledger    typed boot record
     version   what this is
 
 Each one reads live kernel state through the same interface anything else would.
 None of them are stubs.
+
+`ledger` is read-only and bounded. After normal boot it prints the installed
+stage, receipt, capability and optional-skip counts, the diagnostic fingerprint
+and `PASS` or `DEGRADED`; it prints no physical address. During the early shell
+scenario the ledger has not yet been published, so the same command cleanly
+reports `unavailable` rather than reading partial receipts. The complete record
+contract is in `docs/BOOT_LEDGER.md`.
 
 ## Where it runs
 

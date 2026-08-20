@@ -238,7 +238,7 @@ struct acpi_topology {
 };
 
 enum acpi_status acpi_root_discover(
-    const struct boot_context *context,
+    const struct boot_information *information,
     struct acpi_root *root
 );
 enum acpi_status acpi_madt_discover(
