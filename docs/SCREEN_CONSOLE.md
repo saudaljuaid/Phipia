@@ -1,6 +1,6 @@
 # Text on the screen
 
-Until this layer existed Seneri could draw pixels and could write words, but
+Until this layer existed OpenSeneri could draw pixels and could write words, but
 never both. The console spoke to a serial port and a VGA text buffer; the
 framebuffer knew about pixels and nothing about characters. This is what joins
 them, and it is the first thing in this project a person standing in front of
@@ -51,7 +51,7 @@ The reader is `src/rust/font.rs`. Every field in that header is a length or an
 index that becomes an offset into the blob, which is the rule `docs/RUST.md`
 states. The difference from the logo is frequency: a logo is decoded once, a
 glyph is looked up once per character printed, so this is the first Rust in
-Seneri on a hot path.
+OpenSeneri on a hot path.
 
 ## Where it sits in boot
 
@@ -75,7 +75,7 @@ a change that quietly moved the transcript would break every scenario at once.
 The font's 32-byte row buffer and the at-most 8x32 pixel tile are local to each
 draw, never shared scratch storage. A thread switched out while building a glyph
 therefore cannot hand another caller half of its tile. The screen cursor, damage
-rectangle and surface are shared state and remain unsynchronised; Seneri has one
+rectangle and surface are shared state and remain unsynchronised; OpenSeneri has one
 CPU and no interrupt handler writes text, so no two callers currently execute
 this path at once. A lock belongs with the first real concurrent writer.
 

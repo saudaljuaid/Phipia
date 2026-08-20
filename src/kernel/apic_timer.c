@@ -202,7 +202,7 @@ static void stop_counting(void)
 
 /*
  * Measure the local APIC timer against the ACPI power management timer. The APIC
- * timer's input is the processor's bus or core crystal clock, whose rate Seneri
+ * timer's input is the processor's bus or core crystal clock, whose rate OpenSeneri
  * is not told, so the only honest way to use it as a clock is to count it
  * against a reference whose rate is known. The PM timer's rate is stated by
  * the ACPI specification and measured against nothing, which is what makes it

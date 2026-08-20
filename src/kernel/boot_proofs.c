@@ -2,7 +2,7 @@
 /*
  * What boot proves before it calls a layer established.
  *
- * Every subsystem in Seneri carries a self-test that runs on synthetic data,
+ * Every subsystem in OpenSeneri carries a self-test that runs on synthetic data,
  * and every subsystem is also exercised here against the machine it actually
  * booted on. Those are different claims: a self-test says the arithmetic is
  * right, a proof says the hardware agreed.
@@ -117,9 +117,9 @@ static uint8_t write_back_probe;
  * slight blue bias, so the logo's own edges have something to sit against
  * rather than a pure black that hides how they were composited.
  */
-#define BOOT_BACKGROUND_RED UINT8_C(0x08)
-#define BOOT_BACKGROUND_GREEN UINT8_C(0x0A)
-#define BOOT_BACKGROUND_BLUE UINT8_C(0x0E)
+#define BOOT_BACKGROUND_RED UINT8_C(0xFF)
+#define BOOT_BACKGROUND_GREEN UINT8_C(0xFF)
+#define BOOT_BACKGROUND_BLUE UINT8_C(0xFF)
 
 /*
  * The first interrupt this kernel accepts as a level rather than an edge.
@@ -156,7 +156,7 @@ void prove_level_route(void)
         console_panic(ioapic_status_string(ioapic_status));
     }
 
-    console_write("Seneri OS: I/O APIC level route id ");
+    console_write("OpenSeneri: I/O APIC level route id ");
     console_write_u64(entry.unit_identifier);
     console_write(" GSI ");
     console_write_u64(entry.global_interrupt);
@@ -197,7 +197,7 @@ void prove_level_route(void)
         console_panic(pit_status_string(pit_status));
     }
 
-    console_write("Seneri OS: I/O APIC level deliveries ");
+    console_write("OpenSeneri: I/O APIC level deliveries ");
     console_write_u64(pit_ticks());
     console_write(" remote IRR ");
     console_write_u64(ioapic.remote_irr_observed);
@@ -311,7 +311,7 @@ void prove_apic_timer(void)
         console_panic(apic_timer_status_string(status));
     }
 
-    console_write("Seneri OS: local APIC timer calibrated at ");
+    console_write("OpenSeneri: local APIC timer calibrated at ");
     console_write_u64(apic_timer_counts_per_second());
     console_write(" counts per second\n");
 
@@ -353,7 +353,7 @@ void prove_tsc(void)
     }
 
     tsc = tsc_get_state();
-    console_write("Seneri OS: TSC calibrated at ");
+    console_write("OpenSeneri: TSC calibrated at ");
     console_write_u64(tsc.frequency_hz);
     console_write(" Hz, invariant ");
     console_write(tsc.invariant ? "yes" : "no");
@@ -384,7 +384,7 @@ void prove_pm_timer(void)
         console_panic(pm_timer_status_string(status));
     }
 
-    console_write("Seneri OS: PM timer counted ");
+    console_write("OpenSeneri: PM timer counted ");
     console_write_u64(elapsed_ticks);
     console_write(" ticks in ");
     console_write_u64(pm_timer_ticks_to_nanoseconds(elapsed_ticks));
@@ -462,7 +462,7 @@ void prove_clocks_without_pit(void)
     expected_ns = CLOCK_PROOF_TICKS * UINT64_C(1000000000) /
         CLOCK_PROOF_FREQUENCY;
 
-    console_write("Seneri OS: clocks agree: PM ");
+    console_write("OpenSeneri: clocks agree: PM ");
     console_write_u64(measured_ns);
     console_write(" ns, APIC timer ");
     console_write_u64(expected_ns);
@@ -508,7 +508,7 @@ void prove_monotonic_time(void)
     }
 
     clock = clock_get_state();
-    console_write("Seneri OS: monotonic clock on ");
+    console_write("OpenSeneri: monotonic clock on ");
     console_write(clock_source_string(clock.source));
     console_putc('\n');
 
@@ -523,7 +523,7 @@ void prove_monotonic_time(void)
      * now whatever timer_start obtained from the heap rather than an array
      * bound the compiler fixed.
      */
-    console_write("Seneri OS: deadline table of ");
+    console_write("OpenSeneri: deadline table of ");
     console_write_u64(timer_capacity());
     console_write(" entries on the heap\n");
 
@@ -540,7 +540,7 @@ void prove_monotonic_time(void)
 
     slept_ns = clock_monotonic_ns() - before;
 
-    console_write("Seneri OS: slept ");
+    console_write("OpenSeneri: slept ");
     console_write_u64(slept_ns);
     console_write(" ns for a ");
     console_write_u64(SLEEP_PROOF_NS);
@@ -581,7 +581,7 @@ void prove_monotonic_time(void)
  * segments since day one and `make verify` has refused an RWX load segment for
  * just as long. Neither fact ever reached the hardware, and nothing noticed.
  *
- * This is the third property Seneri has found to be verified in name only,
+ * This is the third property OpenSeneri has found to be verified in name only,
  * after the QEMU suite that never ran and the PIT that delivered twice per
  * period. The pattern each time is the same: the check was necessary and was
  * never sufficient.
@@ -608,7 +608,7 @@ void install_page_tables(
         console_panic(paging_status_string(status));
     }
 
-    console_write("Seneri OS: paging root ");
+    console_write("OpenSeneri: paging root ");
     console_write_hex(paging.root_physical_address);
     console_write(" table frames ");
     console_write_u64(paging.table_frames);
@@ -620,7 +620,7 @@ void install_page_tables(
     console_write(paging.write_protect_active ? "yes" : "no");
     console_putc('\n');
 
-    console_write("Seneri OS: paging leaves ");
+    console_write("OpenSeneri: paging leaves ");
     console_write_u64(audit.leaf_count);
     console_write(" writable ");
     console_write_u64(audit.writable_leaves);
@@ -652,8 +652,8 @@ void install_page_tables(
         console_panic("W^X cannot be enforced on this processor");
     }
 
-    console_write("Seneri OS: kernel page tables installed\n");
-    console_write("Seneri OS: no writable executable mapping\n");
+    console_write("OpenSeneri: kernel page tables installed\n");
+    console_write("OpenSeneri: no writable executable mapping\n");
 }
 
 static bool window_has_memory_type(
@@ -746,20 +746,20 @@ void prove_write_combining(
         console_panic("ordinary RAM is not write-back");
     }
 
-    console_write("Seneri OS: IA32_PAT before ");
+    console_write("OpenSeneri: IA32_PAT before ");
     console_write_hex(paging.pat_before);
     console_write(" after ");
     console_write_hex(paging.pat_after);
     console_write(" entry ");
     console_write_u64(paging.write_combining_pat_entry);
     console_write(" write-combining\n");
-    console_write("Seneri OS: framebuffer memory type ");
+    console_write("OpenSeneri: framebuffer memory type ");
     console_write(paging.framebuffer_size == 0U ? "absent" :
         paging_memory_type_string(PAGING_MEMORY_WRITE_COMBINING));
     console_write(" pages ");
     console_write_u64(paging.framebuffer_size / PAGING_PAGE_SIZE);
     console_putc('\n');
-    console_write("Seneri OS: write-combining established\n");
+    console_write("OpenSeneri: write-combining established\n");
 }
 
 /*
@@ -888,7 +888,7 @@ void bring_up_heap(void)
     }
 
     heap = heap_get_state();
-    console_write("Seneri OS: heap window ");
+    console_write("OpenSeneri: heap window ");
     console_write_hex(heap.base_address);
     console_write(" size ");
     console_write_u64(heap.size);
@@ -974,7 +974,7 @@ void prove_heap_lifecycle(void)
     }
 
     heap = heap_get_state();
-    console_write("Seneri OS: heap committed ");
+    console_write("OpenSeneri: heap committed ");
     console_write_u64(heap.committed_bytes);
     console_write(" bytes in ");
     console_write_u64(heap.mapped_pages);
@@ -1047,14 +1047,14 @@ void prove_heap_lifecycle(void)
         console_panic("heap accepted a pointer it had already merged away");
     }
 
-    console_write("Seneri OS: kernel heap online\n");
-    console_write("Seneri OS: heap coalesced to one free block\n");
+    console_write("OpenSeneri: kernel heap online\n");
+    console_write("OpenSeneri: heap coalesced to one free block\n");
 }
 
 /*
  * Count what is actually on the machine.
  *
- * Every driver Seneri will ever have begins here, because nothing above this
+ * Every driver OpenSeneri will ever have begins here, because nothing above this
  * layer can name a device that nothing below it has found. The enumeration is
  * read-only on purpose: sizing a base address register means writing all ones
  * into it, and a boot that only counts devices has no business disturbing one.
@@ -1079,7 +1079,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
     }
 
     pci = pci_get_state();
-    console_write("Seneri OS: PCI mechanism 1 online, ");
+    console_write("OpenSeneri: PCI mechanism 1 online, ");
     console_write(pci.ecam_active ? "window mapped at " : "no window mapped");
 
     if (pci.ecam_active) {
@@ -1091,7 +1091,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
     }
 
     console_putc('\n');
-    console_write("Seneri OS: PCI buses ");
+    console_write("OpenSeneri: PCI buses ");
     console_write_u64(pci.bus_count);
     console_write(" functions ");
     console_write_u64(pci.function_count);
@@ -1106,7 +1106,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
             console_panic("PCI reported a function it cannot return");
         }
 
-        console_write("Seneri OS: PCI ");
+        console_write("OpenSeneri: PCI ");
         console_write_u64(function->address.bus);
         console_putc(':');
         console_write_u64(function->address.device);
@@ -1154,7 +1154,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
         console_panic("PCI enumeration found no functions");
     }
 
-    console_write("Seneri OS: PCI configuration space enumerated\n");
+    console_write("OpenSeneri: PCI configuration space enumerated\n");
 
     /*
      * The claim the second mechanism exists to make. Two readers built
@@ -1163,7 +1163,7 @@ void bring_up_pci(const struct acpi_mcfg *mcfg, bool present)
      * is nothing to compare, and saying so is better than reporting a
      * comparison that did not happen.
      */
-    console_write("Seneri OS: PCI mechanisms agree on ");
+    console_write("OpenSeneri: PCI mechanisms agree on ");
     console_write_u64(pci.compared_dwords);
     console_write(" registers of ");
     console_write_u64(pci.compared_functions);
@@ -1253,7 +1253,7 @@ void prove_threads(void)
     }
 
     threads = thread_get_state();
-    console_write("Seneri OS: threads online, ");
+    console_write("OpenSeneri: threads online, ");
     console_write_u64(threads.ready);
     console_write(" ready of ");
     console_write_u64(threads.capacity);
@@ -1308,7 +1308,7 @@ void prove_threads(void)
         }
     }
 
-    console_write("Seneri OS: thread rotation ");
+    console_write("OpenSeneri: thread rotation ");
 
     for (size_t index = 0; index < thread_rotation_length; ++index) {
         console_write_u64(thread_rotation[index]);
@@ -1342,7 +1342,7 @@ void prove_threads(void)
         console_panic("the boot thread did not resume");
     }
 
-    console_write("Seneri OS: threads switched ");
+    console_write("OpenSeneri: threads switched ");
     console_write_u64(threads.switches);
     console_write(" times, ");
     console_write_u64(threads.exited);
@@ -1373,7 +1373,7 @@ void prove_threads(void)
         console_panic("starting and stopping threads did not return every frame");
     }
 
-    console_write("Seneri OS: kernel threads established\n");
+    console_write("OpenSeneri: kernel threads established\n");
 }
 
 /*
@@ -1403,12 +1403,12 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
     enum framebuffer_status status = framebuffer_initialize(framebuffer);
 
     /*
-     * A loader that set no graphics mode is not a failure. Seneri has run on
+     * A loader that set no graphics mode is not a failure. OpenSeneri has run on
      * the serial console since day one and continues to; this says so and moves
      * on, the same shape as a machine that declares no MCFG.
      */
     if (status == FRAMEBUFFER_STATUS_ABSENT) {
-        console_write("Seneri OS: no framebuffer, serial console only\n");
+        console_write("OpenSeneri: no framebuffer, serial console only\n");
         return;
     }
 
@@ -1417,7 +1417,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
     }
 
     screen = framebuffer_get_state();
-    console_write("Seneri OS: framebuffer ");
+    console_write("OpenSeneri: framebuffer ");
     console_write_u64(screen.width);
     console_putc('x');
     console_write_u64(screen.height);
@@ -1480,7 +1480,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
         }
     }
 
-    console_write("Seneri OS: framebuffer verified ");
+    console_write("OpenSeneri: framebuffer verified ");
     console_write_u64(checked);
     console_write(" pixels\n");
 
@@ -1504,7 +1504,7 @@ void prove_framebuffer(const struct boot_framebuffer *framebuffer)
         console_panic("the framebuffer is not device memory");
     }
 
-    console_write("Seneri OS: framebuffer established\n");
+    console_write("OpenSeneri: framebuffer established\n");
 }
 
 /*
@@ -1694,7 +1694,7 @@ void prove_surface(void)
         console_panic("two-corner damage missed the last framebuffer corner");
     }
 
-    console_write("Seneri OS: surface ");
+    console_write("OpenSeneri: surface ");
     console_write_u64(surface.width);
     console_putc('x');
     console_write_u64(surface.height);
@@ -1703,14 +1703,14 @@ void prove_surface(void)
     console_write(" buffer ");
     console_write_u64((uint64_t)surface.pitch * surface.height);
     console_write(" bytes\n");
-    console_write("Seneri OS: surface cycles full present ");
+    console_write("OpenSeneri: surface cycles full present ");
     console_write_u64(full_cycles);
     console_write(" one-line update ");
     console_write_u64(line_cycles);
     console_write(" scroll ");
     console_write_u64(scroll_cycles);
     console_putc('\n');
-    console_write("Seneri OS: surface split cycles full draw ");
+    console_write("OpenSeneri: surface split cycles full draw ");
     console_write_u64(full_draw_cycles);
     console_write(" push ");
     console_write_u64(full_push_cycles);
@@ -1723,7 +1723,7 @@ void prove_surface(void)
     console_write(" push ");
     console_write_u64(scroll_push_cycles);
     console_putc('\n');
-    console_write("Seneri OS: surface sparse two-corner cycles total ");
+    console_write("OpenSeneri: surface sparse two-corner cycles total ");
     console_write_u64(sparse_cycles);
     console_write(" draw ");
     console_write_u64(sparse_draw_cycles);
@@ -1732,7 +1732,7 @@ void prove_surface(void)
     console_write(" union ");
     console_write_u64(surface.last_present_pixels);
     console_putc('\n');
-    console_write("Seneri OS: surface copied ");
+    console_write("OpenSeneri: surface copied ");
     console_write_u64((uint64_t)surface.width * surface.height);
     console_write(" full, ");
     console_write_u64((uint64_t)surface.width * line_height);
@@ -1746,7 +1746,7 @@ void prove_surface(void)
         console_panic(surface_status_string(status));
     }
 
-    console_write("Seneri OS: cached surface established\n");
+    console_write("OpenSeneri: cached surface established\n");
 }
 
 /*
@@ -1757,7 +1757,7 @@ void prove_surface(void)
  * shape as every other: the image is decoded into memory, blitted, and then
  * every pixel of the blitted region is read back off the screen and compared
  * against what the decoder produced. A logo that looks right is not evidence;
- * a logo whose 65,536 pixels each match the decode is.
+ * a logo whose every pixel matches the decode is.
  */
 void draw_logo(void)
 {
@@ -1781,7 +1781,7 @@ void draw_logo(void)
         console_panic(logo_status_string(status));
     }
 
-    console_write("Seneri OS: logo ");
+    console_write("OpenSeneri: logo ");
     console_write_u64(width);
     console_putc('x');
     console_write_u64(height);
@@ -1890,7 +1890,7 @@ void draw_logo(void)
         console_panic("the decoded logo could not be released");
     }
 
-    console_write("Seneri OS: logo verified ");
+    console_write("OpenSeneri: logo verified ");
     console_write_u64(compared);
     console_write(" pixels on screen\n");
 
@@ -1898,7 +1898,7 @@ void draw_logo(void)
         console_panic("the logo proof skipped part of the image");
     }
 
-    console_write("Seneri OS: logo established\n");
+    console_write("OpenSeneri: logo established\n");
 }
 
 /*
@@ -2022,7 +2022,7 @@ void prove_preemption(void)
     cpu_interrupt_disable();
     threads = thread_get_state();
 
-    console_write("Seneri OS: preempted ");
+    console_write("OpenSeneri: preempted ");
     console_write_u64(threads.preemptions);
     console_write(" times across ");
     console_write_u64(threads.switches);
@@ -2030,7 +2030,7 @@ void prove_preemption(void)
     console_write_u64((clock_monotonic_ns() - started_ns) / 1000000U);
     console_write(" ms\n");
 
-    console_write("Seneri OS: unyielding threads ran");
+    console_write("OpenSeneri: unyielding threads ran");
 
     for (size_t index = 0; index < THREAD_PROOF_THREADS; ++index) {
         console_putc(' ');
@@ -2081,7 +2081,7 @@ void prove_preemption(void)
         console_panic(thread_status_string(status));
     }
 
-    console_write("Seneri OS: preemption established\n");
+    console_write("OpenSeneri: preemption established\n");
 }
 
 void prove_frame_lifecycle(void)
@@ -2108,7 +2108,7 @@ void prove_frame_lifecycle(void)
         console_panic("frame allocator returned an invalid address");
     }
 
-    console_write("Seneri OS: frame probe: ");
+    console_write("OpenSeneri: frame probe: ");
     console_write_hex(first_frame);
     console_write(" and ");
     console_write_hex(second_frame);
@@ -2154,7 +2154,7 @@ void prove_frame_lifecycle(void)
  */
 void prove_screen_console(void)
 {
-    static const char sample[] = "Seneri OS";
+    static const char sample[] = "OpenSeneri";
     static const size_t sample_length = sizeof(sample) - 1U;
 
     struct screen_state before;
@@ -2169,7 +2169,7 @@ void prove_screen_console(void)
 
     before = screen_get_state();
 
-    console_write("Seneri OS: screen console ");
+    console_write("OpenSeneri: screen console ");
     console_write_u64(before.columns);
     console_write("x");
     console_write_u64(before.rows);
@@ -2310,18 +2310,18 @@ void prove_screen_console(void)
     }
 
     after = screen_get_state();
-    console_write("Seneri OS: screen console drew ");
+    console_write("OpenSeneri: screen console drew ");
     console_write_u64(after.characters);
     console_write(" characters and scrolled ");
     console_write_u64(after.scrolls);
     console_write(" times\n");
-    console_write("Seneri OS: screen console established\n");
+    console_write("OpenSeneri: screen console established\n");
 }
 
 /*
  * The keyboard, proved without a person at the machine.
  *
- * Every other device Seneri brings up either announces itself or can be asked a
+ * Every other device OpenSeneri brings up either announces itself or can be asked a
  * question. A keyboard does neither: it says nothing until somebody presses a
  * key, and boot cannot wait for that.
  *
@@ -2429,17 +2429,17 @@ void prove_keyboard(void)
         console_panic("the keyboard left shift held after its release");
     }
 
-    console_write("Seneri OS: keyboard 8042 online, IRQ 1 routed, ");
+    console_write("OpenSeneri: keyboard 8042 online, IRQ 1 routed, ");
     console_write_u64(after.interrupts - before.interrupts);
     console_write(" interrupts for ");
     console_write_u64(after.events);
     console_write(" events\n");
-    console_write("Seneri OS: keyboard decoded \"");
+    console_write("OpenSeneri: keyboard decoded \"");
     for (size_t index = 0; index < characters; ++index) {
         console_putc(seen[index]);
     }
     console_write("\" from injected scancodes\n");
-    console_write("Seneri OS: keyboard established\n");
+    console_write("OpenSeneri: keyboard established\n");
 }
 
 /*
@@ -2467,7 +2467,7 @@ void prove_shell(void)
     };
     static const char echoed[] = "echo hi";
     static const char output[] = "hi";
-    static const char prompt[] = "seneri> ";
+    static const char prompt[] = "open> ";
 
     struct shell_state before;
     struct shell_state after;
@@ -2573,11 +2573,11 @@ void prove_shell(void)
      * next transcript line beginning halfway across the screen.
      */
     console_putc('\n');
-    console_write("Seneri OS: shell ran \"");
+    console_write("OpenSeneri: shell ran \"");
     console_write(echoed);
     console_write("\" from ");
     console_write_u64(sizeof(typed));
     console_write(" injected scancodes\n");
-    console_write("Seneri OS: shell output verified on screen\n");
-    console_write("Seneri OS: shell established\n");
+    console_write("OpenSeneri: shell output verified on screen\n");
+    console_write("OpenSeneri: shell established\n");
 }

@@ -13,7 +13,7 @@
  * mechanism #1: a 32-bit address latched into one port and the selected
  * register read through the next. It reaches the first 256 bytes of every
  * function of every bus of segment group zero, needs no mapping, and has been
- * present on every PC since PCI existed. It is what Seneri enumerates through.
+ * present on every PC since PCI existed. It is what OpenSeneri enumerates through.
  */
 #define PCI_CONFIG_ADDRESS_PORT UINT16_C(0x0CF8)
 #define PCI_CONFIG_DATA_PORT UINT16_C(0x0CFC)
@@ -91,7 +91,7 @@
 #define PCI_SUBCLASS_HOST_BRIDGE UINT8_C(0x00)
 
 /*
- * A Seneri early-boot policy bound on how many functions one enumeration may
+ * An OpenSeneri early-boot policy bound on how many functions one enumeration may
  * record, not an architectural one - the architecture allows 65536. The table
  * is one kernel heap allocation made at pci_initialize and released at
  * pci_shutdown, following the pattern src/kernel/timer.c set: never per

@@ -25,7 +25,7 @@
 #define MADT_LOCAL_APIC_OVERRIDE_SIZE 12U
 #define MADT_LOCAL_X2APIC_SIZE 16U
 
-/* ACPI 6.6 tables 5.22 and 5.26 define the flag fields Seneri accepts. */
+/* ACPI 6.6 tables 5.22 and 5.26 define the flag fields OpenSeneri accepts. */
 #define MADT_PROCESSOR_ENABLED UINT32_C(1)
 #define MADT_PROCESSOR_ONLINE_CAPABLE UINT32_C(2)
 #define MADT_PROCESSOR_VALID_FLAGS \
@@ -34,7 +34,7 @@
 
 /*
  * ACPI 6.6 section 5.2.12.5 defines interrupt source overrides only for the
- * ISA bus, whose sixteen legacy IRQs Seneri already owns through the 8259 pair.
+ * ISA bus, whose sixteen legacy IRQs OpenSeneri already owns through the 8259 pair.
  */
 #define MADT_BUS_ISA 0U
 #define MADT_ISA_IRQ_COUNT 16U
@@ -535,7 +535,7 @@ static uint8_t *append_override(
 /*
  * One enabled processor, one processor that is only online capable, one I/O
  * APIC, the customary IRQ0-to-GSI2 override, a local APIC NMI, and a structure
- * type Seneri does not model yet.
+ * type OpenSeneri does not model yet.
  */
 static bool build_reference_fixture(struct topology_fixture *fixture)
 {

@@ -6,7 +6,7 @@
 #include <seneri/acpi.h>
 #include <seneri/acpi_util.h>
 
-/* Seneri early-boot policy bounds firmware-controlled work. */
+/* OpenSeneri early-boot policy bounds firmware-controlled work. */
 #define ACPI_MAX_ROOT_ENTRIES 256U
 
 /*
@@ -21,7 +21,7 @@
 
 /*
  * ACPI 1.0 ends the table at 116 bytes, immediately past FLAGS. Every field
- * Seneri requires is inside that span, so a table of exactly that size is still
+ * OpenSeneri requires is inside that span, so a table of exactly that size is still
  * usable; the extended timer address is read only when the table's own declared
  * length reaches the end of the structure, because the bytes past a short
  * table's length belong to something else.
@@ -113,7 +113,7 @@ struct acpi_test_fadt {
 } __attribute__((packed));
 
 /*
- * Two allocation structures, which is one more than any machine Seneri is
+ * Two allocation structures, which is one more than any machine OpenSeneri is
  * tested on declares. The second exists so the overlap rejection has something
  * to reject against.
  */
@@ -360,7 +360,7 @@ static enum acpi_status validate_referenced_table(
 
 /*
  * Walk the root table once and return the single entry carrying a signature.
- * Every table Seneri reads comes through here, so a referenced table is bounds
+ * Every table OpenSeneri reads comes through here, so a referenced table is bounds
  * checked and its checksum verified before any reader sees it, and a firmware
  * that declares the same table twice is refused rather than resolved by
  * position. The caller names the two refusals so each table reports its own.
@@ -753,7 +753,7 @@ static enum acpi_status decode_ecam_allocations(
 /*
  * Discover the memory-mapped configuration window firmware advertises.
  *
- * This is the first optional table Seneri reads. A machine with no PCI Express
+ * This is the first optional table OpenSeneri reads. A machine with no PCI Express
  * host bridge publishes no MCFG, and that is a fact about the machine rather
  * than a fault: ACPI_STATUS_MISSING_MCFG is returned and the caller decides
  * whether it can proceed without one. Everything else here is refused for the

@@ -230,7 +230,7 @@ static enum boot_status decode_framebuffer(
     size = (uint64_t)pitch * height;
 
     /*
-     * Seneri maps the framebuffer out of the identity window, so a loader that
+     * OpenSeneri maps the framebuffer out of the identity window, so a loader that
      * placed it above 4 GiB has given this kernel something it cannot reach.
      * Refused here rather than discovered as a fault at a plausible address.
      */

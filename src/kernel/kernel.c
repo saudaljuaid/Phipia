@@ -89,7 +89,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (interrupt_status != INTERRUPT_STATUS_OK) {
         if (interrupt_status == INTERRUPT_STATUS_CPU_TABLE_FAILURE) {
-            console_write("Seneri OS: CPU table detail: ");
+            console_write("OpenSeneri: CPU table detail: ");
             console_write(cpu_status_string(cpu_tables_validate()));
             console_putc('\n');
         }
@@ -97,9 +97,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic(interrupt_status_string(interrupt_status));
     }
 
-    console_write("Seneri OS: kernel online\n");
-    console_write("Seneri OS: descriptor tables verified\n");
-    console_write("Seneri OS: interrupt foundation online\n");
+    console_write("OpenSeneri: kernel online\n");
+    console_write("OpenSeneri: descriptor tables verified\n");
+    console_write("OpenSeneri: interrupt foundation online\n");
 
     if (!boot_parser_self_test()) {
         console_panic("Multiboot2 parser self-test failed");
@@ -193,7 +193,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         console_panic("font reader self-test failed");
     }
 
-    console_write("Seneri OS: parser rejection tests passed\n");
+    console_write("OpenSeneri: parser rejection tests passed\n");
 
     boot_status = boot_context_parse(magic, boot_information, &context);
 
@@ -255,11 +255,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     report_acpi_fadt(&acpi_fadt);
     report_pm_timer(&pm_timer_state);
     report_acpi_mcfg(&boot_mcfg, boot_mcfg_present);
-    console_write("Seneri OS: ACPI root verified\n");
-    console_write("Seneri OS: ACPI MADT verified\n");
-    console_write("Seneri OS: ACPI topology verified\n");
-    console_write("Seneri OS: ACPI FADT verified\n");
-    console_write("Seneri OS: ACPI configuration windows verified\n");
+    console_write("OpenSeneri: ACPI root verified\n");
+    console_write("OpenSeneri: ACPI MADT verified\n");
+    console_write("OpenSeneri: ACPI topology verified\n");
+    console_write("OpenSeneri: ACPI FADT verified\n");
+    console_write("OpenSeneri: ACPI configuration windows verified\n");
     apic_status = apic_bring_online(&boot_topology);
 
     if (apic_status != APIC_STATUS_OK) {
@@ -268,7 +268,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     apic_state = apic_get_state();
     report_apic(&apic_state);
-    console_write("Seneri OS: local APIC online\n");
+    console_write("OpenSeneri: local APIC online\n");
     ioapic_status = ioapic_initialize(&boot_topology);
 
     if (ioapic_status != IOAPIC_STATUS_OK) {
@@ -277,7 +277,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     ioapic_state = ioapic_get_state();
     report_ioapic(&ioapic_state);
-    console_write("Seneri OS: I/O APIC online\n");
+    console_write("OpenSeneri: I/O APIC online\n");
     frame_status = frame_allocator_initialize(&context);
 
     if (frame_status != FRAME_STATUS_OK) {
@@ -337,8 +337,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         prove_shell();
     }
 
-    console_write("Seneri OS: day one passed\n");
-    console_write("Seneri OS: memory foundation passed\n");
+    console_write("OpenSeneri: day one passed\n");
+    console_write("OpenSeneri: memory foundation passed\n");
     test_scenario = kernel_test_select(&context);
     kernel_test_run(test_scenario, boot_mcfg_present ? &boot_mcfg : NULL,
         boot_mcfg_present, &context.framebuffer);
@@ -428,36 +428,36 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         }
     }
 
-    console_write("Seneri OS: exception probes passed\n");
-    console_write("Seneri OS: PIC spurious paths passed\n");
-    console_write("Seneri OS: PIT delivered eight interrupts\n");
-    console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
-    console_write("Seneri OS: legacy 8259 retired\n");
-    console_write("Seneri OS: timer survives legacy retirement\n");
+    console_write("OpenSeneri: exception probes passed\n");
+    console_write("OpenSeneri: PIC spurious paths passed\n");
+    console_write("OpenSeneri: PIT delivered eight interrupts\n");
+    console_write("OpenSeneri: I/O APIC delivered eight interrupts\n");
+    console_write("OpenSeneri: legacy 8259 retired\n");
+    console_write("OpenSeneri: timer survives legacy retirement\n");
     console_write(
-        "Seneri OS: I/O APIC delivered eight level-triggered interrupts\n"
+        "OpenSeneri: I/O APIC delivered eight level-triggered interrupts\n"
     );
-    console_write("Seneri OS: level-triggered routing established\n");
-    console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
-    console_write("Seneri OS: TSC reference established\n");
-    console_write("Seneri OS: PM timer independent reference established\n");
-    console_write("Seneri OS: PIT retired\n");
-    console_write("Seneri OS: clocks survive PIT retirement\n");
-    console_write("Seneri OS: deadline timers online\n");
-    console_write("Seneri OS: monotonic time established\n");
-    console_write("Seneri OS: virtual memory established\n");
-    console_write("Seneri OS: kernel heap established\n");
-    console_write("Seneri OS: PCI enumeration established\n");
-    console_write("Seneri OS: kernel threads passed\n");
-    console_write("Seneri OS: preemption passed\n");
+    console_write("OpenSeneri: level-triggered routing established\n");
+    console_write("OpenSeneri: local APIC timer delivered eight interrupts\n");
+    console_write("OpenSeneri: TSC reference established\n");
+    console_write("OpenSeneri: PM timer independent reference established\n");
+    console_write("OpenSeneri: PIT retired\n");
+    console_write("OpenSeneri: clocks survive PIT retirement\n");
+    console_write("OpenSeneri: deadline timers online\n");
+    console_write("OpenSeneri: monotonic time established\n");
+    console_write("OpenSeneri: virtual memory established\n");
+    console_write("OpenSeneri: kernel heap established\n");
+    console_write("OpenSeneri: PCI enumeration established\n");
+    console_write("OpenSeneri: kernel threads passed\n");
+    console_write("OpenSeneri: preemption passed\n");
     if (framebuffer_is_active()) {
-        console_write("Seneri OS: framebuffer passed\n");
-        console_write("Seneri OS: logo passed\n");
-        console_write("Seneri OS: screen console passed\n");
-        console_write("Seneri OS: shell passed\n");
+        console_write("OpenSeneri: framebuffer passed\n");
+        console_write("OpenSeneri: logo passed\n");
+        console_write("OpenSeneri: screen console passed\n");
+        console_write("OpenSeneri: shell passed\n");
     }
-    console_write("Seneri OS: keyboard passed\n");
-    console_write("Seneri OS: never triple fault milestone passed\n");
+    console_write("OpenSeneri: keyboard passed\n");
+    console_write("OpenSeneri: never triple fault milestone passed\n");
 
     if (test_scenario == KERNEL_TEST_NORMAL) {
         kernel_test_complete_normal();

@@ -1,6 +1,6 @@
 # Owning the page tables
 
-Seneri looked like it enforced W^X. It did not.
+OpenSeneri looked like it enforced W^X. It did not.
 
 `linker.ld` has separated the kernel into properly flagged segments since day
 one — `text` is `FLAGS(5)`, `rodata` is `FLAGS(4)`, `data` is `FLAGS(6)` — and
@@ -17,7 +17,7 @@ Every byte below 4 GiB was simultaneously readable, writable and executable:
 kernel text, kernel rodata, the BSS, the frame allocator's bitmaps, the firmware
 ACPI tables, and every page the frame allocator handed out.
 
-This is the third time Seneri has found a property that was verified in name
+This is the third time OpenSeneri has found a property that was verified in name
 only. A `.PHONY` bug meant the entire QEMU suite silently never ran (`bbcec6f`).
 The PIT was programmed in mode 3 and delivered two interrupts per period, so
 both calibrated clocks ran at half rate and agreed with each other about it
@@ -66,7 +66,7 @@ Nothing sets the global bit, which is why a CR3 load is a complete flush.
 
 ### The null page is deliberately absent
 
-Nothing in Seneri reads physical address zero. Leaving it unmapped turns a null
+Nothing in OpenSeneri reads physical address zero. Leaving it unmapped turns a null
 dereference into a page fault naming `CR2 = 0` instead of a silent read of the
 real-mode interrupt vector table. `paging_verify` re-checks this on every call.
 
@@ -94,7 +94,7 @@ worked only because MTRRs happened to override it and because QEMU is forgiving.
 Each discovered register page now sets `PCD` and `PWT`, which with the PAT bit
 clear selects PAT entry 3.
 
-Seneri checks that entry and entry 0 rather than assuming firmware defaults. It
+OpenSeneri checks that entry and entry 0 rather than assuming firmware defaults. It
 then changes only unused entry 1 to write-combining, with exact readback and
 cache flushes around the CR3 transition. The bootstrap hierarchy selects entry
 0; live register mappings select entry 3; framebuffer pages select entry 1 with
@@ -119,7 +119,7 @@ are corrected here.
   `CPUID.80000001H:EDX[20]`, checked and refused rather than assumed, the way
   `src/kernel/tsc.c` checks for an invariant TSC.
 - **`CR0.WP`** (bit 16). With it clear, supervisor writes ignore the read-only
-  bit entirely — and ring 0 is the only ring Seneri has, so every permission
+  bit entirely — and ring 0 is the only ring OpenSeneri has, so every permission
   installed here would have been advisory. This bit is the difference between
   a W^X guarantee and a comment.
 
@@ -270,11 +270,11 @@ read-only, read back again, then unmapped, proved absent, and released. Nothing
 in it faults.
 
 ```text
-Seneri OS: paging root 0x000000000017F000 table frames 9 regions 3 NX yes write protect yes
-Seneri OS: paging leaves 3580 writable 3557 executable 16 both 0
-Seneri OS: kernel page tables installed
-Seneri OS: no writable executable mapping
-Seneri OS: virtual memory established
+OpenSeneri: paging root 0x000000000017F000 table frames 9 regions 3 NX yes write protect yes
+OpenSeneri: paging leaves 3580 writable 3557 executable 16 both 0
+OpenSeneri: kernel page tables installed
+OpenSeneri: no writable executable mapping
+OpenSeneri: virtual memory established
 ```
 
 `executable 16` is exactly the sixteen pages between `__text_start` and

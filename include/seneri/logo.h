@@ -8,7 +8,7 @@
 /*
  * The boot logo, decoded by src/rust/logo.rs.
  *
- * This is the first thing in Seneri that is not C, and the choice is argued in
+ * This is the first thing in OpenSeneri that is not C, and the choice is argued in
  * docs/RUST.md: the decoder reads a byte stream whose every length field is
  * attacker-controlled in principle, which is precisely where a bounds check
  * the compiler inserts is worth more than one an author remembered.

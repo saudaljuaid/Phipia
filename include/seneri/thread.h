@@ -46,7 +46,7 @@
 #define THREAD_STACK_STRIDE (THREAD_STACK_SIZE + PAGING_PAGE_SIZE)
 
 /*
- * A Seneri policy bound on how many threads may exist at once, not an
+ * An OpenSeneri policy bound on how many threads may exist at once, not an
  * architectural one. The table is one kernel heap allocation made at
  * thread_start and released at thread_stop, following the pattern
  * src/kernel/timer.c set: never per operation.
@@ -58,7 +58,7 @@
  *
  * Two milliseconds is short enough that three threads visibly interleave inside
  * a boot proof, and long enough that the fixed cost of a switch is a rounding
- * error against it. It is a Seneri policy number, not an architectural one.
+ * error against it. It is an OpenSeneri policy number, not an architectural one.
  */
 #define THREAD_QUANTUM_NS UINT64_C(2000000)
 
