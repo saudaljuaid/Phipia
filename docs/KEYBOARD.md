@@ -105,9 +105,9 @@ Boot's proof reports 5 interrupts for 5 events; the scenario reports
 
 ## Deferred work
 
-- **Nothing reads it yet.** The events go into a queue and boot drains it. There
-  is no shell, no line editor and no echo to the screen, so a key pressed after
-  boot is decoded, queued, and eventually dropped.
+- **One reader, and it polls.** `shell_run` drains the queue, edits a line, and
+  echoes it to the screen; see `docs/SHELL.md`. A test scenario never reaches
+  the shell, so keys pressed during one are eventually dropped.
 - **`keyboard_read` never blocks.** It returns `no key event is waiting` rather
   than sleeping, because there is no way yet for an interrupt to wake a thread.
   That is the next thing this layer needs and it is a scheduler change, not a

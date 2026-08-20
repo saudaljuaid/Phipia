@@ -85,17 +85,21 @@ is not permission to perform an incomplete cache transition.
 
 ### MTRRs
 
-Seneri neither changes nor claims ownership of firmware MTRRs. The Intel and AMD
-combined-type tables both define a PAT-selected WC page as effective WC for the
-architectural MTRR types, including an MTRR UC range. This is why PAT can assign
-WC to a framebuffer in a physical range firmware otherwise treats as device
-memory.
+Seneri neither changes nor claims ownership of firmware MTRRs. PAT and MTRRs
+jointly determine the processor's effective type; the page-table walk proves
+only the PAT-selected type. In Intel SDM table 14-7, an MTRR UC range dominates
+a PAT-selected WC entry and remains effectively UC, while MTRR WB or WC combined
+with PAT WC is effectively WC. AMD likewise requires the page and range types
+to be combined. Seneri does not yet read the MTRRs, so it cannot claim that the
+effective bare-metal framebuffer type is WC from its page-table bits alone.
 
-That table is not a performance measurement. A virtual display device, a host
-hypervisor, or a physical display controller can still dominate the cost, and
-Seneri does not yet dump or audit MTRR ranges for a general aliasing policy. The
-framebuffer is split into 4 KiB leaves, so no single large leaf crosses a
-framebuffer boundary while claiming one page type.
+That is a real evidence limit, not a documentation technicality. Firmware may
+cover a physical display aperture with UC, and a virtual display device or host
+hypervisor can impose different costs again. The measured speedup therefore
+demonstrates behavior only on the named executor; bare-metal MTRR audit and
+display-controller measurement remain required. The framebuffer is split into
+4 KiB leaves, so no single large leaf crosses a framebuffer boundary while
+claiming one page type.
 
 ## Invariants
 
@@ -239,14 +243,32 @@ measurement or a proof result.
 
 ## Verification sweep
 
-The final 28-scenario count includes every scenario inherited from the base and
-the new `write-combining` scenario. One Ubuntu 24.04 workflow job invoked the
-exact `make qemu-tests` target twenty separate times after `make verify`:
-20/20 invocations and 560/560 scenario boots passed. The log contains twenty
-`all deterministic QEMU scenarios passed` lines and no `ST FAIL`, kernel panic,
-scenario failure, or timeout. The first marker was `QEMU sweep 1/20` and the
-last was `QEMU sweep 20/20`; GitHub Actions run `32289648657` completed
-successfully from 18:50:42 to 19:05:29 UTC.
+The final integrated count is 29 scenarios: every scenario inherited from
+`main`, including `ioapic-level`, plus `write-combining`. On Windows build
+26200, an Intel Core i7-1255U host, and QEMU 11.1.0 TCG, the exact
+`make qemu-tests` target ran twenty separate times after a clean `make verify`.
+All 20/20 invocations and 580/580 scenario boots passed. Each run produced 29
+`QEMU scenario ... passed` lines and one
+`all deterministic QEMU scenarios passed` line; the logs were audited before
+the final clean rebuild and none had a scenario failure, `ST FAIL`, or kernel
+panic.
+
+Before that final sweep, one integrated normal boot delivered all eight
+level-triggered interrupts but measured 127,453,070 ns and tripped the proof's
+old symmetric 25% timing window. That exposed an over-constrained upper bound:
+the same bounded wait already refuses anything beyond two seconds, while a host
+scheduling pause may legitimately stretch emulated PIT time. The proof now
+keeps a three-quarter lower bound, which still rejects the early-acknowledgement
+control at roughly half-time, and relies on the existing two-second deadline for
+the upper bound. Normal, `ioapic-level`, and `write-combining` then passed under
+WHPX with host statuses 33, 69, and 89 respectively. No failure occurred in the
+final twenty-sweep run.
+
+The earlier pre-integration Ubuntu 24.04 sweep covered the then-current 28
+scenarios: 20/20 invocations and 560/560 boots passed in GitHub Actions run
+`32289648657`, from 18:50:42 to 19:05:29 UTC. It remains evidence for the
+write-combining tree before `ioapic-level` joined its base, not a substitute for
+the final 29-scenario sweep above.
 
 An earlier hosted attempt was cancelled at its ten-minute job limit while the
 runner's Azure Ubuntu package mirror was unresponsive, before compilation or

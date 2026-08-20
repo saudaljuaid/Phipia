@@ -30,7 +30,9 @@ enum apic_status {
     APIC_STATUS_ID_DISAGREES_WITH_ACPI,
     APIC_STATUS_INTERRUPT_FAILURE,
     APIC_STATUS_READBACK_MISMATCH,
-    APIC_STATUS_NOT_ONLINE
+    APIC_STATUS_NOT_ONLINE,
+    APIC_STATUS_EOI_BROADCAST_SUPPRESSION_UNSUPPORTED,
+    APIC_STATUS_COUNT
 };
 
 struct apic_state {
@@ -38,12 +40,15 @@ struct apic_state {
     uint32_t id;
     uint8_t version;
     uint8_t max_lvt_entry;
+    bool eoi_broadcast_suppression_supported;
+    bool eoi_broadcasts_suppressed;
     bool legacy_interrupts_routed;
     bool online;
 };
 
 enum apic_status apic_bring_online(const struct acpi_topology *topology);
 enum apic_status apic_retire_legacy_routing(void);
+enum apic_status apic_suppress_eoi_broadcasts(void);
 void apic_send_eoi(void);
 
 /*

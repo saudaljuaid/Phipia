@@ -76,7 +76,6 @@
  * person generates between reads, and the count of what was dropped is kept so
  * a full queue is visible rather than silent.
  */
-#define KEYBOARD_QUEUE_SIZE 64U
 #define KEYBOARD_QUEUE_MASK (KEYBOARD_QUEUE_SIZE - 1U)
 
 _Static_assert(
@@ -443,6 +442,8 @@ enum keyboard_status keyboard_initialize(void)
     status = send_command(KEYBOARD_COMMAND_ENABLE_FIRST_PORT);
 
     if (status != KEYBOARD_STATUS_OK) {
+        (void)ioapic_mask_isa_irq(KEYBOARD_IRQ);
+        (void)interrupt_unregister_handler(KEYBOARD_VECTOR);
         return status;
     }
 
@@ -451,12 +452,16 @@ enum keyboard_status keyboard_initialize(void)
     status = send_command(KEYBOARD_COMMAND_WRITE_CONFIGURATION);
 
     if (status != KEYBOARD_STATUS_OK) {
+        (void)ioapic_mask_isa_irq(KEYBOARD_IRQ);
+        (void)interrupt_unregister_handler(KEYBOARD_VECTOR);
         return status;
     }
 
     status = send_data(configuration);
 
     if (status != KEYBOARD_STATUS_OK) {
+        (void)ioapic_mask_isa_irq(KEYBOARD_IRQ);
+        (void)interrupt_unregister_handler(KEYBOARD_VECTOR);
         return status;
     }
 

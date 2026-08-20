@@ -32,8 +32,9 @@ def parse(path):
 
     for number, raw in enumerate(open(path, encoding='utf-8'), 1):
         line = raw.rstrip('\n')
+        glyph_row = len(line) == CELL_WIDTH and not (set(line) - {'.', '#'})
 
-        if line.startswith('#') or (not line and code is None):
+        if (line.startswith('#') and not glyph_row) or (not line and code is None):
             continue
 
         if line.startswith('U+'):

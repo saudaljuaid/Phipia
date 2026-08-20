@@ -7,9 +7,9 @@ ISO := $(BUILD_DIR)/seneri.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
-	double-fault apic ioapic retired apic-timer tsc pm-timer pit-retired timers \
-	paging heap pci pci-ecam threads thread-guard framebuffer screen keyboard shell \
-	surface write-combining
+	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
+	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
+	screen keyboard shell surface write-combining
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -101,9 +101,16 @@ toolchain:
 	@for tool in gcc ld grub-file readelf nm objdump rustc python3; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
+	@version=$$($(RUSTC) --version | awk '{ print $$2 }'); \
+		echo "$$version" | awk -F'[.-]' \
+			'{ exit !($$1 > 1 || ($$1 == 1 && $$2 >= 85)) }' || \
+		{ echo "rustc 1.85.0 or newer is required (found $$version)"; exit 1; }
 	@$(RUSTC) --print target-list | grep -Fxq '$(RUST_TARGET)' || \
 		{ echo 'rustc does not know $(RUST_TARGET)'; exit 1; }
-	@$(RUSTC) --target $(RUST_TARGET) --print target-libdir >/dev/null 2>&1 || \
+	@libdir=$$($(RUSTC) --target $(RUST_TARGET) --print target-libdir 2>/dev/null) || \
+		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }; \
+		set -- "$$libdir"/libcore-*.rlib; \
+		test -f "$$1" || \
 		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }
 
 lint:
@@ -118,6 +125,10 @@ verify: toolchain lint
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
 	readelf -h $(KERNEL) | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64'
 	@test -z "$$($(NM) -u $(KERNEL))" || { $(NM) -u $(KERNEL); exit 1; }
+	@if readelf -W -r $(KERNEL) | grep -Eq 'R_X86_64_'; then \
+		echo 'kernel contains unresolved relocation records'; \
+		readelf -W -r $(KERNEL); exit 1; \
+	fi
 	@test "$$($(NM) $(KERNEL) | grep -Ec ' [tT] interrupt_vector_[0-9]+$$')" -eq 256
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'iretq'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
@@ -163,9 +174,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
-	# 0x22, which is status 69, is left unused: it belongs to the ioapic-level
-	# scenario in the level-triggered routing change, which was opened against
-	# main before these were written.
+	# 0x22, which is status 69, remains assigned to the ioapic-level scenario;
+	# the later scenarios start at 0x23 so every exit value stays stable.
 	@case '$*' in \
 		normal) expected=33 ;; \
 		breakpoint) expected=35 ;; \
@@ -185,6 +195,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		timers) expected=63 ;; \
 		paging) expected=65 ;; \
 		heap) expected=67 ;; \
+		ioapic-level) expected=69 ;; \
 		pci) expected=71 ;; \
 		pci-ecam) expected=73 ;; \
 		threads) expected=75 ;; \
@@ -197,14 +208,16 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		write-combining) expected=89 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
-	# Only pci-ecam departs from the default machine. i440fx publishes no \
-	# MCFG, so every other scenario - including pci - proves the path that \
-	# has nothing but the I/O ports. q35 is the only machine here with a \
-	# PCI Express host bridge, and the root port is what gives the \
-	# enumeration a second bus to find. \
-	case '$*' in \
-		pci-ecam) \
-			hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
+		# Only pci-ecam departs from the default machine. i440fx publishes no \
+		# MCFG, so every other scenario - including pci - proves the path that \
+		# has nothing but the I/O ports. q35 is the only machine here with a \
+		# PCI Express host bridge, and the root port is what gives the \
+		# enumeration a second bus to find. Both PCI scenarios name their \
+		# network device explicitly instead of relying on QEMU defaults. \
+		case '$*' in \
+			pci) hardware='-device e1000e' ;; \
+			pci-ecam) \
+				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
 		*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -231,10 +244,16 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Eq '^Seneri OS: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC online' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC legacy routing LINT0 ExtINT' "$$log" || \
+		  ! grep -Eq '^Seneri OS: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: I/O APIC online' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight interrupts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: legacy 8259 retired' "$$log" || \
 		  ! grep -Fq 'Seneri OS: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
+		  ! grep -Fq 'Seneri OS: level-triggered routing established' "$$log" || \
 		  ! grep -Eq '^Seneri OS: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
 		  ! grep -Fq 'Seneri OS: local APIC timer delivered eight interrupts' "$$log" || \
 		  ! grep -Eq '^Seneri OS: TSC calibrated at [0-9]+ Hz' "$$log" || \
@@ -323,6 +342,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000401000000' "$$log" && \
 			grep -Fq '  page-fault bits: P=0 W=1 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
+		ioapic-level) \
+			grep -Eq '^ST INFO ioapic-level: [0-9]+ deliveries, remote IRR [0-9]+, directed EOI [0-9]+, mode (directed|broadcast), in [0-9]+ ns$$' "$$log" || \
 				diagnostics_ok=false ;; \
 		pci) \
 			grep -Eq '^ST PCI ports functions [0-9]+ buses [0-9]+$$' "$$log" && \

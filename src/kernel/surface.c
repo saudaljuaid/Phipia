@@ -361,19 +361,9 @@ enum surface_status surface_copy_rect(
             uint32_t *destination_row = row_at(surface, destination_y + y);
             const uint32_t *source_row = const_row_at(surface, source.y + y);
 
-            if (destination_y == source.y && destination_x > source.x) {
-                for (uint32_t x_remaining = copy_width;
-                     x_remaining > 0U;
-                     --x_remaining) {
-                    const uint32_t x = x_remaining - 1U;
-                    destination_row[destination_x + x] =
-                        source_row[source.x + x];
-                }
-            } else {
-                for (uint32_t x = 0U; x < copy_width; ++x) {
-                    destination_row[destination_x + x] =
-                        source_row[source.x + x];
-                }
+            for (uint32_t x = 0U; x < copy_width; ++x) {
+                destination_row[destination_x + x] =
+                    source_row[source.x + x];
             }
         }
     } else {

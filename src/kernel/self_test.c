@@ -429,6 +429,29 @@ static bool framebuffer_rejections_are_named(void)
         return false;
     }
 
+    /*
+     * A span larger than the whole early map must be rejected before the
+     * address-bound subtraction, or that subtraction wraps and accepts it.
+     */
+    prepare_framebuffer_fixture(&fixture);
+    write_le32(
+        framebuffer_field(&fixture.framebuffer, FB_OFFSET_WIDTH),
+        1U
+    );
+    write_le32(
+        framebuffer_field(&fixture.framebuffer, FB_OFFSET_HEIGHT),
+        UINT32_C(0x100)
+    );
+    write_le32(
+        framebuffer_field(&fixture.framebuffer, FB_OFFSET_PITCH),
+        UINT32_C(0x10000000)
+    );
+
+    if (parse_framebuffer_fixture(&fixture, &context) !=
+        BOOT_STATUS_FRAMEBUFFER_OUTSIDE_EARLY_MAP) {
+        return false;
+    }
+
     /* A channel narrower than a byte. */
     prepare_framebuffer_fixture(&fixture);
     *framebuffer_field(&fixture.framebuffer, FB_OFFSET_RED_SIZE) = 5U;

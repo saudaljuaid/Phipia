@@ -203,9 +203,9 @@ still missing sits above this layer, not inside it.
 
 - **Nothing sleeps concurrently.** `timer_sleep_ns` halts rather than yielding.
   ~~A second sleeper needs threads~~ — threads now exist, see `docs/THREADS.md`,
-  but the scheduler is cooperative and a sleep does not hand it the processor.
-  Making a sleep a block is what finally makes this entry false, and it needs
-  preemption first.
+  and preemption is available. The missing operation is for `timer_sleep_ns` to
+  block the current thread, remove it from the run queue, and arrange for its
+  deadline to make it runnable again.
 - ~~**The table is a linear scan over fixed storage**, because there is no
   heap.~~ **Half fixed.** The storage is now one kernel heap allocation made at
   `timer_start`, so `TIMER_MAX_PENDING` is a default rather than an array bound;

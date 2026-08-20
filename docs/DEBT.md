@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the twenty-three scenarios pass,
+here is a correctness hole in a shipped layer — the twenty-nine scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof, one function signature growing a parameter per
@@ -155,7 +155,7 @@ The last three exist because a comparison that cannot fail proves nothing, and
 the masking of timing lines is exactly the kind of thing that quietly makes a
 comparison blind.
 
-All twenty-three QEMU scenarios pass, and `nm -u` is still empty.
+All twenty-nine QEMU scenarios pass, and `nm -u` is still empty.
 
 **What this does not fix.** `boot_proofs.c` is 1,648 lines and is now the third
 largest file here. It has a single responsibility, which the old `kernel.c` did
@@ -244,8 +244,8 @@ this is not a surprise, and the number above is what it will cost.
 
 Measured, and healthy:
 
-- **Twenty-three QEMU scenarios in 27.9 seconds.** A full boot is under a second
-  even with an 786,432-pixel readback in it.
+- **Twenty-seven QEMU scenarios.** Runtime depends on the host; every scenario
+  remains bounded, including the 786,432-pixel framebuffer readback.
 - **726 KB kernel image**, of which 66 KB is the logo.
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.

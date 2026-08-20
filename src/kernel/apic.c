@@ -41,6 +41,7 @@
 
 /* Intel SDM volume 3A figure 11-23 defines the spurious vector register. */
 #define APIC_SPURIOUS_SOFTWARE_ENABLE UINT32_C(0x00000100)
+#define APIC_SPURIOUS_SUPPRESS_EOI_BROADCASTS UINT32_C(0x00001000)
 
 /* Intel SDM volume 3A section 11.4.4 defines IA32_APIC_BASE. */
 #define IA32_APIC_BASE_MSR UINT32_C(0x0000001B)
@@ -60,6 +61,7 @@
  */
 #define APIC_VERSION_INTEGRATED_MASK UINT32_C(0xF0)
 #define APIC_VERSION_INTEGRATED UINT32_C(0x10)
+#define APIC_VERSION_EOI_BROADCAST_SUPPRESSION UINT32_C(0x01000000)
 
 struct apic_base_info {
     uint64_t address;
@@ -141,7 +143,8 @@ static enum apic_status decode_base(
 static enum apic_status decode_version(
     uint32_t version_register,
     uint8_t *version,
-    uint8_t *max_lvt_entry
+    uint8_t *max_lvt_entry,
+    bool *eoi_broadcast_suppression_supported
 )
 {
     const uint32_t raw_version = version_register & UINT32_C(0xFF);
@@ -158,6 +161,8 @@ static enum apic_status decode_version(
 
     *version = (uint8_t)raw_version;
     *max_lvt_entry = (uint8_t)entries;
+    *eoi_broadcast_suppression_supported =
+        (version_register & APIC_VERSION_EOI_BROADCAST_SUPPRESSION) != 0U;
     return APIC_STATUS_OK;
 }
 
@@ -304,7 +309,8 @@ enum apic_status apic_bring_online(const struct acpi_topology *topology)
     status = decode_version(
         apic_read(APIC_REGISTER_VERSION),
         &state.version,
-        &state.max_lvt_entry
+        &state.max_lvt_entry,
+        &state.eoi_broadcast_suppression_supported
     );
 
     if (status != APIC_STATUS_OK) {
@@ -354,6 +360,47 @@ enum apic_status apic_bring_online(const struct acpi_topology *topology)
     }
 
     state.online = true;
+    return APIC_STATUS_OK;
+}
+
+/*
+ * Intel SDM volume 3A section 13.8.5 permits directed EOI only after the local
+ * APIC advertises the feature in version bit 24 and SVR bit 12 reads back set.
+ * The caller keeps interrupts disabled so no level interrupt can be completed
+ * while the machine is between broadcast and directed acknowledgement modes.
+ */
+enum apic_status apic_suppress_eoi_broadcasts(void)
+{
+    uint32_t spurious;
+
+    if (!state.online) {
+        return APIC_STATUS_NOT_ONLINE;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return APIC_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!state.eoi_broadcast_suppression_supported) {
+        return APIC_STATUS_EOI_BROADCAST_SUPPRESSION_UNSUPPORTED;
+    }
+
+    if (state.eoi_broadcasts_suppressed) {
+        return APIC_STATUS_OK;
+    }
+
+    spurious = apic_read(APIC_REGISTER_SPURIOUS);
+    apic_write(
+        APIC_REGISTER_SPURIOUS,
+        spurious | APIC_SPURIOUS_SUPPRESS_EOI_BROADCASTS
+    );
+
+    if ((apic_read(APIC_REGISTER_SPURIOUS) &
+         APIC_SPURIOUS_SUPPRESS_EOI_BROADCASTS) == 0U) {
+        return APIC_STATUS_READBACK_MISMATCH;
+    }
+
+    state.eoi_broadcasts_suppressed = true;
     return APIC_STATUS_OK;
 }
 
@@ -440,6 +487,7 @@ bool apic_self_test(void)
     struct apic_base_info base = {0};
     uint8_t version = 0U;
     uint8_t entries = 0U;
+    bool eoi_broadcast_suppression_supported = false;
     struct acpi_topology topology;
 
     if (decode_base(valid, acpi_address, &base) != APIC_STATUS_OK ||
@@ -494,19 +542,28 @@ bool apic_self_test(void)
         return false;
     }
 
-    if (decode_version(UINT32_C(0x00050014), &version, &entries) !=
+    if (decode_version(UINT32_C(0x01050014), &version, &entries,
+            &eoi_broadcast_suppression_supported) !=
             APIC_STATUS_OK ||
         version != UINT8_C(0x14) ||
-        entries != UINT8_C(5)) {
+        entries != UINT8_C(5) || !eoi_broadcast_suppression_supported) {
         return false;
     }
 
-    if (decode_version(UINT32_C(0x00050004), &version, &entries) !=
+    if (decode_version(UINT32_C(0x00050014), &version, &entries,
+            &eoi_broadcast_suppression_supported) != APIC_STATUS_OK ||
+        eoi_broadcast_suppression_supported) {
+        return false;
+    }
+
+    if (decode_version(UINT32_C(0x00050004), &version, &entries,
+            &eoi_broadcast_suppression_supported) !=
         APIC_STATUS_EXTERNAL_APIC) {
         return false;
     }
 
-    if (decode_version(UINT32_C(0x00020014), &version, &entries) !=
+    if (decode_version(UINT32_C(0x00020014), &version, &entries,
+            &eoi_broadcast_suppression_supported) !=
         APIC_STATUS_TOO_FEW_LVT_ENTRIES) {
         return false;
     }
@@ -525,47 +582,53 @@ bool apic_self_test(void)
 
     return check_identifier(&topology, 3U) == APIC_STATUS_OK &&
         check_identifier(&topology, 4U) == APIC_STATUS_ID_DISAGREES_WITH_ACPI &&
+        apic_suppress_eoi_broadcasts() == APIC_STATUS_NOT_ONLINE &&
         apic_bring_online(NULL) == APIC_STATUS_NULL_ARGUMENT;
 }
 
 const char *apic_status_string(enum apic_status status)
 {
-    switch (status) {
-    case APIC_STATUS_OK:
-        return "ok";
-    case APIC_STATUS_NULL_ARGUMENT:
-        return "null local APIC argument";
-    case APIC_STATUS_ALREADY_ONLINE:
-        return "local APIC was brought online twice";
-    case APIC_STATUS_INTERRUPTS_ENABLED:
-        return "local APIC bring-up requires interrupts disabled";
-    case APIC_STATUS_UNSUPPORTED:
-        return "processor reports no on-chip local APIC";
-    case APIC_STATUS_HARDWARE_DISABLED:
-        return "firmware left the local APIC hardware disabled";
-    case APIC_STATUS_X2APIC_MODE:
-        return "local APIC is in x2APIC mode and has no register window";
-    case APIC_STATUS_NOT_BOOTSTRAP:
-        return "local APIC bring-up ran off the bootstrap processor";
-    case APIC_STATUS_NULL_BASE:
-        return "local APIC base address is null";
-    case APIC_STATUS_BASE_OUTSIDE_EARLY_MAP:
-        return "local APIC base address is outside the early map";
-    case APIC_STATUS_BASE_DISAGREES_WITH_ACPI:
-        return "local APIC base disagrees with the ACPI MADT";
-    case APIC_STATUS_EXTERNAL_APIC:
-        return "local APIC reports a discrete 82489DX version";
-    case APIC_STATUS_TOO_FEW_LVT_ENTRIES:
-        return "local APIC lacks the required local vector table entries";
-    case APIC_STATUS_ID_DISAGREES_WITH_ACPI:
-        return "local APIC identifier is not an enabled ACPI processor";
-    case APIC_STATUS_INTERRUPT_FAILURE:
-        return "local APIC could not register its spurious handler";
-    case APIC_STATUS_READBACK_MISMATCH:
-        return "local APIC did not read back its programmed state";
-    case APIC_STATUS_NOT_ONLINE:
-        return "local APIC is not online";
-    default:
+    static const char *const messages[APIC_STATUS_COUNT] = {
+        [APIC_STATUS_OK] = "ok",
+        [APIC_STATUS_NULL_ARGUMENT] = "null local APIC argument",
+        [APIC_STATUS_ALREADY_ONLINE] = "local APIC was brought online twice",
+        [APIC_STATUS_INTERRUPTS_ENABLED] =
+            "local APIC mutation requires interrupts disabled",
+        [APIC_STATUS_UNSUPPORTED] = "processor reports no on-chip local APIC",
+        [APIC_STATUS_HARDWARE_DISABLED] =
+            "firmware left the local APIC hardware disabled",
+        [APIC_STATUS_X2APIC_MODE] =
+            "local APIC is in x2APIC mode and has no register window",
+        [APIC_STATUS_NOT_BOOTSTRAP] =
+            "local APIC bring-up ran off the bootstrap processor",
+        [APIC_STATUS_NULL_BASE] = "local APIC base address is null",
+        [APIC_STATUS_BASE_OUTSIDE_EARLY_MAP] =
+            "local APIC base address is outside the early map",
+        [APIC_STATUS_BASE_DISAGREES_WITH_ACPI] =
+            "local APIC base disagrees with the ACPI MADT",
+        [APIC_STATUS_EXTERNAL_APIC] =
+            "local APIC reports a discrete 82489DX version",
+        [APIC_STATUS_TOO_FEW_LVT_ENTRIES] =
+            "local APIC lacks the required local vector table entries",
+        [APIC_STATUS_ID_DISAGREES_WITH_ACPI] =
+            "local APIC identifier is not an enabled ACPI processor",
+        [APIC_STATUS_INTERRUPT_FAILURE] =
+            "local APIC could not register its spurious handler",
+        [APIC_STATUS_READBACK_MISMATCH] =
+            "local APIC did not read back its programmed state",
+        [APIC_STATUS_NOT_ONLINE] = "local APIC is not online",
+        [APIC_STATUS_EOI_BROADCAST_SUPPRESSION_UNSUPPORTED] =
+            "local APIC does not support EOI-broadcast suppression"
+    };
+
+    _Static_assert(
+        sizeof(messages) / sizeof(messages[0]) == APIC_STATUS_COUNT,
+        "local APIC status table must cover every enumerator"
+    );
+
+    if ((unsigned int)status >= APIC_STATUS_COUNT || messages[status] == NULL) {
         return "unknown local APIC status";
     }
+
+    return messages[status];
 }

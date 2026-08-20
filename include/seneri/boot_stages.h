@@ -75,6 +75,7 @@ void prove_heap_lifecycle(void);
 
 void prove_timer_route(enum pit_route route);
 void retire_legacy_interrupt_path(void);
+void prove_level_route(void);
 
 void prove_pm_timer(void);
 void prove_apic_timer(void);

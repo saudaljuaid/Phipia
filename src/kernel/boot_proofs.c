@@ -79,6 +79,16 @@ static uint8_t write_back_probe;
 #define SLEEP_PROOF_NS UINT64_C(50000000)
 
 /*
+ * Eight level-triggered deliveries at 100 Hz, so 80 ms of timer. Eight rather
+ * than one because a level-triggered pin that is never acknowledged delivers
+ * exactly once and then wedges. The two-second bound is 25 times the expected
+ * interval and remains inside one wrap of the reference counter.
+ */
+#define LEVEL_PROOF_FREQUENCY UINT32_C(100)
+#define LEVEL_PROOF_TICKS UINT64_C(8)
+#define LEVEL_PROOF_BOUND_NS UINT64_C(2000000000)
+
+/*
  * Three threads, four rounds each. Three is the smallest number that can tell a
  * rotation from a ping-pong, and four rounds is enough that a scheduler which
  * gets the first pass right and then loses a thread is caught.
@@ -110,6 +120,127 @@ static uint8_t write_back_probe;
 #define BOOT_BACKGROUND_RED UINT8_C(0x08)
 #define BOOT_BACKGROUND_GREEN UINT8_C(0x0A)
 #define BOOT_BACKGROUND_BLUE UINT8_C(0x0E)
+
+/*
+ * The first interrupt this kernel accepts as a level rather than an edge.
+ *
+ * The proof reads the installed route from hardware, counts enough deliveries
+ * to catch a wedged remote IRR, and measures their interval to catch an
+ * acknowledgement sent before the source is quiet. Directed mode additionally
+ * proves local-APIC broadcast suppression remained active; otherwise the
+ * architected local-APIC EOI broadcast is the acknowledgement.
+ */
+void prove_level_route(void)
+{
+    struct ioapic_redirection entry;
+    struct ioapic_state ioapic = ioapic_get_state();
+    uint64_t elapsed_ns = 0U;
+    const uint64_t expected_ns = LEVEL_PROOF_TICKS * UINT64_C(1000000000) /
+        LEVEL_PROOF_FREQUENCY;
+    enum ioapic_status ioapic_status;
+    enum pit_status pit_status;
+
+    if (ioapic.count == 0U) {
+        console_panic(ioapic_status_string(IOAPIC_STATUS_MISSING_IO_APIC));
+    }
+
+    pit_status = pit_start(LEVEL_PROOF_FREQUENCY, PIT_ROUTE_IO_APIC_LEVEL);
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    ioapic_status = ioapic_read_redirection(pit_active_vector(), &entry);
+
+    if (ioapic_status != IOAPIC_STATUS_OK) {
+        console_panic(ioapic_status_string(ioapic_status));
+    }
+
+    console_write("Seneri OS: I/O APIC level route id ");
+    console_write_u64(entry.unit_identifier);
+    console_write(" GSI ");
+    console_write_u64(entry.global_interrupt);
+    console_write(" vector ");
+    console_write_u64(entry.vector);
+    console_write(" active ");
+    console_write(entry.active_low ? "low" : "high");
+    console_write(" acknowledgement ");
+    console_write(ioapic_get_state().directed_eoi_mode ? "directed" : "broadcast");
+    console_putc('\n');
+
+    if (!entry.level_triggered || entry.masked ||
+        !ioapic_vector_is_level_triggered(pit_active_vector())) {
+        console_panic("level route did not read back level triggered");
+    }
+
+    pit_status = pit_wait_for_ticks_bounded(
+        LEVEL_PROOF_TICKS,
+        LEVEL_PROOF_BOUND_NS,
+        &elapsed_ns
+    );
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    ioapic = ioapic_get_state();
+
+    /*
+     * Mask the source and remove its handler before writing the graphical
+     * transcript. Presenting those lines can take longer than another PIT
+     * period; leaving the one-shot source armed would queue vector 48 and let
+     * it arrive after its handler had been removed.
+     */
+    pit_status = pit_stop();
+
+    if (pit_status != PIT_STATUS_OK) {
+        console_panic(pit_status_string(pit_status));
+    }
+
+    console_write("Seneri OS: I/O APIC level deliveries ");
+    console_write_u64(pit_ticks());
+    console_write(" remote IRR ");
+    console_write_u64(ioapic.remote_irr_observed);
+    console_write(" directed EOI ");
+    console_write_u64(ioapic.directed_eoi_count);
+    console_write(" in ");
+    console_write_u64(elapsed_ns);
+    console_write(" ns\n");
+
+    if (pit_ticks() < LEVEL_PROOF_TICKS) {
+        console_panic("level-triggered route delivered too few interrupts");
+    }
+
+    if (pit_ticks() > LEVEL_PROOF_TICKS * 2U) {
+        console_panic("level-triggered route delivered without stopping");
+    }
+
+    if (ioapic.remote_irr_observed < LEVEL_PROOF_TICKS ||
+        ioapic.remote_irr_missing != 0U ||
+        (ioapic.directed_eoi_mode &&
+         (ioapic.directed_eoi_count < LEVEL_PROOF_TICKS ||
+          !apic_get_state().eoi_broadcasts_suppressed)) ||
+        (!ioapic.directed_eoi_mode && ioapic.directed_eoi_count != 0U)) {
+        console_panic("a level-triggered delivery did not latch remote IRR");
+    }
+
+    /*
+     * A host scheduling pause can stretch emulated PIT time without making the
+     * eight deliveries any less real. The bounded wait already supplies the
+     * two-second upper limit; this lower limit is the independent protection
+     * against an asserted line re-delivering immediately. The early-EOI
+     * control takes roughly half the requested interval and still fails it.
+     */
+    if (elapsed_ns <
+        expected_ns - expected_ns / PM_TIMER_TOLERANCE_QUARTER) {
+        console_panic("level-triggered deliveries did not take a timer period");
+    }
+
+    if (ioapic_vector_is_level_triggered(pit_active_vector()) ||
+        ioapic_get_state().level_routes != 0U) {
+        console_panic("a stopped level route is still routed");
+    }
+}
 
 /*
  * The same timer, counted over both delivery paths. Proving the legacy path

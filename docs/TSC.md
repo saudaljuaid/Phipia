@@ -114,5 +114,5 @@ rate being stable are different claims, and only the first has been established.
 
 Nothing here is per-processor: a second processor's counter would need its own
 calibration and its own agreement check, since neither synchronisation nor a
-shared rate may be assumed. Level-triggered I/O APIC routing still needs
-directed EOI.
+shared rate may be assumed. ~~Level-triggered I/O APIC routing still needs
+directed EOI.~~ **Fixed**, in `docs/IO_APIC.md`.

@@ -30,7 +30,7 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `kernel.c` | 456 | The order boot happens in. Nothing else. |
-| `boot_report.c` | 271 | Turns what was discovered into the transcript. Never decides anything. |
+| `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2243 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
 ### Getting off the ground
@@ -113,7 +113,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 3670 | The twenty-eight QEMU scenarios and what each must print. |
+| `test.c` | 3924 | The twenty-nine QEMU scenarios and what each must print. |
 | `self_test.c` | 588 | Checks that run on synthetic data every boot, before any hardware is touched. |
 
 ## The boot sequence, in order

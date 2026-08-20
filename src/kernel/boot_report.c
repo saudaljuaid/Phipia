@@ -251,6 +251,14 @@ void report_apic(const struct apic_state *apic)
     console_write("Seneri OS: local APIC legacy routing ");
     console_write(apic->legacy_interrupts_routed ? "LINT0 ExtINT" : "masked");
     console_putc('\n');
+
+    console_write("Seneri OS: local APIC EOI-broadcast suppression ");
+    console_write(
+        apic->eoi_broadcast_suppression_supported ? "supported" : "unsupported"
+    );
+    console_write(" active ");
+    console_write(apic->eoi_broadcasts_suppressed ? "yes" : "no");
+    console_putc('\n');
 }
 
 void report_ioapic(const struct ioapic_state *ioapic)
@@ -266,6 +274,8 @@ void report_ioapic(const struct ioapic_state *ioapic)
         console_write_u64(unit->entry_count);
         console_write(" base GSI ");
         console_write_u64(unit->interrupt_base);
+        console_write(" directed EOI ");
+        console_write(unit->directed_eoi ? "yes" : "no");
         console_putc('\n');
     }
 }

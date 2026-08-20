@@ -103,9 +103,9 @@ SECTIONS
         *(.llvmcmd)
 
         /*
-         * Relocations for a fully linked, non-relocatable image. Discarding
-         * them is safe only because the GOT assertion below proves nothing
-         * needed relocating.
+         * Relocations for a fully linked, non-relocatable image. The verify
+         * target inspects the final ELF and rejects any R_X86_64 relocation
+         * records, independently of the GOT assertion below.
          */
         *(.rela .rela.*)
     }
