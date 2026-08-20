@@ -360,6 +360,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     prove_timer_route(PIT_ROUTE_IO_APIC);
 
     /*
+     * Level-triggered delivery runs with the 8259 pair retired, so only the
+     * I/O APIC can carry it, and before the PIT retires because the 8254 is the
+     * source sampled as a level.
+     */
+    prove_level_route();
+
+    /*
      * Establish the reference before anything is calibrated from it, calibrate
      * both derived clocks against it, then retire the 8254 and prove the three
      * still agree with it gone. The order is the argument: the PIT may only be
@@ -426,6 +433,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("Seneri OS: I/O APIC delivered eight interrupts\n");
     console_write("Seneri OS: legacy 8259 retired\n");
     console_write("Seneri OS: timer survives legacy retirement\n");
+    console_write(
+        "Seneri OS: I/O APIC delivered eight level-triggered interrupts\n"
+    );
+    console_write("Seneri OS: level-triggered routing established\n");
     console_write("Seneri OS: local APIC timer delivered eight interrupts\n");
     console_write("Seneri OS: TSC reference established\n");
     console_write("Seneri OS: PM timer independent reference established\n");
