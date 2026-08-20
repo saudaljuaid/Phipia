@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-one scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -107,56 +107,44 @@ None were semantic disagreements. They were resolved when #31 landed before
 #32; #33 then landed on their combined `main`. This is retained as the measured
 cost that justified paying the integration debt.
 
-### 2. `kernel.c` was the place proofs went to live — paid
+### 2. `kernel.c` was the place proofs and order went to live — paid twice
 
-    $ wc -l src/kernel/kernel.c
-    399           # 1256 at the start of the session, 1990 when this entry was
-                  # written, 2211 one increment later
+The first payment split proof implementations out of a 2,211-line
+`kernel.c`. It left one smaller but still manually ordered call list. That was a
+useful boundary and an incomplete policy: ACPI-before-topology,
+device-windows-before-paging, W^X-before-heap and controller-before-interrupt
+relationships remained understandable only by reading the entire function.
 
-**Split.** Every increment added a `prove_X()` and every `prove_X()` landed
-here, so the file grew once per subsystem regardless of how well factored that
-subsystem was. This entry warned that each increment landing first would make
-the move bigger, and then the next increment added 221 lines and proved it.
-
-The split follows the second option this entry offered — a file the boot
-sequence calls in order — divided by what a function is permitted to do:
+The OpenSeneri Boot Ledger is the second payment:
 
 | | | |
 | --- | ---: | --- |
-| `src/kernel/kernel.c` | 399 | the order boot happens in, and nothing else |
-| `src/kernel/boot_report.c` | 271 | describes what was found, never decides, never panics |
-| `src/kernel/boot_proofs.c` | 1648 | decides, and panics when the answer is wrong |
+| `src/kernel/kernel.c` | 101 | validates, executes and verifies one ledger; no subsystem call order |
+| `src/kernel/boot_plan.c` | 1170 | private stage functions and typed dependency declarations |
+| `src/kernel/boot_ledger.c` | 1742 | bounded canonical planner, receipts, fingerprint and installed proof |
+| `src/kernel/boot_report.c` | 281 | describes what was found, never decides |
+| `src/kernel/boot_proofs.c` | 2661 | existing hardware proofs and transition sequences |
 
-`include/seneri/boot_stages.h` declares the twenty-eight functions that moved.
-None of them is a general-purpose interface — each is called exactly once, from
-`kernel_main` — and the header says so, so nobody mistakes the split for an API.
+The plan and receipts are fixed-capacity because they authorize the heap and
+cannot depend on it. Stable stage IDs, phase bounds and declared capability
+edges produce one topological order independent of descriptor insertion order.
+Missing providers, ambiguous providers, cycles, premature irreversible stages,
+receipt mismatches and bypasses are named refusals. One source assertion keeps
+the migrated proof calls private to `boot_plan.c`.
 
-One coupling was removed rather than carried across: `bring_up_pci` read
-`boot_mcfg` and `boot_mcfg_present` out of `kernel.c`'s file scope. It takes
-them as parameters now. A hidden read of another translation unit's state is not
-something a split should preserve.
+The loader-only structure was renamed `struct boot_information`; the new
+`struct boot_context` owns typed discovered state across every stage instead of
+growing more arguments or reintroducing file-scope firmware reads. The complete
+contract and controls are in `docs/BOOT_LEDGER.md`.
 
-**The refactor changed no behaviour, and that was checked rather than assumed.**
-A refactor's correctness condition is that the observable output is identical,
-so the boot transcript was captured before the split and compared after, with
-only the six timing-dependent lines masked:
+The earlier byte-for-byte transcript control remains relevant and has been
+expanded: the permanent installed-ledger proof is a required normal line, and
+the comparator is itself broken by one changed word, one deleted proof line and
+one changed scenario exit before its output is trusted.
 
-| Control | Result |
-| --- | --- |
-| Compare the 100-line boot transcript before and after. | Identical, byte for byte. |
-| Change one word of one transcript line. | `PCI enumeration established` → `ESTABLISHED` caught at line 94. |
-| Change a line inside the moved code. | `PCI buses` → `PCI BUSES` caught at line 57. |
-| Delete a whole proof call from `kernel_main`. | Three lines vanish from the transcript and the comparison reports them. |
-
-The last three exist because a comparison that cannot fail proves nothing, and
-the masking of timing lines is exactly the kind of thing that quietly makes a
-comparison blind.
-
-That checkpoint's complete QEMU suite passed, and `nm -u` was still empty.
-
-**What this does not fix.** `boot_proofs.c` is 1,648 lines and is now the third
+**What this does not fix.** `boot_proofs.c` is 2,661 lines and is now the second
 largest file here. It has a single responsibility, which the old `kernel.c` did
-not, so it is a better 1,648 lines — but the first option this entry offered,
+not, so it is a better 2,661 lines — but the first option this entry offered,
 moving each proof beside the subsystem it proves, is still the better end state
 and is still undone.
 
@@ -256,7 +244,7 @@ this is not a surprise, and the number above is what it will cost.
 
 Measured, and healthy:
 
-- **Thirty QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty-one QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
 - **726 KB kernel image**, of which 66 KB is the logo.
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`

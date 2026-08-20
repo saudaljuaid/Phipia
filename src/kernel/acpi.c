@@ -47,7 +47,7 @@ static void root_reset(struct acpi_root *root)
 }
 
 enum acpi_status acpi_root_discover(
-    const struct boot_context *context,
+    const struct boot_information *context,
     struct acpi_root *root
 )
 {
@@ -170,7 +170,7 @@ static void make_test_tag(struct acpi_test_tag *tag, bool modern)
 bool acpi_self_test(void)
 {
     struct acpi_test_tag tag;
-    struct boot_context context = {0};
+    struct boot_information context = {0};
     struct acpi_root root;
 
     make_test_tag(&tag, true);

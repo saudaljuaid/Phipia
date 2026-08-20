@@ -289,10 +289,10 @@ static void prepare_framebuffer_fixture(struct framebuffer_information *fixture)
 
 static enum boot_status parse_framebuffer_fixture(
     const struct framebuffer_information *fixture,
-    struct boot_context *context
+    struct boot_information *context
 )
 {
-    return boot_context_parse(
+    return boot_information_parse(
         MULTIBOOT2_BOOT_MAGIC,
         (uintptr_t)(const void *)fixture,
         context
@@ -307,7 +307,7 @@ static bool framebuffer_rejections_are_named(void)
 {
     struct framebuffer_information fixture;
     struct two_framebuffer_information duplicate;
-    struct boot_context context;
+    struct boot_information context;
 
     /* The acceptance case, which is what makes the rejections mean anything. */
     prepare_framebuffer_fixture(&fixture);
@@ -516,7 +516,7 @@ static bool framebuffer_rejections_are_named(void)
     duplicate.end.type = MULTIBOOT2_TAG_END;
     duplicate.end.size = sizeof(struct multiboot2_tag);
 
-    return boot_context_parse(
+    return boot_information_parse(
         MULTIBOOT2_BOOT_MAGIC,
         (uintptr_t)(const void *)&duplicate,
         &context
@@ -525,18 +525,18 @@ static bool framebuffer_rejections_are_named(void)
 
 bool boot_parser_self_test(void)
 {
-    struct boot_context context;
+    struct boot_information context;
 
-    if (boot_context_parse(0U, 0U, &context) != BOOT_STATUS_BAD_MAGIC) {
+    if (boot_information_parse(0U, 0U, &context) != BOOT_STATUS_BAD_MAGIC) {
         return false;
     }
 
-    if (boot_context_parse(MULTIBOOT2_BOOT_MAGIC, 0U, &context) !=
+    if (boot_information_parse(MULTIBOOT2_BOOT_MAGIC, 0U, &context) !=
         BOOT_STATUS_NULL_INFORMATION) {
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&empty_information + 1U,
             &context
@@ -544,7 +544,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&empty_information,
             &context
@@ -552,7 +552,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&bad_end_information,
             &context
@@ -560,7 +560,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&unterminated_information,
             &context
@@ -568,7 +568,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&overflowing_memory_information,
             &context
@@ -576,7 +576,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&module_information,
             &context
@@ -584,7 +584,7 @@ bool boot_parser_self_test(void)
         return false;
     }
 
-    if (boot_context_parse(
+    if (boot_information_parse(
             MULTIBOOT2_BOOT_MAGIC,
             (uintptr_t)(const void *)&valid_memory_information,
             &context

@@ -46,7 +46,7 @@
  */
 #define MAX_REPORTED_BOOT_LOADER_NAME 64U
 
-void report_boot_context(const struct boot_context *context)
+void report_boot_information(const struct boot_information *context)
 {
     console_write("OpenSeneri: boot loader: ");
 

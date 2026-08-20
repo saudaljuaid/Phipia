@@ -1,6 +1,6 @@
 # Where everything is
 
-OpenSeneri is forty-three source files and twenty-nine documents. This page exists
+OpenSeneri is forty-five source files and thirty documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -11,15 +11,16 @@ ordering constraint that cannot be reordered. What makes it readable is knowing
 
 ## Start here, in this order
 
-1. **`src/kernel/kernel.c`** — 650 lines, and almost all of it is a list plus the
-   bounded device-window construction. This is
-   the order boot happens in, top to bottom, and every step is one call. Read it
-   first even if none of the calls mean anything yet, because everything else is
-   a detail of one of these lines.
-2. **`docs/DAY_ONE.md`** — what the machine looks like at the instant the loader
+1. **`docs/BOOT_LEDGER.md`** — the typed stages, capabilities, canonical order,
+   receipts and irreversible transitions. This is boot policy now.
+2. **`src/kernel/boot_plan.c`** — the installed descriptors and their private
+   execution functions. Read capability edges, not raw declaration order.
+3. **`src/kernel/kernel.c`** — validates, executes and proves the installed
+   ledger. It contains no subsystem call sequence.
+4. **`docs/DAY_ONE.md`** — what the machine looks like at the instant the loader
    hands it over.
-3. **`src/kernel/logo.c`** — 39 lines. The smallest complete file in the kernel.
-4. **Any one document in `docs/`, then its `.c` file.** Not the other way round.
+5. **`src/kernel/logo.c`** — 39 lines. The smallest complete file in the kernel.
+6. **Any one document in `docs/`, then its `.c` file.** Not the other way round.
 
 ## What each file is
 
@@ -30,7 +31,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 650 | The order boot happens in, plus construction of the one boot device-window registry. |
+| `kernel.c` | 101 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell handoff. |
+| `boot_plan.c` | 1170 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 1742 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -39,7 +42,7 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `arch/x86_64/boot.S` | 190 | Multiboot2 header, 32-bit entry, the first page tables, the jump to long mode. |
-| `multiboot2.c` | 562 | Parsing what the loader left in memory. Refuses malformed input rather than trusting it. |
+| `multiboot2.c` | 563 | Parsing what the loader left in memory. Refuses malformed input rather than trusting it. |
 | `console.c` | 186 | Serial port and VGA text. The only way the kernel speaks until the framebuffer exists. |
 | `cpu.c`, `arch/x86_64/cpu.S` | 338 + 297 | Descriptor tables, control registers, and the instructions C cannot express. |
 
@@ -103,7 +106,7 @@ long you will be in there.
 | `surface.c` | 815 | Cached pixels, clipped primitives, overlap-safe copies, damage, and the WC store fence. |
 | `screen.c` | 604 | Text on the framebuffer: cells, wrapping, scrolling, and reading it back. |
 | `keyboard.c` | 728 | The 8042 and scancode set 1. The first device a person operates. |
-| `shell.c` | 657 | A command line. The first layer here that never panics. |
+| `shell.c` | 688 | A command line, including the read-only `ledger` boot-record summary. The first layer here that never panics. |
 | `font.c` | 39 | The C side of the font: names for what the reader can refuse. |
 | `rust/font.rs` | 276 | The glyph table reader. Rust, on the first hot path in this kernel. |
 | `logo.c` | 39 | The C side of the logo: three lines of glue. |
@@ -114,60 +117,32 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4066 | The thirty QEMU scenarios and what each must print. |
-| `self_test.c` | 588 | Checks that run on synthetic data every boot, before any hardware is touched. |
+| `test.c` | 4239 | The thirty-one QEMU scenarios and what each must print. |
+| `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
 
-Each line is one call in `kernel_main`. This is the whole kernel, in the order
-it happens.
+`kernel_main` does not express subsystem order. It initializes the reversible
+console, runs the pure ledger self-test, builds and validates the complete plan,
+executes it, verifies every installed receipt, publishes the read-only ledger
+and hands off to a scenario or the shell.
 
-    console_initialize            speak
-    interrupts_initialize         stop dying
-    <twenty self-tests>           prove the arithmetic before trusting the hardware
-    boot_context_parse            read what the loader left
-    acpi_root_discover            find the firmware tables
-    acpi_madt / fadt / mcfg       read them
-    construct_device_windows      validate one bounded mapping description
-    pm_timer_initialize           the reference clock
-    apic_bring_online             the local APIC
-    ioapic_initialize             external interrupt routing
-    frame_allocator_initialize    own physical memory
-    prove_frame_lifecycle
-    install_page_tables           own the address space, W^X on
-    prove_write_combining         PAT readback and every WB/WC/UC window
-    prove_paging_lifecycle
-    bring_up_heap                 allocation that is not a fixed array
-    prove_heap_lifecycle
-    kernel_test_run               the scenario, if one was selected
-    prove_timer_route x3          the PIT over both delivery paths
-    retire_legacy_interrupt_path  the 8259 latched shut
-    prove_pm_timer                the reference
-    prove_apic_timer              calibrated against it
-    prove_tsc                     calibrated against it
-    retire_pit                    only now may the 8254 go
-    prove_clocks_without_pit      and the three still agree
-    prove_monotonic_time          instants and deadlines
-    bring_up_pci                  count the machine
-    prove_threads                 more than one thread of control
-    prove_preemption              threads that never yield still lose the CPU
-    prove_framebuffer             every one of 786,432 pixels
-    prove_surface                 cached drawing and damage copied to the glass
-    draw_logo                     the splash
-    prove_screen_console          text on the screen, read back off the glass
-    prove_keyboard                a scancode injected through 0xD2, decoded back
-    prove_shell                   typed, run, drawn, and read back off the glass
-    paging_verify                 re-walk the tables at the end, not the middle
-    heap_verify
-    pci_verify
-    framebuffer_verify
+The canonical descriptor sequence is:
 
-The order is an argument in three places, and each is commented where it
-happens: page tables need frames, so they come after the allocator; the 8254 may
-only be retired once something independent of it can time an interval; and the
-closing verification block runs *after* the last thing that writes through each
-mapping, which is why `framebuffer_verify` sits below `draw_logo` rather than
-inside the framebuffer's own proof.
+    early serial -> interrupt foundation -> pure self-tests
+    -> boot information -> firmware discovery -> device windows
+    -> interrupt controllers -> physical frames
+    -> PAT/CR3 installation -> installed paging proofs
+    -> optional independent framebuffer WC proof
+    -> paging/heap runtime -> optional framebuffer output
+    -> keyboard interrupt path -> optional shell -> early scenario gate
+    -> interrupt proofs -> routing -> timer calibration
+    -> PCI -> threading -> scheduler -> closing proofs
+
+That order is produced from declared capability edges, bounded phases and stable
+stage IDs. Raw descriptor insertion order is not policy. See
+`docs/BOOT_LEDGER.md` for every edge and the mandatory prerequisites attached to
+PAT/CR3, interrupt enable, framebuffer output, APIC timer and scheduler classes.
 
 ## When you want to know
 
@@ -183,9 +158,8 @@ inside the framebuffer's own proof.
 ## How to re-measure this page
 
     wc -l src/kernel/*.c src/arch/x86_64/*.S src/rust/*.rs | sort -rn
-    grep -oE '^ +[a-z_]+\(' src/kernel/kernel.c | tr -d ' ('
+    grep -n 'REQUIRED_STAGE\|OPTIONAL_STAGE' src/kernel/boot_plan.c
 
-The second prints the boot sequence in order. It also catches the calls nested
-inside conditionals - `draw_logo` and the closing verification block only run
-when the framebuffer came up - so it prints slightly more than the list above.
-If the two disagree about *order*, the list above is wrong.
+The second prints raw descriptor declarations. Use the `boot-ledger` scenario
+for the canonical installed order: declaration order is deliberately not a
+semantic source of truth.
