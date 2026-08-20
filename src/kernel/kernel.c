@@ -61,6 +61,172 @@ static struct acpi_topology boot_topology;
  */
 static struct acpi_mcfg boot_mcfg;
 static bool boot_mcfg_present;
+static struct paging_device_windows boot_device_windows;
+
+static enum paging_status add_boot_window(
+    enum paging_device_window_kind kind,
+    uint32_t instance,
+    uint64_t base,
+    uint64_t length,
+    enum paging_memory_type memory_type
+)
+{
+    return paging_device_windows_add(&boot_device_windows, kind, instance,
+        base, length, memory_type, PAGING_DEVICE_WINDOW_WRITE);
+}
+
+static enum paging_status add_optional_boot_window(
+    enum paging_device_window_kind kind,
+    uint64_t base,
+    uint64_t length,
+    enum paging_memory_type memory_type
+)
+{
+    enum paging_status status = add_boot_window(kind, 0U, base, length,
+        memory_type);
+
+    if (status == PAGING_STATUS_OK) {
+        status = paging_device_windows_validate(&boot_device_windows,
+            &boot_device_windows);
+
+        if (status != PAGING_STATUS_OK) {
+            --boot_device_windows.count;
+        }
+    }
+
+    return status;
+}
+
+static void report_optional_window_refusal(
+    enum paging_device_window_kind kind,
+    enum paging_status status
+)
+{
+    console_write("OpenSeneri: ");
+    console_write(paging_device_window_kind_string(kind));
+    console_write(" unavailable: ");
+    console_write(paging_status_string(status));
+    console_putc('\n');
+}
+
+/* Build one page-aligned registry from descriptions boot has already proved. */
+static enum paging_status construct_device_windows(
+    const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
+    struct boot_framebuffer *framebuffer
+)
+{
+    bool framebuffer_registered = false;
+    enum paging_status status;
+
+    if (topology == NULL || framebuffer == NULL) {
+        return PAGING_STATUS_NULL_ARGUMENT;
+    }
+
+    paging_device_windows_reset(&boot_device_windows);
+    status = add_boot_window(PAGING_DEVICE_WINDOW_VGA_TEXT, 0U,
+        PAGING_VGA_TEXT_BUFFER_BASE, PAGING_PAGE_SIZE,
+        PAGING_MEMORY_UNCACHEABLE);
+
+    if (status == PAGING_STATUS_OK) {
+        status = add_boot_window(PAGING_DEVICE_WINDOW_LOCAL_APIC, 0U,
+            topology->local_apic_address, PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE);
+    }
+
+    for (size_t index = 0U;
+         status == PAGING_STATUS_OK && index < topology->io_apic_count;
+         ++index) {
+        status = add_boot_window(PAGING_DEVICE_WINDOW_IO_APIC,
+            (uint32_t)index, topology->io_apics[index].address,
+            PAGING_PAGE_SIZE, PAGING_MEMORY_UNCACHEABLE);
+    }
+
+    if (status != PAGING_STATUS_OK) {
+        return status;
+    }
+
+    if (mcfg != NULL && mcfg->allocation_count != 0U) {
+        const uint64_t base = mcfg->allocations[0].base_address;
+
+        if (base == 0U ||
+            base > SENERI_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+            report_optional_window_refusal(PAGING_DEVICE_WINDOW_PCI_ECAM,
+                PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
+        } else if ((base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U) {
+            report_optional_window_refusal(PAGING_DEVICE_WINDOW_PCI_ECAM,
+                PAGING_STATUS_UNALIGNED_DEVICE_WINDOW);
+        } else {
+            const enum paging_status optional_status =
+                add_optional_boot_window(PAGING_DEVICE_WINDOW_PCI_ECAM, base,
+                    PAGING_ECAM_WINDOW_SIZE, PAGING_MEMORY_UNCACHEABLE);
+
+            if (optional_status != PAGING_STATUS_OK) {
+                report_optional_window_refusal(PAGING_DEVICE_WINDOW_PCI_ECAM,
+                    optional_status);
+                boot_mcfg_present = false;
+            }
+        }
+    }
+
+    if (framebuffer->present) {
+        uint64_t page_base = 0U;
+        uint64_t page_end = 0U;
+        uint64_t region_base = 0U;
+        uint64_t region_end = 0U;
+
+        if (framebuffer->size == 0U) {
+            report_optional_window_refusal(PAGING_DEVICE_WINDOW_FRAMEBUFFER,
+                PAGING_STATUS_ZERO_LENGTH_DEVICE_WINDOW);
+        } else if (framebuffer->size > UINT64_MAX - framebuffer->address) {
+            report_optional_window_refusal(PAGING_DEVICE_WINDOW_FRAMEBUFFER,
+                PAGING_STATUS_DEVICE_WINDOW_RANGE_OVERFLOW);
+        } else {
+            const uint64_t framebuffer_end =
+                framebuffer->address + framebuffer->size;
+
+            if (framebuffer_end > SENERI_EARLY_PHYSICAL_LIMIT) {
+                report_optional_window_refusal(
+                    PAGING_DEVICE_WINDOW_FRAMEBUFFER,
+                    PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
+            } else {
+                page_base = framebuffer->address &
+                    ~(PAGING_PAGE_SIZE - 1U);
+                page_end = (framebuffer_end + PAGING_PAGE_SIZE - 1U) &
+                    ~(PAGING_PAGE_SIZE - 1U);
+                region_base = framebuffer->address &
+                    ~(PAGING_HUGE_PAGE_SIZE - 1U);
+                region_end = (framebuffer_end + PAGING_HUGE_PAGE_SIZE - 1U) &
+                    ~(PAGING_HUGE_PAGE_SIZE - 1U);
+
+                if (region_end - region_base >
+                    PAGING_DEVICE_WINDOW_MAX_LENGTH) {
+                    report_optional_window_refusal(
+                        PAGING_DEVICE_WINDOW_FRAMEBUFFER,
+                        PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
+                } else {
+                    const enum paging_status optional_status =
+                        add_optional_boot_window(
+                            PAGING_DEVICE_WINDOW_FRAMEBUFFER, page_base,
+                            page_end - page_base,
+                            PAGING_MEMORY_WRITE_COMBINING);
+
+                    if (optional_status != PAGING_STATUS_OK) {
+                        report_optional_window_refusal(
+                            PAGING_DEVICE_WINDOW_FRAMEBUFFER, optional_status);
+                    } else {
+                        framebuffer_registered = true;
+                    }
+                }
+            }
+        }
+    }
+
+    framebuffer->present = framebuffer_registered;
+
+    return paging_device_windows_validate(&boot_device_windows,
+        &boot_device_windows);
+}
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
@@ -71,6 +237,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     struct boot_context context;
     struct frame_allocator_stats stats;
     struct ioapic_state ioapic_state;
+    struct kernel_test_context test_context;
     struct pm_timer_state pm_timer_state;
     enum boot_status boot_status;
     enum acpi_status acpi_status;
@@ -241,6 +408,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         boot_mcfg_present = true;
     }
 
+    paging_status = construct_device_windows(&boot_topology,
+        boot_mcfg_present ? &boot_mcfg : NULL, &context.framebuffer);
+
+    if (paging_status != PAGING_STATUS_OK) {
+        console_panic(paging_status_string(paging_status));
+    }
+
     pm_timer_status = pm_timer_initialize(&acpi_fadt);
 
     if (pm_timer_status != PM_TIMER_STATUS_OK) {
@@ -299,9 +473,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
      * here. It has to run before the scenarios, because every one of them now
      * executes on the kernel's own hierarchy rather than on boot.S's.
      */
-    install_page_tables(&boot_topology,
+    install_page_tables(&boot_device_windows);
+    prove_write_combining(&boot_topology,
         boot_mcfg_present ? &boot_mcfg : NULL, &context.framebuffer);
-    prove_write_combining(&boot_topology, &context.framebuffer);
     prove_paging_lifecycle();
     bring_up_heap();
     prove_heap_lifecycle();
@@ -340,8 +514,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("OpenSeneri: day one passed\n");
     console_write("OpenSeneri: memory foundation passed\n");
     test_scenario = kernel_test_select(&context);
-    kernel_test_run(test_scenario, boot_mcfg_present ? &boot_mcfg : NULL,
-        boot_mcfg_present, &context.framebuffer);
+    test_context.mcfg = boot_mcfg_present ? &boot_mcfg : NULL;
+    test_context.framebuffer = &context.framebuffer;
+    test_context.device_windows = &boot_device_windows;
+    test_context.mcfg_present = boot_mcfg_present;
+    kernel_test_run(test_scenario, &test_context);
 
     if (!interrupt_breakpoint_self_test()) {
         console_panic("breakpoint register self-test failed");

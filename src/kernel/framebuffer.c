@@ -67,7 +67,8 @@ enum framebuffer_status framebuffer_initialize(
     const struct boot_framebuffer *framebuffer
 )
 {
-    struct paging_state paging;
+    const struct paging_device_windows *windows;
+    const struct paging_device_window *window = NULL;
 
     if (framebuffer == NULL) {
         return FRAMEBUFFER_STATUS_NULL_ARGUMENT;
@@ -91,12 +92,21 @@ enum framebuffer_status framebuffer_initialize(
      * paging could not map is one this layer must refuse, because writing to it
      * would be writing through whatever the identity map happens to say.
      */
-    paging = paging_get_state();
+    windows = paging_get_device_windows();
 
-    if (paging.framebuffer_size == 0U ||
-        framebuffer->address < paging.framebuffer_base ||
+    for (size_t index = 0U; index < windows->count; ++index) {
+        if (windows->entries[index].kind ==
+            PAGING_DEVICE_WINDOW_FRAMEBUFFER) {
+            window = &windows->entries[index];
+            break;
+        }
+    }
+
+    if (window == NULL ||
+        framebuffer->size > UINT64_MAX - framebuffer->address ||
+        framebuffer->address < window->physical_base ||
         framebuffer->address + framebuffer->size >
-            paging.framebuffer_base + paging.framebuffer_size) {
+            window->physical_base + window->length) {
         return FRAMEBUFFER_STATUS_NOT_MAPPED;
     }
 

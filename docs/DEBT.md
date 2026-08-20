@@ -11,17 +11,18 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the twenty-nine scenarios pass,
+here is a correctness hole in a shipped layer — the thirty scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
-absorbing every new proof, one function signature growing a parameter per
-increment, and a test harness whose contract is now ninety-one shell assertions.
+absorbing every new proof and a test harness whose contract grew into a wall of
+shell assertions. The paging and test-runner signatures have since been paid.
 
 The debt is real but it is the cheap kind. It is written down before it is
 expensive rather than after.
 
-**Two of the seven are now paid** — the branch census in §1 and the `kernel.c`
-split in §2 — and both are kept below with what they cost rather than deleted,
+**Three of the seven are now paid** — the branch census in §1, the `kernel.c`
+split in §2, and the growing signatures in §3 — and all are kept below with
+what they cost rather than deleted,
 because an entry that predicted its own price and was then proved right is worth
 more as a record than as a blank space. §2 in particular warned that deferring
 it would make the move bigger, and the next increment added 221 lines before
@@ -46,14 +47,12 @@ become false is worse than no entry, because it is read as current.
 
 Ordered by what it costs to leave alone, not by size.
 
-### 1. Integration debt — measured, and smaller than it looked
+### 1. Integration debt — measured and paid
 
 **The exit-value collision is resolved.** PR #31
-(`ioapic: route level-triggered sources with directed EOI`) was opened against
-`main` first, so it keeps `0x22`; the scenarios added since were renumbered up
-to `0x23`–`0x27` and `0x22` is reserved by name in both `test.c` and the
-`Makefile`. The two changes can now land in either order without one silently
-passing as the other.
+(`ioapic: route level-triggered sources with directed EOI`) landed first, so it
+keeps `0x22`; later scenarios occupy `0x23` through `0x2D`, and `0x22` is
+reserved by name in both `test.c` and the `Makefile`.
 
 **The pile of unmerged branches was not a pile.** `git branch -r` showed
 eighteen branches and `git branch -r --no-merged origin/main` showed all
@@ -70,23 +69,22 @@ purely because the patch context shifted — the symbol it adds, `cpu_read_tsc`,
 is present in `main` verbatim in `src/arch/x86_64/cpu.S` and declared in
 `include/seneri/cpu.h`. Checked by hand rather than trusted.
 
-**So exactly two branches carry work that is not in `main`:**
+**At the time of the census exactly two branches carried work not in `main`:**
 
 | Branch | Pull request | State |
 | --- | --- | --- |
-| `seneri-os-ioapic-level-dapmyc` | #31 | open, one commit |
-| `seneri-os-pci-enumeration` | #32 | open, eight commits |
+| `seneri-os-ioapic-level-dapmyc` | #31 | merged |
+| `seneri-os-pci-enumeration` | #32 | merged |
 
 The other sixteen are the remains of merged or superseded pull requests. Two of
 them belong to pull requests closed unmerged as duplicates — #23 and #14 — and
 their content reached `main` through #24 and #17 respectively. `git cherry`
 agrees.
 
-**They are gone.** All sixteen were deleted in one push once the census above
-had been checked three ways; the commits remain recoverable from each pull
-request's page. The remote now holds three branches — `main` and the two open
-pull requests — which is what the repository actually contains and now what it
-looks like.
+The sixteen stale branches were deleted in one push once the census above had
+been checked three ways; their commits remain recoverable from each pull
+request's page. PRs #31, #32, and #33 are now merged; there were no open pull
+requests when this registry increment branched from `main`.
 
 **This census was broken before it was believed.** Patch identity is not proof,
 so the claim was re-checked a second way and then the checker itself was
@@ -95,20 +93,19 @@ checked:
 | Control | Result |
 | --- | --- |
 | For all sixteen branches, does `main` contain every function symbol the branch adds to `src/` or `include/`? | Yes, every one. The claim survives a symbol-level check, not just a patch-ID one. |
-| Is #31's work genuinely absent from `main`, so the census is not vacuously true? | Absent. `acknowledgement_targets_are_resolved`, `directed_eoi_is_gated_on_version` and `entries_round_trip` exist on that branch and nowhere in `main`. |
+| Was #31's work genuinely absent from `main` at census time, so the census was not vacuously true? | It was absent. `acknowledgement_targets_are_resolved`, `directed_eoi_is_gated_on_version` and `entries_round_trip` existed on that branch and nowhere in that snapshot of `main`. |
 | Can the checker fail at all? | Yes. Fed `seneri_this_symbol_does_not_exist` it reports missing, so a clean run means something. |
 
-**What remains between #31 and #32 is textual.** Measured with
+**What remained between #31 and #32 was textual.** Measured with
 `git merge-tree --write-tree --name-only`, the two branches touch the same five
 files — `Makefile`, `README.md`, `docs/PIT_RETIREMENT.md`, `src/kernel/kernel.c`
 and `src/kernel/test.c` — in the same regions: the scenario list, the boot
 sequence, and the deferred-work paragraph both changes rewrite.
 `include/seneri/test.h` merges cleanly.
 
-None of those are semantic disagreements any more, but they are hand
-resolutions, and there are more of them every increment that lands on either
-side. **Both branches merge cleanly with `main` today.** The order that costs
-least is #31 first, then #32.
+None were semantic disagreements. They were resolved when #31 landed before
+#32; #33 then landed on their combined `main`. This is retained as the measured
+cost that justified paying the integration debt.
 
 ### 2. `kernel.c` was the place proofs went to live — paid
 
@@ -155,7 +152,7 @@ The last three exist because a comparison that cannot fail proves nothing, and
 the masking of timing lines is exactly the kind of thing that quietly makes a
 comparison blind.
 
-All twenty-nine QEMU scenarios pass, and `nm -u` is still empty.
+That checkpoint's complete QEMU suite passed, and `nm -u` was still empty.
 
 **What this does not fix.** `boot_proofs.c` is 1,648 lines and is now the third
 largest file here. It has a single responsibility, which the old `kernel.c` did
@@ -163,7 +160,7 @@ not, so it is a better 1,648 lines — but the first option this entry offered,
 moving each proof beside the subsystem it proves, is still the better end state
 and is still undone.
 
-### 3. Signatures growing a parameter per increment
+### 3. Signatures growing a parameter per increment — paid
 
 `paging_initialize` took one argument three commits ago and takes three now:
 
@@ -171,13 +168,28 @@ and is still undone.
     paging_initialize(topology, mcfg)
     paging_initialize(topology, mcfg, framebuffer)
 
-Every addition is a *typed physical window* — a range carved out of the bulk
+Every addition was a *typed physical window* — a range carved out of the bulk
 write-back identity map. APIC, VGA, and PCI ECAM are uncacheable; the framebuffer
-is write-combining; ordinary RAM stays write-back. That is one memory-type layer
-wearing three parameters, and the next window makes it four. It should be a
-`struct paging_device_windows` whose entries name both span and memory type.
+is write-combining; ordinary RAM stays write-back. The predicted registry now
+exists. `paging_initialize` takes one bounded, validated
+`struct paging_device_windows`; entries name kind, indexed instance, physical
+span, semantic memory type, and semantic access without exposing table bits.
 
-`kernel_test_run` has the same shape for the same reason, at four parameters.
+The fixed capacity is twelve: VGA, local APIC, eight bounded I/O APICs, optional
+ECAM, and optional framebuffer. Canonical sorting makes insertion order
+irrelevant; every duplicate or overlap is a named refusal. `kernel_test_run`
+now takes one `struct kernel_test_context`, which carries the same registry and
+the explicit optional descriptions scenarios need without hidden reads.
+
+Measured cost: the new public registry and context replaced the three paging
+hardware arguments and three test-runner environment arguments, removed five
+derived window fields from `paging_state`, added one scenario and one document,
+and made the pure registry validator plus installed page-by-page proof part of
+every boot.
+The executable text crossed one 4 KiB boundary (33 to 34 executable leaves);
+the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
+linked image size remained unchanged. The normal transcript otherwise retained
+its stable words and mapping/device counts.
 
 ### 4. The harness contract is ninety-one shell assertions
 
@@ -244,7 +256,7 @@ this is not a surprise, and the number above is what it will cost.
 
 Measured, and healthy:
 
-- **Twenty-seven QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
 - **726 KB kernel image**, of which 66 KB is the logo.
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`

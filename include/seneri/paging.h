@@ -7,7 +7,6 @@
 #include <stdint.h>
 
 #include <seneri/acpi.h>
-#include <seneri/boot.h>
 
 /*
  * Intel SDM volume 3A section 4.5 splits a canonical 48-bit virtual address
@@ -19,6 +18,9 @@
 #define PAGING_ENTRIES_PER_TABLE 512U
 #define PAGING_PAGE_SIZE UINT64_C(4096)
 #define PAGING_HUGE_PAGE_SIZE UINT64_C(0x200000)
+
+/* console.c's fallback output page, described here once for every owner. */
+#define PAGING_VGA_TEXT_BUFFER_BASE UINT64_C(0x000B8000)
 
 /*
  * The virtual page the paging scenario and the boot lifecycle proof map a
@@ -48,6 +50,16 @@
  */
 #define PAGING_MAX_FRAMEBUFFER_REGIONS 8U
 
+/*
+ * One VGA window, one local APIC, every bounded I/O APIC, one optional ECAM
+ * span, and one optional framebuffer span. The registry stays fixed storage;
+ * a new kind has to justify changing this public policy bound.
+ */
+#define PAGING_DEVICE_WINDOW_CAPACITY (4U + ACPI_MAX_IO_APICS)
+#define PAGING_DEVICE_WINDOW_MAX_LENGTH \
+    (PAGING_MAX_FRAMEBUFFER_REGIONS * PAGING_HUGE_PAGE_SIZE)
+#define PAGING_DEVICE_WINDOW_NONE SIZE_MAX
+
 enum paging_status {
     PAGING_STATUS_OK = 0,
     PAGING_STATUS_NULL_ARGUMENT,
@@ -63,6 +75,21 @@ enum paging_status {
     PAGING_STATUS_PAT_LAYOUT_UNSAFE,
     PAGING_STATUS_PAT_READBACK_MISMATCH,
     PAGING_STATUS_BAD_KERNEL_LAYOUT,
+    PAGING_STATUS_BAD_DEVICE_WINDOW_KIND,
+    PAGING_STATUS_BAD_DEVICE_WINDOW_INSTANCE,
+    PAGING_STATUS_UNSUPPORTED_DEVICE_WINDOW_MEMORY_TYPE,
+    PAGING_STATUS_BAD_DEVICE_WINDOW_PERMISSIONS,
+    PAGING_STATUS_ZERO_LENGTH_DEVICE_WINDOW,
+    PAGING_STATUS_UNALIGNED_DEVICE_WINDOW,
+    PAGING_STATUS_DEVICE_WINDOW_RANGE_OVERFLOW,
+    PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE,
+    PAGING_STATUS_TOO_MANY_DEVICE_WINDOWS,
+    PAGING_STATUS_CONFLICTING_DEVICE_WINDOW_OVERLAP,
+    PAGING_STATUS_OVERLAPPING_DEVICE_WINDOWS,
+    PAGING_STATUS_DUPLICATE_DEVICE_WINDOW,
+    PAGING_STATUS_REQUIRED_DEVICE_WINDOW_MISSING,
+    PAGING_STATUS_DEVICE_WINDOW_KERNEL_OVERLAP,
+    PAGING_STATUS_INSTALLED_DEVICE_WINDOW_MISMATCH,
     PAGING_STATUS_ZERO_LENGTH,
     PAGING_STATUS_UNALIGNED_ADDRESS,
     PAGING_STATUS_NONCANONICAL_ADDRESS,
@@ -96,6 +123,38 @@ enum paging_memory_type {
     PAGING_MEMORY_TYPE_COUNT
 };
 
+enum paging_device_window_kind {
+    PAGING_DEVICE_WINDOW_VGA_TEXT = 0,
+    PAGING_DEVICE_WINDOW_LOCAL_APIC,
+    PAGING_DEVICE_WINDOW_IO_APIC,
+    PAGING_DEVICE_WINDOW_PCI_ECAM,
+    PAGING_DEVICE_WINDOW_FRAMEBUFFER,
+    PAGING_DEVICE_WINDOW_KIND_COUNT
+};
+
+/*
+ * Device access is semantic too. Execute and user access are deliberately not
+ * representable, so neither can enter the hierarchy through this registry.
+ */
+enum paging_device_window_permissions {
+    PAGING_DEVICE_WINDOW_READ = 0U,
+    PAGING_DEVICE_WINDOW_WRITE = 1U << 0
+};
+
+struct paging_device_window {
+    enum paging_device_window_kind kind;
+    uint32_t instance;
+    uint64_t physical_base;
+    uint64_t length;
+    enum paging_memory_type memory_type;
+    uint32_t permissions;
+};
+
+struct paging_device_windows {
+    size_t count;
+    struct paging_device_window entries[PAGING_DEVICE_WINDOW_CAPACITY];
+};
+
 /*
  * A mapping is described by what it permits, never by raw entry bits. Read
  * access is implied by presence, so the absence of every flag is a read-only,
@@ -117,21 +176,6 @@ struct paging_state {
     uint64_t root_physical_address;
     size_t table_frames;
     size_t fine_regions;
-    /*
-     * Where the configuration window was made uncacheable, or zero when it was
-     * not. Paging owns the address space, so paging decides whether a window
-     * firmware declared can be reached at all, and src/kernel/pci.c reads that
-     * decision rather than making its own.
-     */
-    uint64_t ecam_window_base;
-    uint64_t ecam_window_size;
-    /*
-     * The 4 KiB-aligned span whose pages intersect the framebuffer and were
-     * made write-combining, or zero when it was not mapped at all.
-     */
-    uint64_t framebuffer_base;
-    uint64_t framebuffer_size;
-    size_t framebuffer_regions;
     uint64_t pat_before;
     uint64_t pat_after;
     unsigned int write_combining_pat_entry;
@@ -161,19 +205,21 @@ struct paging_audit {
     size_t user_leaves;
 };
 
-/*
- * The MCFG may be NULL: a machine that declares no configuration window still
- * gets an address space, and PCI configuration space is still reachable through
- * the I/O ports. A window that is declared but cannot be carved into a device
- * region - not 2 MiB aligned, or outside the early identity window - is not an
- * error either. It is simply not mapped, ecam_window_base stays zero, and the
- * caller finds out by asking rather than by faulting.
- */
-enum paging_status paging_initialize(
-    const struct acpi_topology *topology,
-    const struct acpi_mcfg *mcfg,
-    const struct boot_framebuffer *framebuffer
+void paging_device_windows_reset(struct paging_device_windows *windows);
+enum paging_status paging_device_windows_add(
+    struct paging_device_windows *windows,
+    enum paging_device_window_kind kind,
+    uint32_t instance,
+    uint64_t physical_base,
+    uint64_t length,
+    enum paging_memory_type memory_type,
+    uint32_t permissions
 );
+enum paging_status paging_device_windows_validate(
+    const struct paging_device_windows *windows,
+    struct paging_device_windows *validated
+);
+enum paging_status paging_initialize(const struct paging_device_windows *windows);
 enum paging_status paging_map(
     uint64_t virtual_address,
     uint64_t physical_address,
@@ -191,12 +237,20 @@ enum paging_status paging_translate(
     struct paging_translation *translation
 );
 enum paging_status paging_audit_hierarchy(struct paging_audit *audit);
+enum paging_status paging_verify_device_windows(
+    const struct paging_device_windows *expected,
+    size_t *failed_index
+);
 enum paging_status paging_verify(void);
 struct paging_state paging_get_state(void);
+const struct paging_device_windows *paging_get_device_windows(void);
 bool paging_is_active(void);
 bool paging_self_test(void);
 const char *paging_status_string(enum paging_status status);
 const char *paging_memory_type_string(enum paging_memory_type memory_type);
+const char *paging_device_window_kind_string(
+    enum paging_device_window_kind kind
+);
 
 /*
  * Store one byte through a supervisor pointer at an instruction address a test

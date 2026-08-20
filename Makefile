@@ -9,7 +9,7 @@ TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
-	screen keyboard shell surface write-combining
+	screen keyboard shell surface write-combining device-windows
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -151,6 +151,14 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T seneri_logo_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_glyph$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_self_test$$'
+	# Paging and the scenario runner must stay coupled to one typed aggregate,
+	# never grow hardware-specific parameters or hidden firmware reads again.
+	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \
+		include/seneri/paging.h
+	@! grep -Eq 'struct (acpi_topology|acpi_mcfg|boot_framebuffer)' \
+		src/kernel/paging.c
+	@grep -Fq 'const struct kernel_test_context *context' \
+		include/seneri/test.h
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -206,9 +214,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 		shell) expected=85 ;; \
 		surface) expected=87 ;; \
 		write-combining) expected=89 ;; \
+		device-windows) expected=91 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
-		# Only pci-ecam departs from the default machine. i440fx publishes no \
+		# The ECAM and device-window scenarios depart from the default machine. \
+		# i440fx publishes no \
 		# MCFG, so every other scenario - including pci - proves the path that \
 		# has nothing but the I/O ports. q35 is the only machine here with a \
 		# PCI Express host bridge, and the root port is what gives the \
@@ -218,7 +228,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 			pci) hardware='-device e1000e' ;; \
 			pci-ecam) \
 				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
-		*) hardware='' ;; \
+			device-windows) hardware='-machine q35' ;; \
+			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
 	rm -f "$$log"; \
@@ -366,6 +377,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 				diagnostics_ok=false ;; \
 		write-combining) \
 			grep -Eq '^ST WRITE-COMBINING PAT 0x[0-9A-F]{16} ENTRY 1 FRAMEBUFFER [1-9][0-9]* PAGES$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		device-windows) \
+			grep -Eq '^ST DEVICE-WINDOWS WINDOWS [1-9][0-9]* PAGES [1-9][0-9]* VGA 1 LOCAL-APIC 1 IO-APICS [1-9][0-9]* ECAM 1 FRAMEBUFFER 1$$' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
