@@ -24,6 +24,7 @@
 pub mod abi;
 pub mod font;
 pub mod logo;
+pub mod ui_font;
 
 /// Where a Rust panic goes.
 ///

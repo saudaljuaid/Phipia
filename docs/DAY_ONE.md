@@ -43,8 +43,11 @@ phase.
 4. Validate the ACPI root, then replace the legacy PIC/PIT proof with discovered
    APIC hardware. *(Root and MADT discovery complete; topology parsing and APIC
    activation remain.)*
-5. Only then introduce heap allocation, scheduling, userspace, storage, or graphics.
+5. ~~Only then introduce heap allocation, scheduling, userspace, storage, or
+   graphics.~~ Heap, scheduling and the bounded First Light graphics shell are
+   complete; userspace and storage remain separate later milestones.
 
-Each step must arrive with a narrow invariant and a QEMU-observable test. The UI
-is explicitly out of scope until the kernel can isolate processes, survive
-faults, and access storage through tested drivers.
+Each step must arrive with a narrow invariant and a QEMU-observable test. First
+Light does not claim process isolation, storage applications, or a general
+desktop environment; those still depend on the missing userspace and storage
+foundations.

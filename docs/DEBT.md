@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-one scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-two scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -27,6 +27,12 @@ because an entry that predicted its own price and was then proved right is worth
 more as a record than as a blank space. §2 in particular warned that deferring
 it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
+
+First Light deliberately does not pretend this debt register became a desktop
+roadmap. `ui.c` is one 1,799-line bounded kernel shell and `test.c` is now 4,595
+lines. Splitting panel rendering or scenario helpers may improve shape later,
+but userspace, a process model, a window manager, and a compositor are missing
+architectural layers rather than refactors owed by this milestone.
 
 ## Paid on the way in
 

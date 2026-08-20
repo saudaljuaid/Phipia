@@ -10,7 +10,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger
+	boot-ledger first-light
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -30,6 +30,13 @@ LOGO_BLOB := $(BUILD_DIR)/logo.prl
 LOGO_MAX_DIMENSION := 1024
 FONT_SOURCE := tools/font8x16.txt
 FONT_BLOB := $(BUILD_DIR)/font.pnf
+UI_FONT_SOURCE := assets/fonts/spleen-8x16.bdf
+UI_FONT_LICENSE := assets/fonts/Spleen-LICENSE
+UI_FONT_BLOB := $(BUILD_DIR)/ui-font.puf
+FIRST_LIGHT_IMAGE := assets/pyrenis-first-light.png
+FIRST_LIGHT_FOCUS_IMAGE := assets/pyrenis-first-light-focus.png
+FIRST_LIGHT_TERMINAL_IMAGE := assets/pyrenis-first-light-terminal.png
+FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -64,7 +71,8 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all clean hooks iso kernel lint qemu-tests run smoke toolchain verify
+.PHONY: all capture-first-light clean hooks iso kernel lint qemu-tests run \
+	screenshot-proof smoke toolchain verify
 
 all: kernel
 
@@ -90,9 +98,13 @@ $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-font-asset.py $(FONT_SOURCE) $@
 
-$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) | $(BUILD_DIR)
+$(UI_FONT_BLOB): $(UI_FONT_SOURCE) tools/make-ui-font-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) $@
+
+$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	PYRENIS_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
 	PYRENIS_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
+	PYRENIS_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
@@ -125,6 +137,13 @@ verify: toolchain lint
 	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'32CB82EE804EEE0E3F8D3583BDAA4CA88D8E05994F6F58DAA674364883FA92E6'
 	@test '$(LOGO_MAX_DIMENSION)' -eq 1024
+	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
+		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
+	@test "$$(sha256sum $(UI_FONT_LICENSE) | awk '{ print toupper($$1) }')" = \
+		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
+	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
+		'D90CF6ECE73D212C58C97E6F72694C4DAB774FADD09FC77D4E2D7A9C61A55B2F'
+	@test "$(words $(TEST_SCENARIOS))" -eq 32
 	@! git grep -nI -E \
 		'OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>' \
 		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
@@ -164,6 +183,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_logo_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_glyph$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_ui_font_glyph$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_ui_font_self_test$$'
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
 	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \
@@ -178,6 +199,47 @@ verify: toolchain lint
 		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=boot_proofs.c; then \
 		echo 'migrated boot stage bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn \
+		'\b(ui_font_initialize|pointer_initialize|ui_construct|ui_activate)[[:space:]]*\(' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=ui.c --exclude=ui_font.c --exclude=pointer.c; then \
+		echo 'First Light boot stage bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*\(' \
+		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
+		echo 'First Light bypasses the cached surface'; exit 1; \
+	fi
+	@if grep -En \
+		'\b(ui_process_events|ui_flush|surface_present)[[:space:]]*\(' \
+		src/kernel/pointer.c; then \
+		echo 'PS/2 pointer interrupt path attempts UI drawing'; exit 1; \
+	fi
+	@grep -Fq '    cpu_store_fence();' src/kernel/surface.c || \
+		{ echo 'cached-surface WC present lost its sfence'; exit 1; }
+	@grep -Fq 'Pyrenis: First Light installed proof passed' \
+		src/kernel/boot_plan.c
+	$(MAKE) screenshot-proof
+
+screenshot-proof:
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
+		--self-test $(FIRST_LIGHT_IMAGE)
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode focus \
+		--self-test $(FIRST_LIGHT_FOCUS_IMAGE)
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
+		--self-test $(FIRST_LIGHT_TERMINAL_IMAGE)
+
+capture-first-light: iso
+	rm -rf $(FIRST_LIGHT_CAPTURE_DIR)
+	$(PYTHON) tools/capture-first-light.py --iso $(ISO) \
+		--output $(FIRST_LIGHT_CAPTURE_DIR)
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
+		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light.png
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode focus \
+		$(FIRST_LIGHT_FOCUS_IMAGE) \
+		$(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light-focus.png
+	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
+		$(FIRST_LIGHT_TERMINAL_IMAGE) \
+		$(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light-terminal.png
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -235,6 +297,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		write-combining) expected=89 ;; \
 		device-windows) expected=91 ;; \
 		boot-ledger) expected=93 ;; \
+		first-light) expected=95 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -343,6 +406,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		  ! grep -Fq 'Pyrenis: keyboard established' "$$log" || \
 		  ! grep -Fq 'Pyrenis: keyboard passed' "$$log" || \
 		  ! grep -Fq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
+		  ! grep -Fq 'Pyrenis: First Light font verified' "$$log" || \
+		  ! grep -Eq '^Pyrenis: PS/2 pointer (available|unavailable: .+)$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: First Light layout validated' "$$log" || \
+		  ! grep -Fq 'Pyrenis: First Light desktop constructed' "$$log" || \
+		  ! grep -Fq 'Pyrenis: First Light desktop activated' "$$log" || \
+		  ! grep -Fq 'Pyrenis: First Light installed proof passed' "$$log" || \
 		  ! grep -Fxq 'Pyrenis: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
 		  ! grep -Fq 'Pyrenis: shell output verified on screen' "$$log" || \
 		  ! grep -Fq 'Pyrenis: shell established' "$$log" || \
@@ -405,6 +474,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		boot-ledger) \
 			grep -Eq '^ST LEDGER stages [1-9][0-9]* receipts [1-9][0-9]* capabilities [1-9][0-9]* skips [0-9]+ fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
+				diagnostics_ok=false ;; \
+		first-light) \
+			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+			grep -Fxq 'Pyrenis: First Light installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

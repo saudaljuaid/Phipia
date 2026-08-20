@@ -43,6 +43,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_WRITE_COMBINING,
     KERNEL_TEST_DEVICE_WINDOWS,
     KERNEL_TEST_BOOT_LEDGER,
+    KERNEL_TEST_FIRST_LIGHT,
     KERNEL_TEST_INVALID
 };
 
@@ -70,6 +71,7 @@ struct boot_context;
 _Noreturn void kernel_test_complete_boot_ledger(
     const struct boot_context *context
 );
+_Noreturn void kernel_test_complete_first_light(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

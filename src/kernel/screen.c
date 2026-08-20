@@ -51,6 +51,7 @@ static struct screen_state state;
 static uint32_t background_pixel;
 static uint32_t foreground_pixel;
 static struct surface back_buffer;
+static char cells[SCREEN_MAX_CELLS];
 
 /*
  * The row buffer and pixel tile a glyph is copied into are local, never
@@ -84,7 +85,11 @@ static bool font_covers(uint32_t code)
  * written, lit or not, so a character always replaces what was under it rather
  * than being drawn over it.
  */
-static enum screen_status draw_cell(uint32_t column, uint32_t row, char character)
+static enum screen_status paint_cell(
+    uint32_t column,
+    uint32_t row,
+    char character
+)
 {
     uint8_t glyph_rows[FONT_MAX_CELL_HEIGHT];
     uint32_t pixels[FONT_MAX_CELL_WIDTH * FONT_MAX_CELL_HEIGHT];
@@ -99,8 +104,8 @@ static enum screen_status draw_cell(uint32_t column, uint32_t row, char characte
         return SCREEN_STATUS_DRAW_FAILURE;
     }
 
-    const uint32_t origin_x = column * state.cell_width;
-    const uint32_t origin_y = row * state.cell_height;
+    const uint32_t origin_x = state.viewport.x + column * state.cell_width;
+    const uint32_t origin_y = state.viewport.y + row * state.cell_height;
 
     for (uint32_t y = 0U; y < state.cell_height; ++y) {
         const uint8_t bits = glyph_rows[y];
@@ -114,11 +119,32 @@ static enum screen_status draw_cell(uint32_t column, uint32_t row, char characte
 
     if (surface_blit(&back_buffer, origin_x, origin_y, pixels,
             state.cell_width, state.cell_height,
-            state.cell_width * SURFACE_BYTES_PER_PIXEL) != SURFACE_STATUS_OK ||
-        surface_present(&back_buffer) != SURFACE_STATUS_OK) {
+            state.cell_width * SURFACE_BYTES_PER_PIXEL) != SURFACE_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
 
+    return SCREEN_STATUS_OK;
+}
+
+static enum screen_status draw_cell(
+    uint32_t column,
+    uint32_t row,
+    char character
+)
+{
+    enum screen_status status;
+
+    if (!state.visible) {
+        return SCREEN_STATUS_OK;
+    }
+    status = paint_cell(column, row, character);
+    if (status != SCREEN_STATUS_OK) {
+        return status;
+    }
+    if (!state.deferred_present &&
+        surface_present(&back_buffer) != SURFACE_STATUS_OK) {
+        return SCREEN_STATUS_DRAW_FAILURE;
+    }
     return SCREEN_STATUS_OK;
 }
 
@@ -132,20 +158,37 @@ static enum screen_status scroll_one_line(void)
     struct surface_rect source;
     struct surface_rect exposed;
 
-    source.x = 0U;
-    source.y = state.cell_height;
-    source.width = back_buffer.width;
-    source.height = back_buffer.height - state.cell_height;
-    exposed.x = 0U;
-    exposed.y = back_buffer.height - state.cell_height;
-    exposed.width = back_buffer.width;
+    for (uint32_t row = 1U; row < state.rows; ++row) {
+        for (uint32_t column = 0U; column < state.columns; ++column) {
+            cells[(row - 1U) * SCREEN_MAX_COLUMNS + column] =
+                cells[row * SCREEN_MAX_COLUMNS + column];
+        }
+    }
+    for (uint32_t column = 0U; column < state.columns; ++column) {
+        cells[(state.rows - 1U) * SCREEN_MAX_COLUMNS + column] = ' ';
+    }
+
+    if (!state.visible) {
+        state.scrolls += 1U;
+        return SCREEN_STATUS_OK;
+    }
+
+    source.x = state.viewport.x;
+    source.y = state.viewport.y + state.cell_height;
+    source.width = state.viewport.width;
+    source.height = state.viewport.height - state.cell_height;
+    exposed.x = state.viewport.x;
+    exposed.y = state.viewport.y + state.viewport.height - state.cell_height;
+    exposed.width = state.viewport.width;
     exposed.height = state.cell_height;
 
-    if (surface_copy_rect(&back_buffer, source, 0U, 0U) !=
+    if (surface_copy_rect(&back_buffer, source, state.viewport.x,
+            state.viewport.y) !=
             SURFACE_STATUS_OK ||
         surface_fill_rect(&back_buffer, exposed, background_pixel) !=
             SURFACE_STATUS_OK ||
-        surface_present(&back_buffer) != SURFACE_STATUS_OK) {
+        (!state.deferred_present &&
+            surface_present(&back_buffer) != SURFACE_STATUS_OK)) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
 
@@ -243,6 +286,9 @@ enum screen_status screen_initialize(void)
             &columns, &rows)) {
         return SCREEN_STATUS_NO_ROOM;
     }
+    if (columns > SCREEN_MAX_COLUMNS || rows > SCREEN_MAX_ROWS) {
+        return SCREEN_STATUS_CELL_CAPACITY;
+    }
 
     font_first = first;
     font_count = count;
@@ -273,7 +319,16 @@ enum screen_status screen_initialize(void)
     state.row = 0U;
     state.characters = 0U;
     state.scrolls = 0U;
+    state.viewport = (struct surface_rect){
+        0U, 0U, framebuffer.width, framebuffer.height
+    };
+    state.visible = true;
+    state.deferred_present = false;
     state.active = true;
+
+    for (size_t index = 0U; index < SCREEN_MAX_CELLS; ++index) {
+        cells[index] = ' ';
+    }
 
     return screen_clear();
 }
@@ -298,6 +353,9 @@ enum screen_status screen_release(void)
     foreground_pixel = 0U;
     font_first = 0U;
     font_count = 0U;
+    for (size_t index = 0U; index < SCREEN_MAX_CELLS; ++index) {
+        cells[index] = ' ';
+    }
     return SCREEN_STATUS_OK;
 }
 
@@ -312,18 +370,216 @@ enum screen_status screen_clear(void)
         return SCREEN_STATUS_NOT_INITIALIZED;
     }
 
-    const struct surface_rect whole = {
-        0U, 0U, back_buffer.width, back_buffer.height
-    };
+    for (uint32_t row = 0U; row < state.rows; ++row) {
+        for (uint32_t column = 0U; column < state.columns; ++column) {
+            cells[row * SCREEN_MAX_COLUMNS + column] = ' ';
+        }
+    }
 
-    if (surface_fill_rect(&back_buffer, whole, background_pixel) !=
+    if (state.visible &&
+        (surface_fill_rect(&back_buffer, state.viewport, background_pixel) !=
             SURFACE_STATUS_OK ||
-        surface_present(&back_buffer) != SURFACE_STATUS_OK) {
+         (!state.deferred_present &&
+            surface_present(&back_buffer) != SURFACE_STATUS_OK))) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
 
     state.column = 0U;
     state.row = 0U;
+    return SCREEN_STATUS_OK;
+}
+
+static bool rectangle_end(
+    struct surface_rect rectangle,
+    uint32_t *right,
+    uint32_t *bottom
+)
+{
+    if (right == NULL || bottom == NULL || rectangle.width == 0U ||
+        rectangle.height == 0U ||
+        rectangle.x > UINT32_MAX - rectangle.width ||
+        rectangle.y > UINT32_MAX - rectangle.height) {
+        return false;
+    }
+    *right = rectangle.x + rectangle.width;
+    *bottom = rectangle.y + rectangle.height;
+    return true;
+}
+
+static bool rectangles_intersect(
+    struct surface_rect left,
+    struct surface_rect right
+)
+{
+    uint32_t left_right;
+    uint32_t left_bottom;
+    uint32_t right_right;
+    uint32_t right_bottom;
+
+    return rectangle_end(left, &left_right, &left_bottom) &&
+        rectangle_end(right, &right_right, &right_bottom) &&
+        left.x < right_right && right.x < left_right &&
+        left.y < right_bottom && right.y < left_bottom;
+}
+
+static struct surface_rect rectangle_intersection(
+    struct surface_rect left,
+    struct surface_rect right
+)
+{
+    uint32_t left_right;
+    uint32_t left_bottom;
+    uint32_t right_right;
+    uint32_t right_bottom;
+    struct surface_rect result = { 0U, 0U, 0U, 0U };
+
+    if (!rectangles_intersect(left, right) ||
+        !rectangle_end(left, &left_right, &left_bottom) ||
+        !rectangle_end(right, &right_right, &right_bottom)) {
+        return result;
+    }
+    result.x = left.x > right.x ? left.x : right.x;
+    result.y = left.y > right.y ? left.y : right.y;
+    const uint32_t end_x = left_right < right_right ? left_right : right_right;
+    const uint32_t end_y = left_bottom < right_bottom ? left_bottom : right_bottom;
+    result.width = end_x - result.x;
+    result.height = end_y - result.y;
+    return result;
+}
+
+struct surface *screen_surface(void)
+{
+    return state.active ? &back_buffer : NULL;
+}
+
+enum screen_status screen_redraw_region(struct surface_rect clip)
+{
+    uint32_t clip_right;
+    uint32_t clip_bottom;
+    struct surface_rect redraw;
+
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    if (!rectangle_end(clip, &clip_right, &clip_bottom) ||
+        clip_right > back_buffer.width || clip_bottom > back_buffer.height) {
+        return SCREEN_STATUS_BAD_VIEWPORT;
+    }
+    if (!state.visible || !rectangles_intersect(clip, state.viewport)) {
+        return SCREEN_STATUS_OK;
+    }
+
+    redraw = rectangle_intersection(clip, state.viewport);
+    if (surface_fill_rect(&back_buffer, redraw, background_pixel) !=
+        SURFACE_STATUS_OK) {
+        return SCREEN_STATUS_DRAW_FAILURE;
+    }
+
+    for (uint32_t row = 0U; row < state.rows; ++row) {
+        for (uint32_t column = 0U; column < state.columns; ++column) {
+            const struct surface_rect cell = {
+                state.viewport.x + column * state.cell_width,
+                state.viewport.y + row * state.cell_height,
+                state.cell_width,
+                state.cell_height
+            };
+
+            if (rectangles_intersect(cell, redraw) &&
+                paint_cell(column, row,
+                    cells[row * SCREEN_MAX_COLUMNS + column]) !=
+                    SCREEN_STATUS_OK) {
+                return SCREEN_STATUS_DRAW_FAILURE;
+            }
+        }
+    }
+
+    if (!state.deferred_present &&
+        surface_present(&back_buffer) != SURFACE_STATUS_OK) {
+        return SCREEN_STATUS_DRAW_FAILURE;
+    }
+    return SCREEN_STATUS_OK;
+}
+
+enum screen_status screen_set_viewport(
+    struct surface_rect viewport,
+    bool visible
+)
+{
+    uint32_t right;
+    uint32_t bottom;
+    uint32_t columns;
+    uint32_t rows;
+    const uint32_t old_columns = state.columns;
+    const uint32_t old_rows = state.rows;
+    const uint32_t old_row = state.row;
+
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    if (!rectangle_end(viewport, &right, &bottom) ||
+        right > back_buffer.width || bottom > back_buffer.height ||
+        !grid_for(viewport.width, viewport.height, state.cell_width,
+            state.cell_height, &columns, &rows)) {
+        return SCREEN_STATUS_BAD_VIEWPORT;
+    }
+    if (columns > SCREEN_MAX_COLUMNS || rows > SCREEN_MAX_ROWS) {
+        return SCREEN_STATUS_CELL_CAPACITY;
+    }
+
+    if (columns != old_columns || rows != old_rows) {
+        const uint32_t active_rows = old_row + 1U < old_rows ?
+            old_row + 1U : old_rows;
+        const uint32_t first_row = active_rows > rows ? active_rows - rows : 0U;
+        const uint32_t copied_rows = active_rows - first_row < rows ?
+            active_rows - first_row : rows;
+        const uint32_t copied_columns = old_columns < columns ?
+            old_columns : columns;
+
+        for (uint32_t row = 0U; row < copied_rows; ++row) {
+            for (uint32_t column = 0U; column < copied_columns; ++column) {
+                cells[row * SCREEN_MAX_COLUMNS + column] =
+                    cells[(first_row + row) * SCREEN_MAX_COLUMNS + column];
+            }
+            for (uint32_t column = copied_columns; column < columns; ++column) {
+                cells[row * SCREEN_MAX_COLUMNS + column] = ' ';
+            }
+        }
+        for (uint32_t row = copied_rows; row < rows; ++row) {
+            for (uint32_t column = 0U; column < columns; ++column) {
+                cells[row * SCREEN_MAX_COLUMNS + column] = ' ';
+            }
+        }
+        state.row = old_row >= first_row ? old_row - first_row : 0U;
+        if (state.row >= rows) {
+            state.row = rows - 1U;
+        }
+    }
+
+    state.viewport = viewport;
+    state.columns = columns;
+    state.rows = rows;
+    if (state.column >= columns) {
+        state.column = columns - 1U;
+    }
+    state.visible = visible;
+    return visible ? screen_redraw_region(viewport) : SCREEN_STATUS_OK;
+}
+
+enum screen_status screen_set_visible(bool visible)
+{
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    state.visible = visible;
+    return visible ? screen_redraw_region(state.viewport) : SCREEN_STATUS_OK;
+}
+
+enum screen_status screen_set_deferred_present(bool deferred)
+{
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    state.deferred_present = deferred;
     return SCREEN_STATUS_OK;
 }
 
@@ -374,6 +630,7 @@ enum screen_status screen_putc(char character)
         }
     }
 
+    cells[state.row * SCREEN_MAX_COLUMNS + state.column] = character;
     const enum screen_status status =
         draw_cell(state.column, state.row, character);
 
@@ -435,8 +692,8 @@ enum screen_status screen_verify_cell(
         return SCREEN_STATUS_DRAW_FAILURE;
     }
 
-    const uint32_t origin_x = column * state.cell_width;
-    const uint32_t origin_y = row * state.cell_height;
+    const uint32_t origin_x = state.viewport.x + column * state.cell_width;
+    const uint32_t origin_y = state.viewport.y + row * state.cell_height;
     const uint32_t mask = framebuffer_visible_mask();
 
     for (uint32_t y = 0; y < state.cell_height; ++y) {
@@ -472,12 +729,14 @@ const char *screen_status_string(enum screen_status status)
         "font cell is taller than the row buffer",
         "framebuffer has no room for a character grid",
         "screen console could not create its back buffer",
-        "screen console failed to draw"
+        "screen console failed to draw",
+        "screen console viewport is invalid",
+        "screen console cell capacity is exceeded"
     };
 
     _Static_assert(
         sizeof(messages) / sizeof(messages[0]) ==
-            (size_t)SCREEN_STATUS_DRAW_FAILURE + 1U,
+            (size_t)SCREEN_STATUS_CELL_CAPACITY + 1U,
         "screen status messages are out of sync with enum screen_status"
     );
 
@@ -563,7 +822,9 @@ static bool refusals_are_named(void)
         SCREEN_STATUS_CELL_TOO_LARGE,
         SCREEN_STATUS_NO_ROOM,
         SCREEN_STATUS_SURFACE_FAILURE,
-        SCREEN_STATUS_DRAW_FAILURE
+        SCREEN_STATUS_DRAW_FAILURE,
+        SCREEN_STATUS_BAD_VIEWPORT,
+        SCREEN_STATUS_CELL_CAPACITY
     };
 
     for (size_t index = 0; index < sizeof(every) / sizeof(every[0]); ++index) {

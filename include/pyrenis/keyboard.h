@@ -46,6 +46,7 @@ enum keyboard_status {
 struct keyboard_event {
     uint8_t scancode;   /* set 1, with the release bit already stripped */
     bool pressed;       /* false for a release */
+    bool shift;         /* modifier snapshot at this exact edge */
     char character;     /* '\0' when the key produces no character */
 };
 

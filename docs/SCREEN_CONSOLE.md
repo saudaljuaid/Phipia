@@ -14,6 +14,11 @@ the machine can read.
 - **The grid is derived by division, and a partial cell is not a cell.**
   1024x768 is 128 columns by 48 rows. 1023 pixels across an 8-pixel cell is 127
   whole cells and seven pixels of nothing.
+- **Cells outlive their current viewport.** A fixed 160 by 48 cell store keeps
+  the newest bounded console state. `screen_set_viewport` validates the new
+  pixel rectangle, derives its whole-cell grid, and reflows the most recent
+  rows. First Light can therefore move the console into Terminal and hide or
+  reopen it without introducing a second terminal implementation.
 - **Every pixel of a cell is written, lit or not.** A character replaces what was
   under it rather than being drawn over it, so no glyph can leave a fragment of
   the one before it.
@@ -74,6 +79,13 @@ Routing is additive. `console_putc` still writes to the serial port and the VGA
 text buffer exactly as it did, because the test harness reads the serial log and
 a change that quietly moved the transcript would break every scenario at once.
 
+After First Light activation the screen surface is shared with the desktop.
+The screen console is normally hidden and uses deferred presentation. Opening
+Terminal installs the validated panel client as the viewport and redraws only
+its intersection with current UI damage. Closing it hides presentation but
+retains the fixed cell store. The serial transcript remains active in every
+panel state.
+
 ## Staging and reentrancy
 
 The font's 32-byte row buffer and the at-most 8x32 pixel tile are local to each
@@ -131,9 +143,10 @@ cached rows and presents the moved picture.
 
 - **One foreground colour.** There is no attribute per cell, so nothing can be
   highlighted — a panic looks like every other line.
-- **No cursor is drawn.** The cursor position exists in `struct screen_state` and
-  nothing renders it. The back buffer makes an untorn cursor possible, but
-  cursor shape, blinking and restoration are a later increment.
+- **No text insertion caret is drawn.** The cursor position in
+  `struct screen_state` is a cell location only. First Light's separate 12 by
+  18 software pointer is composed by the UI after terminal redraw; a blinking
+  terminal caret remains later work.
 - **No synchronization.** The one-CPU kernel has no concurrent screen writer.
   The first one needs to serialize the cursor and damage state rather than only
   protecting the pixel copy.

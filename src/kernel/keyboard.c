@@ -34,6 +34,7 @@
 
 #define KEYBOARD_STATUS_OUTPUT_FULL UINT8_C(0x01)
 #define KEYBOARD_STATUS_INPUT_FULL UINT8_C(0x02)
+#define KEYBOARD_STATUS_AUXILIARY_DATA UINT8_C(0x20)
 
 #define KEYBOARD_COMMAND_READ_CONFIGURATION UINT8_C(0x20)
 #define KEYBOARD_COMMAND_WRITE_CONFIGURATION UINT8_C(0x60)
@@ -190,7 +191,10 @@ static enum keyboard_status receive_data(uint8_t *value)
 static void drain(void)
 {
     for (uint32_t spins = 0; spins < KEYBOARD_QUEUE_SIZE; ++spins) {
-        if ((controller_status() & KEYBOARD_STATUS_OUTPUT_FULL) == 0U) {
+        const uint8_t status = controller_status();
+
+        if ((status & KEYBOARD_STATUS_OUTPUT_FULL) == 0U ||
+            (status & KEYBOARD_STATUS_AUXILIARY_DATA) != 0U) {
             return;
         }
 
@@ -276,6 +280,7 @@ static void handle_byte(uint8_t byte)
     event.character = event.pressed
         ? keyboard_character_for(make, state.shift, state.caps_lock)
         : '\0';
+    event.shift = state.shift;
 
     enqueue(&event);
 }
