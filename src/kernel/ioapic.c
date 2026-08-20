@@ -3,12 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi.h>
-#include <seneri/acpi_util.h>
-#include <seneri/apic.h>
-#include <seneri/cpu.h>
-#include <seneri/interrupts.h>
-#include <seneri/ioapic.h>
+#include <pyrenis/acpi.h>
+#include <pyrenis/acpi_util.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/ioapic.h>
 
 /*
  * Intel 82093AA section 3.1: the I/O APIC is reached through an index register
@@ -36,7 +36,7 @@
 /*
  * Intel 82093AA section 3.2.4 defines the redirection entry fields. Delivery
  * status at bit 12 and remote IRR at bit 14 are read-only status the I/O APIC
- * owns; everything else in the low word is OpenSeneri's to write.
+ * owns; everything else in the low word is Pyrenis's to write.
  */
 #define IOAPIC_DELIVERY_FIXED UINT32_C(0x00000000)
 #define IOAPIC_DESTINATION_PHYSICAL UINT32_C(0x00000000)
@@ -57,7 +57,7 @@
 /*
  * ACPI 6.6 table 5.25 encodes polarity in bits 0-1 and trigger mode in bits
  * 2-3. Both fields reserve one encoding, and a reserved encoding describes
- * electricals OpenSeneri cannot program, so it is refused rather than read as the
+ * electricals Pyrenis cannot program, so it is refused rather than read as the
  * nearest thing that fits. Conforming means whatever the bus specifies, and
  * ACPI 6.6 section 5.2.12.5 makes that edge triggered and active high for ISA.
  */
@@ -169,7 +169,7 @@ static uint32_t redirection_index(uint32_t entry, bool high)
     return IOAPIC_INDEX_REDIRECTION + entry * 2U + (high ? 1U : 0U);
 }
 
-/* Compose the two halves of a redirection entry from what OpenSeneri intends. */
+/* Compose the two halves of a redirection entry from what Pyrenis intends. */
 static uint32_t entry_low(const struct ioapic_redirection *entry)
 {
     uint32_t low = IOAPIC_DELIVERY_FIXED | IOAPIC_DESTINATION_PHYSICAL |
@@ -214,7 +214,7 @@ static void entry_decompose(
 /*
  * Intel SDM volume 3A section 11.5.5: the directed end-of-interrupt register
  * arrived with I/O APIC version 0x20. Older units have no way to clear a remote
- * IRR from software except the mask and unmask dance, which OpenSeneri does not
+ * IRR from software except the mask and unmask dance, which Pyrenis does not
  * implement; see docs/IO_APIC.md for why refusing is the deliberate choice.
  */
 static bool version_has_directed_eoi(uint8_t version)
@@ -448,7 +448,7 @@ enum ioapic_status ioapic_initialize(const struct acpi_topology *topology)
 
         state.count = index + 1U;
 
-        /* Firmware may leave any entry unmasked; none of them are OpenSeneri's. */
+        /* Firmware may leave any entry unmasked; none of them are Pyrenis's. */
         for (uint32_t entry = 0; entry < unit->entry_count; ++entry) {
             mask_entry(unit, entry);
         }
@@ -561,7 +561,7 @@ enum ioapic_status ioapic_route_isa_irq_as(
     ioapic_write(unit, redirection_index(entry, false), entry_low(&intent));
 
     /*
-     * Read the entry back and compare only the fields OpenSeneri wrote. Delivery
+     * Read the entry back and compare only the fields Pyrenis wrote. Delivery
      * status and remote IRR are the device's, and either can be set the instant
      * an unmasked pin asserts, so comparing the raw word would make a correctly
      * programmed level-triggered entry fail whenever its line was already busy.
@@ -689,7 +689,7 @@ enum ioapic_status ioapic_send_eoi(uint8_t vector)
     /*
      * A level-triggered delivery latches remote IRR, so it is set here on every
      * interrupt this path acknowledges. Counting both answers is what makes an
-     * entry that is level triggered in OpenSeneri's records but edge triggered in
+     * entry that is level triggered in Pyrenis's records but edge triggered in
      * the hardware observable: it delivers perfectly well and never latches
      * anything, so nothing else would notice.
      */

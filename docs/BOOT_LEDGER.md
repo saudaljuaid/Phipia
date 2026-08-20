@@ -1,4 +1,4 @@
-# OpenSeneri Boot Ledger
+# Pyrenis Boot Ledger
 
 ## The problem
 
@@ -9,7 +9,7 @@ were not enabled until the IDT and controllers existed. None of those facts was
 machine-readable. A new call placed in the wrong part of one long function could
 violate the contract without a structural refusal.
 
-The OpenSeneri Boot Ledger replaces that implicit order with a bounded runtime
+The Pyrenis Boot Ledger replaces that implicit order with a bounded runtime
 contract. Each migrated stage has a stable `enum boot_stage_id`, a diagnostic
 name, typed required and provided `enum boot_capability` values, required or
 optional policy, a phase, an irreversible-ordering class and one typed execution
@@ -22,7 +22,7 @@ installed-state proof whose assertions run in the same kernel they check.
 
 ## Ownership and bounds
 
-`include/seneri/boot_ledger.h` is the public vocabulary. The bounds are:
+`include/pyrenis/boot_ledger.h` is the public vocabulary. The bounds are:
 
 | Object | Capacity |
 | --- | ---: |
@@ -241,14 +241,14 @@ the W^X audit, and checks active framebuffer output has both independent WC and
 surface receipts. Interrupt, APIC-timer and scheduler ordering follows from the
 same mandatory typed prerequisites. The permanent line is:
 
-    OpenSeneri: Boot Ledger installed proof passed
+    Pyrenis: Boot Ledger installed proof passed
 
 The normal transcript contract requires that line, so deleting the proof from
 permanent boot output is a host-test failure.
 
 ## Operator and scenario interfaces
 
-At `open>`, `ledger` prints a bounded summary with no machine addresses:
+At `pyr>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
     plan 23  run 23  skip 0  caps 25  receipts 23
@@ -283,7 +283,7 @@ build; the narrowest scenario was used and the snapshot was restored without
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
 | allow framebuffer output before WC | framebuffer/WC refusal | PASS — `irreversible stage ordered too early`; framebuffer output; independent WC capability |
-| fail optional framebuffer WC stage | serial boot continues; WC success absent | PASS — installed proof completed, WC and surface success stayed absent, and serial reached `open>` |
+| fail optional framebuffer WC stage | serial boot continues; WC success absent | PASS — installed proof completed, WC and surface success stayed absent, and serial reached `pyr>` |
 | fail required paging stage | no heap, interrupt, framebuffer or scheduler dependent runs | PASS — named required paging failure; no dependent transcript lines ran |
 | falsify one installed receipt | installed proof names the stage | PASS — `installed plan differs from validated plan`; paging stage |
 | change one stage ID after validation | plan fingerprint mismatch | PASS — `plan fingerprint mismatch` before execution |

@@ -104,10 +104,10 @@ required to refuse by name before the system is started.
 Normal boot then creates three threads that rotate through a shared log:
 
 ```text
-OpenSeneri: threads online, 3 ready of 8 on 12 stack frames
-OpenSeneri: thread rotation 123123123123
-OpenSeneri: threads switched 20 times, 3 exited
-OpenSeneri: kernel threads established
+Pyrenis: threads online, 3 ready of 8 on 12 stack frames
+Pyrenis: thread rotation 123123123123
+Pyrenis: threads switched 20 times, 3 exited
+Pyrenis: kernel threads established
 ```
 
 **The rotation is asserted exactly.** A scheduler that runs everything eventually
@@ -185,7 +185,7 @@ Rewriting the probe to read its own frame *after* the recursive call forces the
 frame to persist, and that overflows. The result:
 
 ```text
-OpenSeneri DOUBLE FAULT - HALTED
+Pyrenis DOUBLE FAULT - HALTED
 ```
 
 So a real overflow is **contained and deterministic** — the double-fault IST
@@ -218,8 +218,8 @@ There is no `thread_yield` in there, no sleep, and no call that could reach the
 scheduler. The boot thread spins on the same terms. All four make progress:
 
 ```text
-OpenSeneri: preempted 12 times across 16 switches in 25 ms
-OpenSeneri: unyielding threads ran 1957758 2001951 1958442
+Pyrenis: preempted 12 times across 16 switches in 25 ms
+Pyrenis: unyielding threads ran 1957758 2001951 1958442
 ```
 
 Three counts within 2% of each other, from three threads that never once asked

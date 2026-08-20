@@ -1,6 +1,6 @@
 # The shell
 
-This is the first thing in OpenSeneri that exists to be *operated* rather than to be
+This is the first thing in Pyrenis that exists to be *operated* rather than to be
 correct. Everything under it refuses, verifies and panics, because a wrong
 answer from a page table is worse than a stopped machine. A shell is the
 opposite: it is driven by somebody who will make mistakes, so an unknown command
@@ -70,7 +70,7 @@ practice: `make run` gives you a prompt, `make qemu-tests` never reaches one.
 
 ## Proved end to end
 
-This is the first proof in OpenSeneri that runs the whole chain at once, and it is
+This is the first proof in Pyrenis that runs the whole chain at once, and it is
 worth doing that way because **the chain is the product**. A keystroke that
 decodes perfectly and never reaches a command is worthless, and a command that
 runs while nothing appears on screen is worthless.
@@ -85,9 +85,9 @@ Nothing in that sentence is simulated except the finger.
 
     echo hi
     hi
-    open>
-    OpenSeneri: shell ran "echo hi" from 8 injected scancodes
-    OpenSeneri: shell output verified on screen
+    pyr>
+    Pyrenis: shell ran "echo hi" from 8 injected scancodes
+    Pyrenis: shell output verified on screen
 
 The three lines checked on the glass are the echo at row 0, the command's output
 at row 1, and the prompt at row 2. The screen is cleared first, so every cell is

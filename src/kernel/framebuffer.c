@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/boot.h>
-#include <seneri/framebuffer.h>
-#include <seneri/paging.h>
+#include <pyrenis/boot.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/paging.h>
 
 /*
  * Every pixel on the screen, addressable, and nothing above that.

@@ -2,7 +2,7 @@
 
 The cached surface removed framebuffer reads from scrolling. Its remaining hot
 path is the sequential copy from write-back RAM to the linear framebuffer.
-OpenSeneri now gives exactly that framebuffer span a write-combining page memory
+Pyrenis now gives exactly that framebuffer span a write-combining page memory
 type. VGA text memory, local APIC, every I/O APIC, and PCI ECAM remain strongly
 uncacheable. Kernel RAM and the cached surface remain write-back.
 
@@ -24,7 +24,7 @@ the PAT type encodings, PAT index table, combined PAT/MTRR table, memory-type
 transition sequence, and the `SFENCE` instruction definition.
 
 `CPUID.01H:EDX[16]` reports PAT support. `IA32_PAT` is MSR `0x277`; each of its
-eight bytes is one type. OpenSeneri accepts only the architectural encodings:
+eight bytes is one type. Pyrenis accepts only the architectural encodings:
 
 | Encoding | Meaning |
 | ---: | --- |
@@ -37,7 +37,7 @@ eight bytes is one type. OpenSeneri accepts only the architectural encodings:
 
 Any reserved byte makes the inherited PAT layout unsafe. PAT entry 0 must be
 write-back and entry 3 must be uncacheable before the kernel will proceed,
-because the bootstrap hierarchy and OpenSeneri's register windows rely on those two
+because the bootstrap hierarchy and Pyrenis's register windows rely on those two
 meanings.
 
 ### Why entry 1
@@ -48,9 +48,9 @@ so its encoding is identical at every leaf size and cannot confuse the two PAT
 bit positions.
 
 `boot.S` sets none of PAT, PCD, or PWT in its leaves, so it selects entry 0.
-Before this change, OpenSeneri's RAM leaves also selected entry 0 and its live
+Before this change, Pyrenis's RAM leaves also selected entry 0 and its live
 register windows selected entry 3. No bootstrap or live mapping selected entry
-1. OpenSeneri may therefore replace only byte 1 without changing the meaning of an
+1. Pyrenis may therefore replace only byte 1 without changing the meaning of an
 active translation. On the measured machines the exact transition was:
 
 ```text
@@ -90,12 +90,12 @@ is not permission to perform an incomplete cache transition.
 
 ### MTRRs
 
-OpenSeneri neither changes nor claims ownership of firmware MTRRs. PAT and MTRRs
+Pyrenis neither changes nor claims ownership of firmware MTRRs. PAT and MTRRs
 jointly determine the processor's effective type; the page-table walk proves
 only the PAT-selected type. In Intel SDM table 14-7, an MTRR UC range dominates
 a PAT-selected WC entry and remains effectively UC, while MTRR WB or WC combined
 with PAT WC is effectively WC. AMD likewise requires the page and range types
-to be combined. OpenSeneri does not yet read the MTRRs, so it cannot claim that the
+to be combined. Pyrenis does not yet read the MTRRs, so it cannot claim that the
 effective bare-metal framebuffer type is WC from its page-table bits alone.
 
 That is a real evidence limit, not a documentation technicality. Firmware may

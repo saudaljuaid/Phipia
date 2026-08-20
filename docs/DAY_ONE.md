@@ -2,15 +2,15 @@
 
 ## Decision
 
-OpenSeneri starts on x86_64 through the GNU Multiboot2 protocol. GRUB is a temporary
+Pyrenis starts on x86_64 through the GNU Multiboot2 protocol. GRUB is a temporary
 loader, not part of the kernel architecture. It keeps day one focused on the
-first code OpenSeneri owns rather than on disk formats and firmware edge cases.
+first code Pyrenis owns rather than on disk formats and firmware edge cases.
 
 ## Boot invariants
 
 1. `_start` receives the Multiboot2 magic in EAX and the information address in
    EBX while running in 32-bit protected mode.
-2. Interrupts and the direction flag are cleared before OpenSeneri touches its own
+2. Interrupts and the direction flag are cleared before Pyrenis touches its own
    state.
 3. The processor must expose CPUID and the extended long-mode feature bit.
 4. Six page-table pages identity-map the first 4 GiB with 2 MiB writable pages.
@@ -31,7 +31,7 @@ phase.
   32 KiB.
 - Linking has no unresolved symbol and no load segment that is writable and
   executable.
-- A clean QEMU boot emits `OpenSeneri: day one passed` through COM1 within ten
+- A clean QEMU boot emits `Pyrenis: day one passed` through COM1 within ten
   seconds.
 - The same checks run on every push to `main` and every pull request targeting it.
 

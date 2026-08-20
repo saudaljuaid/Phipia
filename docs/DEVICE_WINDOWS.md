@@ -7,7 +7,7 @@ therefore changed `paging_initialize` and repeated the same coupling in
 `kernel_test_run`. The arguments described discovery mechanisms, not the
 address-space policy paging actually needed.
 
-OpenSeneri now builds one `struct paging_device_windows` after boot has discovered
+Pyrenis now builds one `struct paging_device_windows` after boot has discovered
 the machine. `paging_initialize` receives only that collection. The scenario
 runner receives a `struct kernel_test_context` containing the same collection
 alongside the descriptions needed by PCI and framebuffer-specific tests. No
@@ -16,7 +16,7 @@ environment.
 
 ## Representation and ownership
 
-`include/seneri/paging.h` defines three public pieces:
+`include/pyrenis/paging.h` defines three public pieces:
 
 - `enum paging_device_window_kind` names the physical device;
 - `struct paging_device_window` carries kind, instance, physical base, byte
@@ -153,7 +153,7 @@ the presentation path.
 
 PAT selection is not the processor's complete effective-memory-type proof.
 Firmware MTRRs combine with PAT, and a conflicting UC MTRR can dominate a WC
-page selection. OpenSeneri still neither reads nor programs MTRRs, so bare-metal
+page selection. Pyrenis still neither reads nor programs MTRRs, so bare-metal
 effective type remains an explicit limitation.
 
 ## Proof structure
@@ -217,7 +217,7 @@ the table.
 ## Limitations and deferred work
 
 - There is no live remapping or cache-type-change API.
-- The registry covers only windows OpenSeneri currently touches; unowned MMIO holes
+- The registry covers only windows Pyrenis currently touches; unowned MMIO holes
   remain in the bulk WB identity map.
 - There is one ECAM selection and one framebuffer, matching current consumers.
 - There is no alias audit for another virtual mapping of the same physical

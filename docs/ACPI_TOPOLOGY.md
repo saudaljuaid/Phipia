@@ -9,7 +9,7 @@ describes that hardware without programming any of it.
 The recorded MADT is revalidated before it is walked. Discovery does not trust
 the descriptor produced by the previous increment: the address must be nonzero,
 the declared length must include the 44-byte fixed prefix and stay within
-OpenSeneri's 1 MiB early table bound and its first-4-GiB identity map, and the
+Pyrenis's 1 MiB early table bound and its first-4-GiB identity map, and the
 complete table checksum must still be zero.
 
 Each interrupt-controller structure declares its own one-byte type and one-byte
@@ -17,9 +17,9 @@ length. A length below the two-byte entry header would not advance the walk, and
 a length beyond the declared table would read past it; both are rejected rather
 than clamped, so the loop is finite and every read stays inside the table.
 
-Every structure OpenSeneri models must declare exactly its architectural length. A
+Every structure Pyrenis models must declare exactly its architectural length. A
 shorter record cannot hold the fields the type promises, and a longer one means
-the firmware disagrees with the revision it claims. Types OpenSeneri does not model
+the firmware disagrees with the revision it claims. Types Pyrenis does not model
 are counted and skipped, because ACPI adds structure types over time and an
 unknown type is not by itself a defect.
 
@@ -32,7 +32,7 @@ yields one processor list.
 
 An I/O APIC identifier may not repeat, and its register window must lie inside
 the early identity map. A local APIC address override may appear at most once
-and is bounded the same way. Firmware that names an APIC register window OpenSeneri
+and is bounded the same way. Firmware that names an APIC register window Pyrenis
 cannot address is rejected rather than truncated to something addressable.
 
 Interrupt source overrides are accepted only for the ISA bus, only for its
@@ -42,12 +42,12 @@ bound the override count by sixteen, which a static assertion ties to the array
 size, so the count needs no separate runtime capacity rejection.
 
 Early discovery holds the result in fixed storage: 64 processors and 8 I/O
-APICs. These are OpenSeneri policy bounds that keep the description allocation-free
+APICs. These are Pyrenis policy bounds that keep the description allocation-free
 until a heap exists. They are not ACPI architectural limits.
 
 A machine must declare at least one enabled processor and at least one I/O APIC.
-OpenSeneri needs both to route interrupts through discovered hardware later, and a
-description missing either is a firmware defect, not a configuration OpenSeneri
+Pyrenis needs both to route interrupts through discovered hardware later, and a
+description missing either is a firmware defect, not a configuration Pyrenis
 should silently accept.
 
 Every rejection leaves the caller's topology zeroed. A partially populated
@@ -77,12 +77,12 @@ The normal QEMU scenario must also walk SeaBIOS's real tables, report at least
 one I/O APIC, and emit:
 
 ```text
-OpenSeneri: ACPI topology verified
+Pyrenis: ACPI topology verified
 ```
 
 ## Deferred work
 
-OpenSeneri now knows where its interrupt hardware is and what it must route.
+Pyrenis now knows where its interrupt hardware is and what it must route.
 `docs/LOCAL_APIC.md` covers the next increment, which brings the bootstrap
 processor's local APIC online against this description. Programming I/O APIC
 redirection entries from the discovered overrides, masking the legacy PIC

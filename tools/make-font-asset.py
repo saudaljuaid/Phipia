@@ -7,7 +7,7 @@ asset in this kernel a person may actually want to edit by hand, and hex bytes
 cannot be proofread. This turns that art into eight header bytes and one byte
 per glyph row.
 
-    python3 tools/make-font-asset.py tools/font8x16.txt build/font.snf
+    python3 tools/make-font-asset.py tools/font8x16.txt build/font.pnf
 
 The result is a build artifact and is not committed; src/rust/abi.rs includes it
 at compile time. The wire format is four magic bytes, then glyph width, glyph
@@ -20,7 +20,7 @@ is committed, so a clone can build the kernel with nothing but Python.
 """
 import sys
 
-MAGIC = b'SNF1'
+MAGIC = b'PNF1'
 CELL_WIDTH = 8
 CELL_HEIGHT = 16
 
@@ -100,7 +100,7 @@ def pack(rows):
 
 def main():
     if len(sys.argv) != 3:
-        raise SystemExit('usage: make-font-asset.py <font8x16.txt> <out.snf>')
+        raise SystemExit('usage: make-font-asset.py <font8x16.txt> <out.pnf>')
 
     source, target = sys.argv[1], sys.argv[2]
     first, count, glyphs = parse(source)

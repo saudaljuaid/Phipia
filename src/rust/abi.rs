@@ -15,8 +15,8 @@ use crate::font;
 use crate::logo::{self, Format, Status};
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
-/// The Makefile points `OPENSENERI_LOGO_BLOB` at it; there is no committed copy.
-static LOGO: &[u8] = include_bytes!(env!("OPENSENERI_LOGO_BLOB"));
+/// The Makefile points `PYRENIS_LOGO_BLOB` at it; there is no committed copy.
+static LOGO: &[u8] = include_bytes!(env!("PYRENIS_LOGO_BLOB"));
 
 fn status_code(status: Status) -> i32 {
     status as i32
@@ -24,13 +24,13 @@ fn status_code(status: Status) -> i32 {
 
 /// Run the decoder's own tests. Returns 1 when they all pass.
 #[unsafe(no_mangle)]
-pub extern "C" fn seneri_logo_self_test() -> i32 {
+pub extern "C" fn pyrenis_logo_self_test() -> i32 {
     i32::from(logo::self_test())
 }
 
 /// How many bytes the built-in image occupies.
 #[unsafe(no_mangle)]
-pub extern "C" fn seneri_logo_size() -> usize {
+pub extern "C" fn pyrenis_logo_size() -> usize {
     LOGO.len()
 }
 
@@ -40,7 +40,7 @@ pub extern "C" fn seneri_logo_size() -> usize {
 ///
 /// `width` and `height` must both be non-null and point at writable `u32` values.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seneri_logo_geometry(
+pub unsafe extern "C" fn pyrenis_logo_geometry(
     width: *mut u32,
     height: *mut u32,
 ) -> i32 {
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn seneri_logo_geometry(
 /// `out` must point at `out_pixels` writable, aligned `u32`s, and must not
 /// alias anything else live for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seneri_logo_decode(
+pub unsafe extern "C" fn pyrenis_logo_decode(
     out: *mut u32,
     out_pixels: usize,
     red_shift: u8,
@@ -105,9 +105,9 @@ pub unsafe extern "C" fn seneri_logo_decode(
 }
 
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build
-/// time. The Makefile points `OPENSENERI_FONT_BLOB` at it; there is no committed
+/// time. The Makefile points `PYRENIS_FONT_BLOB` at it; there is no committed
 /// copy of the blob, only the ASCII art it is built from.
-static FONT: &[u8] = include_bytes!(env!("OPENSENERI_FONT_BLOB"));
+static FONT: &[u8] = include_bytes!(env!("PYRENIS_FONT_BLOB"));
 
 fn font_status_code(status: font::Status) -> i32 {
     status as i32
@@ -115,13 +115,13 @@ fn font_status_code(status: font::Status) -> i32 {
 
 /// Run the font reader's own tests. Returns 1 when they all pass.
 #[unsafe(no_mangle)]
-pub extern "C" fn seneri_font_self_test() -> i32 {
+pub extern "C" fn pyrenis_font_self_test() -> i32 {
     i32::from(font::self_test())
 }
 
 /// How many bytes the built-in glyph table occupies.
 #[unsafe(no_mangle)]
-pub extern "C" fn seneri_font_size() -> usize {
+pub extern "C" fn pyrenis_font_size() -> usize {
     FONT.len()
 }
 
@@ -131,7 +131,7 @@ pub extern "C" fn seneri_font_size() -> usize {
 ///
 /// Each pointer must be non-null and address a writable `u32`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seneri_font_geometry(
+pub unsafe extern "C" fn pyrenis_font_geometry(
     width: *mut u32,
     height: *mut u32,
     first: *mut u32,
@@ -165,7 +165,7 @@ pub unsafe extern "C" fn seneri_font_geometry(
 /// `out` must point at `out_len` writable bytes and must not alias anything
 /// else live for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seneri_font_glyph(
+pub unsafe extern "C" fn pyrenis_font_glyph(
     code: u32,
     out: *mut u8,
     out_len: usize,

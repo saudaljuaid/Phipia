@@ -2,8 +2,8 @@ SHELL := /bin/sh
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
-KERNEL := $(BUILD_DIR)/openseneri.elf
-ISO := $(BUILD_DIR)/openseneri.iso
+KERNEL := $(BUILD_DIR)/pyrenis.elf
+ISO := $(BUILD_DIR)/pyrenis.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
@@ -23,13 +23,13 @@ PYTHON := python3
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
-RUST_LIB := $(BUILD_DIR)/libopenseneri.a
+RUST_LIB := $(BUILD_DIR)/libpyrenis.a
 RUST_SOURCES := $(wildcard src/rust/*.rs)
-LOGO_SOURCE := assets/openseneri-logo.png
-LOGO_BLOB := $(BUILD_DIR)/logo.srl
-LOGO_MAX_DIMENSION := 256
+LOGO_SOURCE := assets/pyrenis-logo.png
+LOGO_BLOB := $(BUILD_DIR)/logo.prl
+LOGO_MAX_DIMENSION := 1024
 FONT_SOURCE := tools/font8x16.txt
-FONT_BLOB := $(BUILD_DIR)/font.snf
+FONT_BLOB := $(BUILD_DIR)/font.pnf
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -44,7 +44,7 @@ ASFLAGS := $(COMMON_FLAGS) -Wa,--fatal-warnings
 # the first time one was linked in. Now an unnamed section is a link error.
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error --build-id=none -T linker.ld \
-	-Map=$(BUILD_DIR)/openseneri.map
+	-Map=$(BUILD_DIR)/pyrenis.map
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
@@ -56,7 +56,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # to the stricter rule that an unsafe operation inside an unsafe function still
 # needs its own unsafe block naming why it is sound.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
-	--crate-name openseneri -C panic=abort -C opt-level=2 \
+	--crate-name pyrenis -C panic=abort -C opt-level=2 \
 	-C relocation-model=static -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
@@ -91,15 +91,15 @@ $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-font-asset.py $(FONT_SOURCE) $@
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) | $(BUILD_DIR)
-	OPENSENERI_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
-	OPENSENERI_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
+	PYRENIS_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	PYRENIS_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
 
 toolchain:
-	@for tool in gcc ld grub-file readelf nm objdump rustc python3; do \
+	@for tool in gcc ld grub-file readelf nm objdump rustc python3 sha256sum strings; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
 	@version=$$($(RUSTC) --version | awk '{ print $$2 }'); \
@@ -122,6 +122,18 @@ lint:
 verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
+	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
+		'32CB82EE804EEE0E3F8D3583BDAA4CA88D8E05994F6F58DAA674364883FA92E6'
+	@test '$(LOGO_MAX_DIMENSION)' -eq 1024
+	@! git grep -nI -E \
+		'OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>' \
+		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
+	@! git ls-files | grep -Ei 'openseneri|seneri|zenith'
+	@if strings $(KERNEL) | grep -E \
+		'OpenSeneri(:| PANIC| DOUBLE| FATAL)|openseneri\.test=|seneri_(logo|font)|ZENITH'; then \
+		echo 'kernel contains a legacy identity string'; exit 1; \
+	fi
+	@grep -Fq '#define SHELL_PROMPT "pyr> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
 	readelf -h $(KERNEL) | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64'
@@ -135,7 +147,7 @@ verify: toolchain lint
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'lidt'
 	# This inspects the ELF file, and for a long time it was the only thing
-	# behind OpenSeneri's W^X claim - while the kernel ran on boot.S's huge pages
+	# behind Pyrenis's W^X claim - while the kernel ran on boot.S's huge pages
 	# with no NX bit enabled at all. It is kept because it catches a bad link
 	# before anything boots, but the guarantee now rests on paging.c walking
 	# the installed tables at runtime; see docs/VIRTUAL_MEMORY.md.
@@ -148,18 +160,18 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'
 	# The Rust half has to actually be in the image, and has to have been
 	# linked as ordinary code rather than as something with its own runtime.
-	@$(NM) $(KERNEL) | grep -Eq ' T seneri_logo_decode$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T seneri_logo_self_test$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_glyph$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_logo_decode$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_logo_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_glyph$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_self_test$$'
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
 	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \
-		include/seneri/paging.h
+		include/pyrenis/paging.h
 	@! grep -Eq 'struct (acpi_topology|acpi_mcfg|boot_framebuffer)' \
 		src/kernel/paging.c
 	@grep -Fq 'const struct kernel_test_context *context' \
-		include/seneri/test.h
+		include/pyrenis/test.h
 	# Migrated boot operations are reachable only from typed ledger descriptors.
 	@if grep -ERn \
 		'\b(prove_frame_lifecycle|install_page_tables|prove_paging_lifecycle|prove_write_combining|bring_up_heap|prove_heap_lifecycle|prove_timer_route|retire_legacy_interrupt_path|prove_level_route|prove_pm_timer|prove_apic_timer|prove_tsc|retire_pit|prove_clocks_without_pit|prove_monotonic_time|bring_up_pci|prove_threads|prove_preemption|prove_framebuffer|prove_surface|draw_logo|prove_screen_console|prove_keyboard|prove_shell)[[:space:]]*\(' \
@@ -169,23 +181,23 @@ verify: toolchain lint
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
-	cp $(KERNEL) $(ISO_ROOT)/boot/openseneri.elf
+	cp $(KERNEL) $(ISO_ROOT)/boot/pyrenis.elf
 	cp grub/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(ISO_ROOT)
 
 iso: $(ISO)
 
-$(TEST_BUILD_DIR)/%/openseneri.iso: $(KERNEL) Makefile
+$(TEST_BUILD_DIR)/%/pyrenis.iso: $(KERNEL) Makefile
 	rm -rf $(TEST_BUILD_DIR)/$*
 	mkdir -p $(TEST_BUILD_DIR)/$*/iso-root/boot/grub
-	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/openseneri.elf
+	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/pyrenis.elf
 	printf '%s\n' 'set default=0' 'set timeout=0' '' \
-		'menuentry "OpenSeneri test" {' \
-		'    multiboot2 /boot/openseneri.elf openseneri.test=$*' \
+		'menuentry "Pyrenis test" {' \
+		'    multiboot2 /boot/pyrenis.elf pyrenis.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
-qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
+qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
@@ -251,91 +263,91 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
-		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'OpenSeneri PANIC' "$$log"; then \
+		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Pyrenis PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		{ ! grep -Fq 'OpenSeneri: ACPI root verified' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: ACPI MADT verified' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: ACPI topology verified' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: local APIC online' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: local APIC legacy routing LINT0 ExtINT' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: I/O APIC online' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: I/O APIC delivered eight interrupts' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: legacy 8259 retired' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: timer survives legacy retirement' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: level-triggered routing established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: local APIC timer delivered eight interrupts' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: TSC calibrated at [0-9]+ Hz' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: TSC reference established' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: ACPI FADT verified' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: ACPI MCFG absent' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: ACPI configuration windows verified' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: PM timer independent reference established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: PIT retired' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: clocks survive PIT retirement' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: monotonic clock on time-stamp counter' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: deadline timers online' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: monotonic time established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: kernel page tables installed' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: no writable executable mapping' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: write-combining established' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: virtual memory established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: kernel heap online' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: heap coalesced to one free block' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: kernel heap established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: PCI mechanism 1 online, no window mapped$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: PCI configuration space enumerated' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: PCI enumeration established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
-		  ! grep -Fxq 'OpenSeneri: thread rotation 123123123123' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: kernel threads established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
-		  ! grep -Fxq 'OpenSeneri: framebuffer verified 786432 pixels' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: framebuffer established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: cached surface established' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: screen console established' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: screen console passed' "$$log" || \
-		  ! grep -Eq '^OpenSeneri: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
-		  ! grep -Fxq 'OpenSeneri: keyboard decoded "hiI" from injected scancodes' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: keyboard established' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: keyboard passed' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: Boot Ledger installed proof passed' "$$log" || \
-		  ! grep -Fxq 'OpenSeneri: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: shell output verified on screen' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: shell established' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: shell passed' "$$log" || \
-		  ! grep -Fq 'OpenSeneri: never triple fault milestone passed' "$$log"; }; then \
+		{ ! grep -Fq 'Pyrenis: ACPI root verified' "$$log" || \
+		  ! grep -Fq 'Pyrenis: ACPI MADT verified' "$$log" || \
+		  ! grep -Fq 'Pyrenis: ACPI topology verified' "$$log" || \
+		  ! grep -Eq '^Pyrenis: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
+		  ! grep -Fq 'Pyrenis: local APIC online' "$$log" || \
+		  ! grep -Fq 'Pyrenis: local APIC legacy routing LINT0 ExtINT' "$$log" || \
+		  ! grep -Eq '^Pyrenis: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: I/O APIC online' "$$log" || \
+		  ! grep -Eq '^Pyrenis: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: I/O APIC delivered eight interrupts' "$$log" || \
+		  ! grep -Fq 'Pyrenis: legacy 8259 retired' "$$log" || \
+		  ! grep -Fq 'Pyrenis: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^Pyrenis: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
+		  ! grep -Fq 'Pyrenis: level-triggered routing established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
+		  ! grep -Fq 'Pyrenis: local APIC timer delivered eight interrupts' "$$log" || \
+		  ! grep -Eq '^Pyrenis: TSC calibrated at [0-9]+ Hz' "$$log" || \
+		  ! grep -Fq 'Pyrenis: TSC reference established' "$$log" || \
+		  ! grep -Fq 'Pyrenis: ACPI FADT verified' "$$log" || \
+		  ! grep -Fq 'Pyrenis: ACPI MCFG absent' "$$log" || \
+		  ! grep -Fq 'Pyrenis: ACPI configuration windows verified' "$$log" || \
+		  ! grep -Eq '^Pyrenis: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: PM timer independent reference established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: PIT retired' "$$log" || \
+		  ! grep -Fq 'Pyrenis: clocks survive PIT retirement' "$$log" || \
+		  ! grep -Fq 'Pyrenis: monotonic clock on time-stamp counter' "$$log" || \
+		  ! grep -Eq '^Pyrenis: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: deadline timers online' "$$log" || \
+		  ! grep -Fq 'Pyrenis: monotonic time established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: kernel page tables installed' "$$log" || \
+		  ! grep -Fq 'Pyrenis: no writable executable mapping' "$$log" || \
+		  ! grep -Eq '^Pyrenis: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: write-combining established' "$$log" || \
+		  ! grep -Fq 'Pyrenis: virtual memory established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: kernel heap online' "$$log" || \
+		  ! grep -Fq 'Pyrenis: heap coalesced to one free block' "$$log" || \
+		  ! grep -Fq 'Pyrenis: kernel heap established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: PCI mechanism 1 online, no window mapped$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
+		  ! grep -Fq 'Pyrenis: PCI configuration space enumerated' "$$log" || \
+		  ! grep -Fq 'Pyrenis: PCI enumeration established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: thread rotation 123123123123' "$$log" || \
+		  ! grep -Eq '^Pyrenis: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: kernel threads established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: framebuffer verified 786432 pixels' "$$log" || \
+		  ! grep -Fq 'Pyrenis: framebuffer established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: cached surface established' "$$log" || \
+		  ! grep -Eq '^Pyrenis: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Pyrenis: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
+		  ! grep -Fq 'Pyrenis: screen console established' "$$log" || \
+		  ! grep -Fq 'Pyrenis: screen console passed' "$$log" || \
+		  ! grep -Eq '^Pyrenis: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: keyboard decoded "hiI" from injected scancodes' "$$log" || \
+		  ! grep -Fq 'Pyrenis: keyboard established' "$$log" || \
+		  ! grep -Fq 'Pyrenis: keyboard passed' "$$log" || \
+		  ! grep -Fq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
+		  ! grep -Fq 'Pyrenis: shell output verified on screen' "$$log" || \
+		  ! grep -Fq 'Pyrenis: shell established' "$$log" || \
+		  ! grep -Fq 'Pyrenis: shell passed' "$$log" || \
+		  ! grep -Fq 'Pyrenis: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \
@@ -352,7 +364,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 		unexpected) \
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
-			grep -Fq 'OpenSeneri DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+			grep -Fq 'Pyrenis DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
 		paging) \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000200000000' "$$log" && \
@@ -368,10 +380,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 				diagnostics_ok=false ;; \
 		pci) \
 			grep -Eq '^ST PCI ports functions [0-9]+ buses [0-9]+$$' "$$log" && \
-			! grep -Fq 'OpenSeneri: ACPI MCFG at' "$$log" || \
+			! grep -Fq 'Pyrenis: ACPI MCFG at' "$$log" || \
 				diagnostics_ok=false ;; \
 		pci-ecam) \
-			grep -Fq 'OpenSeneri: ACPI MCFG at' "$$log" && \
+			grep -Fq 'Pyrenis: ACPI MCFG at' "$$log" && \
 			grep -Eq '^ST PCI window agreed on [0-9]+ registers of [0-9]+ functions across [0-9]+ buses, [0-9]+ with MSI-X$$' "$$log" && \
 			! grep -Eq '^ST PCI window agreed on [0-9]+ registers of 0 functions' "$$log" || \
 				diagnostics_ok=false ;; \
@@ -392,7 +404,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 				diagnostics_ok=false ;; \
 		boot-ledger) \
 			grep -Eq '^ST LEDGER stages [1-9][0-9]* receipts [1-9][0-9]* capabilities [1-9][0-9]* skips [0-9]+ fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
-			grep -Fxq 'OpenSeneri: Boot Ledger installed proof passed' "$$log" || \
+			grep -Fxq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

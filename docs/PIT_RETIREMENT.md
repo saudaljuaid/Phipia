@@ -1,6 +1,6 @@
 # Retiring the 8254
 
-The PIT was OpenSeneri's ruler. Both derived clocks were measured against it, and
+The PIT was Pyrenis's ruler. Both derived clocks were measured against it, and
 `docs/PM_TIMER.md` records what that cost: the PIT's own tick accounting was
 wrong by a factor of two, both clocks inherited the error, and because they
 inherited it equally they went on agreeing with each other and nothing noticed.
@@ -109,12 +109,12 @@ point — see the third negative control.
 Normal boot additionally requires:
 
 ```text
-OpenSeneri: PM timer counted 35795 ticks in 9999874 ns
-OpenSeneri: local APIC timer calibrated at 62548547 counts per second
-OpenSeneri: TSC calibrated at 2802032223 Hz, invariant no
-OpenSeneri: clocks agree: PM 200434412 ns, APIC timer 200000000 ns, TSC 200171595 ns
-OpenSeneri: PIT retired
-OpenSeneri: clocks survive PIT retirement
+Pyrenis: PM timer counted 35795 ticks in 9999874 ns
+Pyrenis: local APIC timer calibrated at 62548547 counts per second
+Pyrenis: TSC calibrated at 2802032223 Hz, invariant no
+Pyrenis: clocks agree: PM 200434412 ns, APIC timer 200000000 ns, TSC 200171595 ns
+Pyrenis: PIT retired
+Pyrenis: clocks survive PIT retirement
 ```
 
 ## Negative controls

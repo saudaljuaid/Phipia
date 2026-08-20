@@ -1,13 +1,13 @@
 # Local APIC timer
 
-OpenSeneri's timer interrupt now originates in the processor rather than in a
+Pyrenis's timer interrupt now originates in the processor rather than in a
 separate 8254 chip. Getting there required answering one question the hardware
 does not answer for itself: how fast does the local APIC timer count?
 
 ## Why calibration is unavoidable
 
 The local APIC timer counts the processor's bus or core crystal clock, whose rate
-is not reported by CPUID on the processors OpenSeneri targets and is not described by
+is not reported by CPUID on the processors Pyrenis targets and is not described by
 ACPI. A count is therefore meaningless until it has been measured against a
 reference whose rate is known.
 
@@ -73,8 +73,8 @@ by more than a factor of two shows up as a tick count that disagrees.
 Normal boot additionally requires:
 
 ```text
-OpenSeneri: local APIC timer calibrated at <n> counts per second
-OpenSeneri: local APIC timer delivered eight interrupts
+Pyrenis: local APIC timer calibrated at <n> counts per second
+Pyrenis: local APIC timer delivered eight interrupts
 ```
 
 A negative control confirms the cross-check is real: multiplying the calibrated

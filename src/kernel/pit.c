@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/apic.h>
-#include <seneri/cpu.h>
-#include <seneri/interrupts.h>
-#include <seneri/ioapic.h>
-#include <seneri/pic.h>
-#include <seneri/pit.h>
-#include <seneri/pm_timer.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/ioapic.h>
+#include <pyrenis/pic.h>
+#include <pyrenis/pit.h>
+#include <pyrenis/pm_timer.h>
 
 #define PIT_INPUT_FREQUENCY UINT32_C(1193182)
 #define PIT_CHANNEL_ZERO UINT16_C(0x40)

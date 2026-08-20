@@ -1,6 +1,6 @@
-# Rust in OpenSeneri
+# Rust in Pyrenis
 
-OpenSeneri is a C kernel with one Rust component. This document argues where the
+Pyrenis is a C kernel with one Rust component. This document argues where the
 line goes, and why it is not where people usually put it.
 
 ## The rule
@@ -58,7 +58,7 @@ index is checked.
 `src/rust/lib.rs` — the crate root and the panic handler.
 
 The source PNG is committed; the derived stream is not.
-`tools/make-logo-asset.py` converts `assets/openseneri-logo.png` at build time.
+`tools/make-logo-asset.py` converts `assets/pyrenis-logo.png` at build time.
 The kernel deliberately carries no PNG or DEFLATE parser, so the general-purpose
 format stays outside the image and the boot path receives a small stream it can
 validate in one bounded pass.
@@ -96,7 +96,7 @@ chasing the section problem and immediately earned its place — see below.
 
 ## Executable proof
 
-`seneri_logo_self_test` runs on every boot beside the C self-tests, driving
+`pyrenis_logo_self_test` runs on every boot beside the C self-tests, driving
 malformed blobs built in Rust: a bad magic, a short header, a zero width, a zero
 height, a width past the bound, a zero-length run, a run larger than the image,
 a run that overruns only because of what preceded it, a truncated blob, a buffer
@@ -126,7 +126,7 @@ drags in `core`'s formatting and location machinery, that machinery needs
 relocations, and the relocations need a global offset table this kernel asserts
 it does not have.
 
-The corollary is visible in the finished image: `nm` on `openseneri.elf` finds no
+The corollary is visible in the finished image: `nm` on `pyrenis.elf` finds no
 Rust panic path at all. Not a dormant one — none. Every fallible operation in
 the decoder returns a status, the compiler proved no panic is reachable, and
 optimised the handler away.
