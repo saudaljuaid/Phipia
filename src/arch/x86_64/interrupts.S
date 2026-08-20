@@ -299,9 +299,9 @@ interrupt_trigger_unexpected:
 
 .section .rodata, "a"
 double_fault_message:
-    .asciz "OpenSeneri DOUBLE FAULT - HALTED\n"
+    .asciz "Pyrenis DOUBLE FAULT - HALTED\n"
 double_fault_test_message:
-    .asciz "OpenSeneri DOUBLE FAULT - HALTED\nST PASS double-fault\n"
+    .asciz "Pyrenis DOUBLE FAULT - HALTED\nST PASS double-fault\n"
 
 .balign 8
 .global interrupt_vector_table

@@ -1,6 +1,6 @@
 # ACPI power management timer
 
-OpenSeneri had two clocks before this increment, and both were calibrated against
+Pyrenis had two clocks before this increment, and both were calibrated against
 the PIT. They agreed with each other, and that agreement proved less than it
 looked like it did.
 
@@ -14,7 +14,7 @@ that limitation. This increment closes it.
 
 The ACPI power management timer is different in kind. ACPI 6.6 section 4.8.3.3
 fixes its frequency at exactly 3.579545 MHz, a third of the colour burst
-frequency the original PC clock chain was built from. OpenSeneri does not measure
+frequency the original PC clock chain was built from. Pyrenis does not measure
 that rate against anything, so the timer is not a third opinion drawn from the
 same evidence — it is the first opinion here that owes the PIT nothing.
 
@@ -24,8 +24,8 @@ It disagreed. The new timer said an interval was half as long as the two
 calibrated clocks said it was, by a factor of 2.00 in both cases:
 
 ```text
-OpenSeneri: PM timer measured 9999874 ns against TSC 20172796 ns
-OpenSeneri: local APIC timer calibrated at 31299710 counts per second
+Pyrenis: PM timer measured 9999874 ns against TSC 20172796 ns
+Pyrenis: local APIC timer calibrated at 31299710 counts per second
 ```
 
 The PIT was programmed in mode 3, the square wave generator. Mode 3 toggles its
@@ -41,16 +41,16 @@ Two independent measurements confirm the diagnosis and agree with each other to
 - the PM timer, at its specified rate, measured 100 PIT ticks at a programmed
   100 Hz as spanning 1790310 ticks — 0.5002 seconds, so 200 Hz;
 - QEMU's local APIC timer counts one tick per 16 ns under divide-by-sixteen, so
-  62.5 MHz exactly. OpenSeneri measured 31.3 MHz — half.
+  62.5 MHz exactly. Pyrenis measured 31.3 MHz — half.
 
 The fix is one control word: `src/kernel/pit.c` now programs mode 2, the rate
 generator, which drives its output low for one input clock once per period.
 After it, the same three measurements agree:
 
 ```text
-OpenSeneri: local APIC timer calibrated at 62643780 counts per second
-OpenSeneri: TSC calibrated at 2806852220 Hz, invariant no
-OpenSeneri: PM timer measured 9999874 ns against TSC 10130453 ns
+Pyrenis: local APIC timer calibrated at 62643780 counts per second
+Pyrenis: TSC calibrated at 2806852220 Hz, invariant no
+Pyrenis: PM timer measured 9999874 ns against TSC 10130453 ns
 ```
 
 62.64 MHz against the 62.5 MHz QEMU models is a 0.2% match, derived without
@@ -88,14 +88,14 @@ The supported QEMU target publishes a revision 1 FADT, so it exercises the
 fixed-field path:
 
 ```text
-OpenSeneri: ACPI FADT at 0x0000000007FE1B06 revision 1 flags 0x00000000000080A5
-OpenSeneri: ACPI PM timer port 0x0000000000000608 width 24 bits address fixed
+Pyrenis: ACPI FADT at 0x0000000007FE1B06 revision 1 flags 0x00000000000080A5
+Pyrenis: ACPI PM timer port 0x0000000000000608 width 24 bits address fixed
 ```
 
 ### Which address wins
 
 ACPI 6.6 gives `X_PM_TMR_BLK` precedence: when it holds an address the operating
-system can use, `PM_TMR_BLK` must be ignored. OpenSeneri applies that literally.
+system can use, `PM_TMR_BLK` must be ignored. Pyrenis applies that literally.
 
 The extended block is *selected* when the declared length covers it, its address
 is non-zero, and its address space is System I/O. A block in any other space
@@ -124,7 +124,7 @@ partial result can never be mistaken for a complete one:
 
 ## Reading the counter
 
-A 32-bit port read, which `include/seneri/cpu.h` did not previously have.
+A 32-bit port read, which `include/pyrenis/cpu.h` did not previously have.
 `cpu_in32` is a four-instruction `inl` in `src/arch/x86_64/cpu.S`; the timer
 block is a single dword register and the specification gives no meaning to
 reading it in narrower pieces.
@@ -218,10 +218,10 @@ which does not cross clock domains.
 Normal boot additionally requires:
 
 ```text
-OpenSeneri: ACPI FADT verified
-OpenSeneri: ACPI PM timer port 0x0000000000000608 width 24 bits address fixed
-OpenSeneri: PM timer measured 9999874 ns against TSC 10130453 ns
-OpenSeneri: PM timer independent reference established
+Pyrenis: ACPI FADT verified
+Pyrenis: ACPI PM timer port 0x0000000000000608 width 24 bits address fixed
+Pyrenis: PM timer measured 9999874 ns against TSC 10130453 ns
+Pyrenis: PM timer independent reference established
 ```
 
 ## Negative controls
@@ -231,7 +231,7 @@ each isolating a different layer, were run and then reverted:
 
 | Breakage | Observed failure |
 | --- | --- |
-| `PM_TIMER_FREQUENCY_HZ` multiplied by four | `OpenSeneri PANIC: ACPI PM timer arithmetic self-test failed` |
+| `PM_TIMER_FREQUENCY_HZ` multiplied by four | `Pyrenis PANIC: ACPI PM timer arithmetic self-test failed` |
 | `PIT_CHANNEL_ZERO_MODE_RATE_GENERATOR` reverted to mode 3 | `ST FAIL pm-timer: PM timer and local APIC timer disagree on interval`, reporting `PM 100250171 ns, APIC timer 200000000 ns` |
 | decoded port advanced by four past validation | `ST FAIL pm-timer: ACPI PM timer did not advance within its bound` |
 

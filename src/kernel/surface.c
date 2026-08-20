@@ -3,11 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/framebuffer.h>
-#include <seneri/cpu.h>
-#include <seneri/heap.h>
-#include <seneri/paging.h>
-#include <seneri/surface.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/paging.h>
+#include <pyrenis/surface.h>
 
 /*
  * A cached picture and the one rectangle that changed.

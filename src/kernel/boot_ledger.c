@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/boot_ledger.h>
-#include <seneri/framebuffer.h>
-#include <seneri/paging.h>
+#include <pyrenis/boot_ledger.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/paging.h>
 
 #define BOOT_FINGERPRINT_OFFSET UINT64_C(14695981039346656037)
 #define BOOT_FINGERPRINT_PRIME UINT64_C(1099511628211)

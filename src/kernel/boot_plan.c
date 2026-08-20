@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * The installed OpenSeneri Boot Ledger plan.
+ * The installed Pyrenis Boot Ledger plan.
  *
  * Every function that performs migrated boot work is private to this file and
  * can only be reached through a typed descriptor. kernel_main constructs,
@@ -10,35 +10,35 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi.h>
-#include <seneri/apic.h>
-#include <seneri/apic_timer.h>
-#include <seneri/boot.h>
-#include <seneri/boot_ledger.h>
-#include <seneri/boot_plan.h>
-#include <seneri/boot_stages.h>
-#include <seneri/clock.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/framebuffer.h>
-#include <seneri/heap.h>
-#include <seneri/interrupts.h>
-#include <seneri/font.h>
-#include <seneri/logo.h>
-#include <seneri/ioapic.h>
-#include <seneri/keyboard.h>
-#include <seneri/memory.h>
-#include <seneri/paging.h>
-#include <seneri/pci.h>
-#include <seneri/pm_timer.h>
-#include <seneri/screen.h>
-#include <seneri/self_test.h>
-#include <seneri/shell.h>
-#include <seneri/surface.h>
-#include <seneri/test.h>
-#include <seneri/thread.h>
-#include <seneri/timer.h>
-#include <seneri/tsc.h>
+#include <pyrenis/acpi.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/apic_timer.h>
+#include <pyrenis/boot.h>
+#include <pyrenis/boot_ledger.h>
+#include <pyrenis/boot_plan.h>
+#include <pyrenis/boot_stages.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/font.h>
+#include <pyrenis/logo.h>
+#include <pyrenis/ioapic.h>
+#include <pyrenis/keyboard.h>
+#include <pyrenis/memory.h>
+#include <pyrenis/paging.h>
+#include <pyrenis/pci.h>
+#include <pyrenis/pm_timer.h>
+#include <pyrenis/screen.h>
+#include <pyrenis/self_test.h>
+#include <pyrenis/shell.h>
+#include <pyrenis/surface.h>
+#include <pyrenis/test.h>
+#include <pyrenis/thread.h>
+#include <pyrenis/timer.h>
+#include <pyrenis/tsc.h>
 
 static void stage_failed(
     struct boot_context *context,
@@ -90,7 +90,7 @@ static void report_optional_window_refusal(
     enum paging_status status
 )
 {
-    console_write("OpenSeneri: ");
+    console_write("Pyrenis: ");
     console_write(paging_device_window_kind_string(kind));
     console_write(" unavailable: ");
     console_write(paging_status_string(status));
@@ -136,7 +136,7 @@ static enum paging_status construct_device_windows(
         const uint64_t base = mcfg->allocations[0].base_address;
 
         if (base == 0U ||
-            base > SENERI_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+            base > PYRENIS_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
             report_optional_window_refusal(PAGING_DEVICE_WINDOW_PCI_ECAM,
                 PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
         } else if ((base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U) {
@@ -172,7 +172,7 @@ static enum paging_status construct_device_windows(
             const uint64_t framebuffer_end =
                 framebuffer->address + framebuffer->size;
 
-            if (framebuffer_end > SENERI_EARLY_PHYSICAL_LIMIT) {
+            if (framebuffer_end > PYRENIS_EARLY_PHYSICAL_LIMIT) {
                 report_optional_window_refusal(
                     PAGING_DEVICE_WINDOW_FRAMEBUFFER,
                     PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
@@ -234,7 +234,7 @@ static void execute_interrupt_foundation(
 
     if (status != INTERRUPT_STATUS_OK) {
         if (status == INTERRUPT_STATUS_CPU_TABLE_FAILURE) {
-            console_write("OpenSeneri: CPU table detail: ");
+            console_write("Pyrenis: CPU table detail: ");
             console_write(cpu_status_string(cpu_tables_validate()));
             console_putc('\n');
         }
@@ -243,9 +243,9 @@ static void execute_interrupt_foundation(
         return;
     }
 
-    console_write("OpenSeneri: kernel online\n");
-    console_write("OpenSeneri: descriptor tables verified\n");
-    console_write("OpenSeneri: interrupt foundation online\n");
+    console_write("Pyrenis: kernel online\n");
+    console_write("Pyrenis: descriptor tables verified\n");
+    console_write("Pyrenis: interrupt foundation online\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -297,9 +297,9 @@ static void execute_pure_self_tests(
         failure = "keyboard translation self-test failed";
     } else if (!shell_self_test()) {
         failure = "shell line and dispatch self-test failed";
-    } else if (seneri_logo_self_test() != 1) {
+    } else if (pyrenis_logo_self_test() != 1) {
         failure = "logo decoder self-test failed";
-    } else if (seneri_font_self_test() != 1) {
+    } else if (pyrenis_font_self_test() != 1) {
         failure = "font reader self-test failed";
     }
 
@@ -308,7 +308,7 @@ static void execute_pure_self_tests(
         return;
     }
 
-    console_write("OpenSeneri: parser rejection tests passed\n");
+    console_write("Pyrenis: parser rejection tests passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -416,11 +416,11 @@ static void execute_interrupt_controllers(
     report_acpi_fadt(&context->acpi_fadt);
     report_pm_timer(&pm_timer_state);
     report_acpi_mcfg(&context->acpi_mcfg, context->mcfg_present);
-    console_write("OpenSeneri: ACPI root verified\n");
-    console_write("OpenSeneri: ACPI MADT verified\n");
-    console_write("OpenSeneri: ACPI topology verified\n");
-    console_write("OpenSeneri: ACPI FADT verified\n");
-    console_write("OpenSeneri: ACPI configuration windows verified\n");
+    console_write("Pyrenis: ACPI root verified\n");
+    console_write("Pyrenis: ACPI MADT verified\n");
+    console_write("Pyrenis: ACPI topology verified\n");
+    console_write("Pyrenis: ACPI FADT verified\n");
+    console_write("Pyrenis: ACPI configuration windows verified\n");
 
     apic_status = apic_bring_online(&context->topology);
     if (apic_status != APIC_STATUS_OK) {
@@ -430,7 +430,7 @@ static void execute_interrupt_controllers(
 
     apic_state = apic_get_state();
     report_apic(&apic_state);
-    console_write("OpenSeneri: local APIC online\n");
+    console_write("Pyrenis: local APIC online\n");
     ioapic_status = ioapic_initialize(&context->topology);
 
     if (ioapic_status != IOAPIC_STATUS_OK) {
@@ -440,7 +440,7 @@ static void execute_interrupt_controllers(
 
     ioapic_state = ioapic_get_state();
     report_ioapic(&ioapic_state);
-    console_write("OpenSeneri: I/O APIC online\n");
+    console_write("Pyrenis: I/O APIC online\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -605,8 +605,8 @@ static void execute_early_scenario(
     struct boot_stage_result *result
 )
 {
-    console_write("OpenSeneri: day one passed\n");
-    console_write("OpenSeneri: memory foundation passed\n");
+    console_write("Pyrenis: day one passed\n");
+    console_write("Pyrenis: memory foundation passed\n");
     context->test_scenario = kernel_test_select(&context->information);
     context->test_context.mcfg = context->mcfg_present ?
         &context->acpi_mcfg : NULL;
@@ -744,36 +744,36 @@ static void execute_closing_proofs(
         }
     }
 
-    console_write("OpenSeneri: exception probes passed\n");
-    console_write("OpenSeneri: PIC spurious paths passed\n");
-    console_write("OpenSeneri: PIT delivered eight interrupts\n");
-    console_write("OpenSeneri: I/O APIC delivered eight interrupts\n");
-    console_write("OpenSeneri: legacy 8259 retired\n");
-    console_write("OpenSeneri: timer survives legacy retirement\n");
+    console_write("Pyrenis: exception probes passed\n");
+    console_write("Pyrenis: PIC spurious paths passed\n");
+    console_write("Pyrenis: PIT delivered eight interrupts\n");
+    console_write("Pyrenis: I/O APIC delivered eight interrupts\n");
+    console_write("Pyrenis: legacy 8259 retired\n");
+    console_write("Pyrenis: timer survives legacy retirement\n");
     console_write(
-        "OpenSeneri: I/O APIC delivered eight level-triggered interrupts\n"
+        "Pyrenis: I/O APIC delivered eight level-triggered interrupts\n"
     );
-    console_write("OpenSeneri: level-triggered routing established\n");
-    console_write("OpenSeneri: local APIC timer delivered eight interrupts\n");
-    console_write("OpenSeneri: TSC reference established\n");
-    console_write("OpenSeneri: PM timer independent reference established\n");
-    console_write("OpenSeneri: PIT retired\n");
-    console_write("OpenSeneri: clocks survive PIT retirement\n");
-    console_write("OpenSeneri: deadline timers online\n");
-    console_write("OpenSeneri: monotonic time established\n");
-    console_write("OpenSeneri: virtual memory established\n");
-    console_write("OpenSeneri: kernel heap established\n");
-    console_write("OpenSeneri: PCI enumeration established\n");
-    console_write("OpenSeneri: kernel threads passed\n");
-    console_write("OpenSeneri: preemption passed\n");
+    console_write("Pyrenis: level-triggered routing established\n");
+    console_write("Pyrenis: local APIC timer delivered eight interrupts\n");
+    console_write("Pyrenis: TSC reference established\n");
+    console_write("Pyrenis: PM timer independent reference established\n");
+    console_write("Pyrenis: PIT retired\n");
+    console_write("Pyrenis: clocks survive PIT retirement\n");
+    console_write("Pyrenis: deadline timers online\n");
+    console_write("Pyrenis: monotonic time established\n");
+    console_write("Pyrenis: virtual memory established\n");
+    console_write("Pyrenis: kernel heap established\n");
+    console_write("Pyrenis: PCI enumeration established\n");
+    console_write("Pyrenis: kernel threads passed\n");
+    console_write("Pyrenis: preemption passed\n");
     if (framebuffer_is_active()) {
-        console_write("OpenSeneri: framebuffer passed\n");
-        console_write("OpenSeneri: logo passed\n");
-        console_write("OpenSeneri: screen console passed\n");
-        console_write("OpenSeneri: shell passed\n");
+        console_write("Pyrenis: framebuffer passed\n");
+        console_write("Pyrenis: logo passed\n");
+        console_write("Pyrenis: screen console passed\n");
+        console_write("Pyrenis: shell passed\n");
     }
-    console_write("OpenSeneri: keyboard passed\n");
-    console_write("OpenSeneri: never triple fault milestone passed\n");
+    console_write("Pyrenis: keyboard passed\n");
+    console_write("Pyrenis: never triple fault milestone passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 

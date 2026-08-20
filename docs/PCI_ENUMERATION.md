@@ -1,6 +1,6 @@
 # PCI configuration space
 
-Every driver OpenSeneri will ever have begins by being found. This increment finds
+Every driver Pyrenis will ever have begins by being found. This increment finds
 what is on the machine — buses, devices, functions, what class each one is, and
 which of them can raise a message-signalled interrupt — and does nothing else
 with it.
@@ -127,7 +127,7 @@ there is right because there is no other way to route a level-triggered
 interrupt, and refusing here would be wrong because there is a complete, tested,
 universally available alternative.
 
-One consequence is stated rather than hidden: OpenSeneri maps **two buses** of a
+One consequence is stated rather than hidden: Pyrenis maps **two buses** of a
 window firmware may declare as 256. That is every bus any machine it is tested
 on populates, and a register past the mapped region is refused rather than
 wrapped. Reaching further, and reaching extended configuration space at all,
@@ -166,11 +166,11 @@ region is refused.
 Normal boot reports:
 
 ```text
-OpenSeneri: PCI mechanism 1 online, no window mapped
-OpenSeneri: PCI buses 1 functions 6 bridges 0
-OpenSeneri: PCI configuration space enumerated
-OpenSeneri: PCI mechanisms agree on 0 registers of 0 functions, 0 unstable
-OpenSeneri: PCI enumeration established
+Pyrenis: PCI mechanism 1 online, no window mapped
+Pyrenis: PCI buses 1 functions 6 bridges 0
+Pyrenis: PCI configuration space enumerated
+Pyrenis: PCI mechanisms agree on 0 registers of 0 functions, 0 unstable
+Pyrenis: PCI enumeration established
 ```
 
 and on q35 with the scenario's hardware:
@@ -278,7 +278,7 @@ CI machine, and the next person to see it should not have to rediscover this.
   disable a function's decode while it probes, which is the first operation here
   that can take a working device away from whoever is using it.
 - **Extended configuration space is unreachable.** Both readers stop at 256
-  bytes. The window would reach 4096, but OpenSeneri maps two buses of it as one
+  bytes. The window would reach 4096, but Pyrenis maps two buses of it as one
   identity-map region and reads no further than the ports can, so the two
   mechanisms compare like for like. Reaching the rest needs the window mapped in
   its own virtual range.

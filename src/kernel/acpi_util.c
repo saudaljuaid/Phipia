@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi_util.h>
-#include <seneri/boot.h>
+#include <pyrenis/acpi_util.h>
+#include <pyrenis/boot.h>
 
 bool acpi_span_is_early_mapped(uint64_t address, uint64_t length)
 {
-    return address < SENERI_EARLY_PHYSICAL_LIMIT &&
-        length <= SENERI_EARLY_PHYSICAL_LIMIT - address;
+    return address < PYRENIS_EARLY_PHYSICAL_LIMIT &&
+        length <= PYRENIS_EARLY_PHYSICAL_LIMIT - address;
 }
 
 uint8_t acpi_byte_sum(const void *data, size_t size)

@@ -3,33 +3,33 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi.h>
-#include <seneri/acpi_util.h>
-#include <seneri/apic.h>
-#include <seneri/apic_timer.h>
-#include <seneri/boot_ledger.h>
-#include <seneri/clock.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/framebuffer.h>
-#include <seneri/font.h>
-#include <seneri/heap.h>
-#include <seneri/interrupts.h>
-#include <seneri/ioapic.h>
-#include <seneri/memory.h>
-#include <seneri/paging.h>
-#include <seneri/pci.h>
-#include <seneri/pic.h>
-#include <seneri/pit.h>
-#include <seneri/keyboard.h>
-#include <seneri/screen.h>
-#include <seneri/shell.h>
-#include <seneri/pm_timer.h>
-#include <seneri/surface.h>
-#include <seneri/test.h>
-#include <seneri/thread.h>
-#include <seneri/timer.h>
-#include <seneri/tsc.h>
+#include <pyrenis/acpi.h>
+#include <pyrenis/acpi_util.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/apic_timer.h>
+#include <pyrenis/boot_ledger.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/font.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/ioapic.h>
+#include <pyrenis/memory.h>
+#include <pyrenis/paging.h>
+#include <pyrenis/pci.h>
+#include <pyrenis/pic.h>
+#include <pyrenis/pit.h>
+#include <pyrenis/keyboard.h>
+#include <pyrenis/screen.h>
+#include <pyrenis/shell.h>
+#include <pyrenis/pm_timer.h>
+#include <pyrenis/surface.h>
+#include <pyrenis/test.h>
+#include <pyrenis/thread.h>
+#include <pyrenis/timer.h>
+#include <pyrenis/tsc.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -379,7 +379,7 @@ enum kernel_test_scenario kernel_test_select(
     const struct boot_information *context
 )
 {
-    static const char prefix[] = "openseneri.test=";
+    static const char prefix[] = "pyrenis.test=";
     enum kernel_test_scenario selected = KERNEL_TEST_NONE;
     size_t offset = 0;
 
@@ -624,7 +624,7 @@ static void ioapic_level_scenario(void)
 
     /*
      * Read the entry off the hardware. An entry programmed edge triggered while
-     * OpenSeneri's records called it level triggered would deliver every interrupt
+     * Pyrenis's records called it level triggered would deliver every interrupt
      * below and latch nothing, so this is the check that catches it.
      */
     if (ioapic_read_redirection(pit_active_vector(), &entry) !=
@@ -1515,7 +1515,7 @@ static volatile uint8_t paging_scratch;
  * recorded in a table.
  *
  * `make verify` has always refused an RWX load segment, and until this
- * increment that assertion was the only thing standing behind OpenSeneri's W^X
+ * increment that assertion was the only thing standing behind Pyrenis's W^X
  * claim - and it inspects the ELF file, not the machine the kernel runs on.
  * Everything below the rejections is the part a file check can never do: a
  * fresh frame is mapped writable, written, narrowed to read-only, and written
@@ -1580,23 +1580,23 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
     }
 
     /* Every refusal, through the public interface, against the live tables. */
-    if (paging_map(PAGING_PROBE_ADDRESS + 1U, 0U, SENERI_PAGE_SIZE,
+    if (paging_map(PAGING_PROBE_ADDRESS + 1U, 0U, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_UNALIGNED_ADDRESS ||
         paging_map(PAGING_PROBE_ADDRESS, 0U, 0U, PAGING_WRITE) !=
             PAGING_STATUS_ZERO_LENGTH ||
-        paging_map(UINT64_C(0x0000800000000000), 0U, SENERI_PAGE_SIZE,
+        paging_map(UINT64_C(0x0000800000000000), 0U, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_NONCANONICAL_ADDRESS ||
-        paging_map(PAGING_PROBE_ADDRESS, 0U, SENERI_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, 0U, PYRENIS_PAGE_SIZE,
             PAGING_WRITE | PAGING_EXECUTE) !=
             PAGING_STATUS_WRITABLE_AND_EXECUTABLE) {
         kernel_test_fail("a malformed mapping request was accepted");
     }
 
-    if (paging_map(text & ~(SENERI_PAGE_SIZE - 1U), 0U, SENERI_PAGE_SIZE,
+    if (paging_map(text & ~(PYRENIS_PAGE_SIZE - 1U), 0U, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED ||
-        paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+        paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
             PAGING_STATUS_NOT_MAPPED ||
-        paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+        paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
             PAGING_STATUS_NOT_MAPPED) {
         kernel_test_fail("an impossible mapping change was accepted");
     }
@@ -1606,9 +1606,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
      * so a 4 KiB change inside one is refused rather than silently applied to
      * the whole 2 MiB.
      */
-    if (paging_protect(PAGING_TEST_HUGE_ADDRESS, SENERI_PAGE_SIZE,
+    if (paging_protect(PAGING_TEST_HUGE_ADDRESS, PYRENIS_PAGE_SIZE,
             PAGING_READ) != PAGING_STATUS_HUGE_PAGE_PRESENT ||
-        paging_unmap(PAGING_TEST_HUGE_ADDRESS, SENERI_PAGE_SIZE) !=
+        paging_unmap(PAGING_TEST_HUGE_ADDRESS, PYRENIS_PAGE_SIZE) !=
             PAGING_STATUS_HUGE_PAGE_PRESENT) {
         kernel_test_fail("a 2 MiB mapping accepted a 4 KiB change");
     }
@@ -1622,9 +1622,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         kernel_test_fail("no frame was available for the probe page");
     }
 
-    if (paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+    if (paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_OK ||
-        paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED) {
         kernel_test_fail("the probe page would not map exactly once");
     }
@@ -1643,7 +1643,7 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         kernel_test_fail("the probe page does not translate to its frame");
     }
 
-    if (paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+    if (paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
         PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not narrow to read-only");
     }
@@ -1666,7 +1666,7 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
      * kernel, so the check that matters is that the frame count is identical
      * after sixty-four cycles - and the paging state's own table count with it.
      */
-    if (paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+    if (paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
         PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not unmap before the cycle");
     }
@@ -1678,9 +1678,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         uintptr_t cycle_frame;
 
         if (frame_allocate(&cycle_frame) != FRAME_STATUS_OK ||
-            paging_map(PAGING_PROBE_ADDRESS, cycle_frame, SENERI_PAGE_SIZE,
+            paging_map(PAGING_PROBE_ADDRESS, cycle_frame, PYRENIS_PAGE_SIZE,
                 PAGING_WRITE) != PAGING_STATUS_OK ||
-            paging_unmap(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE) !=
+            paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
                 PAGING_STATUS_OK ||
             frame_release(cycle_frame) != FRAME_STATUS_OK) {
             kernel_test_fail("a map and unmap cycle did not complete");
@@ -1701,9 +1701,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
 
     /* Put the probe page back so the fault below has something to narrow. */
     if (frame_allocate(&frame) != FRAME_STATUS_OK ||
-        paging_map(PAGING_PROBE_ADDRESS, frame, SENERI_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_OK ||
-        paging_protect(PAGING_PROBE_ADDRESS, SENERI_PAGE_SIZE, PAGING_READ) !=
+        paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
             PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not come back read-only");
     }
@@ -2342,7 +2342,7 @@ static void pci_ecam_scenario(
     }
 
     /*
-     * A bus past what OpenSeneri mapped is refused rather than folded back into the
+     * A bus past what Pyrenis mapped is refused rather than folded back into the
      * window, which is the failure that would read one bus as another.
      */
     address.segment = 0U;
@@ -2929,7 +2929,7 @@ static void shell_scenario(void)
     }
 
     after = shell_get_state();
-    console_write("OpenSeneri: shell scenario ran ");
+    console_write("Pyrenis: shell scenario ran ");
     console_write_u64(after.commands);
     console_write(" commands and refused ");
     console_write_u64(after.unknown);
@@ -3090,7 +3090,7 @@ static void keyboard_scenario(void)
         kernel_test_fail("the keyboard lost events it never accounted for");
     }
 
-    console_write("OpenSeneri: keyboard scenario queued ");
+    console_write("Pyrenis: keyboard scenario queued ");
     console_write_u64((uint64_t)after.queued);
     console_write(" and dropped ");
     console_write_u64(after.dropped - before.dropped);
@@ -3110,7 +3110,7 @@ static void screen_scenario(void)
         kernel_test_fail("the screen scenario has no console");
     }
 
-    if (seneri_font_geometry(&width, &height, &first, &count) !=
+    if (pyrenis_font_geometry(&width, &height, &first, &count) !=
         FONT_STATUS_OK) {
         kernel_test_fail("the font table would not describe itself");
     }
@@ -3207,7 +3207,7 @@ static void screen_scenario(void)
         }
     }
 
-    console_write("OpenSeneri: screen scenario drew ");
+    console_write("Pyrenis: screen scenario drew ");
     console_write_u64((uint64_t)count);
     console_write(" glyphs and read every one back\n");
 }
@@ -3921,7 +3921,7 @@ void kernel_test_run(
         interrupt_test_set_gate_present(14U, false);
         interrupt_trigger_page_fault();
     case KERNEL_TEST_INVALID:
-        kernel_test_fail("invalid or duplicate openseneri.test argument");
+        kernel_test_fail("invalid or duplicate pyrenis.test argument");
     case KERNEL_TEST_NONE:
     default:
         kernel_test_fail("unreachable test scenario");

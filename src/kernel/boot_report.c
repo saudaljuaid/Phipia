@@ -15,30 +15,30 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi.h>
-#include <seneri/apic.h>
-#include <seneri/apic_timer.h>
-#include <seneri/boot.h>
-#include <seneri/clock.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/framebuffer.h>
-#include <seneri/heap.h>
-#include <seneri/interrupts.h>
-#include <seneri/logo.h>
-#include <seneri/ioapic.h>
-#include <seneri/memory.h>
-#include <seneri/paging.h>
-#include <seneri/pci.h>
-#include <seneri/pic.h>
-#include <seneri/pit.h>
-#include <seneri/pm_timer.h>
-#include <seneri/self_test.h>
-#include <seneri/test.h>
-#include <seneri/thread.h>
-#include <seneri/timer.h>
-#include <seneri/tsc.h>
-#include <seneri/boot_stages.h>
+#include <pyrenis/acpi.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/apic_timer.h>
+#include <pyrenis/boot.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/logo.h>
+#include <pyrenis/ioapic.h>
+#include <pyrenis/memory.h>
+#include <pyrenis/paging.h>
+#include <pyrenis/pci.h>
+#include <pyrenis/pic.h>
+#include <pyrenis/pit.h>
+#include <pyrenis/pm_timer.h>
+#include <pyrenis/self_test.h>
+#include <pyrenis/test.h>
+#include <pyrenis/thread.h>
+#include <pyrenis/timer.h>
+#include <pyrenis/tsc.h>
+#include <pyrenis/boot_stages.h>
 
 /*
  * A loader may name itself with an arbitrarily long string. The transcript is a
@@ -48,7 +48,7 @@
 
 void report_boot_information(const struct boot_information *context)
 {
-    console_write("OpenSeneri: boot loader: ");
+    console_write("Pyrenis: boot loader: ");
 
     if (context->boot_loader_name == NULL) {
         console_write("unnamed");
@@ -68,41 +68,41 @@ void report_boot_information(const struct boot_information *context)
 
     console_putc('\n');
 
-    console_write("OpenSeneri: memory map entries: ");
+    console_write("Pyrenis: memory map entries: ");
     console_write_u64(context->memory_map_entry_count);
     console_putc('\n');
 
-    console_write("OpenSeneri: reported usable bytes: ");
+    console_write("Pyrenis: reported usable bytes: ");
     console_write_u64(context->reported_usable_bytes);
     console_putc('\n');
 
-    console_write("OpenSeneri: highest reported address: ");
+    console_write("Pyrenis: highest reported address: ");
     console_write_hex(context->highest_reported_address);
     console_putc('\n');
 }
 
 void report_allocator(const struct frame_allocator_stats *stats)
 {
-    console_write("OpenSeneri: allocatable frames: ");
+    console_write("Pyrenis: allocatable frames: ");
     console_write_u64(stats->allocatable_frames);
     console_putc('\n');
 
-    console_write("OpenSeneri: free frames: ");
+    console_write("Pyrenis: free frames: ");
     console_write_u64(stats->free_frames);
     console_putc('\n');
 
-    console_write("OpenSeneri: reserved frames: ");
+    console_write("Pyrenis: reserved frames: ");
     console_write_u64(stats->reserved_frames);
     console_putc('\n');
 
-    console_write("OpenSeneri: highest allocatable address: ");
+    console_write("Pyrenis: highest allocatable address: ");
     console_write_hex(stats->highest_allocatable_address);
     console_putc('\n');
 }
 
 void report_acpi_root(const struct acpi_root *root)
 {
-    console_write("OpenSeneri: ACPI ");
+    console_write("Pyrenis: ACPI ");
     console_write(acpi_root_kind_string(root->kind));
     console_write(" at ");
     console_write_hex(root->physical_address);
@@ -113,7 +113,7 @@ void report_acpi_root(const struct acpi_root *root)
 
 void report_acpi_madt(const struct acpi_madt *madt)
 {
-    console_write("OpenSeneri: ACPI MADT at ");
+    console_write("Pyrenis: ACPI MADT at ");
     console_write_hex(madt->physical_address);
     console_write(" local APIC ");
     console_write_hex(madt->local_apic_address);
@@ -121,7 +121,7 @@ void report_acpi_madt(const struct acpi_madt *madt)
     console_write_hex(madt->flags);
     console_putc('\n');
 
-    console_write("OpenSeneri: ACPI root entries: ");
+    console_write("Pyrenis: ACPI root entries: ");
     console_write_u64(madt->root_entry_count);
     console_write(" MADT OEM ");
     console_write_n(madt->oem_id, 6U);
@@ -132,7 +132,7 @@ void report_acpi_madt(const struct acpi_madt *madt)
 
 void report_acpi_fadt(const struct acpi_fadt *fadt)
 {
-    console_write("OpenSeneri: ACPI FADT at ");
+    console_write("Pyrenis: ACPI FADT at ");
     console_write_hex(fadt->physical_address);
     console_write(" revision ");
     console_write_u64(fadt->revision);
@@ -143,7 +143,7 @@ void report_acpi_fadt(const struct acpi_fadt *fadt)
 
 void report_pm_timer(const struct pm_timer_state *pm_timer)
 {
-    console_write("OpenSeneri: ACPI PM timer port ");
+    console_write("Pyrenis: ACPI PM timer port ");
     console_write_hex(pm_timer->port);
     console_write(" width ");
     console_write_u64(pm_timer->counter_bits);
@@ -153,7 +153,7 @@ void report_pm_timer(const struct pm_timer_state *pm_timer)
 }
 
 /*
- * The one firmware table OpenSeneri reads whose absence is not a fault. A machine
+ * The one firmware table Pyrenis reads whose absence is not a fault. A machine
  * with no PCI Express host bridge publishes no MCFG, and configuration space is
  * still reachable through the I/O ports the PCI specification has always
  * defined, so absence is reported and boot continues.
@@ -161,11 +161,11 @@ void report_pm_timer(const struct pm_timer_state *pm_timer)
 void report_acpi_mcfg(const struct acpi_mcfg *mcfg, bool present)
 {
     if (!present) {
-        console_write("OpenSeneri: ACPI MCFG absent\n");
+        console_write("Pyrenis: ACPI MCFG absent\n");
         return;
     }
 
-    console_write("OpenSeneri: ACPI MCFG at ");
+    console_write("Pyrenis: ACPI MCFG at ");
     console_write_hex(mcfg->physical_address);
     console_write(" windows ");
     console_write_u64(mcfg->allocation_count);
@@ -175,7 +175,7 @@ void report_acpi_mcfg(const struct acpi_mcfg *mcfg, bool present)
         const struct acpi_ecam_allocation *allocation =
             &mcfg->allocations[index];
 
-        console_write("OpenSeneri: ACPI ECAM segment ");
+        console_write("Pyrenis: ACPI ECAM segment ");
         console_write_u64(allocation->segment);
         console_write(" base ");
         console_write_hex(allocation->base_address);
@@ -191,7 +191,7 @@ void report_acpi_mcfg(const struct acpi_mcfg *mcfg, bool present)
 
 void report_acpi_topology(const struct acpi_topology *topology)
 {
-    console_write("OpenSeneri: ACPI local APIC base ");
+    console_write("Pyrenis: ACPI local APIC base ");
     console_write_hex(topology->local_apic_address);
 
     if (topology->local_apic_address_overridden) {
@@ -200,7 +200,7 @@ void report_acpi_topology(const struct acpi_topology *topology)
 
     console_putc('\n');
 
-    console_write("OpenSeneri: ACPI processors: ");
+    console_write("Pyrenis: ACPI processors: ");
     console_write_u64(topology->local_apic_count);
     console_write(" enabled ");
     console_write_u64(topology->enabled_processor_count);
@@ -213,7 +213,7 @@ void report_acpi_topology(const struct acpi_topology *topology)
     for (size_t index = 0; index < topology->io_apic_count; ++index) {
         const struct acpi_io_apic *io_apic = &topology->io_apics[index];
 
-        console_write("OpenSeneri: ACPI I/O APIC id ");
+        console_write("Pyrenis: ACPI I/O APIC id ");
         console_write_u64(io_apic->identifier);
         console_write(" at ");
         console_write_hex(io_apic->address);
@@ -226,7 +226,7 @@ void report_acpi_topology(const struct acpi_topology *topology)
         const struct acpi_interrupt_override *override =
             &topology->interrupt_overrides[index];
 
-        console_write("OpenSeneri: ACPI override ISA IRQ ");
+        console_write("Pyrenis: ACPI override ISA IRQ ");
         console_write_u64(override->source);
         console_write(" to GSI ");
         console_write_u64(override->global_system_interrupt);
@@ -238,7 +238,7 @@ void report_acpi_topology(const struct acpi_topology *topology)
 
 void report_apic(const struct apic_state *apic)
 {
-    console_write("OpenSeneri: local APIC id ");
+    console_write("Pyrenis: local APIC id ");
     console_write_u64(apic->id);
     console_write(" version ");
     console_write_hex(apic->version);
@@ -248,11 +248,11 @@ void report_apic(const struct apic_state *apic)
     console_write_hex(apic->base_address);
     console_putc('\n');
 
-    console_write("OpenSeneri: local APIC legacy routing ");
+    console_write("Pyrenis: local APIC legacy routing ");
     console_write(apic->legacy_interrupts_routed ? "LINT0 ExtINT" : "masked");
     console_putc('\n');
 
-    console_write("OpenSeneri: local APIC EOI-broadcast suppression ");
+    console_write("Pyrenis: local APIC EOI-broadcast suppression ");
     console_write(
         apic->eoi_broadcast_suppression_supported ? "supported" : "unsupported"
     );
@@ -266,7 +266,7 @@ void report_ioapic(const struct ioapic_state *ioapic)
     for (size_t index = 0; index < ioapic->count; ++index) {
         const struct ioapic_unit *unit = &ioapic->units[index];
 
-        console_write("OpenSeneri: I/O APIC id ");
+        console_write("Pyrenis: I/O APIC id ");
         console_write_u64(unit->identifier);
         console_write(" version ");
         console_write_hex(unit->version);

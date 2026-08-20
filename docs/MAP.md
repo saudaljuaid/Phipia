@@ -1,6 +1,6 @@
 # Where everything is
 
-OpenSeneri is forty-five source files and thirty documents. This page exists
+Pyrenis is forty-five source files and thirty-one documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -13,14 +13,16 @@ ordering constraint that cannot be reordered. What makes it readable is knowing
 
 1. **`docs/BOOT_LEDGER.md`** — the typed stages, capabilities, canonical order,
    receipts and irreversible transitions. This is boot policy now.
-2. **`src/kernel/boot_plan.c`** — the installed descriptors and their private
+2. **`docs/BRAND.md`** — the one public identity, exact source mark, palette,
+   namespaces, artifacts and prompt.
+3. **`src/kernel/boot_plan.c`** — the installed descriptors and their private
    execution functions. Read capability edges, not raw declaration order.
-3. **`src/kernel/kernel.c`** — validates, executes and proves the installed
+4. **`src/kernel/kernel.c`** — validates, executes and proves the installed
    ledger. It contains no subsystem call sequence.
-4. **`docs/DAY_ONE.md`** — what the machine looks like at the instant the loader
+5. **`docs/DAY_ONE.md`** — what the machine looks like at the instant the loader
    hands it over.
-5. **`src/kernel/logo.c`** — 39 lines. The smallest complete file in the kernel.
-6. **Any one document in `docs/`, then its `.c` file.** Not the other way round.
+6. **`src/kernel/logo.c`** — 39 lines. The smallest complete file in the kernel.
+7. **Any one document in `docs/`, then its `.c` file.** Not the other way round.
 
 ## What each file is
 
@@ -32,8 +34,8 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `kernel.c` | 101 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell handoff. |
-| `boot_plan.c` | 1170 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 1742 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `boot_plan.c` | 1178 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 1780 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -43,14 +45,14 @@ long you will be in there.
 | --- | ---: | --- |
 | `arch/x86_64/boot.S` | 190 | Multiboot2 header, 32-bit entry, the first page tables, the jump to long mode. |
 | `multiboot2.c` | 563 | Parsing what the loader left in memory. Refuses malformed input rather than trusting it. |
-| `console.c` | 186 | Serial port and VGA text. The only way the kernel speaks until the framebuffer exists. |
-| `cpu.c`, `arch/x86_64/cpu.S` | 338 + 297 | Descriptor tables, control registers, and the instructions C cannot express. |
+| `console.c` | 200 | Serial port and VGA text. The only way the kernel speaks until the framebuffer exists. |
+| `cpu.c`, `arch/x86_64/cpu.S` | 338 + 322 | Descriptor tables, control registers, and the instructions C cannot express. |
 
 ### Not dying
 
 | File | | |
 | --- | ---: | --- |
-| `interrupts.c` | 523 | The interrupt descriptor table and the dispatcher. Read `docs/NEVER_TRIPLE_FAULT.md` first. |
+| `interrupts.c` | 549 | The interrupt descriptor table and the dispatcher. Read `docs/NEVER_TRIPLE_FAULT.md` first. |
 | `arch/x86_64/interrupts.S` | 327 | The stubs that save state before C can run. The ABI is in the comments. |
 | `interrupt_self_test.c` | 162 | Deliberately causing faults to prove they are contained. |
 
@@ -59,7 +61,7 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `acpi.c` | 302 | Finding the firmware's root pointer without trusting it. |
-| `acpi_tables.c` | 1612 | RSDT, XSDT, FADT, MCFG. Bounds and checksums on everything. |
+| `acpi_tables.c` | 1652 | RSDT, XSDT, FADT, MCFG. Bounds and checksums on everything. |
 | `acpi_madt.c` | 1058 | The interrupt topology: which APICs exist and how legacy IRQs were rerouted. |
 | `acpi_util.c` | 83 | The checks the above three share. |
 | `pci.c` | 1260 | Every device on every bus, read two independent ways so each checks the other. |
@@ -68,15 +70,15 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `apic.c` | 571 | The local APIC. |
-| `ioapic.c` | 450 | Routing external interrupts to it. |
+| `apic.c` | 634 | The local APIC. |
+| `ioapic.c` | 1128 | Routing external interrupts to it. |
 | `pic.c` | 244 | The 8259 pair, and latching them permanently shut. |
 
 ### Telling the time
 
 | File | | |
 | --- | ---: | --- |
-| `pit.c` | 305 | The 8254. Used to calibrate the others, then retired. |
+| `pit.c` | 443 | The 8254. Used to calibrate the others, then retired. |
 | `pm_timer.c` | 645 | The ACPI timer — the one reference nothing else calibrated. |
 | `apic_timer.c` | 762 | Calibrated against the above; drives preemption. |
 | `tsc.c` | 366 | The time-stamp counter, and what it may not claim. |
@@ -87,7 +89,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `physical_memory.c` | 454 | Which physical frames exist and which are free. |
+| `physical_memory.c` | 458 | Which physical frames exist and which are free. |
 | `paging.c` | 3006 | Four-level page tables, W^X, the bounded device-window registry, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` before it. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
@@ -95,7 +97,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `thread.c` | 1165 | Threads, guarded stacks, the scheduler, and preemption. |
+| `thread.c` | 1178 | Threads, guarded stacks, the scheduler, and preemption. |
 | `arch/x86_64/thread.S` | 107 | The context switch itself. Six registers and a stack pointer. |
 
 ### Pixels
@@ -103,15 +105,15 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `framebuffer.c` | 477 | The linear framebuffer, validated field by field, mapped write-combining. |
-| `surface.c` | 815 | Cached pixels, clipped primitives, overlap-safe copies, damage, and the WC store fence. |
-| `screen.c` | 604 | Text on the framebuffer: cells, wrapping, scrolling, and reading it back. |
-| `keyboard.c` | 728 | The 8042 and scancode set 1. The first device a person operates. |
+| `surface.c` | 805 | Cached pixels, clipped primitives, overlap-safe copies, damage, and the WC store fence. |
+| `screen.c` | 611 | Text on the framebuffer: cells, wrapping, scrolling, and reading it back. |
+| `keyboard.c` | 733 | The 8042 and scancode set 1. The first device a person operates. |
 | `shell.c` | 688 | A command line, including the read-only `ledger` boot-record summary. The first layer here that never panics. |
-| `font.c` | 39 | The C side of the font: names for what the reader can refuse. |
+| `font.c` | 38 | The C side of the font: names for what the reader can refuse. |
 | `rust/font.rs` | 276 | The glyph table reader. Rust, on the first hot path in this kernel. |
 | `logo.c` | 39 | The C side of the logo: three lines of glue. |
-| `rust/logo.rs` | 330 | The decoder. Rust, because it parses bytes the kernel did not produce. |
-| `rust/abi.rs`, `rust/lib.rs` | 103 + 42 | What the two languages promise each other. |
+| `rust/logo.rs` | 329 | The decoder. Rust, because it parses bytes the kernel did not produce. |
+| `rust/abi.rs`, `rust/lib.rs` | 186 + 44 | What the two languages promise each other. |
 
 ### Proving it
 
@@ -152,7 +154,7 @@ PAT/CR3, interrupt enable, framebuffer output, APIC timer and scheduler classes.
 | "what does this function actually do?" | its `*_self_test` — it is the shortest complete description, because it has to be |
 | "why is this line here?" | `git log -S'<the line>' -- <file>` — most non-obvious lines were explained by whoever added them |
 | "what is this kernel carrying?" | `docs/DEBT.md`, measured rather than remembered |
-| "how do I change something?" | `docs/WORKING_ON_OPENSENERI.md` |
+| "how do I change something?" | `docs/WORKING_ON_PYRENIS.md` |
 | "what is the plan?" | `docs/HARDWARE_AND_APPLICATIONS.md` |
 
 ## How to re-measure this page

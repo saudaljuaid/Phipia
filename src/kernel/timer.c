@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/apic_timer.h>
-#include <seneri/clock.h>
-#include <seneri/cpu.h>
-#include <seneri/heap.h>
-#include <seneri/timer.h>
+#include <pyrenis/apic_timer.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/timer.h>
 
 /*
- * OpenSeneri policy bound on the shortest deadline that may be armed. The local APIC
+ * Pyrenis policy bound on the shortest deadline that may be armed. The local APIC
  * timer counts at tens of megahertz, so a deadline closer than this would often
  * have passed by the time the count is written, and rearming from inside the
  * expiry handler would then spin the interrupt rather than make progress.
@@ -18,7 +18,7 @@
 #define TIMER_MINIMUM_INTERVAL_NS UINT64_C(100000)
 
 /*
- * OpenSeneri policy bound on a sleep. A deadline that has not arrived by twice its
+ * Pyrenis policy bound on a sleep. A deadline that has not arrived by twice its
  * own interval plus this grace has not been delivered, and the sleep gives up
  * with a status instead of halting forever. The grace covers the case of a very
  * short interval where twice it is still shorter than one timer interrupt.

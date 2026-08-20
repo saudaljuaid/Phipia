@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/apic.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/interrupts.h>
-#include <seneri/ioapic.h>
-#include <seneri/pic.h>
-#include <seneri/thread.h>
-#include <seneri/test.h>
+#include <pyrenis/apic.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/interrupts.h>
+#include <pyrenis/ioapic.h>
+#include <pyrenis/pic.h>
+#include <pyrenis/thread.h>
+#include <pyrenis/test.h>
 
 #define IDT_GATE_PRESENT UINT8_C(0x80)
 #define IDT_GATE_INTERRUPT UINT8_C(0x0E)
@@ -217,7 +217,7 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     }
 
     fatal_depth = 1U;
-    console_write("OpenSeneri FATAL INTERRUPT\n");
+    console_write("Pyrenis FATAL INTERRUPT\n");
     console_write("  vector=");
     console_write_u64(frame->vector);
     console_write(" name=");
