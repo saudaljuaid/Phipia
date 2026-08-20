@@ -9,6 +9,7 @@
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/pic.h>
+#include <seneri/thread.h>
 #include <seneri/test.h>
 
 #define IDT_GATE_PRESENT UINT8_C(0x80)
@@ -460,7 +461,6 @@ void interrupt_dispatch(struct interrupt_frame *frame)
         }
 
         slot->handler(frame, slot->context);
-
         if (level_triggered) {
             ioapic_status = ioapic_send_eoi(vector);
 
@@ -471,6 +471,14 @@ void interrupt_dispatch(struct interrupt_frame *frame)
             apic_send_eoi();
         }
 
+        /*
+         * The one place a thread may be taken off the processor without asking.
+         * It is after the acknowledgement on purpose: a scheduler that switched
+         * away inside the handler would leave this interrupt in service at the
+         * local APIC, and the next one would never arrive. A no-op unless a
+         * quantum expired while this thread was running.
+         */
+        thread_on_interrupt_return();
         return;
     }
 

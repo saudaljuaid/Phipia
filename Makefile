@@ -8,13 +8,27 @@ SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
-	pit-retired timers paging heap
+	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
+	screen keyboard shell surface
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
 LD := ld
 NM := nm
 OBJDUMP := objdump
+RUSTC := rustc
+PYTHON := python3
+
+# The one target Rust is built for. It matches the C flags exactly - no MMX, no
+# SSE, soft float, no red zone - which is why the two halves can share a stack.
+RUST_TARGET := x86_64-unknown-none
+RUST_LIB := $(BUILD_DIR)/libseneri.a
+RUST_SOURCES := $(wildcard src/rust/*.rs)
+LOGO_SOURCE := assets/seneri-logo.png
+LOGO_BLOB := $(BUILD_DIR)/logo.srl
+LOGO_SIZE := 256
+FONT_SOURCE := tools/font8x16.txt
+FONT_BLOB := $(BUILD_DIR)/font.snf
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -23,14 +37,26 @@ CFLAGS := $(COMMON_FLAGS) -std=c11 -O2 -mno-red-zone -mno-mmx -mno-sse \
 	-fno-unwind-tables -Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
 	-Wstrict-prototypes -Wmissing-prototypes
 ASFLAGS := $(COMMON_FLAGS) -Wa,--fatal-warnings
+# --orphan-handling=error is what keeps the two languages honest. A section
+# neither linker.ld names nor discards is otherwise placed wherever ld prefers,
+# which is how a Rust static library silently opened a gap between data and bss
+# the first time one was linked in. Now an unnamed section is a link error.
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
-	--build-id=none -T linker.ld -Map=$(BUILD_DIR)/seneri.map
+	--orphan-handling=error --build-id=none -T linker.ld \
+	-Map=$(BUILD_DIR)/seneri.map
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
 ASM_SOURCES := $(wildcard src/arch/x86_64/*.S)
 ASM_OBJECTS := $(patsubst src/arch/x86_64/%.S,$(BUILD_DIR)/arch_%.o,$(ASM_SOURCES))
 OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
+
+# Warnings are errors on both sides of the language boundary, and Rust is held
+# to the stricter rule that an unsafe operation inside an unsafe function still
+# needs its own unsafe block naming why it is sound.
+RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
+	--crate-name seneri -C panic=abort -C opt-level=2 \
+	-C relocation-model=static -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
@@ -52,13 +78,40 @@ $(BUILD_DIR)/arch_%.o: src/arch/x86_64/%.S | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(KERNEL): $(OBJECTS) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+# Regenerated only when the logo itself changes. The result is a build
+# artifact and is deliberately not committed; src/rust/abi.rs includes it.
+$(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_SIZE) $@
+
+# Regenerated only when the glyph art changes. Also a build artifact; the
+# committed source is the ASCII art in $(FONT_SOURCE), so a clone needs nothing
+# but Python to build the kernel.
+$(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-font-asset.py $(FONT_SOURCE) $@
+
+$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) | $(BUILD_DIR)
+	SENERI_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	SENERI_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
+		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
+
+$(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
 
 toolchain:
-	@for tool in gcc ld grub-file readelf nm objdump; do \
+	@for tool in gcc ld grub-file readelf nm objdump rustc python3; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
+	@version=$$($(RUSTC) --version | awk '{ print $$2 }'); \
+		echo "$$version" | awk -F'[.-]' \
+			'{ exit !($$1 > 1 || ($$1 == 1 && $$2 >= 85)) }' || \
+		{ echo "rustc 1.85.0 or newer is required (found $$version)"; exit 1; }
+	@$(RUSTC) --print target-list | grep -Fxq '$(RUST_TARGET)' || \
+		{ echo 'rustc does not know $(RUST_TARGET)'; exit 1; }
+	@libdir=$$($(RUSTC) --target $(RUST_TARGET) --print target-libdir 2>/dev/null) || \
+		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }; \
+		set -- "$$libdir"/libcore-*.rlib; \
+		test -f "$$1" || \
+		{ echo 'run: rustup target add $(RUST_TARGET)'; exit 1; }
 
 lint:
 	@if git grep -nI -E '[[:blank:]]+$$' -- . ':!assets/*'; then \
@@ -72,6 +125,10 @@ verify: toolchain lint
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
 	readelf -h $(KERNEL) | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64'
 	@test -z "$$($(NM) -u $(KERNEL))" || { $(NM) -u $(KERNEL); exit 1; }
+	@if readelf -W -r $(KERNEL) | grep -Eq 'R_X86_64_'; then \
+		echo 'kernel contains unresolved relocation records'; \
+		readelf -W -r $(KERNEL); exit 1; \
+	fi
 	@test "$$($(NM) $(KERNEL) | grep -Ec ' [tT] interrupt_vector_[0-9]+$$')" -eq 256
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'iretq'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
@@ -88,6 +145,12 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __rodata_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'
+	# The Rust half has to actually be in the image, and has to have been
+	# linked as ordinary code rather than as something with its own runtime.
+	@$(NM) $(KERNEL) | grep -Eq ' T seneri_logo_decode$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T seneri_logo_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_glyph$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T seneri_font_self_test$$'
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -111,6 +174,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
+	# 0x22, which is status 69, remains assigned to the ioapic-level scenario;
+	# the later scenarios start at 0x23 so every exit value stays stable.
 	@case '$*' in \
 		normal) expected=33 ;; \
 		breakpoint) expected=35 ;; \
@@ -131,13 +196,34 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		paging) expected=65 ;; \
 		heap) expected=67 ;; \
 		ioapic-level) expected=69 ;; \
+		pci) expected=71 ;; \
+		pci-ecam) expected=73 ;; \
+		threads) expected=75 ;; \
+		thread-guard) expected=77 ;; \
+		framebuffer) expected=79 ;; \
+		screen) expected=81 ;; \
+		keyboard) expected=83 ;; \
+		shell) expected=85 ;; \
+		surface) expected=87 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
+	esac; \
+		# Only pci-ecam departs from the default machine. i440fx publishes no \
+		# MCFG, so every other scenario - including pci - proves the path that \
+		# has nothing but the I/O ports. q35 is the only machine here with a \
+		# PCI Express host bridge, and the root port is what gives the \
+		# enumeration a second bus to find. Both PCI scenarios name their \
+		# network device explicitly instead of relying on QEMU defaults. \
+		case '$*' in \
+			pci) hardware='-device e1000e' ;; \
+			pci-ecam) \
+				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
+		*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
 	rm -f "$$log"; \
 	set +e; \
 	timeout 15s qemu-system-x86_64 \
-		-machine accel=tcg -m 128M -smp 1 \
+		-machine accel=tcg -m 128M -smp 1 $$hardware \
 		-cdrom '$<' -display none -monitor none -serial stdio \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-no-reboot >"$$log" 2>&1; result=$$?; \
@@ -172,6 +258,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Eq '^Seneri OS: TSC calibrated at [0-9]+ Hz' "$$log" || \
 		  ! grep -Fq 'Seneri OS: TSC reference established' "$$log" || \
 		  ! grep -Fq 'Seneri OS: ACPI FADT verified' "$$log" || \
+		  ! grep -Fq 'Seneri OS: ACPI MCFG absent' "$$log" || \
+		  ! grep -Fq 'Seneri OS: ACPI configuration windows verified' "$$log" || \
 		  ! grep -Eq '^Seneri OS: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
 		  ! grep -Eq '^Seneri OS: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
 		  ! grep -Fq 'Seneri OS: PM timer independent reference established' "$$log" || \
@@ -193,6 +281,34 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 		  ! grep -Fq 'Seneri OS: heap coalesced to one free block' "$$log" || \
 		  ! grep -Fq 'Seneri OS: kernel heap established' "$$log" || \
 		  ! grep -Eq '^Seneri OS: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: PCI mechanism 1 online, no window mapped$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
+		  ! grep -Fq 'Seneri OS: PCI configuration space enumerated' "$$log" || \
+		  ! grep -Fq 'Seneri OS: PCI enumeration established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
+		  ! grep -Fxq 'Seneri OS: thread rotation 123123123123' "$$log" || \
+		  ! grep -Eq '^Seneri OS: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: kernel threads established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
+		  ! grep -Fxq 'Seneri OS: framebuffer verified 786432 pixels' "$$log" || \
+		  ! grep -Fq 'Seneri OS: framebuffer established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: cached surface established' "$$log" || \
+		  ! grep -Eq '^Seneri OS: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Seneri OS: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
+		  ! grep -Fq 'Seneri OS: screen console established' "$$log" || \
+		  ! grep -Fq 'Seneri OS: screen console passed' "$$log" || \
+		  ! grep -Eq '^Seneri OS: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
+		  ! grep -Fxq 'Seneri OS: keyboard decoded "hiI" from injected scancodes' "$$log" || \
+		  ! grep -Fq 'Seneri OS: keyboard established' "$$log" || \
+		  ! grep -Fq 'Seneri OS: keyboard passed' "$$log" || \
+		  ! grep -Fxq 'Seneri OS: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
+		  ! grep -Fq 'Seneri OS: shell output verified on screen' "$$log" || \
+		  ! grep -Fq 'Seneri OS: shell established' "$$log" || \
+		  ! grep -Fq 'Seneri OS: shell passed' "$$log" || \
 		  ! grep -Fq 'Seneri OS: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
@@ -223,6 +339,30 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/seneri.iso
 				diagnostics_ok=false ;; \
 		ioapic-level) \
 			grep -Eq '^ST INFO ioapic-level: [0-9]+ deliveries, remote IRR [0-9]+, directed EOI [0-9]+, mode (directed|broadcast), in [0-9]+ ns$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		pci) \
+			grep -Eq '^ST PCI ports functions [0-9]+ buses [0-9]+$$' "$$log" && \
+			! grep -Fq 'Seneri OS: ACPI MCFG at' "$$log" || \
+				diagnostics_ok=false ;; \
+		pci-ecam) \
+			grep -Fq 'Seneri OS: ACPI MCFG at' "$$log" && \
+			grep -Eq '^ST PCI window agreed on [0-9]+ registers of [0-9]+ functions across [0-9]+ buses, [0-9]+ with MSI-X$$' "$$log" && \
+			! grep -Eq '^ST PCI window agreed on [0-9]+ registers of 0 functions' "$$log" || \
+				diagnostics_ok=false ;; \
+		threads) \
+			grep -Eq '^ST THREADS created [0-9]+ switches [0-9]+ exited [0-9]+$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		framebuffer) \
+			grep -Eq '^ST FRAMEBUFFER [0-9]+x[0-9]+ probes 16 pitch [0-9]+$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		surface) \
+			grep -Eq '^ST SURFACE full [0-9]+ line [0-9]+ clipped 4 overlap both damage 20$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		thread-guard) \
+			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
+			grep -Fq '  vector=14 name=page fault' "$$log" && \
+			grep -Fq '  cr2=0x0000000800005000' "$$log" && \
+			grep -Fq '  page-fault bits: P=0 W=1 U=0 RSVD=0 I=0' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
