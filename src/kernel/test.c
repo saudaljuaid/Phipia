@@ -7,6 +7,7 @@
 #include <seneri/acpi_util.h>
 #include <seneri/apic.h>
 #include <seneri/apic_timer.h>
+#include <seneri/boot_ledger.h>
 #include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
@@ -270,6 +271,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_DEVICE_WINDOWS;
     }
 
+    if (token_equals(value, length, "boot-ledger")) {
+        return KERNEL_TEST_BOOT_LEDGER;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -345,6 +350,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2C);
     case KERNEL_TEST_DEVICE_WINDOWS:
         return UINT8_C(0x2D);
+    case KERNEL_TEST_BOOT_LEDGER:
+        return UINT8_C(0x2E);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -368,7 +375,9 @@ static _Noreturn void kernel_test_pass(void)
     console_halt();
 }
 
-enum kernel_test_scenario kernel_test_select(const struct boot_context *context)
+enum kernel_test_scenario kernel_test_select(
+    const struct boot_information *context
+)
 {
     static const char prefix[] = "openseneri.test=";
     enum kernel_test_scenario selected = KERNEL_TEST_NONE;
@@ -2767,7 +2776,7 @@ static void shell_scenario(void)
 {
     static const char *const commands[] = {
         "help", "echo hello", "uptime", "mem", "pci", "keys", "threads",
-        "version", "clear"
+        "ledger", "version", "clear"
     };
 
     struct shell_state before;
@@ -3904,6 +3913,9 @@ void kernel_test_run(
     case KERNEL_TEST_DEVICE_WINDOWS:
         device_windows_scenario(context->device_windows);
         kernel_test_pass();
+    case KERNEL_TEST_BOOT_LEDGER:
+        /* Deferred until kernel_main publishes the fully verified receipts. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -3922,6 +3934,165 @@ _Noreturn void kernel_test_complete_normal(void)
         kernel_test_fail("normal completion used outside the normal scenario");
     }
 
+    kernel_test_pass();
+}
+
+static uint32_t boot_ledger_stage_sequence(
+    const struct boot_ledger *ledger,
+    enum boot_stage_id stage
+)
+{
+    const struct boot_stage_receipt *receipt =
+        boot_ledger_receipt_for(ledger, stage);
+
+    return receipt == NULL ? 0U : receipt->sequence;
+}
+
+static uint32_t boot_ledger_capability_sequence(
+    const struct boot_ledger *ledger,
+    enum boot_capability capability
+)
+{
+    for (size_t receipt_index = 0U;
+         receipt_index < ledger->receipt_count;
+         ++receipt_index) {
+        const struct boot_stage_receipt *receipt =
+            boot_ledger_receipt_at(ledger, receipt_index);
+
+        if (receipt == NULL) {
+            kernel_test_fail("Boot Ledger receipt lookup inconsistent");
+        }
+
+        for (size_t capability_index = 0U;
+             capability_index < receipt->provided_capability_count;
+             ++capability_index) {
+            if (receipt->provided_capabilities[capability_index] ==
+                capability) {
+                return receipt->sequence;
+            }
+        }
+    }
+
+    return 0U;
+}
+
+_Noreturn void kernel_test_complete_boot_ledger(
+    const struct boot_context *context
+)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *framebuffer_wc;
+    const struct boot_stage_receipt *framebuffer_output;
+    uint32_t device_windows;
+    uint32_t paging_install;
+    uint32_t paging_proofs;
+    uint32_t interrupts;
+
+    if (active_scenario != KERNEL_TEST_BOOT_LEDGER) {
+        kernel_test_fail("Boot Ledger completion used outside its scenario");
+    }
+
+    if (context == NULL || ledger == NULL || !ledger->validated ||
+        !ledger->executed || ledger->status != BOOT_LEDGER_STATUS_OK) {
+        kernel_test_fail("the installed Boot Ledger is incomplete");
+    }
+
+    device_windows = boot_ledger_stage_sequence(ledger,
+        BOOT_STAGE_DEVICE_WINDOWS);
+    paging_install = boot_ledger_stage_sequence(ledger,
+        BOOT_STAGE_PAGING_INSTALL);
+    paging_proofs = boot_ledger_stage_sequence(ledger,
+        BOOT_STAGE_PAGING_PROOFS);
+    interrupts = boot_ledger_capability_sequence(ledger,
+        BOOT_CAPABILITY_INTERRUPTS_ENABLED);
+
+    for (size_t index = 0U; index < ledger->planned_count; ++index) {
+        const struct boot_stage_descriptor *descriptor =
+            boot_ledger_planned_stage_at(ledger, index);
+        const struct boot_stage_receipt *receipt =
+            boot_ledger_receipt_at(ledger, index);
+
+        if (descriptor == NULL || receipt == NULL ||
+            descriptor->id != receipt->stage_id ||
+            receipt->sequence != index + 1U) {
+            kernel_test_fail("validated plan and receipt order differ");
+        }
+
+        if (descriptor->required &&
+            (receipt->result != BOOT_RECEIPT_RAN ||
+             receipt->status != BOOT_LEDGER_STATUS_OK)) {
+            kernel_test_fail("a mandatory Boot Ledger stage has no receipt");
+        }
+
+        if (receipt->result == BOOT_RECEIPT_RAN) {
+            for (size_t requirement = 0U;
+                 requirement < descriptor->required_capability_count;
+                 ++requirement) {
+                const uint32_t provider = boot_ledger_capability_sequence(
+                    ledger, descriptor->required_capabilities[requirement]);
+
+                if (provider == 0U || provider >= receipt->sequence) {
+                    kernel_test_fail(
+                        "a Boot Ledger dependency was ordered after its consumer"
+                    );
+                }
+            }
+        }
+    }
+
+    if (device_windows == 0U || paging_install <= device_windows ||
+        paging_proofs <= paging_install ||
+        boot_ledger_capability_sequence(ledger,
+            BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED) != paging_proofs ||
+        boot_ledger_capability_sequence(ledger,
+            BOOT_CAPABILITY_INSTALLED_DEVICE_WINDOWS_PROVED) !=
+                paging_proofs) {
+        kernel_test_fail("paging receipts violate device-window proof order");
+    }
+
+    if (interrupts <= boot_ledger_stage_sequence(ledger,
+            BOOT_STAGE_INTERRUPT_FOUNDATION) ||
+        interrupts <= boot_ledger_stage_sequence(ledger,
+            BOOT_STAGE_INTERRUPT_CONTROLLERS)) {
+        kernel_test_fail("interrupt enable preceded its foundation");
+    }
+
+    framebuffer_wc = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FRAMEBUFFER_WC);
+    framebuffer_output = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FRAMEBUFFER_OUTPUT);
+
+    if (context->information.framebuffer.present) {
+        if (framebuffer_wc == NULL || framebuffer_output == NULL ||
+            framebuffer_wc->result != BOOT_RECEIPT_RAN ||
+            framebuffer_output->result != BOOT_RECEIPT_RAN ||
+            framebuffer_output->sequence <= framebuffer_wc->sequence) {
+            kernel_test_fail("framebuffer output preceded independent WC proof");
+        }
+    } else if (boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED) ||
+        framebuffer_output == NULL ||
+        framebuffer_output->result == BOOT_RECEIPT_RAN) {
+        kernel_test_fail("absent framebuffer leaked a success capability");
+    }
+
+    if (!boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE) ||
+        !boot_ledger_fingerprint_valid(ledger)) {
+        kernel_test_fail("installed Boot Ledger fingerprint is invalid");
+    }
+
+    console_write("ST LEDGER stages ");
+    console_write_u64(ledger->planned_count);
+    console_write(" receipts ");
+    console_write_u64(ledger->receipt_count);
+    console_write(" capabilities ");
+    console_write_u64(ledger->established_capability_count);
+    console_write(" skips ");
+    console_write_u64(ledger->optional_skip_count);
+    console_write(" fingerprint ");
+    console_write_hex(ledger->fingerprint);
+    console_putc('\n');
     kernel_test_pass();
 }
 
@@ -4047,6 +4218,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "write-combining";
     case KERNEL_TEST_DEVICE_WINDOWS:
         return "device-windows";
+    case KERNEL_TEST_BOOT_LEDGER:
+        return "boot-ledger";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

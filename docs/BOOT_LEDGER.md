@@ -1,0 +1,311 @@
+# OpenSeneri Boot Ledger
+
+## The problem
+
+Boot used to be correct because `kernel_main` called everything in the right
+order. ACPI happened before topology consumers, the device-window registry
+happened before paging, heap construction happened after W^X, and interrupts
+were not enabled until the IDT and controllers existed. None of those facts was
+machine-readable. A new call placed in the wrong part of one long function could
+violate the contract without a structural refusal.
+
+The OpenSeneri Boot Ledger replaces that implicit order with a bounded runtime
+contract. Each migrated stage has a stable `enum boot_stage_id`, a diagnostic
+name, typed required and provided `enum boot_capability` values, required or
+optional policy, a phase, an irreversible-ordering class and one typed execution
+function. The complete plan is validated before any stage can program PAT,
+replace CR3, enable interrupts, activate the local APIC timer, write the
+framebuffer or activate the scheduler.
+
+This is not formal verification. It is a bounded planner, execution ledger and
+installed-state proof whose assertions run in the same kernel they check.
+
+## Ownership and bounds
+
+`include/seneri/boot_ledger.h` is the public vocabulary. The bounds are:
+
+| Object | Capacity |
+| --- | ---: |
+| descriptors and canonical plan | 32 stages |
+| receipts | 32 receipts |
+| required, success or fallback capabilities per descriptor | 8 each |
+| stable proof counters per receipt | 2 |
+
+Plan construction, validation, execution bookkeeping and the pure planner test
+use fixed storage. They cannot allocate from the heap whose construction the
+plan authorizes. A compile-time assertion keeps the capability enumeration
+within the private planner's bounded representation; public interfaces expose
+typed capability arrays and accessors, never undocumented bit positions.
+
+The loader record formerly called `struct boot_context` is now the narrower
+`struct boot_information`. `struct boot_context` owns the lifetime-wide state:
+the parsed loader record, ACPI tables and topology, device-window registry,
+optional MCFG decision and scenario context. One statically allocated instance
+outlives the 16 KiB boot stack and the interactive shell. It owns values, not
+untyped pointers. `kernel_main` initializes it, descriptor functions populate
+it after their requirements have receipts, and later stages consume those
+fields. The published ledger is read-only after installed verification.
+
+## Installed stages
+
+The table describes the normal canonical plan. A dash means the stage provides
+no new public capability; it still receives one ordered receipt.
+
+| ID | Stage | Requires | Provides | Policy | Phase / irreversible class |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | early serial | — | early serial available | required | foundation |
+| 2 | interrupt foundation | early serial | IDT installed | required | foundation |
+| 3 | pure boot self-tests | serial, IDT | boot self-tests complete | required | foundation |
+| 4 | boot information | self-tests | boot information validated | required | discovery |
+| 5 | firmware discovery | boot information | ACPI root, interrupt topology, clocks discovered | required | discovery |
+| 6 | device-window registry | boot information, topology | registry validated, framebuffer availability decided | required | discovery |
+| 7 | interrupt controllers | ACPI root, topology, clocks, registry | interrupt controllers configured | required | controllers |
+| 8 | physical frame allocator | boot information, controllers | frame allocator available | required | controllers |
+| 9 | PAT and page-table installation | registry, frame allocator | page tables installed | required | memory transition / PAT+CR3 |
+| 10 | installed paging proofs | page tables | W^X proved, installed windows proved | required | memory transition |
+| 11 | independent framebuffer WC proof | page tables, installed windows, framebuffer decision | WC independently proved; serial fallback when skipped | optional | memory transition |
+| 12 | heap and paging runtime | page tables, W^X | heap available | required | runtime |
+| 13 | framebuffer output | independent WC, heap | surface available | optional | runtime / framebuffer output |
+| 14 | keyboard interrupt path | IDT, controllers, heap | interrupts enabled | required | runtime / interrupt enable |
+| 15 | interactive shell | surface, interrupts | shell available | optional | runtime |
+| 16 | early scenario gate | heap, interrupts | — | required | runtime |
+| 17 | interrupt proofs | IDT, controllers, interrupts | — | required | timers |
+| 18 | interrupt routing | IDT, controllers, interrupts | interrupt routing proved | required | timers |
+| 19 | timer calibration | IDT, controllers, interrupts, clocks, routing | timer calibration complete | required | timers / APIC timer |
+| 20 | PCI access | page tables, timer calibration | PCI access available | required | services |
+| 21 | threading | heap, timer calibration | threading available | required | services |
+| 22 | scheduler | heap, threading, timer calibration, interrupts | scheduler available | required | services / scheduler |
+| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler | boot proofs complete | required | proofs |
+
+`install_page_tables` remains one indivisible execution function. It preserves
+the existing PAT MSR read/program/readback sequence and the existing
+`WBINVD`, CR3 replacement, `WBINVD` sequence. Stage 10 adds a later semantic
+receipt by freshly walking the installed hierarchy; it does not split or replay
+the transition.
+
+## Capabilities
+
+The complete capability enumeration is:
+
+1. early serial available;
+2. boot self-tests complete;
+3. boot information validated;
+4. physical frame allocator available;
+5. ACPI root validated;
+6. interrupt topology discovered;
+7. clocks discovered;
+8. device-window registry validated;
+9. page tables installed;
+10. W^X proved;
+11. installed device windows proved;
+12. heap available;
+13. IDT installed;
+14. interrupt controllers configured;
+15. interrupts enabled;
+16. interrupt routing proved;
+17. timer calibration complete;
+18. PCI access available;
+19. framebuffer availability decided;
+20. framebuffer WC independently proved;
+21. serial framebuffer fallback;
+22. surface available;
+23. threading available;
+24. scheduler available;
+25. shell available; and
+26. boot proofs complete.
+
+The framebuffer decision and framebuffer WC proof are intentionally distinct.
+The device-window registry says what paging installed. The independent WC stage
+re-derives the framebuffer span from validated boot information, verifies PAT
+readback, walks every page and separately checks that VGA, APIC, ECAM and normal
+RAM retained their UC or WB types. The registry is not the sole WC oracle.
+
+## Canonical planning
+
+Validation first checks identifiers, enum bounds, per-stage capacities,
+duplicate stage IDs, duplicate requirements and exclusive capability providers.
+Every requirement must have exactly one declared provider. A provider in a
+later phase is an invalid phase transition.
+
+The planner then performs a bounded topological selection. Among ready stages,
+the lower phase wins; within one phase the lower stable stage ID wins. Raw
+descriptor insertion order is never consulted as a tie-break. If no unplanned
+stage is ready, the lowest stable ID still blocked names the dependency cycle.
+Two-stage and longer cycles are therefore the same named refusal. A raw
+declaration permutation produces the same canonical IDs, receipts, capability
+transitions and fingerprint.
+
+Optional stages still have providers in the validated graph. At execution, an
+optional stage whose runtime requirements were not established receives a
+skipped receipt without being called. A stage that runs and reports optional
+failure receives a failed receipt. Neither path can mint its success
+capabilities. The WC stage may instead provide its separately declared serial
+fallback capability when the framebuffer is absent. A required skip is always
+a refusal. A required failure appends its failure receipt and stops execution;
+no dependent or later stage runs.
+
+## Irreversible ordering
+
+The phase graph is supplemented by semantic irreversible classes. Validation
+refuses a descriptor that does not declare all mandatory prerequisites:
+
+| Class | Mandatory capabilities before execution |
+| --- | --- |
+| PAT programming, `WBINVD` and CR3 replacement | validated device windows, physical frames |
+| interrupt enable | IDT, configured interrupt controllers |
+| framebuffer output | independent framebuffer WC proof |
+| local APIC timer activation | IDT, controllers, interrupt-enable receipt, discovered clocks |
+| scheduler activation | heap, threads, timer calibration, interrupt-enable receipt |
+
+The framebuffer and cached-surface store fences remain in their existing
+implementation paths. The ledger changes who may call those paths, not their
+ordering instructions.
+
+## Receipts and fingerprint
+
+Every canonical stage produces at most one bounded `struct boot_stage_receipt`.
+It records the stable stage ID, one-based canonical sequence, result class
+(`ran`, `skipped` or `failed`), ledger status, typed capabilities actually
+established and up to two stable proof counters. It records neither time nor a
+machine address. A successful result must exactly match its descriptor's
+success capability set. A skip must exactly match its declared fallback set. A
+failure must provide nothing.
+
+The summary's executed count includes stages whose functions ran and either
+succeeded or failed; it excludes stages skipped without execution. The separate
+skip count includes only optional skip receipts.
+
+The 64-bit fingerprint is FNV-1a with an explicit format version. It covers the
+canonical stage IDs, required/optional policy, phases, irreversible classes,
+sorted typed requirement/success/fallback sets, then every receipt's stage ID,
+sequence, result class, status and sorted capability transition. Proof counters
+are excluded because they may describe a particular machine. Reordering raw
+descriptors cannot change it; changing a stable stage ID or receipt does.
+
+This fingerprint is a deterministic integrity and debugging summary. FNV-1a is
+not collision-resistant. The value is not cryptographic attestation, is not a
+security boundary and must not be used as one.
+
+## Refusals
+
+`enum boot_ledger_status` has a complete compile-time-checked string table. Its
+named results are:
+
+- ok;
+- null argument;
+- empty boot plan;
+- boot plan not validated;
+- boot plan already executed;
+- unknown stage identifier;
+- unknown capability;
+- too many stages;
+- too many receipts;
+- too many stage capabilities;
+- duplicate stage;
+- duplicate capability requirement;
+- duplicate capability provider;
+- missing capability provider;
+- capability dependency cycle;
+- invalid phase transition;
+- irreversible stage ordered too early;
+- required stage skipped;
+- undeclared capability provided;
+- stage executed before its requirements;
+- required stage failed;
+- optional stage failed;
+- optional stage skipped;
+- receipt mismatch;
+- plan fingerprint mismatch; and
+- installed plan differs from validated plan.
+
+A refusal stores the offending typed stage and capability whenever one exists.
+Boot diagnostics print both semantic names plus a subsystem detail for an
+execution failure.
+
+## Pure and installed proofs
+
+`boot_ledger_self_test` uses synthetic fixed-storage plans before any PAT or CR3
+transition. It accepts a mixed required/optional plan; permutes declarations;
+rejects missing and duplicate providers, duplicate stages and requirements,
+unknown enums, two-stage and longer cycles and capacity plus one; exercises
+undeclared capability minting and execution before requirements; proves
+optional failure leakage and required-failure stopping; compares fingerprints;
+changes one stable ID; and accepts framebuffer/ECAM absence.
+
+After the normal plan finishes, `boot_ledger_verify_installed` walks the plan
+and receipts again. It proves canonical order, one receipt per stage, exactly
+one provider per established capability, requirements before consumers,
+required success, optional non-leakage, known stage IDs and the recomputed
+fingerprint. It then re-walks paging and the installed device windows, repeats
+the W^X audit, and checks active framebuffer output has both independent WC and
+surface receipts. Interrupt, APIC-timer and scheduler ordering follows from the
+same mandatory typed prerequisites. The permanent line is:
+
+    OpenSeneri: Boot Ledger installed proof passed
+
+The normal transcript contract requires that line, so deleting the proof from
+permanent boot output is a host-test failure.
+
+## Operator and scenario interfaces
+
+At `open>`, `ledger` prints a bounded summary with no machine addresses:
+
+    boot ledger :: PASS
+    plan 23  run 23  skip 0  caps 25  receipts 23
+    fingerprint 0xCB59D7DC9445EB93
+
+The exact fingerprint is build-plan dependent; the shape is stable. Optional
+fallback or failure changes the state to `DEGRADED`.
+
+The `boot-ledger` QEMU scenario owns guest exit `0x2E`, host status 93. It emits
+exactly one begin and pass marker, walks the actual published ledger, checks all
+mandatory receipts and every dependency edge, checks device windows before
+paging and installed W^X/window proofs after it, checks IDT/controllers before
+interrupt enable, checks conditional WC before framebuffer output, verifies the
+fingerprint and prints this numeric shape:
+
+    ST LEDGER stages N receipts N capabilities N skips N fingerprint 0xHHHHHHHHHHHHHHHH
+
+## Negative controls
+
+Each control was run from a file snapshot, one mutation at a time, after a clean
+build; the narrowest scenario was used and the snapshot was restored without
+`git checkout -- <file>`.
+
+| Mutation | Required observation | Result |
+| --- | --- | --- |
+| remove device-window provider | named missing-provider refusal before PAT/CR3 | PASS — `missing capability provider`; `interrupt controllers`; `device-window registry validated` |
+| make paging require heap | named dependency cycle | PASS — `capability dependency cycle`; `PAT and page-table installation` |
+| duplicate a stable stage ID | named duplicate-stage refusal | PASS — `duplicate stage`; `early serial` |
+| duplicate one exclusive capability provider | named duplicate-provider refusal | PASS — `duplicate capability provider`; `device-window registry`; `IDT installed` |
+| add capacity plus one descriptors | named stage-capacity refusal | PASS — `too many stages` before execution |
+| reverse descriptor declarations | identical order, receipts, fingerprint and boot | PASS — all 23 receipts and guest status 93 identical; fingerprint `0xCB59D7DC9445EB93` |
+| execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
+| move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
+| allow framebuffer output before WC | framebuffer/WC refusal | PASS — `irreversible stage ordered too early`; framebuffer output; independent WC capability |
+| fail optional framebuffer WC stage | serial boot continues; WC success absent | PASS — installed proof completed, WC and surface success stayed absent, and serial reached `open>` |
+| fail required paging stage | no heap, interrupt, framebuffer or scheduler dependent runs | PASS — named required paging failure; no dependent transcript lines ran |
+| falsify one installed receipt | installed proof names the stage | PASS — `installed plan differs from validated plan`; paging stage |
+| change one stage ID after validation | plan fingerprint mismatch | PASS — `plan fingerprint mismatch` before execution |
+| call a migrated operation outside its descriptor file | `make verify` source assertion fails | PASS — assertion named the bypassing source line |
+| delete permanent ledger proof line | normal transcript assertion fails | PASS — comparator showed the one deleted proof line |
+
+The transcript comparator was also challenged by changing one permanent word
+and by changing the existing `normal` guest exit from `0x10` to `0x11`. It
+rejected both mutations as well as the proof-line deletion.
+
+## Limitations and deferred work
+
+- Stage implementations inherited from `boot_proofs.c` still use fatal proof
+  helpers internally. The descriptor boundary prevents bypass and the engine
+  records returned stage failures, but a deep proof panic halts at its original
+  diagnostic rather than unwinding C control flow.
+- The plan is single-core and immutable after publication. There is no dynamic
+  module loading, hot-plug or live MMIO remapping.
+- Optional framebuffer output has a serial fallback. Other optional device
+  classes do not yet have first-class absence stages because legacy PCI port
+  access already covers missing ECAM.
+- The fingerprint summarizes integrity for debugging only. Cryptographic
+  measurement and remote attestation are outside this design.
+- The ledger does not add userspace, SMP scheduling, MTRR programming,
+  higher-half conversion or display-driver work.

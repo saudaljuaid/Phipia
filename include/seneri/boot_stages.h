@@ -14,7 +14,7 @@
 #include <seneri/pm_timer.h>
 
 /*
- * The stages kernel_main runs, in the two files it runs them from.
+ * Hardware proof operations reached by typed Boot Ledger stages.
  *
  * This header exists because kernel.c had grown to 2,211 lines and had stopped
  * having a single responsibility: every increment added a proof and every proof
@@ -22,10 +22,10 @@
  * increment added 221 more, so the split is the debt being paid rather than
  * described.
  *
- * Nothing declared here is a general-purpose interface. Every one of these is
- * called exactly once, from kernel_main, in the order boot happens. They are
- * declared rather than static only because they now live beside each other
- * instead of beside their caller.
+ * Nothing declared here is a general-purpose interface. Every migrated call is
+ * private to src/kernel/boot_plan.c, where a typed descriptor owns its
+ * requirements, result capabilities, phase and irreversible class. Makefile's
+ * source assertion rejects calls from anywhere else.
  *
  * The division is by what a function is allowed to do:
  *
@@ -41,7 +41,7 @@
  * lines the Makefile asserts. None of them panic, and none of them read state
  * the caller has not handed them.
  */
-void report_boot_context(const struct boot_context *context);
+void report_boot_information(const struct boot_information *information);
 void report_allocator(const struct frame_allocator_stats *stats);
 void report_acpi_root(const struct acpi_root *root);
 void report_acpi_madt(const struct acpi_madt *madt);

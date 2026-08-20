@@ -170,7 +170,7 @@ struct boot_memory_region {
     uint32_t type;
 };
 
-struct boot_context {
+struct boot_information {
     uintptr_t information_start;
     uintptr_t information_end;
     const struct multiboot2_memory_map_tag *memory_map;
@@ -186,14 +186,14 @@ struct boot_context {
     struct boot_framebuffer framebuffer;
 };
 
-enum boot_status boot_context_parse(
+enum boot_status boot_information_parse(
     uint32_t magic,
     uintptr_t information_address,
-    struct boot_context *context
+    struct boot_information *information
 );
 
-bool boot_memory_region_at(
-    const struct boot_context *context,
+bool boot_information_region_at(
+    const struct boot_information *information,
     size_t index,
     struct boot_memory_region *region
 );

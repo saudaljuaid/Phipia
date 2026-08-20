@@ -20,7 +20,7 @@ static size_t align_tag_size(size_t size)
     return (size + mask) & ~mask;
 }
 
-static void boot_context_reset(struct boot_context *context)
+static void boot_information_reset(struct boot_information *context)
 {
     context->information_start = 0;
     context->information_end = 0;
@@ -79,7 +79,7 @@ static bool string_length_within(
 
 static enum boot_status validate_memory_map(
     const struct multiboot2_memory_map_tag *map,
-    struct boot_context *context
+    struct boot_information *context
 )
 {
     const size_t map_header_size = sizeof(*map);
@@ -112,7 +112,7 @@ static enum boot_status validate_memory_map(
         struct boot_memory_region region;
         uint64_t region_end;
 
-        if (!boot_memory_region_at(context, index, &region)) {
+        if (!boot_information_region_at(context, index, &region)) {
             return BOOT_STATUS_TRUNCATED_TAG;
         }
 
@@ -276,10 +276,10 @@ static enum boot_status decode_framebuffer(
     return BOOT_STATUS_OK;
 }
 
-enum boot_status boot_context_parse(
+enum boot_status boot_information_parse(
     uint32_t magic,
     uintptr_t information_address,
-    struct boot_context *context
+    struct boot_information *context
 )
 {
     const struct multiboot2_information_header *information;
@@ -292,7 +292,7 @@ enum boot_status boot_context_parse(
         return BOOT_STATUS_NULL_CONTEXT;
     }
 
-    boot_context_reset(context);
+    boot_information_reset(context);
 
     if (magic != MULTIBOOT2_BOOT_MAGIC) {
         return BOOT_STATUS_BAD_MAGIC;
@@ -460,8 +460,8 @@ enum boot_status boot_context_parse(
     return BOOT_STATUS_OK;
 }
 
-bool boot_memory_region_at(
-    const struct boot_context *context,
+bool boot_information_region_at(
+    const struct boot_information *context,
     size_t index,
     struct boot_memory_region *region
 )

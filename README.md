@@ -39,14 +39,14 @@ part of the architecture rather than a claim left to screenshots.
 
 | Area | Current capability |
 | --- | --- |
-| Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics |
+| Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics, and a bounded typed Boot Ledger |
 | Memory | Firmware memory map, physical frames, four-level paging, W^X, a validated device-window registry, explicit PAT memory types, guarded heap and stacks |
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, PCI configuration through ports and ECAM, bridge-aware enumeration |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
 | Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console, PS/2 keyboard, and shell |
 | Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof | Boot-time invariants, deliberate fault probes, and 30 deterministic QEMU scenarios |
+| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, and 31 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -69,7 +69,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 30 deterministic fault, memory, device, and kernel scenarios
+make qemu-tests   # all 31 deterministic fault, memory, device, and kernel scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -79,6 +79,7 @@ The build produces `build/openseneri.elf` and `build/openseneri.iso`.
 ## Documentation
 
 - [`docs/DAY_ONE.md`](docs/DAY_ONE.md) — the boot contract and first verified milestone.
+- [`docs/BOOT_LEDGER.md`](docs/BOOT_LEDGER.md) — typed startup capabilities, canonical planning, receipts, and installed proof.
 - [`docs/VIRTUAL_MEMORY.md`](docs/VIRTUAL_MEMORY.md) — page-table ownership and W^X proof.
 - [`docs/DEVICE_WINDOWS.md`](docs/DEVICE_WINDOWS.md) — bounded physical windows and their WB/WC/UC policy.
 - [`docs/IO_APIC.md`](docs/IO_APIC.md) — discovered interrupt routing and its controls.

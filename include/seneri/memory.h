@@ -34,7 +34,9 @@ struct frame_allocator_stats {
     uint64_t highest_allocatable_address;
 };
 
-enum frame_status frame_allocator_initialize(const struct boot_context *context);
+enum frame_status frame_allocator_initialize(
+    const struct boot_information *information
+);
 enum frame_status frame_allocate(uintptr_t *physical_address);
 enum frame_status frame_release(uintptr_t physical_address);
 enum frame_status frame_reserve_range(uint64_t base_address, uint64_t length);

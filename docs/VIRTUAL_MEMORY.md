@@ -56,7 +56,8 @@ each 2 MiB region that needs 4 KiB granularity on the normal boot machine.
 | framebuffer-intersecting pages | 4 KiB | writable, NX, **write-combining** |
 | everything else below 4 GiB | 2 MiB | writable, NX, **write-back** |
 
-The device rows are not separate paging arguments. `kernel.c` constructs one
+The device rows are not separate paging arguments. The Boot Ledger's typed
+device-window stage constructs one
 bounded `struct paging_device_windows` from the topology, usable first MCFG
 allocation, and usable framebuffer description after discovery has finished.
 Each entry names a kind, instance, physical span, semantic memory type, and

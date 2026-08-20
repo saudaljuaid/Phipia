@@ -251,8 +251,8 @@ measurement or a proof result.
 
 ## Verification sweep
 
-The final integrated count is 30 scenarios: every scenario inherited from
-`main`, `write-combining`, and `device-windows`. After the final registry code
+The final integrated count at this checkpoint was 30 scenarios: every scenario
+inherited from `main`, `write-combining`, and `device-windows`. After the final registry code
 and linked-size adjustment, QEMU 8.2.2 TCG in the Ubuntu 24.04 build VM ran the
 exact `make qemu-tests` target twenty complete times after a clean
 `make verify`. All 20/20 invocations and 600/600 guest boots passed with no

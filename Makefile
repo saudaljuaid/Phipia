@@ -9,7 +9,8 @@ TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
-	screen keyboard shell surface write-combining device-windows
+	screen keyboard shell surface write-combining device-windows \
+	boot-ledger
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -159,6 +160,12 @@ verify: toolchain lint
 		src/kernel/paging.c
 	@grep -Fq 'const struct kernel_test_context *context' \
 		include/seneri/test.h
+	# Migrated boot operations are reachable only from typed ledger descriptors.
+	@if grep -ERn \
+		'\b(prove_frame_lifecycle|install_page_tables|prove_paging_lifecycle|prove_write_combining|bring_up_heap|prove_heap_lifecycle|prove_timer_route|retire_legacy_interrupt_path|prove_level_route|prove_pm_timer|prove_apic_timer|prove_tsc|retire_pit|prove_clocks_without_pit|prove_monotonic_time|bring_up_pci|prove_threads|prove_preemption|prove_framebuffer|prove_surface|draw_logo|prove_screen_console|prove_keyboard|prove_shell)[[:space:]]*\(' \
+		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=boot_proofs.c; then \
+		echo 'migrated boot stage bypasses the Boot Ledger'; exit 1; \
+	fi
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -215,6 +222,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 		surface) expected=87 ;; \
 		write-combining) expected=89 ;; \
 		device-windows) expected=91 ;; \
+		boot-ledger) expected=93 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -322,6 +330,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 		  ! grep -Fxq 'OpenSeneri: keyboard decoded "hiI" from injected scancodes' "$$log" || \
 		  ! grep -Fq 'OpenSeneri: keyboard established' "$$log" || \
 		  ! grep -Fq 'OpenSeneri: keyboard passed' "$$log" || \
+		  ! grep -Fq 'OpenSeneri: Boot Ledger installed proof passed' "$$log" || \
 		  ! grep -Fxq 'OpenSeneri: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
 		  ! grep -Fq 'OpenSeneri: shell output verified on screen' "$$log" || \
 		  ! grep -Fq 'OpenSeneri: shell established' "$$log" || \
@@ -380,6 +389,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/openseneri.iso
 				diagnostics_ok=false ;; \
 		device-windows) \
 			grep -Eq '^ST DEVICE-WINDOWS WINDOWS [1-9][0-9]* PAGES [1-9][0-9]* VGA 1 LOCAL-APIC 1 IO-APICS [1-9][0-9]* ECAM 1 FRAMEBUFFER 1$$' "$$log" || \
+				diagnostics_ok=false ;; \
+		boot-ledger) \
+			grep -Eq '^ST LEDGER stages [1-9][0-9]* receipts [1-9][0-9]* capabilities [1-9][0-9]* skips [0-9]+ fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+			grep -Fxq 'OpenSeneri: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
