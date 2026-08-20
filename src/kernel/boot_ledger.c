@@ -6,6 +6,9 @@
 #include <pyrenis/boot_ledger.h>
 #include <pyrenis/framebuffer.h>
 #include <pyrenis/paging.h>
+#include <pyrenis/pointer.h>
+#include <pyrenis/ui.h>
+#include <pyrenis/ui_font.h>
 
 #define BOOT_FINGERPRINT_OFFSET UINT64_C(14695981039346656037)
 #define BOOT_FINGERPRINT_PRIME UINT64_C(1099511628211)
@@ -41,7 +44,14 @@ static const char *const stage_names[] = {
     "PCI access",
     "threading",
     "scheduler",
-    "closing boot proofs"
+    "closing boot proofs",
+    "First Light UI font",
+    "pointer availability decision",
+    "pointer availability outcome",
+    "First Light layout",
+    "desktop construction",
+    "desktop activation",
+    "First Light installed proof"
 };
 
 static const char *const capability_names[] = {
@@ -71,7 +81,17 @@ static const char *const capability_names[] = {
     "threading available",
     "scheduler available",
     "shell available",
-    "boot proofs complete"
+    "boot proofs complete",
+    "framebuffer output installed",
+    "keyboard available",
+    "UI font verified",
+    "pointer availability decided",
+    "pointer input available",
+    "pointer input absent",
+    "UI layout validated",
+    "desktop shell available",
+    "desktop shell activated",
+    "First Light installed proof complete"
 };
 
 static const char *const status_names[] = {
@@ -85,6 +105,7 @@ static const char *const status_names[] = {
     "too many stages",
     "too many receipts",
     "too many stage capabilities",
+    "neutral skip policy is invalid",
     "duplicate stage",
     "duplicate capability requirement",
     "duplicate capability provider",
@@ -155,6 +176,22 @@ static bool descriptor_requires(
         descriptor->required_capability_count, capability);
 }
 
+static const struct boot_stage_descriptor *descriptor_for_stage(
+    const struct boot_ledger *ledger,
+    enum boot_stage_id stage
+)
+{
+    if (ledger == NULL) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < ledger->descriptor_count; ++index) {
+        if (ledger->descriptors[index].id == stage) {
+            return &ledger->descriptors[index];
+        }
+    }
+    return NULL;
+}
+
 static void set_refusal(
     struct boot_ledger *ledger,
     enum boot_ledger_status status,
@@ -215,6 +252,8 @@ static uint64_t fingerprint_plan(const struct boot_ledger *ledger)
 
         fingerprint = fingerprint_u64(fingerprint, descriptor->id);
         fingerprint = fingerprint_u64(fingerprint, descriptor->required);
+        fingerprint = fingerprint_u64(fingerprint,
+            descriptor->skip_preserves_health);
         fingerprint = fingerprint_u64(fingerprint, descriptor->phase);
         fingerprint = fingerprint_u64(fingerprint,
             descriptor->irreversible_class);
@@ -421,6 +460,14 @@ enum boot_ledger_status boot_ledger_validate(struct boot_ledger *ledger)
                 BOOT_STAGE_CAPABILITY_CAPACITY) {
             set_refusal(ledger,
                 BOOT_LEDGER_STATUS_TOO_MANY_STAGE_CAPABILITIES,
+                descriptor->id, BOOT_CAPABILITY_INVALID);
+            return ledger->status;
+        }
+
+        if (descriptor->skip_preserves_health &&
+            (descriptor->required ||
+             descriptor->skipped_capability_count == 0U)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_INVALID_NEUTRAL_SKIP,
                 descriptor->id, BOOT_CAPABILITY_INVALID);
             return ledger->status;
         }
@@ -829,7 +876,10 @@ static enum boot_ledger_status append_receipt(
     }
 
     if (result->result != BOOT_RECEIPT_RAN) {
-        ledger->degraded = true;
+        if (result->result != BOOT_RECEIPT_SKIPPED ||
+            !descriptor->skip_preserves_health) {
+            ledger->degraded = true;
+        }
 
         if (result->result == BOOT_RECEIPT_SKIPPED) {
             ledger->optional_skip_count += 1U;
@@ -1249,6 +1299,123 @@ enum boot_ledger_status boot_ledger_verify_installed(
         set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
             BOOT_STAGE_FRAMEBUFFER_OUTPUT,
             BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED);
+        return ledger->status;
+    }
+
+    if (boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE)) {
+        const struct boot_stage_receipt *font = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_UI_FONT);
+        const struct boot_stage_receipt *pointer_decision =
+            boot_ledger_receipt_for(ledger, BOOT_STAGE_POINTER_DECISION);
+        const struct boot_stage_receipt *pointer_outcome =
+            boot_ledger_receipt_for(ledger, BOOT_STAGE_POINTER_OUTCOME);
+        const struct boot_stage_receipt *layout = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_UI_LAYOUT);
+        const struct boot_stage_receipt *construction =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_DESKTOP_CONSTRUCTION);
+        const struct boot_stage_receipt *activation =
+            boot_ledger_receipt_for(ledger, BOOT_STAGE_DESKTOP_ACTIVATION);
+        const struct boot_stage_receipt *proof = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_FIRST_LIGHT_PROOF);
+        const struct boot_stage_receipt *wc = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_FRAMEBUFFER_WC);
+        const struct boot_stage_receipt *closing =
+            boot_ledger_receipt_for(ledger, BOOT_STAGE_CLOSING_PROOFS);
+        const struct boot_stage_descriptor *activation_descriptor =
+            descriptor_for_stage(ledger, BOOT_STAGE_DESKTOP_ACTIVATION);
+        const bool pointer_available = boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE);
+        const bool pointer_absent = boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_POINTER_INPUT_ABSENT);
+        const struct ui_state *installed_ui = ui_get_state();
+        const struct ui_font_metrics metrics = ui_font_get_metrics();
+        const struct framebuffer_state framebuffer = framebuffer_get_state();
+
+        if (font == NULL || font->result != BOOT_RECEIPT_RAN ||
+            font->proof_counter_count != 2U ||
+            font->proof_counters[0] != pyrenis_ui_font_size() ||
+            font->proof_counters[1] != pyrenis_ui_font_fingerprint() ||
+            !ui_font_is_verified() || metrics.width != 8U ||
+            metrics.height != 16U || metrics.ascent != 12U ||
+            metrics.descent != 4U || metrics.advance != 8U ||
+            metrics.first != 0x20U || metrics.count != 95U) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_UI_FONT, BOOT_CAPABILITY_UI_FONT_VERIFIED);
+            return ledger->status;
+        }
+        if (pointer_decision == NULL || pointer_outcome == NULL ||
+            pointer_decision->result != BOOT_RECEIPT_RAN ||
+            pointer_available == pointer_absent ||
+            (pointer_available &&
+                pointer_outcome->result != BOOT_RECEIPT_RAN) ||
+            (pointer_absent &&
+                pointer_outcome->result != BOOT_RECEIPT_SKIPPED) ||
+            pointer_is_present() != pointer_available) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_POINTER_OUTCOME,
+                BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED);
+            return ledger->status;
+        }
+        if (activation_descriptor == NULL ||
+            !descriptor_has_capability(
+                activation_descriptor->required_capabilities,
+                activation_descriptor->required_capability_count,
+                BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED) ||
+            wc == NULL || wc->result != BOOT_RECEIPT_RAN ||
+            (construction != NULL &&
+                wc->sequence >= construction->sequence) ||
+            (activation != NULL && wc->sequence >= activation->sequence)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_DESKTOP_ACTIVATION,
+                BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED);
+            return ledger->status;
+        }
+        if (!descriptor_has_capability(
+                activation_descriptor->required_capabilities,
+                activation_descriptor->required_capability_count,
+                BOOT_CAPABILITY_SCHEDULER_AVAILABLE)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_DESKTOP_ACTIVATION,
+                BOOT_CAPABILITY_SCHEDULER_AVAILABLE);
+            return ledger->status;
+        }
+        if (layout == NULL || construction == NULL || activation == NULL ||
+            proof == NULL || closing == NULL ||
+            layout->result != BOOT_RECEIPT_RAN ||
+            construction->result != BOOT_RECEIPT_RAN ||
+            activation->result != BOOT_RECEIPT_RAN ||
+            proof->result != BOOT_RECEIPT_RAN ||
+            proof->proof_counter_count != 2U ||
+            proof->proof_counters[0] == 0U ||
+            proof->proof_counters[1] == 0U ||
+            closing->result != BOOT_RECEIPT_RAN ||
+            font->sequence >= construction->sequence ||
+            layout->sequence >= construction->sequence ||
+            construction->sequence >= activation->sequence ||
+            closing->sequence >= activation->sequence ||
+            activation->sequence >= proof->sequence) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_FIRST_LIGHT_PROOF,
+                BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED);
+            return ledger->status;
+        }
+        if (installed_ui == NULL || !installed_ui->active ||
+            installed_ui->pointer_present != pointer_available ||
+            installed_ui->layout.surface.width != framebuffer.width ||
+            installed_ui->layout.surface.height != framebuffer.height ||
+            ui_layout_validate(&installed_ui->layout) != UI_STATUS_OK) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_DESKTOP_ACTIVATION,
+                BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED);
+            return ledger->status;
+        }
+    } else if (boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_FIRST_LIGHT_PROOF,
+            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE);
         return ledger->status;
     }
 
@@ -1773,6 +1940,36 @@ bool boot_ledger_self_test(void)
             BOOT_CAPABILITY_FRAMEBUFFER_SERIAL_FALLBACK) ||
         !boot_ledger_has_capability(&first,
             BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE)) {
+        return false;
+    }
+
+    /* Pointer absence is an explicit neutral branch, never a success leak. */
+    boot_ledger_reset(&first);
+    one = self_test_descriptor(BOOT_STAGE_POINTER_OUTCOME,
+        BOOT_PHASE_RUNTIME, false, self_test_skip);
+    one.provided_capabilities[0] =
+        BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE;
+    one.provided_capability_count = 1U;
+    one.skipped_capabilities[0] = BOOT_CAPABILITY_POINTER_INPUT_ABSENT;
+    one.skipped_capability_count = 1U;
+    one.skip_preserves_health = true;
+    if (!self_test_add(&first, &one) ||
+        boot_ledger_validate(&first) != BOOT_LEDGER_STATUS_OK ||
+        boot_ledger_execute(&first, &context) != BOOT_LEDGER_STATUS_OK ||
+        first.degraded || first.optional_skip_count != 1U ||
+        !boot_ledger_has_capability(&first,
+            BOOT_CAPABILITY_POINTER_INPUT_ABSENT) ||
+        boot_ledger_has_capability(&first,
+            BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE)) {
+        return false;
+    }
+
+    /* A required or capability-free stage cannot declare a neutral skip. */
+    boot_ledger_reset(&first);
+    one.required = true;
+    if (!self_test_add(&first, &one) ||
+        boot_ledger_validate(&first) !=
+            BOOT_LEDGER_STATUS_INVALID_NEUTRAL_SKIP) {
         return false;
     }
 

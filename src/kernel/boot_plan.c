@@ -30,6 +30,7 @@
 #include <pyrenis/memory.h>
 #include <pyrenis/paging.h>
 #include <pyrenis/pci.h>
+#include <pyrenis/pointer.h>
 #include <pyrenis/pm_timer.h>
 #include <pyrenis/screen.h>
 #include <pyrenis/self_test.h>
@@ -39,6 +40,8 @@
 #include <pyrenis/thread.h>
 #include <pyrenis/timer.h>
 #include <pyrenis/tsc.h>
+#include <pyrenis/ui.h>
+#include <pyrenis/ui_font.h>
 
 static void stage_failed(
     struct boot_context *context,
@@ -297,6 +300,12 @@ static void execute_pure_self_tests(
         failure = "keyboard translation self-test failed";
     } else if (!shell_self_test()) {
         failure = "shell line and dispatch self-test failed";
+    } else if (!pointer_self_test()) {
+        failure = pointer_self_test_failure();
+    } else if (!ui_font_self_test()) {
+        failure = ui_font_self_test_failure();
+    } else if (!ui_self_test()) {
+        failure = ui_self_test_failure();
     } else if (pyrenis_logo_self_test() != 1) {
         failure = "logo decoder self-test failed";
     } else if (pyrenis_font_self_test() != 1) {
@@ -599,6 +608,88 @@ static void execute_shell(
     boot_stage_result_succeed(descriptor, result);
 }
 
+static void execute_ui_font(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum ui_font_status status = ui_font_initialize();
+
+    if (status != UI_FONT_STATUS_OK) {
+        stage_failed(context, result, ui_font_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: First Light font verified\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = pyrenis_ui_font_size();
+    result->proof_counters[1] = pyrenis_ui_font_fingerprint();
+    result->proof_counter_count = 2U;
+}
+
+static void execute_pointer_decision(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum pointer_status status = pointer_initialize();
+
+    (void)context;
+    if (status == POINTER_STATUS_OK) {
+        console_write("Pyrenis: PS/2 pointer available\n");
+    } else {
+        console_write("Pyrenis: PS/2 pointer unavailable: ");
+        console_write(pointer_status_string(status));
+        console_putc('\n');
+    }
+
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static void execute_pointer_outcome(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    (void)context;
+
+    if (pointer_is_present()) {
+        boot_stage_result_succeed(descriptor, result);
+    } else {
+        boot_stage_result_skip(descriptor, result);
+    }
+}
+
+static void execute_ui_layout(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const struct framebuffer_state framebuffer = framebuffer_get_state();
+    struct ui_layout layout;
+    enum ui_status status;
+
+    status = ui_layout_build(framebuffer.width, framebuffer.height, &layout);
+    if (status == UI_STATUS_OK) {
+        status = ui_layout_validate(&layout);
+    }
+
+    if (status != UI_STATUS_OK) {
+        stage_failed(context, result, ui_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: First Light layout validated\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = framebuffer.width;
+    result->proof_counters[1] = framebuffer.height;
+    result->proof_counter_count = 2U;
+}
+
 static void execute_early_scenario(
     struct boot_context *context,
     const struct boot_stage_descriptor *descriptor,
@@ -777,6 +868,61 @@ static void execute_closing_proofs(
     boot_stage_result_succeed(descriptor, result);
 }
 
+static void execute_desktop_construction(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum ui_status status = ui_construct(pointer_is_present());
+
+    if (status != UI_STATUS_OK) {
+        stage_failed(context, result, ui_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: First Light desktop constructed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static void execute_desktop_activation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum ui_status status = ui_activate();
+
+    if (status != UI_STATUS_OK) {
+        stage_failed(context, result, ui_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: First Light desktop activated\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static void execute_first_light_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct ui_proof proof;
+    const enum ui_status status = ui_verify_installed(&proof);
+
+    if (status != UI_STATUS_OK) {
+        stage_failed(context, result, ui_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: First Light installed proof passed\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.render_hash;
+    result->proof_counters[1] = proof.glyphs;
+    result->proof_counter_count = 2U;
+}
+
 #define REQUIRED_STAGE(identifier, label, boot_phase, irreversible, function) \
     { \
         .id = identifier, \
@@ -792,6 +938,18 @@ static void execute_closing_proofs(
         .id = identifier, \
         .name = label, \
         .required = false, \
+        .phase = boot_phase, \
+        .irreversible_class = irreversible, \
+        .execute = function \
+    }
+
+#define OPTIONAL_NEUTRAL_STAGE(identifier, label, boot_phase, irreversible, \
+    function) \
+    { \
+        .id = identifier, \
+        .name = label, \
+        .required = false, \
+        .skip_preserves_health = true, \
         .phase = boot_phase, \
         .irreversible_class = irreversible, \
         .execute = function \
@@ -840,6 +998,16 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
         execute_keyboard),
     OPTIONAL_STAGE(BOOT_STAGE_SHELL, "interactive shell",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_shell),
+    OPTIONAL_STAGE(BOOT_STAGE_UI_FONT, "First Light UI font",
+        BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_ui_font),
+    OPTIONAL_STAGE(BOOT_STAGE_POINTER_DECISION,
+        "pointer availability decision", BOOT_PHASE_RUNTIME,
+        BOOT_IRREVERSIBLE_NONE, execute_pointer_decision),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_POINTER_OUTCOME,
+        "pointer availability outcome", BOOT_PHASE_RUNTIME,
+        BOOT_IRREVERSIBLE_NONE, execute_pointer_outcome),
+    OPTIONAL_STAGE(BOOT_STAGE_UI_LAYOUT, "First Light layout",
+        BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_ui_layout),
     REQUIRED_STAGE(BOOT_STAGE_EARLY_SCENARIO, "early scenario gate",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_early_scenario),
     REQUIRED_STAGE(BOOT_STAGE_INTERRUPT_PROOFS, "interrupt proofs",
@@ -856,7 +1024,16 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_SCHEDULER, execute_scheduler),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
-        BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs)
+        BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
+    OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
+        BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE,
+        execute_desktop_construction),
+    OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_ACTIVATION, "desktop activation",
+        BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE,
+        execute_desktop_activation),
+    OPTIONAL_STAGE(BOOT_STAGE_FIRST_LIGHT_PROOF,
+        "First Light installed proof", BOOT_PHASE_PROOFS,
+        BOOT_IRREVERSIBLE_NONE, execute_first_light_proof)
 };
 
 _Static_assert(sizeof(installed_descriptors) /
@@ -1000,7 +1177,9 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 2U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_SURFACE_AVAILABLE;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_FRAMEBUFFER_OUTPUT_INSTALLED;
+        descriptor->provided_capability_count = 2U;
         break;
     case BOOT_STAGE_KEYBOARD:
         descriptor->required_capabilities[0] =
@@ -1012,7 +1191,9 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 3U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_INTERRUPTS_ENABLED;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_KEYBOARD_AVAILABLE;
+        descriptor->provided_capability_count = 2U;
         break;
     case BOOT_STAGE_SHELL:
         descriptor->required_capabilities[0] =
@@ -1022,6 +1203,45 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 2U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_SHELL_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_UI_FONT:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_SURFACE_AVAILABLE;
+        descriptor->required_capability_count = 1U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_UI_FONT_VERIFIED;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_POINTER_DECISION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_KEYBOARD_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_POINTER_OUTCOME:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED;
+        descriptor->required_capability_count = 1U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_POINTER_INPUT_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_UI_LAYOUT:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_SURFACE_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_UI_FONT_VERIFIED;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_UI_LAYOUT_VALIDATED;
         descriptor->provided_capability_count = 1U;
         break;
     case BOOT_STAGE_EARLY_SCENARIO:
@@ -1118,6 +1338,58 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->provided_capability_count = 1U;
         break;
+    case BOOT_STAGE_DESKTOP_CONSTRUCTION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_SURFACE_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_UI_FONT_VERIFIED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_UI_LAYOUT_VALIDATED;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED;
+        descriptor->required_capability_count = 4U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DESKTOP_SHELL_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_DESKTOP_ACTIVATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_DESKTOP_SHELL_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_FRAMEBUFFER_OUTPUT_INSTALLED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_SURFACE_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_UI_FONT_VERIFIED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_UI_LAYOUT_VALIDATED;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_KEYBOARD_AVAILABLE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_THREADING_AVAILABLE;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
+        descriptor->required_capabilities[9] =
+            BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
+        descriptor->required_capability_count = 10U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_FIRST_LIGHT_PROOF:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
+        descriptor->required_capability_count = 3U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        break;
     case BOOT_STAGE_INVALID:
     case BOOT_STAGE_COUNT:
     default:
@@ -1175,4 +1447,128 @@ enum boot_ledger_status boot_plan_build(struct boot_ledger *ledger)
     }
 
     return status;
+}
+
+static void synthetic_stage_success(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    (void)context;
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static void synthetic_pointer_absent(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    (void)context;
+    boot_stage_result_skip(descriptor, result);
+}
+
+bool boot_plan_pointer_absence_self_test(void)
+{
+    static struct boot_ledger ledger;
+    static struct boot_context context;
+    const struct boot_stage_descriptor descriptors[] = {
+        {
+            .id = BOOT_STAGE_POINTER_DECISION,
+            .name = "synthetic pointer decision",
+            .provided_capabilities = {
+                BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED
+            },
+            .provided_capability_count = 1U,
+            .required = true,
+            .phase = BOOT_PHASE_RUNTIME,
+            .execute = synthetic_stage_success
+        },
+        {
+            .id = BOOT_STAGE_POINTER_OUTCOME,
+            .name = "synthetic pointer absence",
+            .required_capabilities = {
+                BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED
+            },
+            .required_capability_count = 1U,
+            .provided_capabilities = {
+                BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE
+            },
+            .provided_capability_count = 1U,
+            .skipped_capabilities = {
+                BOOT_CAPABILITY_POINTER_INPUT_ABSENT
+            },
+            .skipped_capability_count = 1U,
+            .skip_preserves_health = true,
+            .phase = BOOT_PHASE_RUNTIME,
+            .execute = synthetic_pointer_absent
+        },
+        {
+            .id = BOOT_STAGE_UI_LAYOUT,
+            .name = "synthetic keyboard-only layout",
+            .required_capabilities = {
+                BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED,
+                BOOT_CAPABILITY_POINTER_INPUT_ABSENT
+            },
+            .required_capability_count = 2U,
+            .provided_capabilities = {
+                BOOT_CAPABILITY_UI_LAYOUT_VALIDATED
+            },
+            .provided_capability_count = 1U,
+            .required = true,
+            .phase = BOOT_PHASE_RUNTIME,
+            .execute = synthetic_stage_success
+        },
+        {
+            .id = BOOT_STAGE_DESKTOP_CONSTRUCTION,
+            .name = "synthetic keyboard-only desktop",
+            .required_capabilities = {
+                BOOT_CAPABILITY_POINTER_INPUT_ABSENT,
+                BOOT_CAPABILITY_UI_LAYOUT_VALIDATED
+            },
+            .required_capability_count = 2U,
+            .provided_capabilities = {
+                BOOT_CAPABILITY_DESKTOP_SHELL_AVAILABLE
+            },
+            .provided_capability_count = 1U,
+            .required = true,
+            .phase = BOOT_PHASE_PROOFS,
+            .execute = synthetic_stage_success
+        }
+    };
+    enum boot_ledger_status status;
+
+    boot_context_initialize(&context, 0U, 0U);
+    boot_ledger_reset(&ledger);
+    for (size_t index = 0U;
+         index < sizeof(descriptors) / sizeof(descriptors[0]); ++index) {
+        status = boot_ledger_add_stage(&ledger, &descriptors[index]);
+        if (status != BOOT_LEDGER_STATUS_OK) {
+            return false;
+        }
+    }
+    status = boot_ledger_validate(&ledger);
+    if (status == BOOT_LEDGER_STATUS_OK) {
+        status = boot_ledger_execute(&ledger, &context);
+    }
+
+    const struct boot_stage_receipt *outcome =
+        boot_ledger_receipt_for(&ledger, BOOT_STAGE_POINTER_OUTCOME);
+    const struct boot_stage_receipt *desktop =
+        boot_ledger_receipt_for(&ledger, BOOT_STAGE_DESKTOP_CONSTRUCTION);
+
+    return status == BOOT_LEDGER_STATUS_OK && ledger.executed &&
+        !ledger.degraded && ledger.optional_skip_count == 1U &&
+        outcome != NULL && outcome->result == BOOT_RECEIPT_SKIPPED &&
+        desktop != NULL && desktop->result == BOOT_RECEIPT_RAN &&
+        boot_ledger_has_capability(&ledger,
+            BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED) &&
+        boot_ledger_has_capability(&ledger,
+            BOOT_CAPABILITY_POINTER_INPUT_ABSENT) &&
+        !boot_ledger_has_capability(&ledger,
+            BOOT_CAPABILITY_POINTER_INPUT_AVAILABLE) &&
+        boot_ledger_has_capability(&ledger,
+            BOOT_CAPABILITY_DESKTOP_SHELL_AVAILABLE) &&
+        boot_ledger_fingerprint_valid(&ledger);
 }

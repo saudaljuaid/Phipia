@@ -13,6 +13,7 @@
 
 use crate::font;
 use crate::logo::{self, Format, Status};
+use crate::ui_font;
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
 /// The Makefile points `PYRENIS_LOGO_BLOB` at it; there is no committed copy.
@@ -182,5 +183,75 @@ pub unsafe extern "C" fn pyrenis_font_glyph(
     match font::glyph(FONT, code, rows) {
         Ok(_) => font_status_code(font::Status::Ok),
         Err(status) => font_status_code(status),
+    }
+}
+
+/// Build-packed Spleen 12x24 glyphs. No BDF parser enters the kernel image.
+static UI_FONT: &[u8] = include_bytes!(env!("PYRENIS_UI_FONT_BLOB"));
+
+fn ui_font_status_code(status: ui_font::Status) -> i32 {
+    status as i32
+}
+
+/// Run the PUF1 parser's synthetic acceptance and refusal tests.
+#[unsafe(no_mangle)]
+pub extern "C" fn pyrenis_ui_font_self_test() -> i32 {
+    i32::from(ui_font::self_test())
+}
+
+/// Return the byte length of the built-in PUF1 asset.
+#[unsafe(no_mangle)]
+pub extern "C" fn pyrenis_ui_font_size() -> usize {
+    UI_FONT.len()
+}
+
+/// Return a stable FNV-1a fingerprint of the exact built-in bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn pyrenis_ui_font_fingerprint() -> u64 {
+    ui_font::fingerprint(UI_FONT)
+}
+
+/// Validate the built-in asset and copy all declared metrics.
+///
+/// # Safety
+///
+/// `metrics` must be non-null and point to one writable `ui_font::Geometry`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrenis_ui_font_geometry(
+    metrics: *mut ui_font::Geometry,
+) -> i32 {
+    if metrics.is_null() {
+        return ui_font_status_code(ui_font::Status::NullArgument);
+    }
+    match ui_font::geometry(UI_FONT) {
+        Ok(value) => {
+            // SAFETY: the pointer was checked above; the caller owns one
+            // writable value with the same repr(C) layout.
+            unsafe { *metrics = value };
+            ui_font_status_code(ui_font::Status::Ok)
+        }
+        Err(status) => ui_font_status_code(status),
+    }
+}
+
+/// Copy one glyph from the built-in PUF1 body into a caller-owned buffer.
+///
+/// # Safety
+///
+/// `out` must address `out_len` writable, non-aliased bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrenis_ui_font_glyph(
+    code: u32,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if out.is_null() {
+        return ui_font_status_code(ui_font::Status::NullArgument);
+    }
+    // SAFETY: this is the caller's contract, and the null case was refused.
+    let bytes = unsafe { core::slice::from_raw_parts_mut(out, out_len) };
+    match ui_font::glyph(UI_FONT, code, bytes) {
+        Ok(_) => ui_font_status_code(ui_font::Status::Ok),
+        Err(status) => ui_font_status_code(status),
     }
 }

@@ -1,6 +1,6 @@
 # Where everything is
 
-Pyrenis is forty-five source files and thirty-one documents. This page exists
+Pyrenis is forty-nine source files and thirty-four documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -33,9 +33,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 101 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell handoff. |
-| `boot_plan.c` | 1178 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 1780 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `kernel.c` | 101 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
+| `boot_plan.c` | 1574 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 1977 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -106,20 +106,24 @@ long you will be in there.
 | --- | ---: | --- |
 | `framebuffer.c` | 477 | The linear framebuffer, validated field by field, mapped write-combining. |
 | `surface.c` | 805 | Cached pixels, clipped primitives, overlap-safe copies, damage, and the WC store fence. |
-| `screen.c` | 611 | Text on the framebuffer: cells, wrapping, scrolling, and reading it back. |
+| `screen.c` | 872 | Text on the framebuffer: retained cells, validated viewports, reflow, wrapping, scrolling, and reading it back. |
 | `keyboard.c` | 733 | The 8042 and scancode set 1. The first device a person operates. |
-| `shell.c` | 688 | A command line, including the read-only `ledger` boot-record summary. The first layer here that never panics. |
+| `pointer.c` | 529 | Shared-8042 auxiliary discovery, IRQ12, three-byte packets, bounded coordinates, and UI event publication. |
+| `ui.c` | 1799 | First Light state, pure layout, dock/panels, event queue, damage, cursor, and installed render proof. |
+| `ui_font.c` | 307 | Verified Spleen metrics, clipped glyph drawing, representative pixel proof, and named refusals. |
+| `shell.c` | 740 | One command parser shared by serial and the First Light Terminal panel. |
 | `font.c` | 38 | The C side of the font: names for what the reader can refuse. |
 | `rust/font.rs` | 276 | The glyph table reader. Rust, on the first hot path in this kernel. |
 | `logo.c` | 39 | The C side of the logo: three lines of glue. |
 | `rust/logo.rs` | 329 | The decoder. Rust, because it parses bytes the kernel did not produce. |
+| `rust/ui_font.rs` | 265 | Bounded `PUF1` parser and glyph reader for the build-packed Spleen face. |
 | `rust/abi.rs`, `rust/lib.rs` | 186 + 44 | What the two languages promise each other. |
 
 ### Proving it
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4239 | The thirty-one QEMU scenarios and what each must print. |
+| `test.c` | 4595 | The thirty-two QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
@@ -137,9 +141,12 @@ The canonical descriptor sequence is:
     -> PAT/CR3 installation -> installed paging proofs
     -> optional independent framebuffer WC proof
     -> paging/heap runtime -> optional framebuffer output
-    -> keyboard interrupt path -> optional shell -> early scenario gate
+    -> keyboard interrupt path -> optional shell
+    -> optional UI font -> pointer decision/outcome -> optional UI layout
+    -> early scenario gate
     -> interrupt proofs -> routing -> timer calibration
     -> PCI -> threading -> scheduler -> closing proofs
+    -> optional desktop construction -> activation -> installed UI proof
 
 That order is produced from declared capability edges, bounded phases and stable
 stage IDs. Raw descriptor insertion order is not policy. See

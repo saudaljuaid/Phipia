@@ -28,7 +28,7 @@ installed-state proof whose assertions run in the same kernel they check.
 | --- | ---: |
 | descriptors and canonical plan | 32 stages |
 | receipts | 32 receipts |
-| required, success or fallback capabilities per descriptor | 8 each |
+| required, success or fallback capabilities per descriptor | 10 each |
 | stable proof counters per receipt | 2 |
 
 Plan construction, validation, execution bookkeeping and the pure planner test
@@ -65,9 +65,13 @@ no new public capability; it still receives one ordered receipt.
 | 10 | installed paging proofs | page tables | W^X proved, installed windows proved | required | memory transition |
 | 11 | independent framebuffer WC proof | page tables, installed windows, framebuffer decision | WC independently proved; serial fallback when skipped | optional | memory transition |
 | 12 | heap and paging runtime | page tables, W^X | heap available | required | runtime |
-| 13 | framebuffer output | independent WC, heap | surface available | optional | runtime / framebuffer output |
-| 14 | keyboard interrupt path | IDT, controllers, heap | interrupts enabled | required | runtime / interrupt enable |
+| 13 | framebuffer output | independent WC, heap | surface available, framebuffer output installed | optional | runtime / framebuffer output |
+| 14 | keyboard interrupt path | IDT, controllers, heap | interrupts enabled, keyboard available | required | runtime / interrupt enable |
 | 15 | interactive shell | surface, interrupts | shell available | optional | runtime |
+| 24 | First Light UI font | surface | UI font verified | optional | runtime |
+| 25 | pointer availability decision | keyboard, controllers | pointer availability decided | optional | runtime |
+| 26 | pointer availability outcome | pointer decision | pointer input available; declared absence on neutral skip | optional neutral | runtime |
+| 27 | First Light layout | surface, UI font | UI layout validated | optional | runtime |
 | 16 | early scenario gate | heap, interrupts | — | required | runtime |
 | 17 | interrupt proofs | IDT, controllers, interrupts | — | required | timers |
 | 18 | interrupt routing | IDT, controllers, interrupts | interrupt routing proved | required | timers |
@@ -76,6 +80,9 @@ no new public capability; it still receives one ordered receipt.
 | 21 | threading | heap, timer calibration | threading available | required | services |
 | 22 | scheduler | heap, threading, timer calibration, interrupts | scheduler available | required | services / scheduler |
 | 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler | boot proofs complete | required | proofs |
+| 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
+| 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
+| 30 | First Light installed proof | activated desktop, WC, closing proofs | First Light installed proof complete | optional | proofs |
 
 `install_page_tables` remains one indivisible execution function. It preserves
 the existing PAT MSR read/program/readback sequence and the existing
@@ -111,8 +118,18 @@ The complete capability enumeration is:
 22. surface available;
 23. threading available;
 24. scheduler available;
-25. shell available; and
-26. boot proofs complete.
+25. shell available;
+26. boot proofs complete;
+27. framebuffer output installed;
+28. keyboard available;
+29. UI font verified;
+30. pointer availability decided;
+31. pointer input available;
+32. pointer input absent;
+33. UI layout validated;
+34. desktop shell available;
+35. desktop shell activated; and
+36. First Light installed proof complete.
 
 The framebuffer decision and framebuffer WC proof are intentionally distinct.
 The device-window registry says what paging installed. The independent WC stage
@@ -139,7 +156,9 @@ Optional stages still have providers in the validated graph. At execution, an
 optional stage whose runtime requirements were not established receives a
 skipped receipt without being called. A stage that runs and reports optional
 failure receives a failed receipt. Neither path can mint its success
-capabilities. The WC stage may instead provide its separately declared serial
+capabilities. A narrowly declared neutral skip can establish an absence
+capability without degrading the ledger; the pointer outcome uses it after the
+decision stage. The WC stage may instead provide its separately declared serial
 fallback capability when the framebuffer is absent. A required skip is always
 a refusal. A required failure appends its failure receipt and stops execution;
 no dependent or later stage runs.
@@ -156,6 +175,11 @@ refuses a descriptor that does not declare all mandatory prerequisites:
 | framebuffer output | independent framebuffer WC proof |
 | local APIC timer activation | IDT, controllers, interrupt-enable receipt, discovered clocks |
 | scheduler activation | heap, threads, timer calibration, interrupt-enable receipt |
+
+Desktop activation is not an irreversible-class member, but installed semantic
+verification requires its exact ten prerequisites. In particular, it rejects
+removal of the independent WC or scheduler edge by naming desktop activation
+and the missing capability, even if phases happen to preserve observed order.
 
 The framebuffer and cached-surface store fences remain in their existing
 implementation paths. The ledger changes who may call those paths, not their
@@ -239,7 +263,10 @@ required success, optional non-leakage, known stage IDs and the recomputed
 fingerprint. It then re-walks paging and the installed device windows, repeats
 the W^X audit, and checks active framebuffer output has both independent WC and
 surface receipts. Interrupt, APIC-timer and scheduler ordering follows from the
-same mandatory typed prerequisites. The permanent line is:
+same mandatory typed prerequisites. When First Light completes, verification
+also checks the font receipt and metrics, mutually exclusive pointer outcome,
+layout/construction/activation/proof receipts, WC and closing-proof order,
+installed UI geometry and the recomputed render receipt. The permanent line is:
 
     Pyrenis: Boot Ledger installed proof passed
 
@@ -251,11 +278,13 @@ permanent boot output is a host-test failure.
 At `pyr>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
-    plan 23  run 23  skip 0  caps 25  receipts 23
-    fingerprint 0xCB59D7DC9445EB93
+    plan 30  run 30  skip 0  caps 34  receipts 30
+    fingerprint 0x44D80F3C1AA68CB9
 
-The exact fingerprint is build-plan dependent; the shape is stable. Optional
-fallback or failure changes the state to `DEGRADED`.
+The exact fingerprint is build-plan dependent; the normal pointer-present shape
+above is stable. The pointer-absence path has one neutral skip, 34 established
+capabilities, fingerprint `0x60D92F66EE5D2890`, and remains `PASS`. Other
+optional fallback or failure changes the state to `DEGRADED`.
 
 The `boot-ledger` QEMU scenario owns guest exit `0x2E`, host status 93. It emits
 exactly one begin and pass marker, walks the actual published ledger, checks all
@@ -279,7 +308,7 @@ build; the narrowest scenario was used and the snapshot was restored without
 | duplicate a stable stage ID | named duplicate-stage refusal | PASS — `duplicate stage`; `early serial` |
 | duplicate one exclusive capability provider | named duplicate-provider refusal | PASS — `duplicate capability provider`; `device-window registry`; `IDT installed` |
 | add capacity plus one descriptors | named stage-capacity refusal | PASS — `too many stages` before execution |
-| reverse descriptor declarations | identical order, receipts, fingerprint and boot | PASS — all 23 receipts and guest status 93 identical; fingerprint `0xCB59D7DC9445EB93` |
+| reverse descriptor declarations | identical order, receipts, fingerprint and boot | PASS — all 30 receipts and guest status 93 identical; fingerprint `0x44D80F3C1AA68CB9` |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
 | allow framebuffer output before WC | framebuffer/WC refusal | PASS — `irreversible stage ordered too early`; framebuffer output; independent WC capability |
@@ -302,9 +331,9 @@ rejected both mutations as well as the proof-line deletion.
   diagnostic rather than unwinding C control flow.
 - The plan is single-core and immutable after publication. There is no dynamic
   module loading, hot-plug or live MMIO remapping.
-- Optional framebuffer output has a serial fallback. Other optional device
-  classes do not yet have first-class absence stages because legacy PCI port
-  access already covers missing ECAM.
+- Optional framebuffer output has a serial fallback and pointer input has a
+  first-class neutral absence receipt. Legacy PCI port access still covers
+  missing ECAM without another absence stage.
 - The fingerprint summarizes integrity for debugging only. Cryptographic
   measurement and remote attestation are outside this design.
 - The ledger does not add userspace, SMP scheduling, MTRR programming,

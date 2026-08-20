@@ -18,6 +18,12 @@ colour read back, and no two coordinates share an address. Normal boot writes a
 pattern whose colour is a function of the coordinates and reads **all 786,432
 pixels** back.
 
+First Light commits three QMP framebuffer captures as reviewable runtime
+evidence, but it does not reverse this rule. `first-light` supplies semantic
+installed-state and selected-pixel proofs; the screenshot comparator adds exact
+1024 by 768 stable-frame regression coverage and proves its own oracle with a
+one-pixel negative control. See `docs/FIRST_LIGHT.md`.
+
 ## What the loader gives, and what is refused
 
 The Multiboot2 header asks for 1024x768 at 32 bits, tagged **optional**. A

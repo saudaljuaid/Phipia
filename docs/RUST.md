@@ -1,7 +1,7 @@
 # Rust in Pyrenis
 
-Pyrenis is a C kernel with one Rust component. This document argues where the
-line goes, and why it is not where people usually put it.
+Pyrenis is a C kernel with a small Rust parsing crate. This document argues
+where the line goes, and why it is not where people usually put it.
 
 ## The rule
 
@@ -48,6 +48,14 @@ that will really need it exist.
 `src/rust/logo.rs` — the boot logo decoder. It reads a run-length encoded image
 whose header, run lengths and pixel count are, in principle, attacker
 controlled, and it refuses eight distinct malformations by name.
+
+`src/rust/font.rs` — the bounded reader for the original screen-console font
+table. It validates the header and checked glyph ranges on the console hot path.
+
+`src/rust/ui_font.rs` — the First Light `PUF1` reader. The build tool parses the
+licensed Spleen BDF; the kernel sees only a 24-byte fixed header and 1,520
+bitmap bytes. Rust validates every metric, multiplication, offset and requested
+glyph range before C draws it.
 
 `src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
 blocks appear only where an ABI function turns validated C pointers into Rust
@@ -139,8 +147,8 @@ build would refuse the change that first made it reachable.
 
 ## Deferred work
 
-- **One component is not a policy.** The rule above is worth what the next three
-  decoders do with it. USB descriptors and filesystem metadata are the tests.
+- **Three small assets are only the beginning of the policy.** USB descriptors
+  and filesystem metadata will be the tests when those subsystems exist.
 - **No `alloc`.** The crate has no allocator, so no `Vec` and no `String`.
   Wiring `alloc` to the kernel heap is a small change and should wait until
   something needs it rather than being added because it is possible.

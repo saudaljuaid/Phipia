@@ -236,7 +236,7 @@ to fail passed.
 | 4 | Program entry 1 with the wrong type. | Both halted before framebuffer use: `PANIC: page attribute table readback did not match`. |
 | 5 | Give only the first framebuffer page WC. | Both halted: `PANIC: framebuffer range is not write-combining`. |
 | 6 | Allow `PAGING_UNCACHED | PAGING_WRITE_COMBINING`. | Both halted in the pure test: `PANIC: page table arithmetic self-test failed`. |
-| 7 | Remove the post-store `sfence`. | `surface` and normal passed on both executors. These emulators did not expose the ordering bug; no failure was invented. |
+| 7 | Remove the post-store `sfence`. | Historical runtime controls passed on both executors because neither model exposed the ordering bug. First Light closes the structural gap: current `make verify` refuses `cached-surface WC present lost its sfence` while retaining the runtime evidence honestly. |
 | 8 | Point `screen_verify_cell` at the cached surface. | `screen` and normal passed on both. This is the dangerous blind oracle: source and verifier can agree while the physical display is wrong. Production still reads the framebuffer. |
 | 9 | Bypass the no-PAT refusal. | Both narrow and full boots halted in the pure test: `PANIC: page table arithmetic self-test failed`. The production pure paths require `PAT_UNSUPPORTED` and `PAT_LAYOUT_UNSAFE`. |
 | 10 | Select the old UC framebuffer and adjust only control verifiers. | Dedicated, surface, and full functional boots passed on both. The before rows above changed timing while framebuffer readback stayed valid. |

@@ -31,6 +31,10 @@ pitch.
   rectangle. An empty present copies nothing. A non-empty present copies only
   that rectangle, executes `sfence` after the volatile WC stores, and clears
   damage only after that completion boundary.
+- First Light uses this same surface for desktop, dock, panel, terminal, and
+  software cursor. UI code has a build-time ban on direct framebuffer writes;
+  pointer IRQ code has a separate ban on UI processing or presentation.
+  `make verify` also requires the fence call to remain in `surface_present`.
 - A present requires an active framebuffer with exactly the same width and
   height. Framebuffer pitch remains independent and is used when finding each
   device row.
@@ -150,8 +154,9 @@ counted above.
 
 - More than one damage rectangle may reduce copying when two small changes are
   far apart; one union rectangle is deliberately simpler for this increment.
-- A cursor, compositor, windows, colour attributes, font scaling, mouse input,
-  and z-order remain separate layers.
+- A general compositor, movable/resizable windows, colour attributes, font
+  scaling and general z-order remain separate layers. First Light supplies one
+  fixed panel and one bounded PS/2 software cursor only.
 - The screen cursor and surface damage are shared state without a lock. Local
   glyph scratch prevents torn scratch data, but concurrent writers still need a
   later serialization design.

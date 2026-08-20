@@ -52,6 +52,18 @@ different table and nothing else changes.
   the I/O APIC routed, then the port enabled. Every other order has a window in
   which a keystroke reaches an unrouted vector.
 
+The 8042 is now shared with `src/kernel/pointer.c`. Keyboard bring-up remains
+the controller foundation. The auxiliary driver runs later, touches only the
+second port, rejects auxiliary-tagged bytes in the keyboard IRQ path, and never
+resets or races keyboard configuration. IRQ1 and IRQ12 publish into separate
+bounded queues.
+
+First Light consumes pressed `Tab`, `Shift+Tab`, `Enter`, and `Escape` as focus
+next, focus previous, activation, and panel close. Other printable characters
+reach the existing shell only while Terminal is active. This keeps pointer
+absence operational: the initial Terminal focus is visible and all four dock
+items wrap under keyboard navigation.
+
 ## Proving it without a person
 
 Every other device Pyrenis brings up either announces itself or can be asked a
@@ -105,9 +117,10 @@ Boot's proof reports 5 interrupts for 5 events; the scenario reports
 
 ## Deferred work
 
-- **One reader, and it polls.** `shell_run` drains the queue, edits a line, and
-  echoes it to the screen; see `docs/SHELL.md`. A test scenario never reaches
-  the shell, so keys pressed during one are eventually dropped.
+- **One shell/UI reader, and it polls.** `shell_run` drains UI navigation and
+  line-editor input, then halts when both are empty; see `docs/SHELL.md`. A test
+  scenario never reaches that loop, so keys pressed during one are eventually
+  dropped.
 - **`keyboard_read` never blocks.** It returns `no key event is waiting` rather
   than sleeping, because there is no way yet for an interrupt to wake a thread.
   That is the next thing this layer needs and it is a scheduler change, not a

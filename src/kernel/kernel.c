@@ -11,6 +11,7 @@
 #include <pyrenis/console.h>
 #include <pyrenis/shell.h>
 #include <pyrenis/test.h>
+#include <pyrenis/ui.h>
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -88,6 +89,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     boot_ledger_publish(&installed_ledger);
     console_write("Pyrenis: Boot Ledger installed proof passed\n");
+    if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
+        console_write("Pyrenis: First Light ledger status redraw failed\n");
+    }
 
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
         kernel_test_complete_normal();
@@ -95,6 +99,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     if (installed_context.test_scenario == KERNEL_TEST_BOOT_LEDGER) {
         kernel_test_complete_boot_ledger(&installed_context);
+    }
+
+    if (installed_context.test_scenario == KERNEL_TEST_FIRST_LIGHT) {
+        kernel_test_complete_first_light();
     }
 
     shell_run();

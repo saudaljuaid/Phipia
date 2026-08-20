@@ -1,0 +1,275 @@
+# Pyrenis First Light
+
+First Light is Pyrenis's first stateful graphical interface. It is a bounded
+desktop shell in the kernel, not a boot splash, a general desktop environment,
+a window manager, or a userspace boundary. The same installed framebuffer,
+cached surface, screen console, shell, keyboard, interrupt topology, scheduler,
+and Boot Ledger that existed before the milestone remain underneath it.
+
+The composition is deliberately spare: the canonical mark on a white field,
+small Spleen bitmap labels, one dark ledger indicator, and a compact control
+strip whose one-pixel bevels recall late workstation interfaces without
+copying a contemporary desktop. The mark is decoded from the exact canonical
+asset and is neither recoloured nor redrawn.
+
+![First Light at 1024 by 768](../assets/pyrenis-first-light.png)
+
+## Ownership and lifetime
+
+`struct ui_state` is one fixed, long-lived object in `src/kernel/ui.c`. Layout,
+theme, pointer position, focus, hover, press, active panel, event counters, and
+render counters live together. `ui_construct` initializes it once after the
+typed boot plan has established its prerequisites. `ui_activate` performs the
+one initial full draw. The single long-lived shell/UI control loop then owns
+all state transitions and drawing until shutdown; interrupt handlers publish
+bounded input facts only.
+
+The event queue is a fixed array of 64 `struct ui_event` entries. It has no
+heap ownership and counts accepted, drained, coalesced, and dropped events.
+Adjacent pointer movements coalesce. When a non-movement event reaches a full
+queue, the oldest movement is evicted if one exists. A full queue containing
+only transitions refuses the new event and increments `dropped`; it never
+overwrites unreported state. Idle control flow executes `hlt` and does not
+redraw or busy-spin.
+
+Public types are in `include/pyrenis/ui.h`: named status, event, element,
+panel, action, and pointer-button enums plus `ui_point`, half-open `ui_rect`,
+`ui_event`, `ui_theme`, `ui_layout`, `ui_dock_item`, `ui_state`, and
+`ui_proof`. The cursor is a 12 by 18 code-native mask with hotspot `(0, 0)`.
+
+## Theme and composition
+
+Only the documented identity palette is installed:
+
+| Role | RGB |
+| --- | --- |
+| White field and highlights | `#FFFFFF` |
+| Pyrenis bronze | `#806230` |
+| Deep brown | `#2A2117` |
+| Muted bronze | `#A9874E` |
+| Pale bronze tint | `#E5DFD5` |
+
+The pale tint is computed independently for each channel as
+`(bronze + 4 * white) / 5` with integer arithmetic. There is no floating point,
+alpha compositor, gradient, shadow, transparency, animation, or runtime theme.
+
+The normal desktop contains the exact 396 by 335 mark, `PYRENIS`,
+`machine state, proved.`, and a 144 by 22 ledger indicator. The indicator is
+derived from the published installed ledger: it says `LEDGER PASS` only when
+that ledger is not degraded. No default-desktop label contains an address,
+cycle count, or timing value.
+
+## Deterministic layout
+
+`ui_layout_build` accepts widths from 800 through 1920 and heights from 600
+through 1200. Smaller or larger modes return `unsupported First Light
+framebuffer geometry`. Construction is pure and validation happens before the
+first desktop draw.
+
+The constants are:
+
+- mark: 396 by 335, centred horizontally, at y=18 for 600-pixel modes and y=30
+  otherwise;
+- wordmark: 56 by 16, four pixels below the mark;
+- motto: 176 by 16, twenty pixels below the wordmark origin;
+- ledger indicator: 144 by 22, twenty-two pixels below the motto origin;
+- dock: 438 by 50, centred, eighteen pixels above the bottom edge;
+- dock items: four 104 by 34 half-open rectangles, two pixels apart and eight
+  pixels inside the dock;
+- icons: 16 by 16 at the left of each item;
+- panel width: the lesser of 680 and `surface width - 64`;
+- panel height: 344 at heights of 720 or more, otherwise 300;
+- panel position: centred, eighteen pixels above the dock;
+- panel client: eight pixels inside each side, beginning 32 pixels below the
+  panel top.
+
+At 1024 by 768 the mark begins at `(314,30)`, the dock at `(293,700)`, and the
+panel at `(172,338)`. At 800 by 600 those origins are `(202,18)`, `(181,532)`,
+and `(60,214)`. At 1280 by 720 they are `(442,30)`, `(421,652)`, and
+`(300,290)`.
+
+Validation proves every rectangle is inside the surface, the four items do not
+overlap, the client is non-empty, each baseline fits, the cursor hotspot is
+inside its mask, and each interactive item owns one unique typed ID. All
+rectangles are half-open: left and top edges belong to a rectangle; right and
+bottom edges do not. Hit testing scans every item and refuses ambiguity rather
+than making declaration order a z-order rule. Checked addition is used before
+rectangle ends, intersections, unions, and text advances are accepted.
+
+## Dock and panels
+
+The first four items are fixed and typed:
+
+| Item | Element ID | Action | Panel |
+| --- | --- | --- | --- |
+| Terminal | `UI_ELEMENT_DOCK_TERMINAL` | `UI_ACTION_TOGGLE_TERMINAL` | `UI_PANEL_TERMINAL` |
+| Ledger | `UI_ELEMENT_DOCK_LEDGER` | `UI_ACTION_TOGGLE_LEDGER` | `UI_PANEL_LEDGER` |
+| System | `UI_ELEMENT_DOCK_SYSTEM` | `UI_ACTION_TOGGLE_SYSTEM` | `UI_PANEL_SYSTEM` |
+| About | `UI_ELEMENT_DOCK_ABOUT` | `UI_ACTION_TOGGLE_ABOUT` | `UI_PANEL_ABOUT` |
+
+Each has normal, hovered, focused, pressed, and active states. Focus is a
+one-pixel dotted inset, so it remains visible without a pointer. Icons are
+drawn from bounded fill and stroke primitives; there is no icon font, emoji,
+image, callback payload, or launch animation.
+
+Only one fixed panel can be open. `Tab` advances focus, `Shift+Tab` moves it
+backward, `Enter` activates, and `Escape` closes. Focus wraps across all four
+items. Terminal installs the existing screen console into the validated panel
+client and uses the existing shell parser. Ledger reads the published receipt
+set. System reports stable CPU, memory, PCI, timer, and framebuffer shapes with
+no physical addresses. About identifies Pyrenis 0.2.0 and the First Light
+milestone. Panels are neither draggable nor resizable.
+
+Shell characters are routed to the graphical terminal only while Terminal is
+active. Serial output remains independent. The screen retains a fixed 160 by
+48 cell backing store and reflows the most recent rows into a new validated
+viewport, so hiding and reopening Terminal preserves a bounded tail. A clipped
+terminal redraw cannot reach the dock or cursor.
+
+## Rendering and cursor
+
+All desktop work goes through `struct surface`; UI and pointer code contain no
+direct framebuffer write. The initial activation may present the full surface.
+Later cursor, focus, dock, and panel transitions union bounded damage and
+present only that rectangle. The surface's existing volatile WC row copy and
+post-store `sfence` are unchanged and are statically required by `make verify`.
+
+The cursor mask is drawn last in white and bronze. Movement unions its old and
+new 12 by 18 bounds, restores the cached pixels below the old mask, then draws
+at the new clamped position. The IRQ12 handler never draws. When the pointer is
+declared absent, `pointer_present` is false and no mask is composed.
+
+Render counters cover full draws, damaged draws, pixels copied, cursor moves,
+dock-state changes, panel transitions, damage rectangles, and glyphs. Drawing
+the same installed state twice must reproduce the complete cached-surface hash;
+a one-state mutation must change the synthetic hash.
+
+## Boot Ledger transition
+
+First Light adds these stages:
+
+1. `BOOT_STAGE_UI_FONT`
+2. `BOOT_STAGE_POINTER_DECISION`
+3. `BOOT_STAGE_POINTER_OUTCOME`
+4. `BOOT_STAGE_UI_LAYOUT`
+5. `BOOT_STAGE_DESKTOP_CONSTRUCTION`
+6. `BOOT_STAGE_DESKTOP_ACTIVATION`
+7. `BOOT_STAGE_FIRST_LIGHT_PROOF`
+
+It adds capabilities for verified UI font, pointer decision, mutually
+exclusive pointer-present and pointer-absent outcomes, validated layout,
+available and activated desktop shell, and completed installed proof. Pointer
+absence is a neutral optional skip: it contributes the absence capability and
+does not degrade the ledger.
+
+Desktop activation has ten declared prerequisites: desktop construction,
+installed framebuffer output, the independent framebuffer-WC proof, cached
+surface, verified UI font, validated layout, keyboard, threading, scheduler,
+and inherited closing boot proofs. Installed verification also asserts the WC
+and scheduler edges semantically, so deleting either requirement after plan
+validation is rejected by the named capability.
+
+The bounded capacities are 32 stages, 32 receipts, ten capabilities per stage,
+and two proof counters per receipt. With the QEMU pointer present, the installed
+shape is 30 stages, 30 receipts, 34 established capabilities, zero skips, and
+fingerprint `0x44D80F3C1AA68CB9`. The forced absence control is 30/30/34 with
+one neutral skip and fingerprint `0x60D92F66EE5D2890`.
+
+Framebuffer, font, layout, construction, or activation failure is an optional
+degraded path. It cannot forge later capabilities, and the already-established
+serial shell remains reachable.
+
+## Installed proof and QEMU scenario
+
+The installed proof checks the canonical logo through the unchanged asset
+pipeline; the UI font receipt, bytes, fingerprint, and metrics; exact theme;
+validated installed layout; all four item IDs/actions once; valid focus,
+hover, press, and panel IDs; cursor bounds or declared absence; WC-before-draw
+ordering; scheduler, thread, memory, keyboard, and closing-proof dependencies;
+single execution through receipts; and exact plan and receipt fingerprints.
+It then redraws the same state and requires an identical complete surface hash.
+
+`make qemu-test-first-light` uses guest exit `0x2F` and host status 95. It walks
+the real installed ledger, injects real three-byte packets through 8042 command
+`0xD3`, exercises hover/press/release and every panel, runs keyboard navigation,
+checks the synthetic absence plan, proves old/new cursor damage, reads selected
+logo/text/dock/panel/cursor pixels, and recomputes the ledger fingerprint.
+
+`tools/capture-first-light.py` uses QMP to capture the emulated display itself.
+It produces clean, focus/hover, and terminal-with-ledger frames. The committed
+PNG files are 1024 by 768 and are not edited. The comparator treats the full
+frame as stable because these views expose no variable timings or addresses;
+its self-test flips one stable pixel and requires refusal.
+
+## Deliberate controls
+
+Every mutation below used a file snapshot, a clean build, the narrowest proof,
+and snapshot restoration. The observed results are from QEMU TCG unless the
+control is explicitly a source/comparator assertion.
+
+| # | Deliberate break | Observed refusal |
+| ---: | --- | --- |
+| 1 | Corrupt packed-font magic. | Pure boot stage: `UI font header is missing or malformed`. |
+| 2 | Remove the last declared glyph byte. | Pure boot stage: `UI font bitmap is truncated`. |
+| 3 | Duplicate the Ledger item ID. | Pure boot stage: `duplicate UI element identifier`. |
+| 4 | Place dock items one pixel into each other. | Pure boot stage: `dock item rectangles overlap`. |
+| 5 | Wrap the mark rectangle's right edge. | Pure boot stage: `UI rectangle arithmetic overflowed`. |
+| 6 | Remove activation's WC prerequisite. | Installed ledger: `stage desktop activation; capability framebuffer WC independently proved`. |
+| 7 | Remove activation's scheduler prerequisite. | Installed ledger: `stage desktop activation; capability scheduler available`. |
+| 8 | Call `ui_activate` from `kernel.c`. | Build assertion: `First Light boot stage bypasses the Boot Ledger`. |
+| 9 | Call `ui_flush` in the IRQ12 handler. | Build assertion: `PS/2 pointer interrupt path attempts UI drawing`. |
+| 10 | Damage only the new cursor bounds. | `ST FAIL first-light: First Light cursor damage left a trail`. |
+| 11 | Remove the cached-surface fence call. | Build assertion: `cached-surface WC present lost its sfence`. |
+| 12 | Write one UI pixel through `framebuffer_write_pixel`. | Build assertion: `First Light bypasses the cached surface`. |
+| 13 | Disable adjacent movement coalescing. | Pure boot stage: `pointer movement did not coalesce in the fixed event queue`. The valid test also fills 64 entries and retains the button transition by evicting movement. |
+| 14 | Accept an unsynchronised first packet byte. | Pure boot stage: `PS/2 packet desynchronization did not recover`; the valid continuation produces no phantom button. |
+| 15 | Force declared pointer absence. | `boot-ledger` passed with 30 stages, 30 receipts, 34 capabilities, one neutral skip, no pointer-success capability, and active keyboard focus. |
+| 16 | Force desktop construction failure. | Interactive boot retained `pyr>`; activation/proof lines and their capabilities were absent. |
+| 17 | Falsify the UI-font receipt size. | Installed ledger: `stage First Light UI font; capability UI font verified`. |
+| 18 | Change the UI-font stage ID after validation. | `plan fingerprint mismatch`. |
+| 19 | Delete the permanent installed-proof line. | Normal boot exited normally, then the transcript comparator refused: `normal transcript omitted permanent First Light proof line`. |
+| 20 | Flip one stable screenshot pixel. | Comparator: `single stable-pixel mutation refused`. |
+| 21 | Change the First Light guest exit to `0x30`. | Exit comparator observed host 97 instead of required 95. |
+
+No correctness control passed unexpectedly.
+
+## Verification record
+
+The final TCG record contains 20 complete clean 32-scenario suites: 640
+successful guest boots with every inherited host exit unchanged and First Light
+at host exit 95. Four attempts made while two complete suites were competing for
+the host were retained as flakes rather than counted as clean sweeps:
+
+| Attempt | Recorded failures | Observed cause | Complete serial rerun |
+| ---: | --- | --- | --- |
+| 6 | `pm-timer` | PM/APIC interval disagreement under host starvation | 32/32 pass |
+| 9 | `normal`, `pm-timer`, `first-light` | PM/APIC interval disagreement; two boots reached the inherited panic path | 32/32 pass |
+| 15 | `pm-timer` | PM/APIC interval disagreement under host starvation | 32/32 pass |
+| 18 | `normal`, `first-light` | inherited sleep overshoot and PM/APIC interval disagreement | 32/32 pass |
+
+That is seven recorded flaky boots. None failed a First Light UI, font,
+pointer, layout, damage, ledger, or screenshot assertion. Serial replacement
+sweeps eliminated the host contention and every affected complete suite passed.
+
+The available Windows hardware accelerator, WHPX, passed one complete 32/32
+suite. KVM was unavailable because this host has no Linux/KVM environment, and
+bare-metal display/input evidence was unavailable. Neither unavailable target
+is represented as tested.
+
+The committed 1024 by 768 clean, focus/hover, and terminal/ledger QEMU captures
+all match their complete stable-pixel references. The comparator's mutation
+self-test refuses a single changed pixel. The inherited transcript plus the
+permanent First Light line matches the 32-scenario contract. Final audits found
+the exact canonical logo SHA-256, a byte-reproducible packed font, no compiler
+or linker warnings, no undefined runtime symbols, no RWX load segment, no
+linked relocations, no floating-point/MMX/SSE/AVX instructions, no legacy
+product names, no direct UI framebuffer writes, and no drawing from IRQ12.
+
+## Limits
+
+First Light has no userspace, processes, application ABI, filesystem-backed
+applications, networking, GPU acceleration, USB/Bluetooth/touch input, wheel,
+gestures, live mode switching, animation, dynamic fonts/themes/modules, or SMP
+scheduler expansion. It is not a compositor security boundary or a formally
+verified GUI. Window management, movable/resizable windows, process isolation,
+and physical-machine display/input evidence remain later work.
