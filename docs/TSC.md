@@ -1,6 +1,6 @@
 # Time-stamp counter reference
 
-The local APIC timer was calibrated against the PIT, which left Seneri with one
+The local APIC timer was calibrated against the PIT, which left OpenSeneri with one
 clock and no way to check it. This increment adds a second, independently
 calibrated clock, so the two can be compared.
 
@@ -18,7 +18,7 @@ not the retirement itself.
 ## Reading the counter
 
 `RDTSC` is not a serializing instruction, so a read may be reordered by a few
-instructions relative to the surrounding code. Every interval Seneri measures
+instructions relative to the surrounding code. Every interval OpenSeneri measures
 with it is milliseconds wide, far larger than that window, and the primitive is
 documented as unsuitable for short precise intervals, which would need a fenced
 variant of their own.
@@ -56,14 +56,14 @@ neither has an honest duration to report.
 
 The processor reports whether its counter ticks at a constant rate through power
 and thermal transitions, in `CPUID.80000007H:EDX[8]`. On the supported QEMU
-target that bit is **not** set, and Seneri reports it rather than assuming it:
+target that bit is **not** set, and OpenSeneri reports it rather than assuming it:
 
 ```text
-Seneri OS: TSC calibrated at 2802032223 Hz, invariant no
+OpenSeneri: TSC calibrated at 2802032223 Hz, invariant no
 ```
 
 So the counter is usable here as a second opinion about an interval measured
-moments ago, and it is not yet a time base Seneri may trust across long spans or
+moments ago, and it is not yet a time base OpenSeneri may trust across long spans or
 power states. Retiring the PIT needs a reference that is trustworthy on its own,
 which means either a target that reports an invariant counter or the ACPI power
 management timer. Recording the bit now is what makes that decision evidence
@@ -88,8 +88,8 @@ APIC timer.
 Normal boot additionally requires:
 
 ```text
-Seneri OS: TSC calibrated at <n> Hz, invariant <yes|no>
-Seneri OS: TSC reference established
+OpenSeneri: TSC calibrated at <n> Hz, invariant <yes|no>
+OpenSeneri: TSC reference established
 ```
 
 A negative control confirms the cross-check is real: multiplying the calibrated

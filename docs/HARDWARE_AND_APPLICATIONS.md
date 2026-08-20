@@ -1,6 +1,6 @@
 # Drivers, wireless, and applications
 
-How Seneri gets real hardware and real programs, and what each route actually
+How OpenSeneri gets real hardware and real programs, and what each route actually
 costs. This document decides direction; it implements nothing.
 
 The short version: **for applications, copy Linux's interface and none of its
@@ -24,7 +24,7 @@ the other, so a combined work cannot be distributed under either.
 The consequence is concrete, but it is **narrower than it first appears**, and
 an earlier draft of this document overstated it. The correct statement is:
 
-> **A GPL-2.0-only file cannot be compiled into the Seneri kernel.** Not
+> **A GPL-2.0-only file cannot be compiled into the OpenSeneri kernel.** Not
 > "difficult" - not permitted, no matter how good the shim layer is.
 >
 > But **not every file in Linux is GPL-2.0-only.** A great deal of it,
@@ -38,18 +38,18 @@ Section 3 works that correction through on the case where it matters most.
 FreeBSD's LinuxKPI is not evidence that GPL-2.0-only driver code may be absorbed
 wholesale. The compatibility layer and imported drivers carry their own
 permissive or dual licences, and the usable answer still comes from the SPDX
-identifier and dependencies of each file. Seneri requires that review for every
+identifier and dependencies of each file. OpenSeneri requires that review for every
 file; a GPL-2.0-only dependency remains incompatible with this GPL-3.0-only
 kernel.
 
 Three ways out, and only the third needs no permission:
 
-1. **Relicense Seneri** to GPL-2.0-or-later, or dual-license it. This is a
+1. **Relicense OpenSeneri** to GPL-2.0-or-later, or dual-license it. This is a
    decision only the copyright holder can make, it is effectively irreversible,
    and it should not be made to acquire a driver.
 2. **Separate the driver architecturally.** A driver in its own address space,
    talking over a documented IPC boundary, is more plausibly a separate work
-   than one linked into `seneri.elf`, but placement in userspace is not an
+   than one linked into `openseneri.elf`, but placement in userspace is not an
    automatic licence exemption. Review each driver, dependency, transport, and
    shared-memory interface on its actual coupling.
 3. **Check the SPDX line before assuming either way.** A dual-licensed
@@ -193,7 +193,7 @@ firmware generally does not do. That is what section 2 is for: run
 `wpa_supplicant` as an application rather than reimplementing it.
 
 **USB before PCIe, if the choice is free.** A USB FullMAC adapter needs an xHCI
-driver, which is a standardised class driver Seneri wants anyway for keyboards
+driver, which is a standardised class driver OpenSeneri wants anyway for keyboards
 and storage, and it moves the device outside the machine so a broken driver
 cannot wedge the platform. One xHCI driver serves every USB controller ever
 made; a PCIe Wi-Fi driver serves one vendor's parts.
@@ -222,14 +222,14 @@ public and stable.
 
 `virtio` deserves a specific note: it is the cheapest of all of them, it works in
 exactly the QEMU this project already tests in, and it makes a networked,
-disk-backed Seneri testable in CI long before any physical hardware is involved.
+disk-backed OpenSeneri testable in CI long before any physical hardware is involved.
 
 ## 5. Drivers belong in userspace
 
 The licence argument in section 1 and this project's stated values point the same
 way, which is a good sign.
 
-A driver linked into `seneri.elf` is part of the kernel's licence domain, runs
+A driver linked into `openseneri.elf` is part of the kernel's licence domain, runs
 with full supervisory privilege, and can take the machine down. A driver running
 in ring 3, in its own address space, reaching its device through a mapping the
 kernel granted and talking to the rest of the system over a documented IPC
@@ -269,7 +269,7 @@ executable failure test, and a boot that proves it or refuses.
    `docs/IO_APIC.md`'s deferred work entirely: **a message-signalled interrupt is
    a memory write to the local APIC, so it is edge-triggered by construction and
    needs no redirection entry, no trigger-mode decision, and no directed
-   end-of-interrupt.** Every PCIe device Seneri would want — including every
+   end-of-interrupt.** Every PCIe device OpenSeneri would want — including every
    Wi-Fi part — supports it. Level-triggered I/O APIC routing remains worth
    having for legacy devices, but it stops being on the critical path to
    hardware.

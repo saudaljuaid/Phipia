@@ -99,7 +99,7 @@ enum boot_status {
  * Multiboot2 3.6.12 describes a framebuffer with a 32-byte common part and a
  * colour description whose shape depends on the type. Only direct RGB is
  * modelled: an indexed palette and EGA text are different things wearing the
- * same tag, and Seneri refuses each by name rather than guessing.
+ * same tag, and OpenSeneri refuses each by name rather than guessing.
  */
 #define MULTIBOOT2_FRAMEBUFFER_COMMON_SIZE 32U
 #define MULTIBOOT2_FRAMEBUFFER_RGB_SIZE 38U

@@ -2,10 +2,9 @@
 //! The boot logo: a bounded decoder for a run-length encoded image.
 //!
 //! The image is produced by `tools/make-logo-asset.py` at build time. The
-//! kernel cannot decode the PNG it comes from - that inflates to 16 MB, larger
-//! than the whole kernel heap, and a DEFLATE decoder is a great deal of attack
-//! surface to run before anything else works. So the expensive half happens at
-//! development time and this reads a format that can be validated in one pass.
+//! kernel deliberately carries no PNG or DEFLATE parser. The general-purpose
+//! half runs at development time and this reads a small format that can be
+//! validated in one pass.
 //!
 //! Every length in the stream is attacker-controlled in principle, so nothing
 //! here indexes without a check. That is the entire argument for this file
@@ -18,7 +17,7 @@ const MAGIC: [u8; 4] = *b"SRL1";
 /// One length byte then four RGBA bytes.
 const RUN_SIZE: usize = 5;
 
-/// A Seneri policy bound. The framebuffer this draws into is at least this
+/// An OpenSeneri policy bound. The framebuffer this draws into is at least this
 /// wide on every mode the kernel accepts, and a header claiming more is a
 /// header describing a different image than the one that was built.
 const MAX_DIMENSION: u32 = 1024;

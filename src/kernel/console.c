@@ -193,7 +193,7 @@ _Noreturn void console_halt(void)
 
 _Noreturn void console_panic(const char *message)
 {
-    console_write("Seneri OS PANIC: ");
+    console_write("OpenSeneri PANIC: ");
     console_write(message);
     console_putc('\n');
     console_halt();

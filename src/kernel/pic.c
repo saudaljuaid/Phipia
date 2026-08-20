@@ -174,8 +174,8 @@ void pic_send_eoi(uint8_t irq)
 
 /*
  * Mask every line and refuse to unmask one again. The masks are read back from
- * the interrupt mask registers rather than from Seneri's shadow copy, because
- * the point of retirement is what the hardware holds, not what Seneri believes.
+ * the interrupt mask registers rather than from OpenSeneri's shadow copy, because
+ * the point of retirement is what the hardware holds, not what OpenSeneri believes.
  */
 enum pic_status pic_retire(void)
 {

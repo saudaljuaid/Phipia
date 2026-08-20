@@ -15,8 +15,8 @@ use crate::font;
 use crate::logo::{self, Format, Status};
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
-/// The Makefile points `SENERI_LOGO_BLOB` at it; there is no committed copy.
-static LOGO: &[u8] = include_bytes!(env!("SENERI_LOGO_BLOB"));
+/// The Makefile points `OPENSENERI_LOGO_BLOB` at it; there is no committed copy.
+static LOGO: &[u8] = include_bytes!(env!("OPENSENERI_LOGO_BLOB"));
 
 fn status_code(status: Status) -> i32 {
     status as i32
@@ -105,9 +105,9 @@ pub unsafe extern "C" fn seneri_logo_decode(
 }
 
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build
-/// time. The Makefile points `SENERI_FONT_BLOB` at it; there is no committed
+/// time. The Makefile points `OPENSENERI_FONT_BLOB` at it; there is no committed
 /// copy of the blob, only the ASCII art it is built from.
-static FONT: &[u8] = include_bytes!(env!("SENERI_FONT_BLOB"));
+static FONT: &[u8] = include_bytes!(env!("OPENSENERI_FONT_BLOB"));
 
 fn font_status_code(status: font::Status) -> i32 {
     status as i32

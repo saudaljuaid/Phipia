@@ -25,7 +25,7 @@ const MAGIC: [u8; 4] = *b"SNF1";
 /// property of the format rather than a policy: a wider cell needs a wider row.
 const MAX_WIDTH: u32 = 8;
 
-/// A Seneri policy bound. The smallest mode the kernel accepts is 640x480, so a
+/// An OpenSeneri policy bound. The smallest mode the kernel accepts is 640x480, so a
 /// cell taller than this could not fit a single row of text on screen.
 const MAX_HEIGHT: u32 = 32;
 

@@ -32,7 +32,7 @@
  * mistakes, so an unknown command is a line of output and not an incident.
  */
 
-#define SHELL_PROMPT "seneri> "
+#define SHELL_PROMPT "open> "
 
 /* What splits a command from its arguments. Nothing exotic; space and tab. */
 static bool is_separator(char character)
@@ -209,7 +209,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Seneri OS, an x86_64 kernel built from first principles.\n");
+    console_write("OpenSeneri, an x86_64 kernel built from first principles.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');

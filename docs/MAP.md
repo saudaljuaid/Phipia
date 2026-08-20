@@ -1,6 +1,6 @@
 # Where everything is
 
-Seneri is forty-three source files and twenty-eight documents. This page exists
+OpenSeneri is forty-three source files and twenty-eight documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -175,7 +175,7 @@ inside the framebuffer's own proof.
 | "what does this function actually do?" | its `*_self_test` — it is the shortest complete description, because it has to be |
 | "why is this line here?" | `git log -S'<the line>' -- <file>` — most non-obvious lines were explained by whoever added them |
 | "what is this kernel carrying?" | `docs/DEBT.md`, measured rather than remembered |
-| "how do I change something?" | `docs/WORKING_ON_SENERI.md` |
+| "how do I change something?" | `docs/WORKING_ON_OPENSENERI.md` |
 | "what is the plan?" | `docs/HARDWARE_AND_APPLICATIONS.md` |
 
 ## How to re-measure this page

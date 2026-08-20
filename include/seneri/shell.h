@@ -9,7 +9,7 @@
 /*
  * A command line.
  *
- * This is the first thing in Seneri that exists to be operated rather than to
+ * This is the first thing in OpenSeneri that exists to be operated rather than to
  * be correct. Everything under it refuses, verifies and panics; this one takes
  * whatever a person types and has to keep going regardless.
  *

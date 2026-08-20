@@ -12,7 +12,7 @@
  * an offset into the blob, which is the same argument that put the logo decoder
  * in Rust and is stated once in docs/RUST.md. The difference is frequency: a
  * logo is decoded once at boot, a glyph is looked up once per character
- * printed, so this is the first Rust in Seneri on a hot path.
+ * printed, so this is the first Rust in OpenSeneri on a hot path.
  *
  * The glyph bitmaps derive from GNU Unifont under GPL-2-or-later;
  * tools/font8x16.txt carries the attribution and is the committed source.

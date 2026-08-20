@@ -14,7 +14,7 @@
  * Enumerate the PCI configuration space the machine actually has.
  *
  * Nothing above this layer can name a device until something below it has
- * counted them, and every driver Seneri will ever have - storage, network,
+ * counted them, and every driver OpenSeneri will ever have - storage, network,
  * wireless - starts by being found here. So this increment finds them and
  * reports what they are, and deliberately does nothing else: every access it
  * makes is a read, so enumerating cannot disturb a device that is already
@@ -78,7 +78,7 @@ static uint64_t ecam_address(struct pci_address address, uint16_t offset)
         (uint64_t)offset;
 
     /*
-     * Seneri maps one 2 MiB region of a window firmware may declare far larger,
+     * OpenSeneri maps one 2 MiB region of a window firmware may declare far larger,
      * so the mapped size is the bound that matters rather than the declared
      * one. A register past it is refused, not wrapped.
      */
@@ -688,7 +688,7 @@ enum pci_status pci_initialize(const struct acpi_mcfg *mcfg, bool mcfg_present)
     /*
      * The port pair is two registers used as one, so a read that lands between
      * the address write and the data read answers about a different function.
-     * Nothing in Seneri reads configuration space from an interrupt handler,
+     * Nothing in OpenSeneri reads configuration space from an interrupt handler,
      * and this is the refusal that keeps it that way.
      */
     if (cpu_interrupts_enabled()) {

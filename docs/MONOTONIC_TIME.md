@@ -1,6 +1,6 @@
 # Monotonic time and deadlines
 
-Seneri had three clocks that agreed and nothing that could use them. Each one
+OpenSeneri had three clocks that agreed and nothing that could use them. Each one
 handed callers a raw counter sample and left them to remember which counter it
 came from, how wide it was, and what its rate meant. Nothing that sleeps or
 schedules can be written against that.
@@ -23,7 +23,7 @@ since `docs/PIT_RETIREMENT.md` its rate is derived from the ACPI timer, so
 nothing is given up by preferring it.
 
 ```text
-Seneri OS: monotonic clock on time-stamp counter
+OpenSeneri: monotonic clock on time-stamp counter
 ```
 
 ### Monotonicity is the contract
@@ -153,10 +153,10 @@ fire and its identifier goes stale, and the table settles empty.
 Normal boot additionally requires:
 
 ```text
-Seneri OS: monotonic clock on time-stamp counter
-Seneri OS: slept 50516366 ns for a 50000000 ns deadline
-Seneri OS: deadline timers online
-Seneri OS: monotonic time established
+OpenSeneri: monotonic clock on time-stamp counter
+OpenSeneri: slept 50516366 ns for a 50000000 ns deadline
+OpenSeneri: deadline timers online
+OpenSeneri: monotonic time established
 ```
 
 A sleep is the strongest single check here: it can only return on time if the

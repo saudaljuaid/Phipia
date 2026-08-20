@@ -9,7 +9,7 @@
 
 /*
  * Intel SDM volume 3A section 11.9 requires the spurious vector's low four
- * bits to be set on some processor generations, so Seneri fixes it at 0xFF.
+ * bits to be set on some processor generations, so OpenSeneri fixes it at 0xFF.
  */
 #define APIC_SPURIOUS_VECTOR UINT8_C(0xFF)
 

@@ -1,6 +1,6 @@
-# Rust in Seneri
+# Rust in OpenSeneri
 
-Seneri is a C kernel with one Rust component. This document argues where the
+OpenSeneri is a C kernel with one Rust component. This document argues where the
 line goes, and why it is not where people usually put it.
 
 ## The rule
@@ -57,10 +57,11 @@ index is checked.
 
 `src/rust/lib.rs` — the crate root and the panic handler.
 
-The image itself is not committed. `tools/make-logo-asset.py` converts
-`assets/seneri-logo.png` at build time: the kernel cannot decode the PNG,
-because it inflates to 16 MB — larger than the entire kernel heap — and a
-DEFLATE decoder is a great deal of code to run before anything else works.
+The source PNG is committed; the derived stream is not.
+`tools/make-logo-asset.py` converts `assets/openseneri-logo.png` at build time.
+The kernel deliberately carries no PNG or DEFLATE parser, so the general-purpose
+format stays outside the image and the boot path receives a small stream it can
+validate in one bounded pass.
 
 ## How it is built
 
@@ -103,8 +104,8 @@ one pixel short, and trailing bytes after the last pixel. It also checks that
 alpha actually blends — a fully transparent run must leave exactly the
 background, and the same pixel over black and over white must differ.
 
-Normal boot then decodes the real image, blits it centred, and **reads all
-65,536 pixels back off the screen** to compare against the decode.
+Normal boot then decodes the real image, blits it centred, and **reads every
+decoded pixel back off the screen** to compare against the decode.
 
 ### Negative controls
 
@@ -125,7 +126,7 @@ drags in `core`'s formatting and location machinery, that machinery needs
 relocations, and the relocations need a global offset table this kernel asserts
 it does not have.
 
-The corollary is visible in the finished image: `nm` on `seneri.elf` finds no
+The corollary is visible in the finished image: `nm` on `openseneri.elf` finds no
 Rust panic path at all. Not a dormant one — none. Every fallible operation in
 the decoder returns a status, the compiler proved no panic is reachable, and
 optimised the handler away.
