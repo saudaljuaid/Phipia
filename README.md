@@ -18,10 +18,10 @@
 </p>
 
 <p align="center">
-  <img src="assets/pyrenis-shell.png" alt="Pyrenis graphical console at the pyr prompt" width="820">
+  <img src="assets/pyrenis-first-light.png" alt="Pyrenis First Light desktop shell" width="820">
 </p>
 
-<p align="center"><sub>A real 1024×768 Pyrenis boot in QEMU, waiting at <code>pyr&gt;</code>.</sub></p>
+<p align="center"><sub>A real 1024×768 Pyrenis First Light boot captured from QEMU.</sub></p>
 
 ## About
 
@@ -53,9 +53,9 @@ runtime image parser. The complete asset and naming contract is in
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, PCI configuration through ports and ECAM, bridge-aware enumeration |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
-| Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console, PS/2 keyboard, and shell |
+| Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console and shell, PS/2 keyboard/pointer, software cursor, and bounded First Light desktop shell |
 | Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, and 31 deterministic QEMU scenarios |
+| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, actual framebuffer screenshots, and 32 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -78,7 +78,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 31 deterministic fault, memory, device, and kernel scenarios
+make qemu-tests   # all 32 deterministic fault, memory, device, and UI scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -90,6 +90,8 @@ The build produces `build/pyrenis.elf` and `build/pyrenis.iso`.
 - [`docs/DAY_ONE.md`](docs/DAY_ONE.md) — the boot contract and first verified milestone.
 - [`docs/BRAND.md`](docs/BRAND.md) — canonical name, source logo, palette, and public naming rules.
 - [`docs/BOOT_LEDGER.md`](docs/BOOT_LEDGER.md) — typed startup capabilities, canonical planning, receipts, and installed proof.
+- [`docs/FIRST_LIGHT.md`](docs/FIRST_LIGHT.md) — desktop state, layout, dock, panels, damage, installed proof, screenshots, and controls.
+- [`docs/UI_FONT.md`](docs/UI_FONT.md) and [`docs/POINTER.md`](docs/POINTER.md) — the licensed packed face and IRQ12 input/cursor path.
 - [`docs/VIRTUAL_MEMORY.md`](docs/VIRTUAL_MEMORY.md) — page-table ownership and W^X proof.
 - [`docs/DEVICE_WINDOWS.md`](docs/DEVICE_WINDOWS.md) — bounded physical windows and their WB/WC/UC policy.
 - [`docs/IO_APIC.md`](docs/IO_APIC.md) — discovered interrupt routing and its controls.
@@ -108,7 +110,8 @@ controls.
 
 ## Current limits
 
-Pyrenis is still a foundation-stage kernel. The current `main` branch is
+Pyrenis is still a foundation-stage kernel. First Light is a fixed kernel
+desktop shell, not a window manager or userspace. The current `main` branch is
 single-core and kernel-only; it has no userspace, filesystem, storage or network
 driver, process isolation, or general application ABI. Hardware evidence is
 strongest in QEMU, with bare-metal coverage still an explicit goal.

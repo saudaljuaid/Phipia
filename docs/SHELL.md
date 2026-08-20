@@ -13,6 +13,14 @@ that reads keys does nothing else. `shell_feed` takes one character from
 anywhere — a key, a boot proof, a scenario — and `shell_run` is a loop that
 supplies them.
 
+First Light does not add another parser. The Terminal dock item installs the
+existing screen console in its validated panel client and leaves this command
+table and the `pyr> ` prompt unchanged. Serial output remains independent.
+Keyboard characters reach the line editor only while Terminal is active;
+desktop navigation consumes `Tab`, `Shift+Tab`, `Enter`, and `Escape` first.
+Hiding Terminal retains the fixed recent cell store, and reopening it redraws
+that bounded tail.
+
 That split is the only reason boot can prove this. **A shell tested by pretending
 to type is a shell whose parser was never separated from its input, and the
 pretending is the part that rots.**
@@ -141,7 +149,6 @@ confirms an unknown command is reported and counted without stopping anything.
   in and no filesystem to load it from.
 - **The line is a fixed 128 bytes** in `.bss`, not on the heap. It is one shell
   on one console; the day there are two, this is per-session state.
-- **`shell_run` polls a queue it cannot wait on.** It halts until any interrupt
-  and then looks, because there is still no way for an interrupt to wake a
-  specific thread. That is the scheduler change `docs/KEYBOARD.md` names, and it
-  is the last thing standing between this and a shell that genuinely sleeps.
+- **The shell/UI control loop cannot wait on a specific queue.** It halts until
+  any interrupt, drains UI and keyboard facts, and then looks again. A targeted
+  thread wake-up remains a scheduler change; idle still does not busy-spin.

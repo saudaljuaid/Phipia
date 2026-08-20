@@ -5,6 +5,10 @@ Pyrenis is the only current public name of this project. Public prose uses
 `pyrenis`; preprocessor guards and build environment variables use `PYRENIS`.
 The interactive prompt is `pyr>`.
 
+`Pyrenis First Light` is the public milestone name and `Pyrenis desktop shell`
+describes the implemented interface. First Light does not rename the operating
+system and is not presented as a separate product.
+
 ## Canonical mark
 
 `assets/pyrenis-logo.png` is the source of truth. It is the exact supplied
@@ -29,8 +33,12 @@ The palette is deliberately small:
 | --- | --- | --- |
 | Pyrenis bronze | `#806230` | Mark and graphical-console text |
 | White | `#FFFFFF` | Mark field and graphical-console background |
-| Deep brown | `#2A2117` | Repository contrast and neutral dark accents |
-| Muted bronze | `#A9874E` | Secondary repository accents only |
+| Deep brown | `#2A2117` | Repository contrast, First Light title bars and active controls |
+| Muted bronze | `#A9874E` | Secondary accents and pressed controls |
+| Pale bronze | `#E5DFD5` | First Light one-pixel chrome and control strip |
+
+The pale value is the documented bounded tint `(bronze + 4 * white) / 5`,
+computed per channel with integer division. No unrelated colour is introduced.
 
 The graphical console uses bronze on white. White is intentional: it joins the
 exact white field of the source logo to the surrounding framebuffer without
@@ -55,4 +63,5 @@ The source asset hash above is checked during review. `make verify` builds the
 native-size mark, verifies the branded ABI symbols and artifact names, and the
 normal boot contract requires the Pyrenis transcript. The `screen`, `shell` and
 normal scenarios exercise the white-and-bronze console and `pyr>` prompt on the
-actual framebuffer.
+actual framebuffer. `first-light` verifies the same palette in the installed
+desktop, and QMP captures the three unedited runtime PNGs under `assets/`.

@@ -8,6 +8,7 @@
 #include <pyrenis/apic.h>
 #include <pyrenis/apic_timer.h>
 #include <pyrenis/boot_ledger.h>
+#include <pyrenis/boot_plan.h>
 #include <pyrenis/clock.h>
 #include <pyrenis/console.h>
 #include <pyrenis/cpu.h>
@@ -21,6 +22,7 @@
 #include <pyrenis/pci.h>
 #include <pyrenis/pic.h>
 #include <pyrenis/pit.h>
+#include <pyrenis/pointer.h>
 #include <pyrenis/keyboard.h>
 #include <pyrenis/screen.h>
 #include <pyrenis/shell.h>
@@ -30,6 +32,8 @@
 #include <pyrenis/thread.h>
 #include <pyrenis/timer.h>
 #include <pyrenis/tsc.h>
+#include <pyrenis/ui.h>
+#include <pyrenis/ui_font.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -275,6 +279,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_BOOT_LEDGER;
     }
 
+    if (token_equals(value, length, "first-light")) {
+        return KERNEL_TEST_FIRST_LIGHT;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -352,6 +360,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2D);
     case KERNEL_TEST_BOOT_LEDGER:
         return UINT8_C(0x2E);
+    case KERNEL_TEST_FIRST_LIGHT:
+        return UINT8_C(0x2F);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -3916,6 +3926,9 @@ void kernel_test_run(
     case KERNEL_TEST_BOOT_LEDGER:
         /* Deferred until kernel_main publishes the fully verified receipts. */
         return;
+    case KERNEL_TEST_FIRST_LIGHT:
+        /* Deferred until the ledger and UI are both installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4096,6 +4109,347 @@ _Noreturn void kernel_test_complete_boot_ledger(
     kernel_test_pass();
 }
 
+static uint32_t first_light_pixel(uint32_t x, uint32_t y)
+{
+    uint32_t pixel = 0U;
+    struct surface *surface = screen_surface();
+
+    if (surface == NULL ||
+        surface_read_pixel(surface, x, y, &pixel) != SURFACE_STATUS_OK) {
+        kernel_test_fail("First Light cached-surface pixel read failed");
+    }
+    return pixel;
+}
+
+static void first_light_expect_text_pixel(
+    char character,
+    uint32_t x,
+    uint32_t baseline,
+    uint32_t expected,
+    const char *failure
+)
+{
+    const struct ui_font_metrics metrics = ui_font_get_metrics();
+    uint8_t glyph[UI_FONT_MAX_HEIGHT * UI_FONT_MAX_ROW_BYTES];
+
+    if (pyrenis_ui_font_glyph((uint32_t)(unsigned char)character, glyph,
+            sizeof(glyph)) != UI_FONT_STATUS_OK ||
+        baseline < metrics.ascent) {
+        kernel_test_fail("First Light stable text probe has no glyph");
+    }
+    for (uint32_t row = 0U; row < metrics.height; ++row) {
+        for (uint32_t column = 0U; column < metrics.width; ++column) {
+            const uint8_t byte = glyph[
+                row * metrics.row_bytes + column / 8U
+            ];
+
+            if ((byte & (uint8_t)(0x80U >> (column & 7U))) != 0U) {
+                if (first_light_pixel(x + column,
+                        baseline - metrics.ascent + row) != expected) {
+                    kernel_test_fail(failure);
+                }
+                return;
+            }
+        }
+    }
+    kernel_test_fail("First Light stable text probe glyph is empty");
+}
+
+static void first_light_process_ui(const char *failure)
+{
+    enum ui_status status = ui_process_events();
+
+    if (status == UI_STATUS_OK) {
+        status = ui_flush();
+    }
+    if (status != UI_STATUS_OK) {
+        kernel_test_fail(failure);
+    }
+}
+
+static void first_light_inject_pointer(
+    uint8_t flags,
+    int32_t delta_x,
+    int32_t delta_y,
+    const char *failure
+)
+{
+    const int8_t device_x = (int8_t)delta_x;
+    const int8_t device_y = (int8_t)-delta_y;
+    uint8_t packet_flags = flags;
+
+    if (device_x < 0) {
+        packet_flags |= UINT8_C(0x10);
+    }
+    if (device_y < 0) {
+        packet_flags |= UINT8_C(0x20);
+    }
+    cpu_interrupt_enable();
+    const enum pointer_status status = pointer_inject_packet(packet_flags,
+        (uint8_t)device_x, (uint8_t)device_y);
+    cpu_interrupt_disable();
+    if (status != POINTER_STATUS_OK) {
+        kernel_test_fail(failure);
+    }
+    first_light_process_ui(failure);
+}
+
+static void first_light_move_pointer(
+    uint32_t target_x,
+    uint32_t target_y,
+    const char *failure
+)
+{
+    for (uint32_t packets = 0U; packets < 64U; ++packets) {
+        const struct pointer_state pointer = pointer_get_state();
+        int32_t delta_x;
+        int32_t delta_y;
+
+        if (pointer.x == target_x && pointer.y == target_y) {
+            return;
+        }
+        delta_x = (int32_t)target_x - (int32_t)pointer.x;
+        delta_y = (int32_t)target_y - (int32_t)pointer.y;
+        if (delta_x > 127) {
+            delta_x = 127;
+        } else if (delta_x < -127) {
+            delta_x = -127;
+        }
+        if (delta_y > 127) {
+            delta_y = 127;
+        } else if (delta_y < -127) {
+            delta_y = -127;
+        }
+        first_light_inject_pointer(0U, delta_x, delta_y, failure);
+    }
+    kernel_test_fail("First Light cursor did not reach its dock target");
+}
+
+static void first_light_click_dock_item(
+    const struct ui_dock_item *item,
+    enum ui_panel_id expected_panel,
+    char title_initial
+)
+{
+    const uint32_t target_x = item->bounds.x + item->bounds.width / 2U;
+    const uint32_t target_y = item->bounds.y + item->bounds.height / 2U;
+    const uint32_t state_x = item->bounds.x + 4U;
+    const uint32_t state_y = item->bounds.y + 4U;
+    const struct ui_state *ui;
+
+    first_light_move_pointer(target_x, target_y,
+        "First Light real pointer movement failed");
+    ui = ui_get_state();
+    if (ui->hover != item->id ||
+        first_light_pixel(state_x, state_y) != ui->theme.white) {
+        kernel_test_fail("First Light dock hover state pixel is incorrect");
+    }
+
+    first_light_inject_pointer(UINT8_C(0x01), 0, 0,
+        "First Light pointer press failed");
+    ui = ui_get_state();
+    if (ui->pressed != item->id ||
+        first_light_pixel(state_x, state_y) != ui->theme.muted_bronze) {
+        kernel_test_fail("First Light dock pressed state pixel is incorrect");
+    }
+
+    first_light_inject_pointer(0U, 0, 0,
+        "First Light pointer release failed");
+    ui = ui_get_state();
+    if (ui->pressed != UI_ELEMENT_NONE ||
+        ui->active_panel != expected_panel ||
+        first_light_pixel(state_x, state_y) != ui->theme.deep_brown) {
+        kernel_test_fail("First Light dock active state pixel is incorrect");
+    }
+    if (first_light_pixel(ui->layout.panel.x + 4U,
+            ui->layout.panel.y + 4U) != ui->theme.deep_brown) {
+        kernel_test_fail("First Light panel title surface pixel is incorrect");
+    }
+    first_light_expect_text_pixel(title_initial, ui->layout.panel.x + 10U,
+        ui->layout.panel_title_baseline, ui->theme.white,
+        "First Light panel title glyph pixel is incorrect");
+}
+
+_Noreturn void kernel_test_complete_first_light(void)
+{
+    static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
+        UI_ELEMENT_DOCK_TERMINAL, UI_ELEMENT_DOCK_LEDGER,
+        UI_ELEMENT_DOCK_SYSTEM, UI_ELEMENT_DOCK_ABOUT
+    };
+    static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
+        UI_ACTION_TOGGLE_TERMINAL, UI_ACTION_TOGGLE_LEDGER,
+        UI_ACTION_TOGGLE_SYSTEM, UI_ACTION_TOGGLE_ABOUT
+    };
+    static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
+        UI_PANEL_TERMINAL, UI_PANEL_LEDGER, UI_PANEL_SYSTEM, UI_PANEL_ABOUT
+    };
+    static const char initials[UI_DOCK_ITEM_COUNT] = { 'T', 'L', 'S', 'A' };
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *font;
+    const struct boot_stage_receipt *layout;
+    const struct boot_stage_receipt *construction;
+    const struct boot_stage_receipt *activation;
+    const struct boot_stage_receipt *proof_receipt;
+    const struct boot_stage_receipt *wc;
+    const struct ui_state *ui = ui_get_state();
+    const struct ui_point initial_pointer = ui->pointer;
+    const struct ui_render_counters initial_renders = ui->renders;
+    struct ui_proof proof;
+
+    if (active_scenario != KERNEL_TEST_FIRST_LIGHT) {
+        kernel_test_fail("First Light completion used outside its scenario");
+    }
+    if (ledger == NULL || !ledger->validated || !ledger->executed ||
+        ledger->status != BOOT_LEDGER_STATUS_OK || ledger->degraded ||
+        !boot_ledger_fingerprint_valid(ledger)) {
+        kernel_test_fail("First Light installed ledger is invalid");
+    }
+    font = boot_ledger_receipt_for(ledger, BOOT_STAGE_UI_FONT);
+    layout = boot_ledger_receipt_for(ledger, BOOT_STAGE_UI_LAYOUT);
+    construction = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_DESKTOP_CONSTRUCTION);
+    activation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_DESKTOP_ACTIVATION);
+    proof_receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FIRST_LIGHT_PROOF);
+    wc = boot_ledger_receipt_for(ledger, BOOT_STAGE_FRAMEBUFFER_WC);
+    if (font == NULL || layout == NULL || construction == NULL ||
+        activation == NULL || proof_receipt == NULL || wc == NULL ||
+        font->result != BOOT_RECEIPT_RAN ||
+        layout->result != BOOT_RECEIPT_RAN ||
+        construction->result != BOOT_RECEIPT_RAN ||
+        activation->result != BOOT_RECEIPT_RAN ||
+        proof_receipt->result != BOOT_RECEIPT_RAN ||
+        wc->result != BOOT_RECEIPT_RAN) {
+        kernel_test_fail("First Light required stage receipt is missing");
+    }
+    if (wc->sequence >= construction->sequence ||
+        wc->sequence >= activation->sequence ||
+        construction->sequence >= activation->sequence ||
+        activation->sequence >= proof_receipt->sequence) {
+        kernel_test_fail("First Light desktop present preceded its WC proof");
+    }
+    if (!boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_UI_FONT_VERIFIED) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_UI_LAYOUT_VALIDATED) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE)) {
+        kernel_test_fail("First Light installed capability is missing");
+    }
+    if (!ui->active || !ui->pointer_present || !ui->ledger_pass ||
+        !pointer_is_present() || ui->layout.surface.width != 1024U ||
+        ui->layout.surface.height != 768U) {
+        kernel_test_fail("First Light installed UI state is incomplete");
+    }
+    for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
+        const struct ui_dock_item *item = &ui->layout.dock_items[index];
+
+        if (item->id != ids[index] || item->action != actions[index] ||
+            item->panel != panels[index]) {
+            kernel_test_fail("First Light dock typed action is incorrect");
+        }
+    }
+
+    if (first_light_pixel(ui->layout.logo.x + 198U,
+            ui->layout.logo.y + 100U) != ui->theme.bronze) {
+        kernel_test_fail("First Light logo stable pixel is incorrect");
+    }
+    first_light_expect_text_pixel('P', ui->layout.wordmark.x,
+        ui->layout.title_baseline, ui->theme.deep_brown,
+        "First Light wordmark stable pixel is incorrect");
+    if (first_light_pixel(ui->layout.dock.x, ui->layout.dock.y) !=
+            ui->theme.deep_brown ||
+        first_light_pixel(ui->layout.ledger_status.x + 4U,
+            ui->layout.ledger_status.y + 4U) != ui->theme.deep_brown) {
+        kernel_test_fail("First Light dock or ledger stable pixel is incorrect");
+    }
+
+    for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
+        first_light_click_dock_item(&ui->layout.dock_items[index],
+            panels[index], initials[index]);
+        ui = ui_get_state();
+    }
+    if (initial_pointer.x < 0 || initial_pointer.y < 0 ||
+        first_light_pixel((uint32_t)initial_pointer.x,
+            (uint32_t)initial_pointer.y) != ui->theme.white ||
+        first_light_pixel((uint32_t)ui->pointer.x,
+            (uint32_t)ui->pointer.y) != ui->theme.bronze ||
+        ui->renders.cursor_moves <= initial_renders.cursor_moves ||
+        ui->renders.damage_rectangles <= initial_renders.damage_rectangles) {
+        kernel_test_fail("First Light cursor damage left a trail");
+    }
+
+    struct keyboard_event keyboard = {
+        .scancode = 0x01U, .pressed = true, .shift = false, .character = '\0'
+    };
+    if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
+        kernel_test_fail("First Light keyboard panel close failed");
+    }
+    first_light_process_ui("First Light keyboard panel close draw failed");
+    keyboard.scancode = 0x0FU;
+    if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
+        kernel_test_fail("First Light keyboard focus-next failed");
+    }
+    first_light_process_ui("First Light keyboard focus-next draw failed");
+    if (ui_get_state()->focus != UI_ELEMENT_DOCK_LEDGER) {
+        kernel_test_fail("First Light keyboard focus-next chose wrong item");
+    }
+    keyboard.shift = true;
+    if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
+        kernel_test_fail("First Light keyboard focus-previous failed");
+    }
+    first_light_process_ui("First Light keyboard focus-previous draw failed");
+    if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
+        kernel_test_fail("First Light keyboard focus-previous chose wrong item");
+    }
+    keyboard.scancode = 0x1CU;
+    keyboard.shift = false;
+    if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
+        kernel_test_fail("First Light keyboard activation failed");
+    }
+    first_light_process_ui("First Light keyboard activation draw failed");
+    if (ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
+        kernel_test_fail("First Light keyboard activation chose wrong panel");
+    }
+
+    if (!boot_plan_pointer_absence_self_test()) {
+        kernel_test_fail("First Light pointer-absence synthetic plan failed");
+    }
+    if (ui_verify_installed(&proof) != UI_STATUS_OK ||
+        proof.width != 1024U || proof.height != 768U ||
+        proof.dock_items != UI_DOCK_ITEM_COUNT ||
+        proof.ledger_fingerprint != ledger->fingerprint ||
+        proof.render_hash == 0U || proof.events == 0U ||
+        proof.panels < 5U || proof.cursor_moves == 0U ||
+        proof.damage_rectangles == 0U || proof.glyphs == 0U) {
+        kernel_test_fail("First Light final installed proof is inconsistent");
+    }
+
+    console_write("ST FIRST_LIGHT geometry ");
+    console_write_u64(proof.width);
+    console_putc('x');
+    console_write_u64(proof.height);
+    console_write(" dock ");
+    console_write_u64(proof.dock_items);
+    console_write(" events ");
+    console_write_u64(proof.events);
+    console_write(" panels ");
+    console_write_u64(proof.panels);
+    console_write(" cursor ");
+    console_write_u64(proof.cursor_moves);
+    console_write(" damage ");
+    console_write_u64(proof.damage_rectangles);
+    console_write(" glyphs ");
+    console_write_u64(proof.glyphs);
+    console_write(" fingerprint ");
+    console_write_hex(proof.ledger_fingerprint);
+    console_putc('\n');
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -4220,6 +4574,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "device-windows";
     case KERNEL_TEST_BOOT_LEDGER:
         return "boot-ledger";
+    case KERNEL_TEST_FIRST_LIGHT:
+        return "first-light";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

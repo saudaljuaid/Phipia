@@ -7,6 +7,7 @@
 #include <pyrenis/boot_ledger.h>
 #include <pyrenis/console.h>
 #include <pyrenis/cpu.h>
+#include <pyrenis/framebuffer.h>
 #include <pyrenis/heap.h>
 #include <pyrenis/keyboard.h>
 #include <pyrenis/memory.h>
@@ -14,6 +15,7 @@
 #include <pyrenis/screen.h>
 #include <pyrenis/shell.h>
 #include <pyrenis/thread.h>
+#include <pyrenis/ui.h>
 
 /*
  * A command line.
@@ -377,6 +379,7 @@ struct shell_state shell_get_state(void)
 _Noreturn void shell_run(void)
 {
     struct keyboard_event event;
+    bool ui_operational = ui_is_active();
 
     if (!state.active) {
         (void)shell_initialize();
@@ -387,8 +390,57 @@ _Noreturn void shell_run(void)
 
     for (;;) {
         while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
-            if (event.pressed && event.character != '\0') {
+            if (!event.pressed) {
+                continue;
+            }
+
+            if (ui_operational && event.scancode == 0x0FU) {
+                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                    ui_operational = false;
+                }
+                continue;
+            }
+
+            if (ui_operational && event.scancode == 0x01U) {
+                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                    ui_operational = false;
+                }
+                continue;
+            }
+
+            if (ui_operational && event.scancode == 0x1CU &&
+                ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
+                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                    ui_operational = false;
+                }
+                continue;
+            }
+
+            if (event.character != '\0' &&
+                (!ui_operational ||
+                    ui_get_state()->active_panel == UI_PANEL_TERMINAL)) {
                 (void)shell_feed(event.character);
+            }
+        }
+
+        if (ui_operational) {
+            enum ui_status status = ui_process_events();
+
+            if (status == UI_STATUS_OK) {
+                status = ui_flush();
+            }
+            if (status != UI_STATUS_OK) {
+                const struct framebuffer_state framebuffer =
+                    framebuffer_get_state();
+
+                ui_operational = false;
+                (void)screen_set_deferred_present(false);
+                (void)screen_set_viewport((struct surface_rect){
+                    0U, 0U, framebuffer.width, framebuffer.height
+                }, true);
+                console_write("Pyrenis: First Light runtime disabled: ");
+                console_write(ui_status_string(status));
+                console_putc('\n');
             }
         }
 

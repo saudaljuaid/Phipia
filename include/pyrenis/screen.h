@@ -5,6 +5,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <pyrenis/surface.h>
+
+#define SCREEN_MAX_COLUMNS 160U
+#define SCREEN_MAX_ROWS 48U
+#define SCREEN_MAX_CELLS (SCREEN_MAX_COLUMNS * SCREEN_MAX_ROWS)
+
 /*
  * Text on the framebuffer.
  *
@@ -26,7 +32,9 @@ enum screen_status {
     SCREEN_STATUS_CELL_TOO_LARGE,
     SCREEN_STATUS_NO_ROOM,
     SCREEN_STATUS_SURFACE_FAILURE,
-    SCREEN_STATUS_DRAW_FAILURE
+    SCREEN_STATUS_DRAW_FAILURE,
+    SCREEN_STATUS_BAD_VIEWPORT,
+    SCREEN_STATUS_CELL_CAPACITY
 };
 
 struct screen_state {
@@ -39,6 +47,9 @@ struct screen_state {
     uint32_t row;
     uint64_t characters;  /* how many have been drawn */
     uint64_t scrolls;
+    struct surface_rect viewport;
+    bool visible;
+    bool deferred_present;
 };
 
 /*
@@ -66,6 +77,20 @@ enum screen_status screen_write(const char *text);
 
 /* Clear the screen and return the cursor to the origin. */
 enum screen_status screen_clear(void);
+
+/*
+ * First Light borrows the one long-lived cached surface and constrains this
+ * console to a fixed terminal client rectangle. Cells remain in a bounded
+ * backing store while hidden, so reopening redraws rather than resets them.
+ */
+struct surface *screen_surface(void);
+enum screen_status screen_set_viewport(
+    struct surface_rect viewport,
+    bool visible
+);
+enum screen_status screen_set_visible(bool visible);
+enum screen_status screen_set_deferred_present(bool deferred);
+enum screen_status screen_redraw_region(struct surface_rect clip);
 
 struct screen_state screen_get_state(void);
 

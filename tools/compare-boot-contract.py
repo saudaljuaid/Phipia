@@ -42,6 +42,7 @@ SCENARIOS = {
     "write-combining": ("0x2C", 89),
     "device-windows": ("0x2D", 91),
     "boot-ledger": ("0x2E", 93),
+    "first-light": ("0x2F", 95),
 }
 
 LEDGER_PROOF = "Pyrenis: Boot Ledger installed proof passed"
@@ -61,9 +62,16 @@ def normalize(line: str) -> str:
         return re.sub(r"0x[0-9A-F]{16}", "<address>", line)
 
     if line.startswith("Pyrenis: paging root "):
-        return re.sub(r"0x[0-9A-F]{16}", "<address>", line, count=1)
+        line = re.sub(r"0x[0-9A-F]{16}", "<address>", line, count=1)
+        return re.sub(
+            r"table frames [0-9]+ regions [0-9]+",
+            "table frames <image-count> regions <image-count>",
+            line,
+        )
 
     if line.startswith("Pyrenis: paging leaves "):
+        line = re.sub(r"^Pyrenis: paging leaves [0-9]+",
+                      "Pyrenis: paging leaves <image-count>", line)
         return re.sub(
             r"writable [0-9]+ executable [0-9]+",
             "writable <image-count> executable <image-count>",
@@ -139,22 +147,34 @@ def rebrand(line: str) -> str:
     return line
 
 
-def expected_with_ledger(lines: list[str]) -> list[str]:
-    if LEDGER_PROOF in (rebrand(line) for line in lines):
-        return lines
-
+def expected_with_first_light(lines: list[str]) -> list[str]:
+    branded = [rebrand(line) for line in lines]
     try:
-        completion = lines.index("ST PASS normal")
+        begin = branded.index("ST BEGIN normal")
+        completion = branded.index("ST PASS normal")
     except ValueError as error:
-        raise ValueError("baseline has no ST PASS normal marker") from error
+        raise ValueError("baseline has no normal begin/pass marker") from error
 
-    return lines[:completion] + [LEDGER_PROOF] + lines[completion:]
+    if LEDGER_PROOF not in branded:
+        branded.insert(completion, LEDGER_PROOF)
+    if "Pyrenis: First Light font verified" not in branded:
+        branded[begin + 1:begin + 1] = [
+            "Pyrenis: First Light font verified",
+            "Pyrenis: PS/2 pointer available",
+            "Pyrenis: First Light layout validated",
+        ]
+        ledger = branded.index(LEDGER_PROOF)
+        branded[ledger:ledger] = [
+            "Pyrenis: First Light desktop constructed",
+            "Pyrenis: First Light desktop activated",
+            "Pyrenis: First Light installed proof passed",
+        ]
+    return branded
 
 
 def compare_transcripts(before: pathlib.Path, after: pathlib.Path) -> bool:
-    expected = [normalize(rebrand(line)) for line in expected_with_ledger(
-        transcript_lines(before)
-    )]
+    expected = [normalize(line) for line in expected_with_first_light(
+        transcript_lines(before))]
     actual = [normalize(line) for line in transcript_lines(after)]
 
     if expected == actual:
@@ -209,7 +229,7 @@ def main() -> int:
     if not transcript_ok or not scenarios_ok:
         return 1
 
-    print("Pyrenis boot transcript and 31-scenario exit contract match")
+    print("Pyrenis inherited transcript and 32-scenario exit contract match")
     return 0
 
 
