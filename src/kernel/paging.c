@@ -102,8 +102,9 @@
 #define PAGING_KERNEL_IMAGE_LIMIT UINT64_C(0x800000)
 #define PAGING_MAX_KERNEL_FINE_REGIONS 4U
 #define PAGING_MAX_FINE_REGIONS \
-    (PAGING_MAX_KERNEL_FINE_REGIONS + 2U + ACPI_MAX_IO_APICS)
-#define PAGING_MAX_SECTIONS (4U + 2U + ACPI_MAX_IO_APICS)
+    (PAGING_MAX_KERNEL_FINE_REGIONS + 3U + ACPI_MAX_IO_APICS + \
+        PAGING_MAX_FRAMEBUFFER_REGIONS)
+#define PAGING_MAX_SECTIONS (4U + 4U + ACPI_MAX_IO_APICS)
 
 _Static_assert(
     PAGING_KERNEL_IMAGE_LIMIT <=
@@ -113,18 +114,23 @@ _Static_assert(
 
 /*
  * Every 2 MiB region that is not the kernel's is a device window: the local
- * APIC, the VGA text buffer, and one per firmware-declared I/O APIC. The
- * topology is already bounded by acpi_topology_discover, so a region array this
- * wide cannot overflow and needs no runtime capacity branch.
+ * APIC, the VGA text buffer, one per firmware-declared I/O APIC, and at most one
+ * PCI Express configuration window. The topology is already bounded by
+ * acpi_topology_discover and the configuration window is at most one region, so
+ * a region array this wide cannot overflow and needs no runtime capacity branch.
  */
 _Static_assert(
     PAGING_MAX_FINE_REGIONS - PAGING_MAX_KERNEL_FINE_REGIONS >=
-        2U + ACPI_MAX_IO_APICS,
+        3U + ACPI_MAX_IO_APICS + PAGING_MAX_FRAMEBUFFER_REGIONS,
     "fine region storage no longer covers every device window"
 );
 _Static_assert(
-    PAGING_MAX_SECTIONS >= 4U + 2U + ACPI_MAX_IO_APICS,
+    PAGING_MAX_SECTIONS >= 4U + 4U + ACPI_MAX_IO_APICS,
     "section storage no longer covers the kernel and every device window"
+);
+_Static_assert(
+    PAGING_ECAM_WINDOW_SIZE == PAGING_HUGE_PAGE_SIZE,
+    "the configuration window is no longer exactly one identity map region"
 );
 _Static_assert(
     SENERI_EARLY_PHYSICAL_LIMIT % PAGING_HUGE_PAGE_SIZE == 0U,
@@ -1016,8 +1022,87 @@ static void add_section(
     ++*count;
 }
 
+/*
+ * Decide whether a firmware-declared configuration window can become a device
+ * region, and return its base if it can. Three things have to be true, and none
+ * of them failing is an error: a machine may declare no window at all, and a
+ * window Seneri cannot carve out is one it reads through the I/O ports instead.
+ *
+ * The window must start on a 2 MiB boundary, because a device region is one
+ * whole region of the identity map and a window straddling two would need both.
+ * It must lie inside the early identity window, because that is the only
+ * physical memory this map covers. And only the first declared window is taken:
+ * nothing in Seneri yet has a second segment group to address.
+ */
+static uint64_t select_ecam_window(const struct acpi_mcfg *mcfg)
+{
+    uint64_t base;
+
+    if (mcfg == NULL || mcfg->allocation_count == 0U) {
+        return 0U;
+    }
+
+    base = mcfg->allocations[0].base_address;
+
+    if (base == 0U || base % PAGING_HUGE_PAGE_SIZE != 0U) {
+        return 0U;
+    }
+
+    if (base > SENERI_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+        return 0U;
+    }
+
+    return base;
+}
+
+/*
+ * The span of identity map a framebuffer needs, rounded out to whole 2 MiB
+ * regions because that is the unit a device window is carved in. Returns zero
+ * when there is nothing to map or when what the loader set will not fit inside
+ * the bound above - a framebuffer that is partly uncacheable would be worse
+ * than one that is not mapped at all, because half of it would work.
+ */
+static uint64_t framebuffer_span(
+    const struct boot_framebuffer *framebuffer,
+    uint64_t *base_out
+)
+{
+    uint64_t base;
+    uint64_t end;
+    uint64_t span;
+
+    *base_out = 0U;
+
+    if (framebuffer == NULL || !framebuffer->present ||
+        framebuffer->size == 0U) {
+        return 0U;
+    }
+
+    base = framebuffer->address & ~(PAGING_HUGE_PAGE_SIZE - 1U);
+    end = framebuffer->address + framebuffer->size;
+
+    if (end > SENERI_EARLY_PHYSICAL_LIMIT) {
+        return 0U;
+    }
+
+    /* Round the end up to the region it falls in. */
+    end = (end + PAGING_HUGE_PAGE_SIZE - 1U) &
+        ~(PAGING_HUGE_PAGE_SIZE - 1U);
+    span = end - base;
+
+    if (span > (uint64_t)PAGING_MAX_FRAMEBUFFER_REGIONS *
+        PAGING_HUGE_PAGE_SIZE) {
+        return 0U;
+    }
+
+    *base_out = base;
+    return span;
+}
+
 static void collect_sections(
     const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
+    const struct boot_framebuffer *framebuffer,
     struct paging_section *sections,
     size_t *count
 )
@@ -1025,6 +1110,7 @@ static void collect_sections(
     const uint64_t kernel_start = (uint64_t)(uintptr_t)__kernel_start;
     const uint64_t text_start = (uint64_t)(uintptr_t)__text_start;
     const uint32_t device = PAGING_WRITE | PAGING_UNCACHED;
+    uint64_t ecam;
 
     *count = 0U;
 
@@ -1046,6 +1132,33 @@ static void collect_sections(
 
         add_section(sections, count, address, address + DEVICE_WINDOW_SIZE,
             device);
+    }
+
+    /*
+     * Configuration space is device memory and has to be read as device memory.
+     * A cached read of a configuration register would be answered from a line
+     * fetched at some earlier unrelated moment, so the window is uncacheable for
+     * exactly the reason the APIC windows are.
+     */
+    ecam = select_ecam_window(mcfg);
+
+    if (ecam != 0U) {
+        add_section(sections, count, ecam, ecam + PAGING_ECAM_WINDOW_SIZE,
+            device);
+    }
+
+    /*
+     * The framebuffer is device memory for the same reason the APIC windows
+     * are, and one section covers however many regions it spans.
+     */
+    {
+        uint64_t framebuffer_base = 0U;
+        const uint64_t span = framebuffer_span(framebuffer, &framebuffer_base);
+
+        if (span != 0U) {
+            add_section(sections, count, framebuffer_base,
+                framebuffer_base + span, device);
+        }
     }
 }
 
@@ -1180,6 +1293,11 @@ static void reset_state(void)
     state.root_physical_address = 0U;
     state.table_frames = 0U;
     state.fine_regions = 0U;
+    state.ecam_window_base = 0U;
+    state.ecam_window_size = 0U;
+    state.framebuffer_base = 0U;
+    state.framebuffer_size = 0U;
+    state.framebuffer_regions = 0U;
     state.no_execute_active = false;
     state.write_protect_active = false;
     state.active = false;
@@ -1211,8 +1329,16 @@ static enum paging_status enable_processor_features(void)
     return PAGING_STATUS_OK;
 }
 
-enum paging_status paging_initialize(const struct acpi_topology *topology)
+enum paging_status paging_initialize(
+    const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
+    const struct boot_framebuffer *framebuffer
+)
 {
+    const uint64_t ecam = select_ecam_window(mcfg);
+    uint64_t framebuffer_base = 0U;
+    const uint64_t framebuffer_bytes =
+        framebuffer_span(framebuffer, &framebuffer_base);
     struct cpuid_result extended;
     struct paging_audit audit;
     uint32_t extended_features_edx = 0U;
@@ -1276,7 +1402,18 @@ enum paging_status paging_initialize(const struct acpi_topology *topology)
             topology->io_apics[index].address);
     }
 
-    collect_sections(topology, kernel_sections, &kernel_section_count);
+    if (ecam != 0U) {
+        add_region(fine_regions, &fine_region_count, ecam);
+    }
+
+    for (uint64_t offset = 0U; offset < framebuffer_bytes;
+         offset += PAGING_HUGE_PAGE_SIZE) {
+        add_region(fine_regions, &fine_region_count,
+            framebuffer_base + offset);
+    }
+
+    collect_sections(topology, mcfg, framebuffer, kernel_sections,
+        &kernel_section_count);
 
     live_hierarchy.arena_base = 0U;
     live_hierarchy.arena_capacity = 0U;
@@ -1321,6 +1458,12 @@ enum paging_status paging_initialize(const struct acpi_topology *topology)
     state.root_physical_address = live_hierarchy.root;
     state.table_frames = live_hierarchy.table_frames;
     state.fine_regions = fine_region_count;
+    state.ecam_window_base = ecam;
+    state.ecam_window_size = ecam == 0U ? 0U : PAGING_ECAM_WINDOW_SIZE;
+    state.framebuffer_base = framebuffer_bytes == 0U ? 0U : framebuffer_base;
+    state.framebuffer_size = framebuffer_bytes;
+    state.framebuffer_regions =
+        (size_t)(framebuffer_bytes / PAGING_HUGE_PAGE_SIZE);
     state.no_execute_active = true;
     state.write_protect_active = true;
     state.active = true;
@@ -2089,7 +2232,8 @@ bool paging_self_test(void)
         return false;
     }
 
-    return paging_initialize(NULL) == PAGING_STATUS_NULL_ARGUMENT;
+    return paging_initialize(NULL, NULL, NULL) ==
+        PAGING_STATUS_NULL_ARGUMENT;
 }
 
 const char *paging_status_string(enum paging_status status)

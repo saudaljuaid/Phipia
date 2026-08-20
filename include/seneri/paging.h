@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <seneri/acpi.h>
+#include <seneri/boot.h>
 
 /*
  * Intel SDM volume 3A section 4.5 splits a canonical 48-bit virtual address
@@ -26,6 +27,26 @@
  * page-fault scenario needs to stay absent.
  */
 #define PAGING_PROBE_ADDRESS UINT64_C(0x0000000200000000)
+
+/*
+ * How much of a firmware-declared PCI Express configuration window Seneri makes
+ * uncacheable and therefore readable as configuration space. One 2 MiB region,
+ * because that is the unit the identity map is carved in: a device window is a
+ * whole such region turned into 4 KiB pages, and one region is two buses of
+ * configuration space, which is every bus any machine Seneri is tested on
+ * populates. Reaching further needs the window mapped somewhere of its own, and
+ * that is a later increment; src/kernel/pci.c reads no further than this.
+ */
+#define PAGING_ECAM_WINDOW_SIZE PAGING_HUGE_PAGE_SIZE
+
+/*
+ * How many 2 MiB regions of the identity map a framebuffer may claim. Eight is
+ * 16 MiB, which covers 1920x1080 at 32 bits with room to spare; a loader that
+ * sets a mode larger than this gets no framebuffer rather than a partly mapped
+ * one. Unlike the configuration window a framebuffer is several regions wide,
+ * which is the whole reason this bound exists.
+ */
+#define PAGING_MAX_FRAMEBUFFER_REGIONS 8U
 
 enum paging_status {
     PAGING_STATUS_OK = 0,
@@ -72,6 +93,21 @@ struct paging_state {
     uint64_t root_physical_address;
     size_t table_frames;
     size_t fine_regions;
+    /*
+     * Where the configuration window was made uncacheable, or zero when it was
+     * not. Paging owns the address space, so paging decides whether a window
+     * firmware declared can be reached at all, and src/kernel/pci.c reads that
+     * decision rather than making its own.
+     */
+    uint64_t ecam_window_base;
+    uint64_t ecam_window_size;
+    /*
+     * Where the framebuffer was made uncacheable, rounded down to the region
+     * it starts in, or zero when it was not mapped at all.
+     */
+    uint64_t framebuffer_base;
+    uint64_t framebuffer_size;
+    size_t framebuffer_regions;
     bool no_execute_active;
     bool write_protect_active;
     bool active;
@@ -97,7 +133,19 @@ struct paging_audit {
     size_t user_leaves;
 };
 
-enum paging_status paging_initialize(const struct acpi_topology *topology);
+/*
+ * The MCFG may be NULL: a machine that declares no configuration window still
+ * gets an address space, and PCI configuration space is still reachable through
+ * the I/O ports. A window that is declared but cannot be carved into a device
+ * region - not 2 MiB aligned, or outside the early identity window - is not an
+ * error either. It is simply not mapped, ecam_window_base stays zero, and the
+ * caller finds out by asking rather than by faulting.
+ */
+enum paging_status paging_initialize(
+    const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
+    const struct boot_framebuffer *framebuffer
+);
 enum paging_status paging_map(
     uint64_t virtual_address,
     uint64_t physical_address,

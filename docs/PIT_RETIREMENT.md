@@ -148,8 +148,8 @@ that is what the clock above is for.
 
 Beyond that: the supported target still reports no invariant TSC, so the
 time-stamp counter remains untrustworthy across power states even though its rate
-is now correct. ~~Level-triggered I/O APIC routing still needs directed EOI,
-which gates PCI device interrupts.~~ **Fixed** in `docs/IO_APIC.md`; reaching an
-actual PCI device now needs enumeration rather than acknowledgement. Nothing
-here is per-processor; every subsystem in
+is now correct. Level-triggered I/O APIC routing and its broadcast fallback are
+established in `docs/IO_APIC.md`, and `docs/PCI_ENUMERATION.md` now records the
+devices that can consume that route. Nothing here is per-processor; every
+subsystem in
 this kernel still holds a single static state.

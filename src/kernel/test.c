@@ -10,15 +10,23 @@
 #include <seneri/clock.h>
 #include <seneri/console.h>
 #include <seneri/cpu.h>
+#include <seneri/framebuffer.h>
+#include <seneri/font.h>
 #include <seneri/heap.h>
 #include <seneri/interrupts.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
 #include <seneri/paging.h>
+#include <seneri/pci.h>
 #include <seneri/pic.h>
 #include <seneri/pit.h>
+#include <seneri/keyboard.h>
+#include <seneri/screen.h>
+#include <seneri/shell.h>
 #include <seneri/pm_timer.h>
+#include <seneri/surface.h>
 #include <seneri/test.h>
+#include <seneri/thread.h>
 #include <seneri/timer.h>
 #include <seneri/tsc.h>
 
@@ -218,9 +226,54 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_HEAP;
     }
 
+    if (token_equals(value, length, "pci")) {
+        return KERNEL_TEST_PCI;
+    }
+
+    if (token_equals(value, length, "pci-ecam")) {
+        return KERNEL_TEST_PCI_ECAM;
+    }
+
+    if (token_equals(value, length, "threads")) {
+        return KERNEL_TEST_THREADS;
+    }
+
+    if (token_equals(value, length, "thread-guard")) {
+        return KERNEL_TEST_THREAD_GUARD;
+    }
+
+    if (token_equals(value, length, "shell")) {
+        return KERNEL_TEST_SHELL;
+    }
+
+    if (token_equals(value, length, "keyboard")) {
+        return KERNEL_TEST_KEYBOARD;
+    }
+
+    if (token_equals(value, length, "screen")) {
+        return KERNEL_TEST_SCREEN;
+    }
+
+    if (token_equals(value, length, "framebuffer")) {
+        return KERNEL_TEST_FRAMEBUFFER;
+    }
+
+    if (token_equals(value, length, "surface")) {
+        return KERNEL_TEST_SURFACE;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
+/*
+ * The value each scenario hands to QEMU's debug exit device, which the Makefile
+ * turns into the process status it requires. They are deliberately dense and
+ * deliberately stable: a scenario that took another's value would pass as that
+ * one.
+ *
+ * 0x22 belongs to ioapic-level. The scenarios added after it start at 0x23 so
+ * every exit value remains stable across this integration.
+ */
 static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
 {
     switch (scenario) {
@@ -262,6 +315,24 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x21);
     case KERNEL_TEST_IOAPIC_LEVEL:
         return UINT8_C(0x22);
+    case KERNEL_TEST_PCI:
+        return UINT8_C(0x23);
+    case KERNEL_TEST_PCI_ECAM:
+        return UINT8_C(0x24);
+    case KERNEL_TEST_THREADS:
+        return UINT8_C(0x25);
+    case KERNEL_TEST_THREAD_GUARD:
+        return UINT8_C(0x26);
+    case KERNEL_TEST_FRAMEBUFFER:
+        return UINT8_C(0x27);
+    case KERNEL_TEST_SCREEN:
+        return UINT8_C(0x28);
+    case KERNEL_TEST_KEYBOARD:
+        return UINT8_C(0x29);
+    case KERNEL_TEST_SHELL:
+        return UINT8_C(0x2A);
+    case KERNEL_TEST_SURFACE:
+        return UINT8_C(0x2B);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -573,6 +644,15 @@ static void ioapic_level_scenario(void)
     }
 
     after = ioapic_get_state();
+
+    /*
+     * Stop before printing: framebuffer-backed console output can exceed the
+     * next one-shot period and queue a vector after the handler is removed.
+     */
+    if (pit_stop() != PIT_STATUS_OK) {
+        kernel_test_fail("the level route would not stop");
+    }
+
     console_write("ST INFO ioapic-level: ");
     console_write_u64(pit_ticks());
     console_write(" deliveries, remote IRR ");
@@ -624,10 +704,6 @@ static void ioapic_level_scenario(void)
             PM_TIMER_TOLERANCE_QUARTER
         )) {
         kernel_test_fail("level-triggered deliveries did not take a period");
-    }
-
-    if (pit_stop() != PIT_STATUS_OK) {
-        kernel_test_fail("the level route would not stop");
     }
 
     /* Stopping unroutes the entry, so its vector is nothing's again. */
@@ -1519,7 +1595,7 @@ static void paging_scenario(void)
         kernel_test_fail("a 2 MiB mapping accepted a 4 KiB change");
     }
 
-    if (paging_initialize(&paging_probe_topology) !=
+    if (paging_initialize(&paging_probe_topology, NULL, NULL) !=
         PAGING_STATUS_ALREADY_INITIALIZED) {
         kernel_test_fail("page tables accepted a second installation");
     }
@@ -1651,6 +1727,17 @@ static void heap_scenario(void)
 
     if (!heap_is_active() || !paging_is_active()) {
         kernel_test_fail("kernel heap is not online");
+    }
+
+    /*
+     * The heap's boundary proof must be able to fill its whole 16 MiB window.
+     * The screen normally owns a long-lived 3 MiB client now, so this one
+     * destructive scenario relinquishes it before testing the allocator in
+     * isolation. The scenario ends by faulting on the upper guard and never
+     * returns to code that needs the screen.
+     */
+    if (screen_is_active() && screen_release() != SCREEN_STATUS_OK) {
+        kernel_test_fail("the screen did not release its heap surface");
     }
 
     if (heap_initialize() != HEAP_STATUS_ALREADY_INITIALIZED) {
@@ -1815,7 +1902,1655 @@ static void heap_scenario(void)
     );
 }
 
-void kernel_test_run(enum kernel_test_scenario scenario)
+
+/*
+ * Read every register of every recorded function twice through the ports and
+ * require the two passes to agree. Configuration reads are the foundation
+ * everything above them is decoded from, so a reader that returns a different
+ * answer for the same question makes every claim above it meaningless. This is
+ * the check that would catch an address port left latched by something else.
+ */
+static void pci_reads_repeat(void)
+{
+    for (size_t index = 0; index < pci_function_count(); ++index) {
+        const struct pci_function *function = pci_function_at(index);
+
+        if (function == NULL) {
+            kernel_test_fail("PCI returned no function for a live index");
+        }
+
+        for (uint16_t offset = 0U;
+             offset <= PCI_CONFIG_SPACE_SIZE - 4U;
+             offset = (uint16_t)(offset + 4U)) {
+            uint32_t first = 0U;
+            uint32_t second = 0U;
+
+            if (pci_config_read_port(function->address, offset, &first) !=
+                    PCI_STATUS_OK ||
+                pci_config_read_port(function->address, offset, &second) !=
+                    PCI_STATUS_OK) {
+                kernel_test_fail("a configuration read was refused");
+            }
+
+            if (first != second) {
+                kernel_test_fail("a configuration register did not read twice");
+            }
+        }
+    }
+}
+
+/* Every refusal both readers owe, driven against the live machine. */
+static void pci_refusals_are_named(void)
+{
+    struct pci_address address;
+    uint32_t value = 0U;
+
+    address.segment = 0U;
+    address.bus = 0U;
+    address.device = 0U;
+    address.function = 0U;
+
+    if (pci_config_read_port(address, 2U, &value) != PCI_STATUS_BAD_OFFSET) {
+        kernel_test_fail("an unaligned configuration read was accepted");
+    }
+
+    if (pci_config_read_port(address, PCI_CONFIG_SPACE_SIZE, &value) !=
+        PCI_STATUS_BAD_OFFSET) {
+        kernel_test_fail("a configuration read past the space was accepted");
+    }
+
+    address.device = PCI_DEVICES_PER_BUS;
+
+    if (pci_config_read_port(address, 0U, &value) != PCI_STATUS_BAD_ADDRESS) {
+        kernel_test_fail("a device number out of range was accepted");
+    }
+
+    address.device = 0U;
+    address.segment = 1U;
+
+    if (pci_config_read_port(address, 0U, &value) != PCI_STATUS_BAD_ADDRESS) {
+        kernel_test_fail("the ports accepted a segment they cannot carry");
+    }
+
+    if (pci_initialize(NULL, false) != PCI_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("PCI accepted a second initialization");
+    }
+}
+
+/*
+ * At least one address on bus zero must have nothing at it, and must read all
+ * ones. Absence is how enumeration decides a device is not there, so a machine
+ * where absence read as anything else would produce devices that do not exist -
+ * and this is the only way to check that the floating bus behaves as the
+ * specification says it does.
+ */
+static void pci_absence_reads_all_ones(void)
+{
+    struct pci_address address;
+    bool found_absent = false;
+
+    address.segment = 0U;
+    address.bus = 0U;
+    address.function = 0U;
+
+    for (uint8_t device = 0; device < PCI_DEVICES_PER_BUS; ++device) {
+        uint32_t identity = 0U;
+
+        address.device = device;
+
+        if (pci_config_read_port(address, PCI_REGISTER_VENDOR_ID, &identity) !=
+            PCI_STATUS_OK) {
+            kernel_test_fail("a configuration read was refused");
+        }
+
+        if ((uint16_t)identity != PCI_VENDOR_ABSENT) {
+            continue;
+        }
+
+        found_absent = true;
+
+        /*
+         * Not just the vendor register: an absent function floats the whole
+         * bus high, so every register of it must read all ones. A machine that
+         * answered zero for the rest would let a decoder invent a device with
+         * class zero at every empty slot.
+         */
+        for (uint16_t offset = 0U;
+             offset <= PCI_CONFIG_SPACE_SIZE - 4U;
+             offset = (uint16_t)(offset + 4U)) {
+            uint32_t value = 0U;
+
+            if (pci_config_read_port(address, offset, &value) !=
+                PCI_STATUS_OK) {
+                kernel_test_fail("a configuration read was refused");
+            }
+
+            if (value != UINT32_C(0xFFFFFFFF)) {
+                kernel_test_fail("an absent function did not read all ones");
+            }
+        }
+    }
+
+    if (!found_absent) {
+        kernel_test_fail("bus zero has no empty slot to prove absence with");
+    }
+}
+
+/*
+ * Enumeration through the I/O ports alone, on a machine that declares no
+ * configuration window. This is the path every x86 machine has, so it is the
+ * one that must work without any of the rest, and the scenario asserts the
+ * window really is absent rather than merely unused.
+ */
+static void pci_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
+{
+    const struct pci_function *host_bridge;
+    const struct pci_function *network;
+    struct pci_state pci;
+    struct pci_address address;
+    enum pci_status status;
+    uint32_t value = 0U;
+
+    if (!heap_is_active() || !paging_is_active()) {
+        kernel_test_fail("PCI enumeration ran without its lower layers");
+    }
+
+    if (pci_is_initialized()) {
+        kernel_test_fail("PCI was initialized before its scenario");
+    }
+
+    status = pci_initialize(mcfg, mcfg_present);
+
+    if (status != PCI_STATUS_OK) {
+        kernel_test_fail(pci_status_string(status));
+    }
+
+    pci = pci_get_state();
+
+    if (pci.ecam_active) {
+        kernel_test_fail("a configuration window was mapped on this machine");
+    }
+
+    /*
+     * With no window the memory reader has nothing to answer with, and says so
+     * by name rather than reading whatever is at address zero.
+     */
+    address.segment = 0U;
+    address.bus = 0U;
+    address.device = 0U;
+    address.function = 0U;
+
+    if (pci_config_read_ecam(address, 0U, &value) != PCI_STATUS_NO_ECAM) {
+        kernel_test_fail("the window reader answered without a window");
+    }
+
+    if (pci.compared_dwords != 0U || pci.compared_functions != 0U) {
+        kernel_test_fail("a comparison was reported without two mechanisms");
+    }
+
+    if (pci.bus_count == 0U || pci.function_count == 0U) {
+        kernel_test_fail("enumeration through the ports found nothing");
+    }
+
+    host_bridge = pci_find_class(PCI_CLASS_BRIDGE, PCI_SUBCLASS_HOST_BRIDGE);
+
+    if (host_bridge == NULL) {
+        kernel_test_fail("enumeration found no host bridge");
+    }
+
+    if (host_bridge->address.bus != 0U || host_bridge->address.device != 0U ||
+        host_bridge->address.function != 0U) {
+        kernel_test_fail("the host bridge is not at 00:00.0");
+    }
+
+    if (host_bridge->vendor_id == PCI_VENDOR_ABSENT ||
+        host_bridge->vendor_id == 0U) {
+        kernel_test_fail("the host bridge has no vendor");
+    }
+
+    /*
+     * The host bridge is the first function on this machine, so a lookup that
+     * ignored its arguments entirely would still return it and still satisfy
+     * every check above. That was a negative control that passed, so two more
+     * are asked: a class that is present but is not the first function, and a
+     * class that is not assigned at all and must therefore be found nowhere.
+     */
+    network = pci_find_class(PCI_CLASS_NETWORK, 0U);
+
+    if (network == NULL || network->class_code != PCI_CLASS_NETWORK ||
+        network->subclass != 0U || network == host_bridge) {
+        kernel_test_fail("the class lookup did not find the network device");
+    }
+
+    if (pci_find_class(UINT8_C(0xFE), UINT8_C(0xFE)) != NULL) {
+        kernel_test_fail("the class lookup found an unassigned class");
+    }
+
+    pci_absence_reads_all_ones();
+    pci_reads_repeat();
+    pci_refusals_are_named();
+
+    if (pci_verify() != PCI_STATUS_OK) {
+        kernel_test_fail("PCI enumeration no longer matches the machine");
+    }
+
+    console_write("ST PCI ports functions ");
+    console_write_u64(pci.function_count);
+    console_write(" buses ");
+    console_write_u64(pci.bus_count);
+    console_putc('\n');
+
+    if (pci_shutdown() != PCI_STATUS_OK ||
+        pci_shutdown() != PCI_STATUS_NOT_INITIALIZED) {
+        kernel_test_fail("PCI would not release its function table");
+    }
+}
+
+/*
+ * The same machine read two completely different ways.
+ *
+ * The port pair and the mapped window share no code below this file: one is two
+ * I/O instructions, the other a load from uncacheable memory whose address is
+ * computed from a firmware table. They have no reason to agree about anything
+ * unless both are addressing the function the enumeration believes they are, so
+ * requiring them to agree register for register is a check on the bus number
+ * arithmetic, the window's base, the mapping's cacheability and the firmware
+ * description all at once.
+ *
+ * The scenario also requires them to *disagree* about different functions,
+ * because a window reader whose device and function bits went nowhere would
+ * agree with the ports about 00:00.0 and answer 00:00.0 for everything else.
+ */
+static void pci_ecam_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
+{
+    struct pci_state pci;
+    struct pci_address address;
+    enum pci_status status;
+    size_t bridges = 0U;
+    size_t message_signalled = 0U;
+    size_t behind_a_bridge = 0U;
+    size_t distinct_identities = 0U;
+    uint32_t first_identity = 0U;
+    uint32_t value = 0U;
+
+    if (!mcfg_present) {
+        kernel_test_fail("this machine declares no configuration window");
+    }
+
+    status = pci_initialize(mcfg, mcfg_present);
+
+    if (status != PCI_STATUS_OK) {
+        kernel_test_fail(pci_status_string(status));
+    }
+
+    pci = pci_get_state();
+
+    if (!pci.ecam_active) {
+        kernel_test_fail("the declared configuration window was not mapped");
+    }
+
+    if (pci.ecam_size != PAGING_ECAM_WINDOW_SIZE ||
+        pci.ecam_base != paging_get_state().ecam_window_base) {
+        kernel_test_fail("the window read is not the window that was mapped");
+    }
+
+    /*
+     * Configuration space read through a cached mapping would be answered from
+     * whatever the line held when it was last filled. QEMU under TCG models no
+     * cache, so a cached window behaves identically here and no behavioural
+     * test can tell the difference - the negative control for it passed with
+     * the mapping made write-back. What can be checked is the mapping itself,
+     * so it is: every page of the window must translate as uncacheable, at 4 KiB
+     * granularity, to the physical address it claims. That is the same move
+     * paging.c makes when it walks its own tables rather than trusting them.
+     */
+    for (uint64_t offset = 0U; offset < pci.ecam_size;
+         offset += PAGING_PAGE_SIZE) {
+        struct paging_translation window;
+
+        if (paging_translate(pci.ecam_base + offset, &window) !=
+            PAGING_STATUS_OK) {
+            kernel_test_fail("a configuration window page is not mapped");
+        }
+
+        if (window.physical_address != pci.ecam_base + offset ||
+            window.level != 1U ||
+            window.permissions != (PAGING_WRITE | PAGING_UNCACHED)) {
+            kernel_test_fail("the configuration window is not device memory");
+        }
+    }
+
+    /*
+     * Every function on this machine sits inside the mapped window, so every
+     * one of them must have been compared. A comparison that quietly skipped
+     * functions would still report agreement.
+     */
+    if (pci.compared_functions != pci.function_count ||
+        pci.compared_dwords !=
+            pci.function_count * (PCI_CONFIG_SPACE_SIZE / 4U) -
+                pci.volatile_dwords) {
+        kernel_test_fail("the two mechanisms were not compared everywhere");
+    }
+
+    for (size_t index = 0; index < pci.function_count; ++index) {
+        const struct pci_function *function = pci_function_at(index);
+        uint32_t identity = 0U;
+
+        if (function == NULL) {
+            kernel_test_fail("PCI returned no function for a live index");
+        }
+
+        if (function->header_type == PCI_HEADER_TYPE_BRIDGE) {
+            ++bridges;
+        }
+
+        if (function->address.bus != 0U) {
+            ++behind_a_bridge;
+        }
+
+        if (function->msi_x_offset != 0U) {
+            ++message_signalled;
+
+            /*
+             * The capability the offset names must actually be there when the
+             * window is asked, not only when the ports were. This is what turns
+             * "a capability was recorded" into "the record points at it".
+             */
+            if (pci_config_read_ecam(
+                    function->address,
+                    function->msi_x_offset,
+                    &value
+                ) != PCI_STATUS_OK ||
+                (uint8_t)value != PCI_CAPABILITY_MSI_X) {
+                kernel_test_fail("a recorded MSI-X capability is not there");
+            }
+        }
+
+        if (pci_config_read_ecam(
+                function->address,
+                PCI_REGISTER_VENDOR_ID,
+                &identity
+            ) != PCI_STATUS_OK) {
+            kernel_test_fail("the window would not read a live function");
+        }
+
+        if (index == 0U) {
+            first_identity = identity;
+        } else if (identity != first_identity) {
+            ++distinct_identities;
+        }
+    }
+
+    /*
+     * A window reader that ignored the device and function bits would answer
+     * the same identity for every function and still agree with the ports about
+     * the first one. Requiring the answers to differ is what closes that.
+     */
+    if (distinct_identities == 0U) {
+        kernel_test_fail("the window answered one identity for every function");
+    }
+
+    if (bridges == 0U || behind_a_bridge == 0U || pci.bus_count < 2U) {
+        kernel_test_fail("enumeration did not cross a bridge");
+    }
+
+    if (message_signalled == 0U) {
+        kernel_test_fail("no function offered message-signalled interrupts");
+    }
+
+    /*
+     * A bus past what Seneri mapped is refused rather than folded back into the
+     * window, which is the failure that would read one bus as another.
+     */
+    address.segment = 0U;
+    address.bus = (uint8_t)(pci.ecam_end_bus + 1U);
+    address.device = 0U;
+    address.function = 0U;
+
+    if (pci_config_read_ecam(address, 0U, &value) !=
+        PCI_STATUS_OUTSIDE_ECAM_WINDOW) {
+        kernel_test_fail("the window answered about a bus it does not map");
+    }
+
+    pci_reads_repeat();
+
+    if (pci_verify() != PCI_STATUS_OK) {
+        kernel_test_fail("PCI enumeration no longer matches the machine");
+    }
+
+    console_write("ST PCI window agreed on ");
+    console_write_u64(pci.compared_dwords);
+    console_write(" registers of ");
+    console_write_u64(pci.compared_functions);
+    console_write(" functions across ");
+    console_write_u64(pci.bus_count);
+    console_write(" buses, ");
+    console_write_u64(message_signalled);
+    console_write(" with MSI-X\n");
+
+    if (pci_shutdown() != PCI_STATUS_OK) {
+        kernel_test_fail("PCI would not release its function table");
+    }
+}
+
+
+/*
+ * The guard page of the first thread this scenario creates. Slot zero belongs
+ * to the boot thread, whose stack region is never mapped, so a created thread
+ * is slot one and its guard is one stride above the region base. Written out
+ * rather than computed so the Makefile can require this exact address in the
+ * fault diagnostic - a guard that moved would otherwise still look like a pass.
+ */
+#define THREAD_GUARD_TEST_ADDRESS \
+    (THREAD_STACK_REGION + THREAD_STACK_STRIDE)
+
+/*
+ * A supervisor write to an absent page is P=0 W=1 U=0. The heap scenario takes
+ * the same error code at its own guard, and the two are told apart by CR2.
+ */
+#define THREAD_GUARD_TEST_ERROR_CODE UINT64_C(0x02)
+
+_Static_assert(
+    THREAD_GUARD_TEST_ADDRESS == UINT64_C(0x0000000800005000),
+    "the thread guard page moved and the fault diagnostic no longer matches"
+);
+
+/* Written by every scenario worker, read by the boot thread after they exit. */
+static volatile uint32_t thread_scenario_ran;
+static volatile uint64_t thread_scenario_seen[THREAD_MAX];
+
+static void scenario_worker(void *context)
+{
+    const uint64_t label = (uint64_t)(uintptr_t)context;
+
+    for (unsigned int round = 0; round < 2U; ++round) {
+        /*
+         * Recorded from inside the thread, so this is also a check that
+         * thread_current answers about the thread that is actually running
+         * rather than about whoever asked last.
+         */
+        if (label < THREAD_MAX) {
+            thread_scenario_seen[label] = thread_current();
+        }
+
+        thread_yield();
+    }
+
+    thread_scenario_ran += 1U;
+}
+
+/*
+ * The parts of the thread layer normal boot does not reach: the capacity bound,
+ * every refusal, and the teardown ordering. Normal boot proves three threads
+ * rotate; this proves the layer says no in every way it has to.
+ */
+static void threads_scenario(void)
+{
+    struct frame_allocator_stats before;
+    struct frame_allocator_stats after;
+    struct thread_system_state threads;
+    struct thread_state_report report;
+    uint64_t identifiers[THREAD_MAX];
+    uint64_t overflow = THREAD_ID_NONE;
+    uint64_t boot_identifier;
+    size_t created = 0U;
+    enum thread_status status;
+
+    if (!heap_is_active() || !paging_is_active()) {
+        kernel_test_fail("threads ran without their lower layers");
+    }
+
+    if (thread_is_started()) {
+        kernel_test_fail("threads were started before their scenario");
+    }
+
+    /*
+     * The heap grows but deliberately never shrinks. With the surface already
+     * occupying its first 3 MiB, the first thread table can commit one more
+     * heap page that remains mapped after the table is freed. Warm that path
+     * before taking the frame baseline so the comparison below measures only
+     * the stack frames this scenario owns.
+     */
+    if (thread_start() != THREAD_STATUS_OK ||
+        thread_stop() != THREAD_STATUS_OK) {
+        kernel_test_fail("threads did not survive an empty start and stop");
+    }
+
+    before = frame_allocator_get_stats();
+    status = thread_start();
+
+    if (status != THREAD_STATUS_OK) {
+        kernel_test_fail(thread_status_string(status));
+    }
+
+    boot_identifier = thread_current();
+
+    if (boot_identifier == THREAD_ID_NONE) {
+        kernel_test_fail("the boot thread was adopted without an identifier");
+    }
+
+    if (thread_report(boot_identifier, &report) != THREAD_STATUS_OK ||
+        !report.boot_thread || report.state != THREAD_STATE_RUNNING ||
+        report.stack_top != 0U) {
+        kernel_test_fail("the boot thread was not adopted as itself");
+    }
+
+    /*
+     * Fill every slot the table has. Slot zero is the boot thread's and is
+     * never handed out, so the capacity for created threads is one less than
+     * the table's - and the refusal must arrive exactly there rather than one
+     * either side of it.
+     */
+    for (size_t index = 0; index + 1U < THREAD_MAX; ++index) {
+        status = thread_create(
+            scenario_worker,
+            (void *)(uintptr_t)(index + 1U),
+            &identifiers[index]
+        );
+
+        if (status != THREAD_STATUS_OK) {
+            kernel_test_fail(thread_status_string(status));
+        }
+
+        ++created;
+    }
+
+    if (created != THREAD_MAX - 1U) {
+        kernel_test_fail("the thread table did not fill to its capacity");
+    }
+
+    if (thread_create(scenario_worker, NULL, &overflow) !=
+            THREAD_STATUS_NO_CAPACITY ||
+        overflow != THREAD_ID_NONE) {
+        kernel_test_fail("a thread was created past the table's capacity");
+    }
+
+    /* Every identifier must be distinct, or joining names the wrong thread. */
+    for (size_t index = 0; index < created; ++index) {
+        for (size_t other = index + 1U; other < created; ++other) {
+            if (identifiers[index] == identifiers[other]) {
+                kernel_test_fail("two threads share an identifier");
+            }
+        }
+
+        if (identifiers[index] == boot_identifier) {
+            kernel_test_fail("a thread reused the boot thread's identifier");
+        }
+    }
+
+    /* Refusals, each by its own name, with threads live. */
+    if (thread_join(boot_identifier) != THREAD_STATUS_BAD_IDENTIFIER) {
+        kernel_test_fail("a thread was allowed to wait for itself");
+    }
+
+    if (thread_join(UINT64_C(0xABCDEF)) != THREAD_STATUS_BAD_IDENTIFIER ||
+        thread_join(THREAD_ID_NONE) != THREAD_STATUS_BAD_IDENTIFIER) {
+        kernel_test_fail("a join accepted an identifier naming nothing");
+    }
+
+    /*
+     * Tearing down while a thread is still runnable would unmap a stack that
+     * still holds a suspended frame. It is refused, and refused before any of
+     * it happens rather than part way through.
+     */
+    if (thread_stop() != THREAD_STATUS_THREADS_STILL_RUNNABLE) {
+        kernel_test_fail("threads stopped with a thread still runnable");
+    }
+
+    threads = thread_get_state();
+
+    if (threads.ready != created || threads.stack_frames !=
+        created * THREAD_STACK_PAGES) {
+        kernel_test_fail("the thread table does not account for its stacks");
+    }
+
+    if (thread_verify() != THREAD_STATUS_OK) {
+        kernel_test_fail("thread table does not match the address space");
+    }
+
+    for (size_t index = 0; index < created; ++index) {
+        status = thread_join(identifiers[index]);
+
+        if (status != THREAD_STATUS_OK) {
+            kernel_test_fail(thread_status_string(status));
+        }
+
+        if (thread_report(identifiers[index], &report) != THREAD_STATUS_OK ||
+            report.state != THREAD_STATE_EXITED) {
+            kernel_test_fail("a joined thread had not exited");
+        }
+
+        /* Joining something that has already exited returns at once. */
+        if (thread_join(identifiers[index]) != THREAD_STATUS_OK) {
+            kernel_test_fail("joining an exited thread was refused");
+        }
+    }
+
+    if (thread_scenario_ran != created) {
+        kernel_test_fail("not every thread reached the end of its function");
+    }
+
+    /*
+     * Each worker recorded what thread_current answered while it was running.
+     * A scheduler that switched stacks but not its idea of who is current would
+     * pass every other check here.
+     */
+    for (size_t index = 0; index < created; ++index) {
+        if (thread_scenario_seen[index + 1U] != identifiers[index]) {
+            kernel_test_fail("a thread did not know which thread it was");
+        }
+    }
+
+    threads = thread_get_state();
+
+    if (threads.exited != created || threads.ready != 0U ||
+        threads.switches == 0U) {
+        kernel_test_fail("the thread table does not account for its exits");
+    }
+
+    status = thread_stop();
+
+    if (status != THREAD_STATUS_OK) {
+        kernel_test_fail(thread_status_string(status));
+    }
+
+    if (thread_is_started() ||
+        thread_stop() != THREAD_STATUS_NOT_STARTED ||
+        thread_create(scenario_worker, NULL, &overflow) !=
+            THREAD_STATUS_NOT_STARTED) {
+        kernel_test_fail("threads accepted work after stopping");
+    }
+
+    after = frame_allocator_get_stats();
+
+    if (after.free_frames != before.free_frames) {
+        kernel_test_fail("stopping threads did not return every frame");
+    }
+
+    /*
+     * The stacks are gone, so every guard and every stack page of every slot
+     * must now be absent. Checked after teardown because a stop that unmapped
+     * the guards but kept the stacks would leak silently.
+     */
+    for (size_t slot = 0; slot < THREAD_MAX; ++slot) {
+        const uint64_t guard =
+            THREAD_STACK_REGION + (uint64_t)slot * THREAD_STACK_STRIDE;
+        struct paging_translation translation;
+
+        for (uint64_t offset = 0U; offset < THREAD_STACK_STRIDE;
+             offset += PAGING_PAGE_SIZE) {
+            if (paging_translate(guard + offset, &translation) !=
+                PAGING_STATUS_NOT_MAPPED) {
+                kernel_test_fail("a thread stack outlived the scheduler");
+            }
+        }
+    }
+
+    console_write("ST THREADS created ");
+    console_write_u64(created);
+    console_write(" switches ");
+    console_write_u64(threads.switches);
+    console_write(" exited ");
+    console_write_u64(threads.exited);
+    console_putc('\n');
+}
+
+static void guard_worker(void *context)
+{
+    struct thread_state_report report;
+
+    (void)context;
+
+    if (thread_report(thread_current(), &report) != THREAD_STATUS_OK) {
+        kernel_test_fail("a running thread cannot report itself");
+    }
+
+    if (report.guard_page != THREAD_GUARD_TEST_ADDRESS) {
+        kernel_test_fail("the thread guard page is not where it should be");
+    }
+
+    if (report.stack_base != report.guard_page + PAGING_PAGE_SIZE) {
+        kernel_test_fail("the guard page does not precede the stack");
+    }
+
+    /*
+     * Written through the assembly probe for the same reason the paging and
+     * heap scenarios use it: the scenario matches the faulting instruction
+     * address exactly, and a compiler is free to move or delete an equivalent
+     * C store to memory it can prove nothing reads.
+     */
+    paging_probe_write(
+        (volatile uint8_t *)(uintptr_t)THREAD_GUARD_TEST_ADDRESS,
+        UINT8_C(0x5E)
+    );
+
+    kernel_test_fail("a thread stack guard page accepted a write");
+}
+
+/*
+ * Prove the guard by walking off the stack, exactly as the heap scenario proves
+ * its window. The claim is that the page below a thread's stack is never
+ * mapped, so a stack that runs past its own end meets a fault naming the guard
+ * rather than the next thread's frame.
+ *
+ * What this deliberately does *not* prove is a true stack overflow, where RSP
+ * itself has reached the guard. There the fault handler would need to push its
+ * own frame onto a stack that has just run out, so the page fault escalates.
+ * docs/THREADS.md records what was measured about that and what it needs.
+ */
+static void thread_guard_scenario(void)
+{
+    uint64_t identifier = THREAD_ID_NONE;
+    struct paging_translation translation;
+    enum thread_status status;
+
+    status = thread_start();
+
+    if (status != THREAD_STATUS_OK) {
+        kernel_test_fail(thread_status_string(status));
+    }
+
+    status = thread_create(guard_worker, NULL, &identifier);
+
+    if (status != THREAD_STATUS_OK) {
+        kernel_test_fail(thread_status_string(status));
+    }
+
+    /*
+     * The guard must be absent before the thread runs, or the fault the
+     * scenario is about to take would prove nothing about the guard.
+     */
+    if (paging_translate(THREAD_GUARD_TEST_ADDRESS, &translation) !=
+        PAGING_STATUS_NOT_MAPPED) {
+        kernel_test_fail("the thread guard page is mapped");
+    }
+
+    if (paging_translate(THREAD_GUARD_TEST_ADDRESS + PAGING_PAGE_SIZE,
+            &translation) != PAGING_STATUS_OK ||
+        translation.permissions != PAGING_WRITE) {
+        kernel_test_fail("the thread stack above the guard is not writable");
+    }
+
+    console_write("ST THREAD guard ");
+    console_write_hex(THREAD_GUARD_TEST_ADDRESS);
+    console_putc('\n');
+
+    /* Hands the processor to the worker, which does not come back. */
+    thread_yield();
+    kernel_test_fail("the guard thread returned from its fault");
+}
+
+
+/*
+ * Sixteen coordinates chosen to hit every edge and a few interior points,
+ * rather than a sweep. Normal boot already reads every pixel back through the
+ * framebuffer's own addressing; what this scenario adds is a second, completely
+ * independent addressing to compare it against, and that only needs to
+ * disagree once.
+ */
+#define FRAMEBUFFER_TEST_PROBES 16U
+
+/*
+ * The same picture addressed two ways.
+ *
+ * Normal boot proves that what framebuffer_write_pixel writes,
+ * framebuffer_read_pixel reads - which is true even if both agree on the wrong
+ * address. This computes the physical address of a coordinate from the loader's
+ * own numbers, reads it through a raw volatile pointer that shares no code with
+ * framebuffer.c, and requires the two to agree. It is the same argument the two
+ * PCI configuration mechanisms make, one layer up.
+ */
+/*
+ * The screen console, checked where boot cannot check it.
+ *
+ * prove_screen_console in src/kernel/boot_proofs.c verifies that what was drawn
+ * is on the glass. What it cannot do is take the console apart: boot needs the
+ * console it is printing through, so it can never leave it in a broken state to
+ * see what happens. This scenario can, because nothing after it needs a screen.
+ *
+ * Every character in the font is drawn and read back here, not a sample. The
+ * boot proof draws nine letters; a glyph table with one bad row in the middle
+ * of it would pass that and fail this.
+ */
+/*
+ * The keyboard, taken apart where boot cannot.
+ *
+ * prove_keyboard injects five scancodes and checks three characters come out.
+ * What it cannot do is fill the queue, because boot needs the keyboard working
+ * afterwards, and it cannot toggle caps lock, because that would leave the
+ * machine in a state the rest of boot did not ask for. Nothing after this
+ * scenario needs a keyboard, so this can do both.
+ */
+/*
+ * The shell, taken apart where boot cannot.
+ *
+ * prove_shell types one command and reads the answer off the glass. What it
+ * cannot do is run every command, because several of them clear the screen or
+ * print pages, and boot has to keep its transcript. Nothing after this scenario
+ * needs a console, so this can run all of them.
+ */
+static void shell_scenario(void)
+{
+    static const char *const commands[] = {
+        "help", "echo hello", "uptime", "mem", "pci", "keys", "threads",
+        "version", "clear"
+    };
+
+    struct shell_state before;
+    struct shell_state after;
+
+    if (!shell_is_active()) {
+        kernel_test_fail("the shell scenario has no shell");
+    }
+
+    before = shell_get_state();
+
+    /*
+     * Every command this shell has, run for real. A command that faults or
+     * hangs takes the scenario with it, which is the point: these read live
+     * kernel state and any of them could be pointing at something that has
+     * since moved.
+     */
+    for (size_t index = 0; index < sizeof(commands) / sizeof(commands[0]);
+         ++index) {
+        if (shell_execute(commands[index]) != SHELL_STATUS_OK) {
+            kernel_test_fail("a built-in command refused to run");
+        }
+    }
+
+    after = shell_get_state();
+
+    if (after.commands - before.commands !=
+        sizeof(commands) / sizeof(commands[0])) {
+        kernel_test_fail("the shell did not count every command it ran");
+    }
+
+    if (after.unknown != before.unknown) {
+        kernel_test_fail("the shell did not recognise one of its own commands");
+    }
+
+    /*
+     * A prefix must not run a longer command, and a longer word must not run a
+     * shorter one. Both directions, because a dispatcher that compares only as
+     * far as its own name gets one of them wrong.
+     */
+    if (shell_execute("hel") != SHELL_STATUS_UNKNOWN_COMMAND) {
+        kernel_test_fail("a prefix of a command ran that command");
+    }
+
+    if (shell_execute("helpful") != SHELL_STATUS_UNKNOWN_COMMAND) {
+        kernel_test_fail("a longer word ran a shorter command");
+    }
+
+    if (shell_execute("echoes") != SHELL_STATUS_UNKNOWN_COMMAND) {
+        kernel_test_fail("a longer word ran echo");
+    }
+
+    /*
+     * The line editor, driven the way a person drives it. Typed, corrected with
+     * backspace, and submitted - and the correction has to have taken, which
+     * only the command that runs can show.
+     */
+    before = shell_get_state();
+
+    {
+        static const char typed[] = "echa\bo corrected";
+
+        for (size_t index = 0; typed[index] != '\0'; ++index) {
+            if (shell_feed(typed[index]) != SHELL_STATUS_OK) {
+                kernel_test_fail("the shell refused a character while typing");
+            }
+        }
+
+        if (shell_feed('\n') != SHELL_STATUS_OK) {
+            kernel_test_fail("the corrected line did not run");
+        }
+    }
+
+    after = shell_get_state();
+
+    if (after.unknown != before.unknown) {
+        kernel_test_fail("backspace did not correct the command");
+    }
+
+    if (after.length != 0U) {
+        kernel_test_fail("the shell kept the line after running it");
+    }
+
+    /*
+     * An erase has to reach the glass, not only the buffer.
+     *
+     * This exists because a control found it missing. Deleting the space and
+     * the second backspace from the shell's erase sequence - so the cursor
+     * moves but the character stays on screen - passed every check here, and
+     * chasing that found a real bug underneath: the screen console did not
+     * handle backspace at all, so a correction drew the font's replacement
+     * character instead of stepping back.
+     */
+    if (screen_is_active()) {
+        if (screen_clear() != SCREEN_STATUS_OK) {
+            kernel_test_fail("the shell scenario could not clear the screen");
+        }
+
+        if (shell_feed('a') != SHELL_STATUS_OK ||
+            shell_feed('b') != SHELL_STATUS_OK) {
+            kernel_test_fail("the shell refused a character before an erase");
+        }
+
+        if (screen_verify_cell(1U, 0U, 'b') != SCREEN_STATUS_OK) {
+            kernel_test_fail("a typed character did not reach the screen");
+        }
+
+        if (shell_feed('\b') != SHELL_STATUS_OK) {
+            kernel_test_fail("the shell refused a backspace");
+        }
+
+        /* The erased cell is blank, and the one before it is untouched. */
+        if (screen_verify_cell(1U, 0U, ' ') != SCREEN_STATUS_OK) {
+            kernel_test_fail("backspace did not erase the character on screen");
+        }
+
+        if (screen_verify_cell(0U, 0U, 'a') != SCREEN_STATUS_OK) {
+            kernel_test_fail("backspace erased more than one character");
+        }
+
+        /* And the next character lands where the erased one was. */
+        if (shell_feed('c') != SHELL_STATUS_OK) {
+            kernel_test_fail("the shell refused a character after an erase");
+        }
+
+        if (screen_verify_cell(1U, 0U, 'c') != SCREEN_STATUS_OK) {
+            kernel_test_fail("the cursor did not return to the erased cell");
+        }
+
+        while (shell_get_state().length > 0U) {
+            if (shell_feed('\b') != SHELL_STATUS_OK) {
+                kernel_test_fail("the shell would not clear its line");
+            }
+        }
+    }
+
+    /* And an unknown command is reported without stopping anything. */
+    before = shell_get_state();
+
+    if (shell_execute("definitelynotacommand") != SHELL_STATUS_UNKNOWN_COMMAND) {
+        kernel_test_fail("an unknown command was not reported");
+    }
+
+    if (shell_get_state().unknown != before.unknown + 1U) {
+        kernel_test_fail("an unknown command was not counted");
+    }
+
+    if (shell_execute("help") != SHELL_STATUS_OK) {
+        kernel_test_fail("the shell stopped working after an unknown command");
+    }
+
+    after = shell_get_state();
+    console_write("Seneri OS: shell scenario ran ");
+    console_write_u64(after.commands);
+    console_write(" commands and refused ");
+    console_write_u64(after.unknown);
+    console_write(" unknown\n");
+}
+
+static void keyboard_scenario(void)
+{
+    struct keyboard_state before;
+    struct keyboard_state after;
+    struct keyboard_event event;
+    size_t drained = 0U;
+
+    if (!keyboard_is_initialized()) {
+        kernel_test_fail("the keyboard scenario has no keyboard");
+    }
+
+    /* Bringing it up twice is refused. Boot only ever does it once. */
+    if (keyboard_initialize() != KEYBOARD_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("the keyboard was brought up twice");
+    }
+
+    /* Drain whatever boot's proof left, so the counts below start clean. */
+    while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
+        drained += 1U;
+
+        if (drained > 4096U) {
+            kernel_test_fail("the keyboard queue would not drain");
+        }
+    }
+
+    if (keyboard_read(&event) != KEYBOARD_STATUS_EMPTY) {
+        kernel_test_fail("an empty keyboard queue did not say so");
+    }
+
+    if (keyboard_read(NULL) == KEYBOARD_STATUS_OK) {
+        kernel_test_fail("the keyboard wrote an event through a null pointer");
+    }
+
+    /*
+     * Caps lock, which boot deliberately does not touch. It is a toggle on
+     * press only, it applies to letters and not to digits, and a second press
+     * undoes it.
+     */
+    before = keyboard_get_state();
+
+    if (before.caps_lock) {
+        kernel_test_fail("caps lock was already latched");
+    }
+
+    cpu_interrupt_enable();
+
+    if (keyboard_inject_scancode(0x3AU) != KEYBOARD_STATUS_OK ||
+        keyboard_inject_scancode(0x1EU) != KEYBOARD_STATUS_OK) {
+        cpu_interrupt_disable();
+        kernel_test_fail("the controller refused an injected scancode");
+    }
+
+    for (uint64_t spins = 0; spins < UINT64_C(200000000); ++spins) {
+        if (keyboard_get_state().events >= before.events + 2U) {
+            break;
+        }
+    }
+
+    cpu_interrupt_disable();
+
+    if (!keyboard_get_state().caps_lock) {
+        kernel_test_fail("caps lock did not latch on press");
+    }
+
+    /* The 'a' after it must have arrived capitalised. */
+    while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
+        if (event.character == '\0') {
+            continue;
+        }
+
+        if (event.character != 'A') {
+            kernel_test_fail("caps lock did not capitalise the next letter");
+        }
+    }
+
+    if (keyboard_character_for(0x02U, false, true) != '1') {
+        kernel_test_fail("caps lock changed a digit");
+    }
+
+    cpu_interrupt_enable();
+
+    if (keyboard_inject_scancode(0x3AU) != KEYBOARD_STATUS_OK) {
+        cpu_interrupt_disable();
+        kernel_test_fail("the controller refused the second caps lock");
+    }
+
+    for (uint64_t spins = 0; spins < UINT64_C(200000000); ++spins) {
+        if (!keyboard_get_state().caps_lock) {
+            break;
+        }
+    }
+
+    cpu_interrupt_disable();
+
+    if (keyboard_get_state().caps_lock) {
+        kernel_test_fail("caps lock did not release on a second press");
+    }
+
+    while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
+        /* discard */
+    }
+
+    /*
+     * Overflow. The queue holds sixty-four minus one; more than that must be
+     * counted as dropped rather than silently overwriting what is waiting.
+     * Interrupts stay off so nothing is consumed while it fills.
+     */
+    before = keyboard_get_state();
+
+    if (before.dropped != 0U) {
+        kernel_test_fail("the keyboard had already dropped an event");
+    }
+
+    /*
+     * Interrupts stay on for the whole flood. An earlier version toggled them
+     * around each injection, which delivered nothing at all: sti does not take
+     * effect until after the instruction following it, so sti immediately
+     * followed by cli leaves a window of exactly zero instructions. The
+     * controller holds one byte, so each injection has to be taken by the
+     * handler before the next will land, and the bounded wait inside
+     * keyboard_inject_scancode is what gives it the chance.
+     */
+    cpu_interrupt_enable();
+
+    for (uint32_t index = 0; index < 200U; ++index) {
+        if (keyboard_inject_scancode(0x1EU) != KEYBOARD_STATUS_OK) {
+            cpu_interrupt_disable();
+            kernel_test_fail("the controller refused a flood of scancodes");
+        }
+    }
+
+    for (uint64_t spins = 0; spins < UINT64_C(200000000); ++spins) {
+        const struct keyboard_state now = keyboard_get_state();
+
+        if (now.events + now.dropped >= before.events + 200U) {
+            break;
+        }
+    }
+
+    cpu_interrupt_disable();
+    after = keyboard_get_state();
+
+    if (after.queued >= KEYBOARD_QUEUE_SIZE) {
+        kernel_test_fail("the keyboard queue grew past its bound");
+    }
+
+    if (after.dropped == 0U) {
+        kernel_test_fail("a flooded keyboard queue dropped nothing");
+    }
+
+    if (after.events + after.dropped < before.events + 200U) {
+        kernel_test_fail("the keyboard lost events it never accounted for");
+    }
+
+    console_write("Seneri OS: keyboard scenario queued ");
+    console_write_u64((uint64_t)after.queued);
+    console_write(" and dropped ");
+    console_write_u64(after.dropped - before.dropped);
+    console_write(" of a 200 event flood\n");
+}
+
+static void screen_scenario(void)
+{
+    struct screen_state before;
+    struct screen_state after;
+    uint32_t width = 0U;
+    uint32_t height = 0U;
+    uint32_t first = 0U;
+    uint32_t count = 0U;
+
+    if (!screen_is_active()) {
+        kernel_test_fail("the screen scenario has no console");
+    }
+
+    if (seneri_font_geometry(&width, &height, &first, &count) !=
+        FONT_STATUS_OK) {
+        kernel_test_fail("the font table would not describe itself");
+    }
+
+    before = screen_get_state();
+
+    if (before.cell_width != width || before.cell_height != height) {
+        kernel_test_fail("the console and the font disagree about the cell");
+    }
+
+    /*
+     * Bringing the console up twice must be refused. Boot cannot test this,
+     * because boot only ever does it once.
+     */
+    if (screen_initialize() != SCREEN_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail("the console adopted the screen twice");
+    }
+
+    /*
+     * Every glyph the table covers, drawn and read back. A cell is checked
+     * immediately after it is written so a later character cannot repair an
+     * earlier one by overlapping it.
+     */
+    if (screen_clear() != SCREEN_STATUS_OK) {
+        kernel_test_fail("the console would not clear");
+    }
+
+    for (uint32_t code = first; code < first + count; ++code) {
+        const char character = (char)(unsigned char)code;
+        const struct screen_state cursor = screen_get_state();
+
+        if (screen_putc(character) != SCREEN_STATUS_OK) {
+            kernel_test_fail("the console refused a character its font covers");
+        }
+
+        if (screen_verify_cell(cursor.column, cursor.row, character) !=
+            SCREEN_STATUS_OK) {
+            kernel_test_fail("a glyph did not reach the screen intact");
+        }
+    }
+
+    after = screen_get_state();
+
+    if (after.characters - before.characters != (uint64_t)count) {
+        kernel_test_fail("the console lost a character it said it drew");
+    }
+
+    /*
+     * A cell outside the grid is refused rather than clamped, and the refusal
+     * is the console's own rather than the framebuffer's bounds check catching
+     * it afterwards.
+     */
+    if (screen_verify_cell(after.columns, 0U, 'x') != SCREEN_STATUS_NO_ROOM) {
+        kernel_test_fail("the console read a cell past its last column");
+    }
+
+    if (screen_verify_cell(0U, after.rows, 'x') != SCREEN_STATUS_NO_ROOM) {
+        kernel_test_fail("the console read a cell past its last row");
+    }
+
+    /*
+     * A scroll that actually moves rows, checked by content.
+     *
+     * This exists because a control found it missing. Scrolling by more than
+     * the screen and scrolling by zero both take early exits - one is a fill,
+     * one is a no-op - so neither reaches the copy loop, and reversing that
+     * loop's direction left every check above still passing. A copy whose
+     * destination is above its source must walk forwards or it reads rows it
+     * has already overwritten, and only content one cell tall can tell.
+     */
+    if (screen_clear() != SCREEN_STATUS_OK) {
+        kernel_test_fail("the console would not clear before the scroll check");
+    }
+
+    if (screen_write("top\nsecond") != SCREEN_STATUS_OK) {
+        kernel_test_fail("the console refused the scroll fixture");
+    }
+
+    while (screen_get_state().row + 1U < before.rows) {
+        if (screen_putc('\n') != SCREEN_STATUS_OK) {
+            kernel_test_fail("the console refused to reach its last row");
+        }
+    }
+
+    if (screen_putc('\n') != SCREEN_STATUS_OK) {
+        kernel_test_fail("the console refused to scroll one line");
+    }
+
+    /* The second line must now be the first. */
+    for (uint32_t column = 0U; column < 6U; ++column) {
+        if (screen_verify_cell(column, 0U, "second"[column]) !=
+            SCREEN_STATUS_OK) {
+            kernel_test_fail("a scroll did not move the rows it copied");
+        }
+    }
+
+    console_write("Seneri OS: screen scenario drew ");
+    console_write_u64((uint64_t)count);
+    console_write(" glyphs and read every one back\n");
+}
+
+static uint32_t surface_test_colour(uint32_t value)
+{
+    return framebuffer_pack(
+        (uint8_t)(value * 3U + 1U),
+        (uint8_t)(value * 5U + 2U),
+        (uint8_t)(value * 7U + 3U)
+    );
+}
+
+static void require_framebuffer_pixel(
+    uint32_t x,
+    uint32_t y,
+    uint32_t expected,
+    const char *reason
+)
+{
+    uint32_t pixel = 0U;
+    const uint32_t mask = framebuffer_visible_mask();
+
+    if (framebuffer_read_pixel(x, y, &pixel) != FRAMEBUFFER_STATUS_OK ||
+        (pixel & mask) != (expected & mask)) {
+        kernel_test_fail(reason);
+    }
+}
+
+/*
+ * The self-test proves the primitives over guarded synthetic rows. This proves
+ * the other half: heap allocation, damage presented to device memory, and the
+ * framebuffer pitch all agree on where the same pixels live.
+ */
+static void surface_scenario(void)
+{
+    uint32_t source[4U * 5U];
+    const struct framebuffer_state framebuffer = framebuffer_get_state();
+    const uint32_t base = surface_test_colour(1U);
+    const uint32_t changed = surface_test_colour(2U);
+    const uint32_t clipped_colour = surface_test_colour(3U);
+    struct surface surface = { 0 };
+    struct surface_rect rectangle;
+    uint32_t origin_x;
+    uint32_t origin_y;
+
+    if (!framebuffer_is_active()) {
+        kernel_test_fail("the surface scenario has no framebuffer");
+    }
+
+    if (framebuffer.width < 16U || framebuffer.height < 32U) {
+        kernel_test_fail("the framebuffer is too small for surface fixtures");
+    }
+
+    if (surface_initialize(&surface, framebuffer.width, framebuffer.height) !=
+        SURFACE_STATUS_OK) {
+        kernel_test_fail("the surface scenario could not allocate its buffer");
+    }
+
+    rectangle.x = 0U;
+    rectangle.y = 0U;
+    rectangle.width = surface.width;
+    rectangle.height = surface.height;
+
+    if (surface_fill_rect(&surface, rectangle, base) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels !=
+            (uint64_t)surface.width * surface.height ||
+        surface.damage.pending) {
+        kernel_test_fail("a full surface present copied the wrong damage");
+    }
+
+    require_framebuffer_pixel(surface.width - 1U, surface.height - 1U, base,
+        "a full surface present missed its last pixel");
+
+    if (surface_pixel(&surface, surface.width - 2U, surface.height - 2U,
+            changed) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels != 1U) {
+        kernel_test_fail("one damaged surface pixel copied more than itself");
+    }
+
+    require_framebuffer_pixel(surface.width - 2U, surface.height - 2U,
+        changed, "a damaged surface pixel was presented on the wrong row");
+
+    rectangle.x = 0U;
+    rectangle.y = surface.height / 2U;
+    rectangle.width = surface.width;
+    rectangle.height = 16U;
+
+    if (surface_fill_rect(&surface, rectangle, changed) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels != (uint64_t)surface.width * 16U) {
+        kernel_test_fail("one text line copied more than one line");
+    }
+
+    rectangle.x = surface.width - 2U;
+    rectangle.y = surface.height - 2U;
+    rectangle.width = 4U;
+    rectangle.height = 4U;
+
+    if (surface_fill_rect(&surface, rectangle, clipped_colour) !=
+            SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels != 4U) {
+        kernel_test_fail("a clipped fill crossed the surface edge");
+    }
+
+    require_framebuffer_pixel(surface.width - 1U, surface.height - 1U,
+        clipped_colour, "a clipped fill missed its visible corner");
+
+    for (uint32_t y = 0U; y < 4U; ++y) {
+        for (uint32_t x = 0U; x < 4U; ++x) {
+            source[y * 5U + x] = surface_test_colour(y * 16U + x);
+        }
+
+        source[y * 5U + 4U] = UINT32_C(0xDEADBEEF);
+    }
+
+    origin_x = 8U;
+    origin_y = 8U;
+
+    if (surface_blit(&surface, origin_x, origin_y, source, 4U, 4U,
+            5U * SURFACE_BYTES_PER_PIXEL) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels != 16U) {
+        kernel_test_fail("a padded source did not blit as four rows");
+    }
+
+    for (uint32_t y = 0U; y < 4U; ++y) {
+        for (uint32_t x = 0U; x < 4U; ++x) {
+            require_framebuffer_pixel(origin_x + x, origin_y + y,
+                surface_test_colour(y * 16U + x),
+                "surface blit used the destination pitch for its source");
+        }
+    }
+
+    rectangle.x = origin_x;
+    rectangle.y = origin_y;
+    rectangle.width = 4U;
+    rectangle.height = 4U;
+
+    if (surface_copy_rect(&surface, rectangle, origin_x + 1U,
+            origin_y + 1U) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK) {
+        kernel_test_fail("a downward overlapping copy was refused");
+    }
+
+    for (uint32_t y = 0U; y < 4U; ++y) {
+        for (uint32_t x = 0U; x < 4U; ++x) {
+            require_framebuffer_pixel(origin_x + x + 1U,
+                origin_y + y + 1U, surface_test_colour(y * 16U + x),
+                "a downward overlapping copy read overwritten pixels");
+        }
+    }
+
+    if (surface_blit(&surface, origin_x, origin_y, source, 4U, 4U,
+            5U * SURFACE_BYTES_PER_PIXEL) != SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK) {
+        kernel_test_fail("the overlap fixture could not be restored");
+    }
+
+    rectangle.x = origin_x + 1U;
+    rectangle.y = origin_y + 1U;
+    rectangle.width = 3U;
+    rectangle.height = 3U;
+
+    if (surface_copy_rect(&surface, rectangle, origin_x, origin_y) !=
+            SURFACE_STATUS_OK ||
+        surface_present(&surface) != SURFACE_STATUS_OK) {
+        kernel_test_fail("an upward overlapping copy was refused");
+    }
+
+    for (uint32_t y = 0U; y < 3U; ++y) {
+        for (uint32_t x = 0U; x < 3U; ++x) {
+            require_framebuffer_pixel(origin_x + x, origin_y + y,
+                surface_test_colour((y + 1U) * 16U + x + 1U),
+                "an upward overlapping copy read overwritten pixels");
+        }
+    }
+
+    if (surface_pixel(&surface, 1U, 2U, changed) != SURFACE_STATUS_OK ||
+        surface_pixel(&surface, 4U, 6U, changed) != SURFACE_STATUS_OK ||
+        !surface.damage.pending || surface.damage.rectangle.x != 1U ||
+        surface.damage.rectangle.y != 2U ||
+        surface.damage.rectangle.width != 4U ||
+        surface.damage.rectangle.height != 5U ||
+        surface_present(&surface) != SURFACE_STATUS_OK ||
+        surface.last_present_pixels != 20U) {
+        kernel_test_fail("surface damage did not form one bounding rectangle");
+    }
+
+    if (surface_release(&surface) != SURFACE_STATUS_OK) {
+        kernel_test_fail("the surface scenario leaked its buffer");
+    }
+
+    console_write("ST SURFACE full ");
+    console_write_u64((uint64_t)framebuffer.width * framebuffer.height);
+    console_write(" line ");
+    console_write_u64((uint64_t)framebuffer.width * 16U);
+    console_write(" clipped 4 overlap both damage 20\n");
+}
+
+static void framebuffer_scenario(const struct boot_framebuffer *framebuffer)
+{
+    struct framebuffer_state screen;
+    uint32_t coordinates[FRAMEBUFFER_TEST_PROBES][2];
+    uint32_t mask;
+    size_t probes = 0U;
+    enum framebuffer_status status;
+
+    if (framebuffer == NULL || !framebuffer->present) {
+        kernel_test_fail("the boot loader set no framebuffer");
+    }
+
+    if (!paging_is_active()) {
+        kernel_test_fail("the framebuffer scenario ran before paging");
+    }
+
+    /*
+     * Boot adopts the framebuffer before the scenarios run, because the screen
+     * console has to come up early enough to show the rest of the boot. So the
+     * framebuffer being already initialized is the expected state here and not
+     * a failure; what this scenario needs is a framebuffer that is up, not one
+     * that it personally brought up.
+     *
+     * Adopting it a second time must still be refused, and that refusal is the
+     * one this branch is asserting.
+     */
+    status = framebuffer_initialize(framebuffer);
+
+    if (status != FRAMEBUFFER_STATUS_OK &&
+        status != FRAMEBUFFER_STATUS_ALREADY_INITIALIZED) {
+        kernel_test_fail(framebuffer_status_string(status));
+    }
+
+    if (!framebuffer_is_active()) {
+        kernel_test_fail("the framebuffer scenario has no framebuffer");
+    }
+
+    screen = framebuffer_get_state();
+    mask = framebuffer_visible_mask();
+
+    if (screen.width < 4U || screen.height < 4U) {
+        kernel_test_fail("the framebuffer is too small to probe");
+    }
+
+    /* Four corners, four edge midpoints, and the rest spread through it. */
+    coordinates[probes][0] = 0U;
+    coordinates[probes++][1] = 0U;
+    coordinates[probes][0] = screen.width - 1U;
+    coordinates[probes++][1] = 0U;
+    coordinates[probes][0] = 0U;
+    coordinates[probes++][1] = screen.height - 1U;
+    coordinates[probes][0] = screen.width - 1U;
+    coordinates[probes++][1] = screen.height - 1U;
+    coordinates[probes][0] = screen.width / 2U;
+    coordinates[probes++][1] = 0U;
+    coordinates[probes][0] = screen.width / 2U;
+    coordinates[probes++][1] = screen.height - 1U;
+    coordinates[probes][0] = 0U;
+    coordinates[probes++][1] = screen.height / 2U;
+    coordinates[probes][0] = screen.width - 1U;
+    coordinates[probes++][1] = screen.height / 2U;
+
+    while (probes < FRAMEBUFFER_TEST_PROBES) {
+        coordinates[probes][0] =
+            (uint32_t)(probes * 37U) % screen.width;
+        coordinates[probes][1] =
+            (uint32_t)(probes * 53U) % screen.height;
+        ++probes;
+    }
+
+    /*
+     * A distinct colour per probe, so a coordinate that aliases another shows
+     * up as the wrong colour rather than as a coincidence.
+     */
+    for (size_t index = 0; index < probes; ++index) {
+        const uint32_t colour = framebuffer_pack(
+            (uint8_t)(index * 7U + 1U),
+            (uint8_t)(index * 11U + 2U),
+            (uint8_t)(index * 13U + 3U)
+        );
+
+        if (framebuffer_write_pixel(coordinates[index][0],
+                coordinates[index][1], colour) != FRAMEBUFFER_STATUS_OK) {
+            kernel_test_fail("the framebuffer refused a visible pixel");
+        }
+    }
+
+    for (size_t index = 0; index < probes; ++index) {
+        const uint32_t x = coordinates[index][0];
+        const uint32_t y = coordinates[index][1];
+        const uint32_t colour = framebuffer_pack(
+            (uint8_t)(index * 7U + 1U),
+            (uint8_t)(index * 11U + 2U),
+            (uint8_t)(index * 13U + 3U)
+        );
+        /*
+         * Computed here from the loader's own pitch, not from framebuffer.c.
+         * If this file and that one disagree about where a pixel lives, this is
+         * where it surfaces.
+         */
+        const volatile uint32_t *raw = (const volatile uint32_t *)(uintptr_t)(
+            framebuffer->address +
+            (uint64_t)y * framebuffer->pitch +
+            (uint64_t)x * FRAMEBUFFER_BYTES_PER_PIXEL);
+        uint32_t through_api = 0U;
+
+        if (framebuffer_read_pixel(x, y, &through_api) !=
+            FRAMEBUFFER_STATUS_OK) {
+            kernel_test_fail("the framebuffer refused a visible pixel");
+        }
+
+        if ((through_api & mask) != (colour & mask)) {
+            kernel_test_fail("a framebuffer pixel did not hold its colour");
+        }
+
+        if ((*raw & mask) != (colour & mask)) {
+            kernel_test_fail("the framebuffer wrote a pixel somewhere else");
+        }
+    }
+
+    /*
+     * No two probes may share an address. A pitch read as a width collapses
+     * rows onto each other, which every single-pixel check above would survive.
+     */
+    for (size_t left = 0; left < probes; ++left) {
+        for (size_t right = left + 1U; right < probes; ++right) {
+            const uint64_t first =
+                (uint64_t)coordinates[left][1] * framebuffer->pitch +
+                (uint64_t)coordinates[left][0] * FRAMEBUFFER_BYTES_PER_PIXEL;
+            const uint64_t second =
+                (uint64_t)coordinates[right][1] * framebuffer->pitch +
+                (uint64_t)coordinates[right][0] * FRAMEBUFFER_BYTES_PER_PIXEL;
+
+            if (coordinates[left][0] == coordinates[right][0] &&
+                coordinates[left][1] == coordinates[right][1]) {
+                continue;
+            }
+
+            if (first == second) {
+                kernel_test_fail("two framebuffer coordinates share an address");
+            }
+        }
+    }
+
+    /* The last visible pixel must still be inside the mapped span. */
+    if ((uint64_t)(screen.height - 1U) * screen.pitch +
+            (uint64_t)(screen.width - 1U) * FRAMEBUFFER_BYTES_PER_PIXEL +
+            FRAMEBUFFER_BYTES_PER_PIXEL > screen.size) {
+        kernel_test_fail("the last pixel lies outside the framebuffer");
+    }
+
+    if (framebuffer_write_pixel(screen.width, 0U, 0U) !=
+            FRAMEBUFFER_STATUS_OUT_OF_BOUNDS ||
+        framebuffer_write_pixel(0U, screen.height, 0U) !=
+            FRAMEBUFFER_STATUS_OUT_OF_BOUNDS ||
+        framebuffer_write_pixel(UINT32_MAX, UINT32_MAX, 0U) !=
+            FRAMEBUFFER_STATUS_OUT_OF_BOUNDS) {
+        kernel_test_fail("the framebuffer accepted a pixel off the screen");
+    }
+
+    status = framebuffer_verify();
+
+    if (status != FRAMEBUFFER_STATUS_OK) {
+        kernel_test_fail(framebuffer_status_string(status));
+    }
+
+    console_write("ST FRAMEBUFFER ");
+    console_write_u64(screen.width);
+    console_putc('x');
+    console_write_u64(screen.height);
+    console_write(" probes ");
+    console_write_u64(probes);
+    console_write(" pitch ");
+    console_write_u64(screen.pitch);
+    console_putc('\n');
+}
+
+void kernel_test_run(
+    enum kernel_test_scenario scenario,
+    const struct acpi_mcfg *mcfg,
+    bool mcfg_present,
+    const struct boot_framebuffer *framebuffer
+)
 {
     enum pit_status pit_status;
 
@@ -1906,6 +3641,33 @@ void kernel_test_run(enum kernel_test_scenario scenario)
     case KERNEL_TEST_HEAP:
         heap_scenario();
         kernel_test_fail("a heap guard page accepted a supervisor write");
+    case KERNEL_TEST_PCI:
+        pci_scenario(mcfg, mcfg_present);
+        kernel_test_pass();
+    case KERNEL_TEST_PCI_ECAM:
+        pci_ecam_scenario(mcfg, mcfg_present);
+        kernel_test_pass();
+    case KERNEL_TEST_THREADS:
+        threads_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_THREAD_GUARD:
+        thread_guard_scenario();
+        kernel_test_fail("a thread stack guard page accepted a write");
+    case KERNEL_TEST_FRAMEBUFFER:
+        framebuffer_scenario(framebuffer);
+        kernel_test_pass();
+    case KERNEL_TEST_SCREEN:
+        screen_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_KEYBOARD:
+        keyboard_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_SHELL:
+        shell_scenario();
+        kernel_test_pass();
+    case KERNEL_TEST_SURFACE:
+        surface_scenario();
+        kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -1962,6 +3724,17 @@ bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
             frame->cr2 == HEAP_GUARD_ABOVE &&
             frame->rip == (uintptr_t)(const void *)paging_probe_write_site;
         break;
+    case KERNEL_TEST_THREAD_GUARD:
+        /*
+         * The fault is taken on the created thread's own stack, so this also
+         * proves the fault path works at all on a stack this layer allocated
+         * rather than only on the one boot.S set up.
+         */
+        matches = frame->vector == 14U &&
+            frame->error_code == THREAD_GUARD_TEST_ERROR_CODE &&
+            frame->cr2 == THREAD_GUARD_TEST_ADDRESS &&
+            frame->rip == (uintptr_t)(const void *)paging_probe_write_site;
+        break;
     default:
         return false;
     }
@@ -2016,6 +3789,24 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "paging";
     case KERNEL_TEST_HEAP:
         return "heap";
+    case KERNEL_TEST_PCI:
+        return "pci";
+    case KERNEL_TEST_PCI_ECAM:
+        return "pci-ecam";
+    case KERNEL_TEST_THREADS:
+        return "threads";
+    case KERNEL_TEST_THREAD_GUARD:
+        return "thread-guard";
+    case KERNEL_TEST_FRAMEBUFFER:
+        return "framebuffer";
+    case KERNEL_TEST_SCREEN:
+        return "screen";
+    case KERNEL_TEST_KEYBOARD:
+        return "keyboard";
+    case KERNEL_TEST_SHELL:
+        return "shell";
+    case KERNEL_TEST_SURFACE:
+        return "surface";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
