@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the twenty-eight scenarios pass,
+here is a correctness hole in a shipped layer — the twenty-nine scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof, one function signature growing a parameter per
@@ -155,7 +155,7 @@ The last three exist because a comparison that cannot fail proves nothing, and
 the masking of timing lines is exactly the kind of thing that quietly makes a
 comparison blind.
 
-All twenty-eight QEMU scenarios pass, and `nm -u` is still empty.
+All twenty-nine QEMU scenarios pass, and `nm -u` is still empty.
 
 **What this does not fix.** `boot_proofs.c` is 1,648 lines and is now the third
 largest file here. It has a single responsibility, which the old `kernel.c` did
@@ -171,10 +171,11 @@ and is still undone.
     paging_initialize(topology, mcfg)
     paging_initialize(topology, mcfg, framebuffer)
 
-Every addition is a *device window* — a physical range that must be carved out
-of the identity map as uncacheable. That is one concept wearing three parameters,
-and the next device window makes it four. It should be a
-`struct paging_device_windows`, and the change is small today.
+Every addition is a *typed physical window* — a range carved out of the bulk
+write-back identity map. APIC, VGA, and PCI ECAM are uncacheable; the framebuffer
+is write-combining; ordinary RAM stays write-back. That is one memory-type layer
+wearing three parameters, and the next window makes it four. It should be a
+`struct paging_device_windows` whose entries name both span and memory type.
 
 `kernel_test_run` has the same shape for the same reason, at four parameters.
 

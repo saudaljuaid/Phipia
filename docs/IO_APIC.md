@@ -209,10 +209,12 @@ is live, and then counts eight deliveries.
 
 Eight, because one proves nothing: a pin whose remote IRR is never cleared
 delivers exactly once, and one delivery is what success and that failure have in
-common. The scenario also holds the eight to the interval eight ticks of a
-100 Hz timer take, and refuses more than sixteen of them, because the opposite
-failure is a pin acknowledged too early that re-delivers as fast as the
-processor will accept it. It then re-routes the same pin edge triggered and
+common. The scenario also requires at least three quarters of the interval eight
+ticks of a 100 Hz timer take, bounds the whole wait at two seconds, and refuses
+more than sixteen deliveries. The lower bound catches the opposite failure — a
+pin acknowledged too early that re-delivers as fast as the processor will accept
+it — while the upper bound tolerates a host scheduling pause that stretches
+emulated time. It then re-routes the same pin edge triggered and
 requires both counters to stand still across eight more deliveries, so an
 implementation that treated every route as level triggered would not pass.
 

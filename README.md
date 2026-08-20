@@ -42,13 +42,13 @@ negative controls.
 | Area | Current capability |
 | --- | --- |
 | Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics |
-| Memory | Firmware memory map, physical frames, four-level paging, W^X, guarded heap and stacks |
+| Memory | Firmware memory map, physical frames, four-level paging, W^X, explicit PAT memory types, guarded heap and stacks |
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, PCI configuration through ports and ECAM, bridge-aware enumeration |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
-| Graphics and input | RGB framebuffer, cached drawing surface, screen console, PS/2 keyboard, and shell |
+| Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console, PS/2 keyboard, and shell |
 | Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof | Boot-time invariants, deliberate fault probes, and 28 deterministic QEMU scenarios |
+| Proof | Boot-time invariants, deliberate fault probes, and 29 deterministic QEMU scenarios |
 
 ## 🚀 Build and run
 
@@ -71,7 +71,7 @@ Then choose the level of proof you want:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 28 deterministic fault, memory, device, and kernel scenarios
+make qemu-tests   # all 29 deterministic fault, memory, device, and kernel scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -84,7 +84,7 @@ make run          # interactive graphical boot
 - [`docs/MONOTONIC_TIME.md`](docs/MONOTONIC_TIME.md) — clocks, deadlines, and bounded waits.
 - [`docs/PCI_ENUMERATION.md`](docs/PCI_ENUMERATION.md) — hardware discovery through two configuration paths.
 - [`docs/THREADS.md`](docs/THREADS.md) — guarded threads, switching, and preemption.
-- [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md) and [`docs/SURFACE.md`](docs/SURFACE.md) — pixels, cached drawing, and presentation.
+- [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.
 - [`docs/SCREEN_CONSOLE.md`](docs/SCREEN_CONSOLE.md) and [`docs/SHELL.md`](docs/SHELL.md) — the visible interactive path.
 - [`docs/MAP.md`](docs/MAP.md) — the complete source and boot-order map.
 - [`docs/WORKING_ON_SENERI.md`](docs/WORKING_ON_SENERI.md) — build, proof, and contribution workflow.
