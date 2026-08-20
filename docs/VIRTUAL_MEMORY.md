@@ -30,7 +30,7 @@ fault. It does **not** add a heap. That is the increment after this one.
 
 ## Why boot.S could not simply be fixed
 
-The kernel loads at `0x100000` and ends at `0x17F000`, so all four of its load
+The kernel loads at `0x100000` and ends at `0x1A3000`, so all four of its load
 segments sit inside a single 2 MiB page. One page carries one permission.
 Per-section permissions are therefore impossible without 4 KiB granularity over
 that region, and `boot.S` runs in 32-bit mode before the frame allocator exists,
@@ -38,9 +38,9 @@ with no way to obtain the tables that would need.
 
 ## What the hierarchy contains
 
-Four levels, `CR4.PAE` already set by `boot.S`, `CR4.LA57` refused. Nine frames:
-one PML4, one PDPT, four page directories, and one page table for each 2 MiB
-region that needs 4 KiB granularity.
+Four levels, `CR4.PAE` already set by `boot.S`, `CR4.LA57` refused. Eleven
+frames: one PML4, one PDPT, four page directories, and five page tables, one for
+each 2 MiB region that needs 4 KiB granularity on the normal boot machine.
 
 | Range | Granularity | Permissions |
 | --- | --- | --- |
@@ -55,6 +55,15 @@ region that needs 4 KiB granularity.
 | discovered PCI ECAM window | 4 KiB | writable, NX, **uncacheable** |
 | framebuffer-intersecting pages | 4 KiB | writable, NX, **write-combining** |
 | everything else below 4 GiB | 2 MiB | writable, NX, **write-back** |
+
+The device rows are not separate paging arguments. `kernel.c` constructs one
+bounded `struct paging_device_windows` from the topology, usable first MCFG
+allocation, and usable framebuffer description after discovery has finished.
+Each entry names a kind, instance, physical span, semantic memory type, and
+semantic access. `paging_initialize` accepts that validated collection and
+never reads ACPI, PCI, or framebuffer descriptions. The capacity, canonical
+ordering, overlap refusals, optional-device rules, and complete installed-table
+walk are specified in `docs/DEVICE_WINDOWS.md`.
 
 Every entry is supervisor-only. There is no user flag to request:
 `paging_map` refuses any permission bit it does not recognise, so a caller that
@@ -259,6 +268,9 @@ It runs before boot touches any hardware.
 - table-supply exhaustion, and an arena outside the identity window;
 - synthetic kernel layouts: inverted, unaligned at either end, and an image
   larger than the linked bound;
+- bounded synthetic device registries covering canonical order, mixed WB/WC/UC
+  input, every range/count/type refusal, overlap and duplicate policy, a WC
+  framebuffer crossing a 2 MiB boundary, UC APICs, and absent optional windows;
 - synthetic CPUID, CR4 and PAT values producing every processor refusal before
   any real PAT MSR access.
 
@@ -270,15 +282,15 @@ read-only, read back again, then unmapped, proved absent, and released. Nothing
 in it faults.
 
 ```text
-OpenSeneri: paging root 0x000000000017F000 table frames 9 regions 3 NX yes write protect yes
-OpenSeneri: paging leaves 3580 writable 3557 executable 16 both 0
+OpenSeneri: paging root 0x00000000001A3000 table frames 11 regions 5 NX yes write protect yes
+OpenSeneri: paging leaves 4602 writable 4545 executable 34 both 0
 OpenSeneri: kernel page tables installed
 OpenSeneri: no writable executable mapping
 OpenSeneri: virtual memory established
 ```
 
-`executable 16` is exactly the sixteen pages between `__text_start` and
-`__text_end`. `both 0` is the invariant, counted off the live hierarchy.
+`executable 34` is exactly the pages between `__text_start` and `__text_end`.
+`both 0` is the invariant, counted off the live hierarchy.
 
 The last line comes from a second `paging_verify` at the *end* of boot, after
 every other subsystem has run. Everything between the switch and there executed
@@ -427,9 +439,9 @@ compiler accepts instead.
   the tables would have made the CR3 switch far harder to review.
 - **Narrowing the identity window**, and re-pointing the frame allocator, the
   ACPI readers and the table walk together.
-- **A general device cache policy.** APIC, VGA, and PCI ECAM are UC and the
-  framebuffer is WC; the rest of the MMIO hole is still write-back. A registry,
-  MTRR dump, and alias audit remain missing.
+- **A general device cache policy.** The bounded registry covers APIC, VGA, PCI
+  ECAM and the framebuffer, but the rest of the MMIO hole is still write-back.
+  MTRR inspection and a physical-alias audit remain missing.
 - **Userspace, ring 3, per-process address spaces.** The user bit is refused, not
   supported.
 - **Demand paging, swap, or any fault-driven mapping.** The page-fault handler

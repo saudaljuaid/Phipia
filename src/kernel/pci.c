@@ -635,7 +635,9 @@ static void reset_state(void)
  */
 static void adopt_ecam_window(const struct acpi_mcfg *mcfg, bool mcfg_present)
 {
-    const struct paging_state paging = paging_get_state();
+    const struct paging_device_windows *windows =
+        paging_get_device_windows();
+    const struct paging_device_window *window = NULL;
     const struct acpi_ecam_allocation *allocation;
     uint64_t declared;
 
@@ -643,21 +645,24 @@ static void adopt_ecam_window(const struct acpi_mcfg *mcfg, bool mcfg_present)
         return;
     }
 
-    if (paging.ecam_window_base == 0U || paging.ecam_window_size == 0U) {
-        return;
+    for (size_t index = 0U; index < windows->count; ++index) {
+        if (windows->entries[index].kind == PAGING_DEVICE_WINDOW_PCI_ECAM) {
+            window = &windows->entries[index];
+            break;
+        }
     }
 
     allocation = &mcfg->allocations[0];
 
-    if (allocation->base_address != paging.ecam_window_base) {
+    if (window == NULL || allocation->base_address != window->physical_base) {
         return;
     }
 
     declared = acpi_ecam_allocation_size(allocation);
-    state.ecam_base = paging.ecam_window_base;
-    state.ecam_size = declared < paging.ecam_window_size
+    state.ecam_base = window->physical_base;
+    state.ecam_size = declared < window->length
         ? declared
-        : paging.ecam_window_size;
+        : window->length;
     state.ecam_segment = allocation->segment;
     state.ecam_start_bus = allocation->start_bus;
 

@@ -67,8 +67,6 @@
 #define CLOCK_PROOF_FREQUENCY UINT32_C(100)
 #define CLOCK_PROOF_TICKS UINT64_C(20)
 
-#define WRITE_COMBINING_VGA_TEXT_BUFFER UINT64_C(0x000B8000)
-
 static uint8_t write_back_probe;
 
 /*
@@ -586,16 +584,12 @@ void prove_monotonic_time(void)
  * period. The pattern each time is the same: the check was necessary and was
  * never sufficient.
  */
-void install_page_tables(
-    const struct acpi_topology *topology,
-    const struct acpi_mcfg *mcfg,
-    const struct boot_framebuffer *framebuffer
-)
+void install_page_tables(const struct paging_device_windows *device_windows)
 {
     struct paging_state paging;
     struct paging_audit audit;
-    enum paging_status status =
-        paging_initialize(topology, mcfg, framebuffer);
+    size_t failed_window = PAGING_DEVICE_WINDOW_NONE;
+    enum paging_status status = paging_initialize(device_windows);
 
     if (status != PAGING_STATUS_OK) {
         console_panic(paging_status_string(status));
@@ -642,6 +636,31 @@ void install_page_tables(
         console_panic("an installed page is reachable from user mode");
     }
 
+    status = paging_verify_device_windows(device_windows, &failed_window);
+
+    if (status != PAGING_STATUS_OK) {
+        const struct paging_device_windows *installed =
+            paging_get_device_windows();
+
+        console_write("OpenSeneri: installed device-window proof failed: ");
+
+        if (failed_window < installed->count) {
+            const struct paging_device_window *window =
+                &installed->entries[failed_window];
+
+            console_write(paging_device_window_kind_string(window->kind));
+
+            if (window->kind == PAGING_DEVICE_WINDOW_IO_APIC) {
+                console_putc(' ');
+                console_write_u64(window->instance);
+            }
+
+            console_write(": ");
+        }
+
+        console_panic(paging_status_string(status));
+    }
+
     /*
      * Without either bit the permissions above are decoration: no-execute needs
      * EFER.NXE to exist at all, and a read-only page is writable from ring zero
@@ -654,6 +673,60 @@ void install_page_tables(
 
     console_write("OpenSeneri: kernel page tables installed\n");
     console_write("OpenSeneri: no writable executable mapping\n");
+}
+
+static uint64_t described_ecam_window(const struct acpi_mcfg *mcfg)
+{
+    uint64_t base;
+
+    if (mcfg == NULL || mcfg->allocation_count == 0U) {
+        return 0U;
+    }
+
+    base = mcfg->allocations[0].base_address;
+
+    if (base == 0U || (base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U ||
+        base > SENERI_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+        return 0U;
+    }
+
+    return base;
+}
+
+static uint64_t described_framebuffer_window(
+    const struct boot_framebuffer *framebuffer,
+    uint64_t *base_out
+)
+{
+    uint64_t end;
+    uint64_t region_base;
+    uint64_t region_end;
+
+    *base_out = 0U;
+
+    if (framebuffer == NULL || !framebuffer->present ||
+        framebuffer->size == 0U ||
+        framebuffer->size > UINT64_MAX - framebuffer->address) {
+        return 0U;
+    }
+
+    end = framebuffer->address + framebuffer->size;
+
+    if (end > SENERI_EARLY_PHYSICAL_LIMIT) {
+        return 0U;
+    }
+
+    region_base = framebuffer->address & ~(PAGING_HUGE_PAGE_SIZE - 1U);
+    region_end = (end + PAGING_HUGE_PAGE_SIZE - 1U) &
+        ~(PAGING_HUGE_PAGE_SIZE - 1U);
+
+    if (region_end - region_base > PAGING_DEVICE_WINDOW_MAX_LENGTH) {
+        return 0U;
+    }
+
+    *base_out = framebuffer->address & ~(PAGING_PAGE_SIZE - 1U);
+    end = (end + PAGING_PAGE_SIZE - 1U) & ~(PAGING_PAGE_SIZE - 1U);
+    return end - *base_out;
 }
 
 static bool window_has_memory_type(
@@ -688,10 +761,15 @@ static bool window_has_memory_type(
  */
 void prove_write_combining(
     const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
     const struct boot_framebuffer *framebuffer
 )
 {
     const struct paging_state paging = paging_get_state();
+    const uint64_t ecam_base = described_ecam_window(mcfg);
+    uint64_t framebuffer_base = 0U;
+    const uint64_t framebuffer_size =
+        described_framebuffer_window(framebuffer, &framebuffer_base);
     struct paging_translation ordinary;
 
     if (topology == NULL || framebuffer == NULL) {
@@ -705,7 +783,7 @@ void prove_write_combining(
         console_panic("IA32_PAT write-combining readback is wrong");
     }
 
-    if (!window_has_memory_type(WRITE_COMBINING_VGA_TEXT_BUFFER,
+    if (!window_has_memory_type(PAGING_VGA_TEXT_BUFFER_BASE,
             PAGING_PAGE_SIZE, PAGING_WRITE | PAGING_UNCACHED,
             PAGING_MEMORY_UNCACHEABLE)) {
         console_panic("VGA window is not uncacheable");
@@ -725,16 +803,16 @@ void prove_write_combining(
         }
     }
 
-    if (paging.ecam_window_size != 0U &&
-        !window_has_memory_type(paging.ecam_window_base,
-            paging.ecam_window_size, PAGING_WRITE | PAGING_UNCACHED,
+    if (ecam_base != 0U &&
+        !window_has_memory_type(ecam_base, PAGING_ECAM_WINDOW_SIZE,
+            PAGING_WRITE | PAGING_UNCACHED,
             PAGING_MEMORY_UNCACHEABLE)) {
         console_panic("PCI ECAM window is not uncacheable");
     }
 
-    if (paging.framebuffer_size != 0U &&
-        !window_has_memory_type(paging.framebuffer_base,
-            paging.framebuffer_size, PAGING_WRITE | PAGING_WRITE_COMBINING,
+    if (framebuffer_size != 0U &&
+        !window_has_memory_type(framebuffer_base, framebuffer_size,
+            PAGING_WRITE | PAGING_WRITE_COMBINING,
             PAGING_MEMORY_WRITE_COMBINING)) {
         console_panic("framebuffer range is not write-combining");
     }
@@ -754,10 +832,10 @@ void prove_write_combining(
     console_write_u64(paging.write_combining_pat_entry);
     console_write(" write-combining\n");
     console_write("OpenSeneri: framebuffer memory type ");
-    console_write(paging.framebuffer_size == 0U ? "absent" :
+    console_write(framebuffer_size == 0U ? "absent" :
         paging_memory_type_string(PAGING_MEMORY_WRITE_COMBINING));
     console_write(" pages ");
-    console_write_u64(paging.framebuffer_size / PAGING_PAGE_SIZE);
+    console_write_u64(framebuffer_size / PAGING_PAGE_SIZE);
     console_putc('\n');
     console_write("OpenSeneri: write-combining established\n");
 }

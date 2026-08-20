@@ -8,6 +8,7 @@
 #include <seneri/acpi.h>
 #include <seneri/boot.h>
 #include <seneri/interrupts.h>
+#include <seneri/paging.h>
 
 enum kernel_test_scenario {
     KERNEL_TEST_NONE = 0,
@@ -40,21 +41,26 @@ enum kernel_test_scenario {
     KERNEL_TEST_SHELL,
     KERNEL_TEST_SURFACE,
     KERNEL_TEST_WRITE_COMBINING,
+    KERNEL_TEST_DEVICE_WINDOWS,
     KERNEL_TEST_INVALID
 };
 
-enum kernel_test_scenario kernel_test_select(const struct boot_context *context);
 /*
- * The MCFG is passed in rather than rediscovered because the PCI scenarios need
- * the same description of the machine that normal boot used. A machine that
- * declares no window passes false, which is a case both scenarios have to
- * handle and one of them exists to prove.
+ * The bounded environment a scenario is allowed to inspect. A new discovered
+ * window extends the registry, not kernel_test_run's signature, and every read
+ * remains explicit rather than reaching into kernel.c's file scope.
  */
+struct kernel_test_context {
+    const struct acpi_mcfg *mcfg;
+    const struct boot_framebuffer *framebuffer;
+    const struct paging_device_windows *device_windows;
+    bool mcfg_present;
+};
+
+enum kernel_test_scenario kernel_test_select(const struct boot_context *context);
 void kernel_test_run(
     enum kernel_test_scenario scenario,
-    const struct acpi_mcfg *mcfg,
-    bool mcfg_present,
-    const struct boot_framebuffer *framebuffer
+    const struct kernel_test_context *context
 );
 _Noreturn void kernel_test_complete_normal(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);

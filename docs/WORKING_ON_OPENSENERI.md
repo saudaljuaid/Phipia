@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All twenty-nine bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 

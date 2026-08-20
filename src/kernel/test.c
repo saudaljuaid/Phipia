@@ -266,6 +266,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_WRITE_COMBINING;
     }
 
+    if (token_equals(value, length, "device-windows")) {
+        return KERNEL_TEST_DEVICE_WINDOWS;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -339,6 +343,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2B);
     case KERNEL_TEST_WRITE_COMBINING:
         return UINT8_C(0x2C);
+    case KERNEL_TEST_DEVICE_WINDOWS:
+        return UINT8_C(0x2D);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -1495,9 +1501,6 @@ static void timers_scenario(void)
  */
 static volatile uint8_t paging_scratch;
 
-/* Larger than early boot should place on the 16 KiB kernel stack. */
-static struct acpi_topology paging_probe_topology;
-
 /*
  * Prove the permissions are enforced by the processor rather than merely
  * recorded in a table.
@@ -1513,7 +1516,7 @@ static struct acpi_topology paging_probe_topology;
  * The probe returns if the store succeeds, so a permission that quietly failed
  * to take shows up as a scenario failure rather than as a timeout.
  */
-static void paging_scenario(void)
+static void paging_scenario(const struct paging_device_windows *device_windows)
 {
     volatile uint8_t *probe =
         (volatile uint8_t *)(uintptr_t)PAGING_PROBE_ADDRESS;
@@ -1601,7 +1604,7 @@ static void paging_scenario(void)
         kernel_test_fail("a 2 MiB mapping accepted a 4 KiB change");
     }
 
-    if (paging_initialize(&paging_probe_topology, NULL, NULL) !=
+    if (paging_initialize(device_windows) !=
         PAGING_STATUS_ALREADY_INITIALIZED) {
         kernel_test_fail("page tables accepted a second installation");
     }
@@ -2167,8 +2170,32 @@ static void pci_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
  * because a window reader whose device and function bits went nowhere would
  * agree with the ports about 00:00.0 and answer 00:00.0 for everything else.
  */
-static void pci_ecam_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
+static const struct paging_device_window *find_device_window(
+    const struct paging_device_windows *windows,
+    enum paging_device_window_kind kind
+)
 {
+    if (windows == NULL) {
+        return NULL;
+    }
+
+    for (size_t index = 0U; index < windows->count; ++index) {
+        if (windows->entries[index].kind == kind) {
+            return &windows->entries[index];
+        }
+    }
+
+    return NULL;
+}
+
+static void pci_ecam_scenario(
+    const struct acpi_mcfg *mcfg,
+    bool mcfg_present,
+    const struct paging_device_windows *device_windows
+)
+{
+    const struct paging_device_window *ecam =
+        find_device_window(device_windows, PAGING_DEVICE_WINDOW_PCI_ECAM);
     struct pci_state pci;
     struct pci_address address;
     enum pci_status status;
@@ -2195,8 +2222,9 @@ static void pci_ecam_scenario(const struct acpi_mcfg *mcfg, bool mcfg_present)
         kernel_test_fail("the declared configuration window was not mapped");
     }
 
-    if (pci.ecam_size != PAGING_ECAM_WINDOW_SIZE ||
-        pci.ecam_base != paging_get_state().ecam_window_base) {
+    if (ecam == NULL || pci.ecam_size != PAGING_ECAM_WINDOW_SIZE ||
+        pci.ecam_base != ecam->physical_base ||
+        pci.ecam_size != ecam->length) {
         kernel_test_fail("the window read is not the window that was mapped");
     }
 
@@ -3375,15 +3403,20 @@ static void surface_scenario(void)
 }
 
 static void write_combining_scenario(
-    const struct boot_framebuffer *framebuffer
+    const struct boot_framebuffer *framebuffer,
+    const struct paging_device_windows *device_windows
 )
 {
     const struct paging_state paging = paging_get_state();
+    const struct paging_device_window *framebuffer_window =
+        find_device_window(device_windows, PAGING_DEVICE_WINDOW_FRAMEBUFFER);
+    const struct paging_device_window *ecam =
+        find_device_window(device_windows, PAGING_DEVICE_WINDOW_PCI_ECAM);
     struct paging_translation translation;
     struct surface cached = {0};
 
     if (framebuffer == NULL || !framebuffer->present ||
-        paging.framebuffer_size == 0U) {
+        framebuffer_window == NULL) {
         kernel_test_fail("the write-combining scenario has no framebuffer");
     }
 
@@ -3401,9 +3434,9 @@ static void write_combining_scenario(
         }
     }
 
-    for (uint64_t offset = 0U; offset < paging.framebuffer_size;
+    for (uint64_t offset = 0U; offset < framebuffer_window->length;
          offset += PAGING_PAGE_SIZE) {
-        const uint64_t address = paging.framebuffer_base + offset;
+        const uint64_t address = framebuffer_window->physical_base + offset;
 
         if (paging_translate(address, &translation) != PAGING_STATUS_OK ||
             translation.physical_address != address ||
@@ -3415,9 +3448,9 @@ static void write_combining_scenario(
         }
     }
 
-    for (uint64_t offset = 0U; offset < paging.ecam_window_size;
+    for (uint64_t offset = 0U; ecam != NULL && offset < ecam->length;
          offset += PAGING_PAGE_SIZE) {
-        const uint64_t address = paging.ecam_window_base + offset;
+        const uint64_t address = ecam->physical_base + offset;
 
         if (paging_translate(address, &translation) != PAGING_STATUS_OK ||
             translation.permissions != (PAGING_WRITE | PAGING_UNCACHED) ||
@@ -3455,8 +3488,106 @@ static void write_combining_scenario(
     console_write(" ENTRY ");
     console_write_u64(paging.write_combining_pat_entry);
     console_write(" FRAMEBUFFER ");
-    console_write_u64(paging.framebuffer_size / PAGING_PAGE_SIZE);
+    console_write_u64(framebuffer_window->length / PAGING_PAGE_SIZE);
     console_write(" PAGES\n");
+}
+
+static void device_windows_scenario(
+    const struct paging_device_windows *expected
+)
+{
+    const struct paging_device_windows *installed =
+        paging_get_device_windows();
+    struct paging_translation translation;
+    struct paging_audit audit;
+    size_t failed_window = PAGING_DEVICE_WINDOW_NONE;
+    size_t page_count = 0U;
+    size_t io_apic_count = 0U;
+    bool found_vga = false;
+    bool found_local_apic = false;
+    bool found_ecam = false;
+    bool found_framebuffer = false;
+
+    if (paging_verify_device_windows(expected, &failed_window) !=
+            PAGING_STATUS_OK ||
+        paging_audit_hierarchy(&audit) != PAGING_STATUS_OK ||
+        audit.write_execute_leaves != 0U || audit.user_leaves != 0U) {
+        kernel_test_fail("the installed device-window registry is invalid");
+    }
+
+    for (size_t index = 0U; index < installed->count; ++index) {
+        const struct paging_device_window *window = &installed->entries[index];
+        enum paging_memory_type required_type = PAGING_MEMORY_UNCACHEABLE;
+
+        switch (window->kind) {
+        case PAGING_DEVICE_WINDOW_VGA_TEXT:
+            found_vga = true;
+            break;
+        case PAGING_DEVICE_WINDOW_LOCAL_APIC:
+            found_local_apic = true;
+            break;
+        case PAGING_DEVICE_WINDOW_IO_APIC:
+            ++io_apic_count;
+            break;
+        case PAGING_DEVICE_WINDOW_PCI_ECAM:
+            found_ecam = true;
+            break;
+        case PAGING_DEVICE_WINDOW_FRAMEBUFFER:
+            found_framebuffer = true;
+            required_type = PAGING_MEMORY_WRITE_COMBINING;
+            break;
+        case PAGING_DEVICE_WINDOW_KIND_COUNT:
+        default:
+            kernel_test_fail("the installed registry has an unknown kind");
+        }
+
+        if (window->memory_type != required_type ||
+            window->permissions != PAGING_DEVICE_WINDOW_WRITE) {
+            kernel_test_fail("a device window has the wrong policy");
+        }
+
+        for (uint64_t offset = 0U; offset < window->length;
+             offset += PAGING_PAGE_SIZE) {
+            const uint64_t address = window->physical_base + offset;
+            const uint32_t permissions = PAGING_WRITE |
+                (required_type == PAGING_MEMORY_WRITE_COMBINING
+                    ? PAGING_WRITE_COMBINING
+                    : PAGING_UNCACHED);
+
+            if (paging_translate(address, &translation) != PAGING_STATUS_OK ||
+                translation.physical_address != address ||
+                translation.permissions != permissions ||
+                translation.memory_type != required_type ||
+                translation.level != 1U) {
+                kernel_test_fail("a complete device window did not translate");
+            }
+
+            ++page_count;
+        }
+    }
+
+    if (!found_vga || !found_local_apic || io_apic_count == 0U) {
+        kernel_test_fail("the installed registry lacks a required window");
+    }
+
+    if (paging_translate((uint64_t)(uintptr_t)&active_scenario, &translation) !=
+            PAGING_STATUS_OK ||
+        translation.permissions != PAGING_WRITE ||
+        translation.memory_type != PAGING_MEMORY_WRITE_BACK) {
+        kernel_test_fail("ordinary RAM is not write-back");
+    }
+
+    console_write("ST DEVICE-WINDOWS WINDOWS ");
+    console_write_u64(installed->count);
+    console_write(" PAGES ");
+    console_write_u64(page_count);
+    console_write(" VGA 1 LOCAL-APIC 1 IO-APICS ");
+    console_write_u64(io_apic_count);
+    console_write(" ECAM ");
+    console_write_u64(found_ecam ? 1U : 0U);
+    console_write(" FRAMEBUFFER ");
+    console_write_u64(found_framebuffer ? 1U : 0U);
+    console_putc('\n');
 }
 
 static void framebuffer_scenario(const struct boot_framebuffer *framebuffer)
@@ -3640,9 +3771,7 @@ static void framebuffer_scenario(const struct boot_framebuffer *framebuffer)
 
 void kernel_test_run(
     enum kernel_test_scenario scenario,
-    const struct acpi_mcfg *mcfg,
-    bool mcfg_present,
-    const struct boot_framebuffer *framebuffer
+    const struct kernel_test_context *context
 )
 {
     enum pit_status pit_status;
@@ -3653,6 +3782,12 @@ void kernel_test_run(
 
     active_scenario = scenario;
     test_marker("BEGIN", scenario);
+
+    if (context == NULL || context->framebuffer == NULL ||
+        context->device_windows == NULL ||
+        (context->mcfg_present && context->mcfg == NULL)) {
+        kernel_test_fail("the test context is incomplete");
+    }
 
     if (!interrupt_frame_layout_self_test()) {
         kernel_test_fail("interrupt frame or descriptor validation failed");
@@ -3729,16 +3864,17 @@ void kernel_test_run(
         timers_scenario();
         kernel_test_pass();
     case KERNEL_TEST_PAGING:
-        paging_scenario();
+        paging_scenario(context->device_windows);
         kernel_test_fail("a read-only page accepted a supervisor write");
     case KERNEL_TEST_HEAP:
         heap_scenario();
         kernel_test_fail("a heap guard page accepted a supervisor write");
     case KERNEL_TEST_PCI:
-        pci_scenario(mcfg, mcfg_present);
+        pci_scenario(context->mcfg, context->mcfg_present);
         kernel_test_pass();
     case KERNEL_TEST_PCI_ECAM:
-        pci_ecam_scenario(mcfg, mcfg_present);
+        pci_ecam_scenario(context->mcfg, context->mcfg_present,
+            context->device_windows);
         kernel_test_pass();
     case KERNEL_TEST_THREADS:
         threads_scenario();
@@ -3747,7 +3883,7 @@ void kernel_test_run(
         thread_guard_scenario();
         kernel_test_fail("a thread stack guard page accepted a write");
     case KERNEL_TEST_FRAMEBUFFER:
-        framebuffer_scenario(framebuffer);
+        framebuffer_scenario(context->framebuffer);
         kernel_test_pass();
     case KERNEL_TEST_SCREEN:
         screen_scenario();
@@ -3762,7 +3898,11 @@ void kernel_test_run(
         surface_scenario();
         kernel_test_pass();
     case KERNEL_TEST_WRITE_COMBINING:
-        write_combining_scenario(framebuffer);
+        write_combining_scenario(context->framebuffer,
+            context->device_windows);
+        kernel_test_pass();
+    case KERNEL_TEST_DEVICE_WINDOWS:
+        device_windows_scenario(context->device_windows);
         kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
@@ -3905,6 +4045,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "surface";
     case KERNEL_TEST_WRITE_COMBINING:
         return "write-combining";
+    case KERNEL_TEST_DEVICE_WINDOWS:
+        return "device-windows";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

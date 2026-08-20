@@ -6,6 +6,11 @@ OpenSeneri now gives exactly that framebuffer span a write-combining page memory
 type. VGA text memory, local APIC, every I/O APIC, and PCI ECAM remain strongly
 uncacheable. Kernel RAM and the cached surface remain write-back.
 
+That policy now arrives through the validated device-window registry described
+in `docs/DEVICE_WINDOWS.md`. Paging receives a semantic kind, span, memory type,
+and access policy; it no longer receives topology, MCFG, or framebuffer
+arguments and does not rediscover them.
+
 This distinction is part of the address-space model, not a drawing hint.
 `paging_translate` reports the memory type selected by the leaf and the installed
 `IA32_PAT`; a permissions match without a memory-type match is not proof.
@@ -134,17 +139,20 @@ agreed with itself, not that the copy reached the display mapping.
 
 ## Proof structure
 
-`paging_self_test()` uses synthetic PAT values and synthetic 4 KiB and large
-leaves. It covers all six architectural types, the different PAT-bit positions,
-reserved bytes, missing PAT support, unsafe inherited layouts, incompatible
-requests, and refusal to change a live page's type. It runs before any real PAT
-MSR is touched.
+`paging_self_test()` uses synthetic PAT values, synthetic 4 KiB and large
+leaves, and synthetic device registries. It covers all six architectural types,
+the different PAT-bit positions, reserved bytes, missing PAT support, unsafe
+inherited layouts, incompatible requests, conflicting registry overlaps, and
+refusal to change a live page's type. It runs before any real PAT MSR is touched.
 
-`prove_write_combining()` runs after the new CR3 is installed and before the
-first framebuffer store. It checks the exact PAT readback, walks every page of
-each named register window, walks every framebuffer page, and samples ordinary
-kernel RAM. `framebuffer_verify()` independently repeats the whole framebuffer
-walk. `surface_verify()` walks the cached allocation and requires write-back.
+The installed device-window proof runs after the new CR3 is installed. It walks
+every page registered and requires identity translation, level-1 leaves,
+semantic permissions, and decoded PAT type, while naming a failing kind and I/O
+APIC instance. `prove_write_combining()` remains independent: before the first
+framebuffer store it re-derives register and whole-framebuffer spans from the
+boot descriptions, checks exact PAT readback, and samples ordinary kernel RAM.
+`framebuffer_verify()` independently repeats the whole framebuffer walk.
+`surface_verify()` walks the cached allocation and requires write-back.
 
 The dedicated `write-combining` scenario uses guest exit `0x2C`, host status 89.
 It checks PAT ownership, every framebuffer and ECAM page, ordinary RAM, a real
@@ -243,19 +251,30 @@ measurement or a proof result.
 
 ## Verification sweep
 
-The final integrated count is 29 scenarios: every scenario inherited from
-`main`, including `ioapic-level`, plus `write-combining`. On Windows build
-26200, an Intel Core i7-1255U host, and QEMU 11.1.0 TCG, the exact
-`make qemu-tests` target ran twenty separate times after a clean `make verify`.
-All 20/20 invocations and 580/580 scenario boots passed. Each run produced 29
+The final integrated count is 30 scenarios: every scenario inherited from
+`main`, `write-combining`, and `device-windows`. After the final registry code
+and linked-size adjustment, QEMU 8.2.2 TCG in the Ubuntu 24.04 build VM ran the
+exact `make qemu-tests` target twenty complete times after a clean
+`make verify`. All 20/20 invocations and 600/600 guest boots passed with no
+failed attempt. Each run produced 30
 `QEMU scenario ... passed` lines and one
-`all deterministic QEMU scenarios passed` line; the logs were audited before
-the final clean rebuild and none had a scenario failure, `ST FAIL`, or kernel
-panic.
+`all deterministic QEMU scenarios passed` line. The q35 `device-windows` boot
+reported five windows and 1,283 pages on every pass.
 
-Before that final sweep, one integrated normal boot delivered all eight
+An earlier registry-branch sweep had one excluded attempt after its first twelve
+complete passes. Its normal boot measured PM 280,194,270 ns against an APIC
+interval of 200,000,000 ns and halted at
+`PM timer and local APIC timer disagree on interval`; the immediate retry
+passed. A separate restored-tree normal boot requested a 50 ms sleep, observed
+68,544,521 ns, and halted at `sleep overshot its deadline`; its immediate retry
+observed 50,852,121 ns and passed. Both occurred after the paging and
+framebuffer proofs had passed, are reported as host-timing flakes, and are not
+part of the final 600/600 run.
+
+Before this registry increment, one integrated normal boot delivered all eight
 level-triggered interrupts but measured 127,453,070 ns and tripped the proof's
-old symmetric 25% timing window. That exposed an over-constrained upper bound:
+then-current symmetric 25% timing window. That exposed an over-constrained
+upper bound:
 the same bounded wait already refuses anything beyond two seconds, while a host
 scheduling pause may legitimately stretch emulated PIT time. The proof now
 keeps a three-quarter lower bound, which still rejects the early-acknowledgement
@@ -268,7 +287,7 @@ The earlier pre-integration Ubuntu 24.04 sweep covered the then-current 28
 scenarios: 20/20 invocations and 560/560 boots passed in GitHub Actions run
 `32289648657`, from 18:50:42 to 19:05:29 UTC. It remains evidence for the
 write-combining tree before `ioapic-level` joined its base, not a substitute for
-the final 29-scenario sweep above.
+the final 30-scenario sweep above.
 
 An earlier hosted attempt was cancelled at its ten-minute job limit while the
 runner's Azure Ubuntu package mirror was unresponsive, before compilation or
