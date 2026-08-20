@@ -40,13 +40,13 @@ part of the architecture rather than a claim left to screenshots.
 | Area | Current capability |
 | --- | --- |
 | Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics |
-| Memory | Firmware memory map, physical frames, four-level paging, W^X, explicit PAT memory types, guarded heap and stacks |
+| Memory | Firmware memory map, physical frames, four-level paging, W^X, a validated device-window registry, explicit PAT memory types, guarded heap and stacks |
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, PCI configuration through ports and ECAM, bridge-aware enumeration |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
 | Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console, PS/2 keyboard, and shell |
 | Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof bench | Boot-time invariants, deliberate fault probes, and 29 deterministic QEMU scenarios |
+| Proof | Boot-time invariants, deliberate fault probes, and 30 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -69,7 +69,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 29 deterministic fault, memory, device, and kernel scenarios
+make qemu-tests   # all 30 deterministic fault, memory, device, and kernel scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -80,6 +80,7 @@ The build produces `build/openseneri.elf` and `build/openseneri.iso`.
 
 - [`docs/DAY_ONE.md`](docs/DAY_ONE.md) — the boot contract and first verified milestone.
 - [`docs/VIRTUAL_MEMORY.md`](docs/VIRTUAL_MEMORY.md) — page-table ownership and W^X proof.
+- [`docs/DEVICE_WINDOWS.md`](docs/DEVICE_WINDOWS.md) — bounded physical windows and their WB/WC/UC policy.
 - [`docs/IO_APIC.md`](docs/IO_APIC.md) — discovered interrupt routing and its controls.
 - [`docs/MONOTONIC_TIME.md`](docs/MONOTONIC_TIME.md) — clocks, deadlines, and bounded waits.
 - [`docs/PCI_ENUMERATION.md`](docs/PCI_ENUMERATION.md) — hardware discovery through two configuration paths.

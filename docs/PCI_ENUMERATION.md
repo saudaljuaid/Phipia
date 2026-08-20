@@ -103,12 +103,12 @@ Configuration space read through a cached mapping would be answered from
 whatever a cache line held when it was last filled. The window is therefore
 mapped uncacheable, for the same reason the APIC windows are.
 
-`paging.c` owns that decision, because `paging.c` owns the address space. It
-carves the window out of the identity map as a device region — one 2 MiB region
-of 4 KiB pages with `PAGING_WRITE | PAGING_UNCACHED` — exactly as it already
-does for the local APIC, the I/O APICs and the VGA buffer, and reports the
-result in `paging_state.ecam_window_base`. `pci.c` reads that decision rather
-than making its own.
+Boot owns the availability decision and records a usable first allocation as a
+`PCI_ECAM` entry in the validated device-window registry. `paging.c` owns the
+address space and maps that semantic entry as one 2 MiB span of writable, NX,
+UC 4 KiB leaves, exactly as it maps the APIC and VGA registry entries. `pci.c`
+reads the installed entry rather than repeating paging policy or reading a
+removed hardware-specific field from `paging_state`.
 
 Three things must hold for the window to be carved out, and **none of them
 failing is an error**:
@@ -120,8 +120,8 @@ failing is an error**:
   the identity map.
 - It must lie inside the early identity window.
 
-When any of those fails, `ecam_window_base` stays zero, `pci.c` runs on the
-ports alone, and boot says so. This is deliberately **not** the shape
+When any of those fails, there is no `PCI_ECAM` entry, `pci.c` runs on the ports
+alone, and boot says so. This is deliberately **not** the shape
 `docs/IO_APIC.md` uses for a missing directed-EOI register: refusing to boot
 there is right because there is no other way to route a level-triggered
 interrupt, and refusing here would be wrong because there is a complete, tested,

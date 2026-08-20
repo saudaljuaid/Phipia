@@ -50,12 +50,13 @@ own name:
 ## It is a WC store destination
 
 The framebuffer differs from a register window: OpenSeneri writes long sequential
-pixel runs and does not use reads as device commands. `paging.c` carves every
-4 KiB page intersecting its bytes out of the identity map with `PAGING_WRITE |
-PAGING_WRITE_COMBINING`. `IA32_PAT` entry 1 gives that request an explicit WC
-type. Configuration space, local APIC, every I/O APIC, and VGA text memory keep
-`PAGING_UNCACHED`; ordinary RAM keeps write-back. The selection and transition
-order are proved in `docs/WRITE_COMBINING.md`.
+pixel runs and does not use reads as device commands. Boot rounds every 4 KiB
+page intersecting its bytes into one `FRAMEBUFFER` registry entry requesting WC;
+`paging.c` carves that semantic entry out of the identity map. `IA32_PAT` entry
+1 gives the request an explicit WC type. Configuration space, local APIC, every
+I/O APIC, and VGA text memory keep UC registry entries; ordinary RAM keeps
+write-back. The registry is specified in `docs/DEVICE_WINDOWS.md`, and the PAT
+selection and transition order are proved in `docs/WRITE_COMBINING.md`.
 
 The framebuffer is the first device window that is **several regions wide** —
 1024x768x32 is 3 MiB — which is why `PAGING_MAX_FRAMEBUFFER_REGIONS` exists. A

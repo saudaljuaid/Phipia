@@ -3,8 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/acpi.h>
-#include <seneri/boot.h>
 #include <seneri/cpu.h>
 #include <seneri/memory.h>
 #include <seneri/paging.h>
@@ -95,28 +93,14 @@
 #define CPUID_NO_EXECUTE UINT32_C(0x00100000)
 
 /*
- * console.c writes the VGA text buffer directly. It is device memory sharing a
- * page with nothing else, so it is mapped uncacheable for the same reason the
- * APIC windows are.
- */
-#define VGA_TEXT_BUFFER UINT64_C(0x000B8000)
-
-/* One 4 KiB register window each, per Intel SDM volume 3A sections 11.4.1
-   and 12.11.1. */
-#define DEVICE_WINDOW_SIZE PAGING_PAGE_SIZE
-
-/*
  * linker.ld refuses to link an image that ends above this, so the kernel can
- * never span more 2 MiB regions than there is storage for. The runtime check in
- * collect_kernel_regions is what the self-test drives; this assertion is what
- * keeps the two bounds from drifting apart.
+ * never span more 2 MiB regions than the identity builder's measured bound.
+ * The runtime layout check is what the self-test drives; this assertion keeps
+ * the linked and runtime policies together.
  */
 #define PAGING_KERNEL_IMAGE_LIMIT UINT64_C(0x800000)
 #define PAGING_MAX_KERNEL_FINE_REGIONS 4U
-#define PAGING_MAX_FINE_REGIONS \
-    (PAGING_MAX_KERNEL_FINE_REGIONS + 3U + ACPI_MAX_IO_APICS + \
-        PAGING_MAX_FRAMEBUFFER_REGIONS)
-#define PAGING_MAX_SECTIONS (4U + 4U + ACPI_MAX_IO_APICS)
+#define PAGING_MAX_SECTIONS 4U
 
 _Static_assert(
     PAGING_KERNEL_IMAGE_LIMIT <=
@@ -124,21 +108,9 @@ _Static_assert(
     "the linked kernel bound needs more fine regions than paging reserves"
 );
 
-/*
- * Every 2 MiB region that is not the kernel's is a device window: the local
- * APIC, the VGA text buffer, one per firmware-declared I/O APIC, and at most one
- * PCI Express configuration window. The topology is already bounded by
- * acpi_topology_discover and the configuration window is at most one region, so
- * a region array this wide cannot overflow and needs no runtime capacity branch.
- */
 _Static_assert(
-    PAGING_MAX_FINE_REGIONS - PAGING_MAX_KERNEL_FINE_REGIONS >=
-        3U + ACPI_MAX_IO_APICS + PAGING_MAX_FRAMEBUFFER_REGIONS,
-    "fine region storage no longer covers every device window"
-);
-_Static_assert(
-    PAGING_MAX_SECTIONS >= 4U + 4U + ACPI_MAX_IO_APICS,
-    "section storage no longer covers the kernel and every device window"
+    PAGING_DEVICE_WINDOW_CAPACITY == 4U + ACPI_MAX_IO_APICS,
+    "device-window capacity no longer covers discovered hardware"
 );
 _Static_assert(
     PAGING_ECAM_WINDOW_SIZE == PAGING_HUGE_PAGE_SIZE,
@@ -190,8 +162,8 @@ struct paging_section {
 
 static struct paging_state state;
 static struct page_hierarchy live_hierarchy;
-static uint64_t fine_regions[PAGING_MAX_FINE_REGIONS];
 static struct paging_section kernel_sections[PAGING_MAX_SECTIONS];
+static struct paging_device_windows installed_device_windows;
 static size_t fine_region_count;
 static size_t kernel_section_count;
 static uint64_t test_arena[PAGING_TEST_ENTRIES] __attribute__((aligned(4096)));
@@ -444,6 +416,270 @@ static enum paging_status validate_physical_range(
         return PAGING_STATUS_PHYSICAL_TOO_WIDE;
     }
 
+    return PAGING_STATUS_OK;
+}
+
+void paging_device_windows_reset(struct paging_device_windows *windows)
+{
+    if (windows == NULL) {
+        return;
+    }
+
+    windows->count = 0U;
+}
+
+static bool device_memory_type_supported(enum paging_memory_type memory_type)
+{
+    return memory_type == PAGING_MEMORY_WRITE_BACK ||
+        memory_type == PAGING_MEMORY_WRITE_COMBINING ||
+        memory_type == PAGING_MEMORY_UNCACHEABLE;
+}
+
+static enum paging_status validate_device_window_entry(
+    const struct paging_device_window *window
+)
+{
+    if (window->kind < PAGING_DEVICE_WINDOW_VGA_TEXT ||
+        window->kind >= PAGING_DEVICE_WINDOW_KIND_COUNT) {
+        return PAGING_STATUS_BAD_DEVICE_WINDOW_KIND;
+    }
+
+    if ((window->kind != PAGING_DEVICE_WINDOW_IO_APIC &&
+            window->instance != 0U) ||
+        (window->kind == PAGING_DEVICE_WINDOW_IO_APIC &&
+            window->instance >= ACPI_MAX_IO_APICS)) {
+        return PAGING_STATUS_BAD_DEVICE_WINDOW_INSTANCE;
+    }
+
+    if (!device_memory_type_supported(window->memory_type)) {
+        return PAGING_STATUS_UNSUPPORTED_DEVICE_WINDOW_MEMORY_TYPE;
+    }
+
+    if ((window->permissions & ~PAGING_DEVICE_WINDOW_WRITE) != 0U) {
+        return PAGING_STATUS_BAD_DEVICE_WINDOW_PERMISSIONS;
+    }
+
+    if (window->length == 0U) {
+        return PAGING_STATUS_ZERO_LENGTH_DEVICE_WINDOW;
+    }
+
+    /* Check addition before alignment so a malformed high range has one cause. */
+    if (window->length > UINT64_MAX - window->physical_base) {
+        return PAGING_STATUS_DEVICE_WINDOW_RANGE_OVERFLOW;
+    }
+
+    if ((window->physical_base & (PAGING_PAGE_SIZE - 1U)) != 0U ||
+        (window->length & (PAGING_PAGE_SIZE - 1U)) != 0U) {
+        return PAGING_STATUS_UNALIGNED_DEVICE_WINDOW;
+    }
+
+    if (window->kind == PAGING_DEVICE_WINDOW_PCI_ECAM &&
+        (window->physical_base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U) {
+        return PAGING_STATUS_UNALIGNED_DEVICE_WINDOW;
+    }
+
+    if ((window->kind == PAGING_DEVICE_WINDOW_VGA_TEXT &&
+            window->physical_base != PAGING_VGA_TEXT_BUFFER_BASE) ||
+        ((window->kind == PAGING_DEVICE_WINDOW_VGA_TEXT ||
+            window->kind == PAGING_DEVICE_WINDOW_LOCAL_APIC ||
+            window->kind == PAGING_DEVICE_WINDOW_IO_APIC) &&
+            window->length != PAGING_PAGE_SIZE) ||
+        (window->kind == PAGING_DEVICE_WINDOW_PCI_ECAM &&
+            window->length != PAGING_ECAM_WINDOW_SIZE)) {
+        return PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE;
+    }
+
+    if (window->physical_base == 0U ||
+        window->length > PAGING_DEVICE_WINDOW_MAX_LENGTH ||
+        window->physical_base + window->length >
+            SENERI_EARLY_PHYSICAL_LIMIT) {
+        return PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE;
+    }
+
+    return PAGING_STATUS_OK;
+}
+
+enum paging_status paging_device_windows_add(
+    struct paging_device_windows *windows,
+    enum paging_device_window_kind kind,
+    uint32_t instance,
+    uint64_t physical_base,
+    uint64_t length,
+    enum paging_memory_type memory_type,
+    uint32_t permissions
+)
+{
+    struct paging_device_window window;
+    enum paging_status status;
+
+    if (windows == NULL) {
+        return PAGING_STATUS_NULL_ARGUMENT;
+    }
+
+    if (windows->count >= PAGING_DEVICE_WINDOW_CAPACITY) {
+        return PAGING_STATUS_TOO_MANY_DEVICE_WINDOWS;
+    }
+
+    window.kind = kind;
+    window.instance = instance;
+    window.physical_base = physical_base;
+    window.length = length;
+    window.memory_type = memory_type;
+    window.permissions = permissions;
+    status = validate_device_window_entry(&window);
+
+    if (status != PAGING_STATUS_OK) {
+        return status;
+    }
+
+    windows->entries[windows->count] = window;
+    ++windows->count;
+    return PAGING_STATUS_OK;
+}
+
+static int compare_device_windows(
+    const struct paging_device_window *left,
+    const struct paging_device_window *right
+)
+{
+    if (left->physical_base != right->physical_base) {
+        return left->physical_base < right->physical_base ? -1 : 1;
+    }
+
+    if (left->length != right->length) {
+        return left->length < right->length ? -1 : 1;
+    }
+
+    if (left->kind != right->kind) {
+        return left->kind < right->kind ? -1 : 1;
+    }
+
+    if (left->instance != right->instance) {
+        return left->instance < right->instance ? -1 : 1;
+    }
+
+    if (left->memory_type != right->memory_type) {
+        return left->memory_type < right->memory_type ? -1 : 1;
+    }
+
+    if (left->permissions != right->permissions) {
+        return left->permissions < right->permissions ? -1 : 1;
+    }
+
+    return 0;
+}
+
+static bool ranges_overlap(
+    const struct paging_device_window *left,
+    const struct paging_device_window *right
+)
+{
+    const uint64_t left_end = left->physical_base + left->length;
+    const uint64_t right_end = right->physical_base + right->length;
+
+    return left->physical_base < right_end &&
+        right->physical_base < left_end;
+}
+
+enum paging_status paging_device_windows_validate(
+    const struct paging_device_windows *windows,
+    struct paging_device_windows *validated
+)
+{
+    struct paging_device_windows normalized;
+    bool found_vga = false;
+    bool found_local_apic = false;
+    bool found_io_apic = false;
+    bool conflicting_overlap = false;
+    bool duplicate = false;
+    bool overlap = false;
+
+    if (windows == NULL || validated == NULL) {
+        return PAGING_STATUS_NULL_ARGUMENT;
+    }
+
+    if (windows->count > PAGING_DEVICE_WINDOW_CAPACITY) {
+        return PAGING_STATUS_TOO_MANY_DEVICE_WINDOWS;
+    }
+
+    normalized.count = windows->count;
+
+    for (size_t index = 0U; index < windows->count; ++index) {
+        const struct paging_device_window *window = &windows->entries[index];
+        enum paging_status status = validate_device_window_entry(window);
+
+        if (status != PAGING_STATUS_OK) {
+            return status;
+        }
+
+        if (window->kind == PAGING_DEVICE_WINDOW_VGA_TEXT) {
+            found_vga = true;
+        } else if (window->kind == PAGING_DEVICE_WINDOW_LOCAL_APIC) {
+            found_local_apic = true;
+        } else if (window->kind == PAGING_DEVICE_WINDOW_IO_APIC) {
+            found_io_apic = true;
+        }
+
+        normalized.entries[index] = *window;
+    }
+
+    /* Collect every fault before applying fixed, insertion-independent order. */
+    for (size_t left = 0U; left < windows->count; ++left) {
+        for (size_t right = left + 1U; right < windows->count; ++right) {
+            const struct paging_device_window *first =
+                &windows->entries[left];
+            const struct paging_device_window *second =
+                &windows->entries[right];
+            const bool pair_overlaps = ranges_overlap(first, second);
+
+            if (pair_overlaps &&
+                first->memory_type != second->memory_type) {
+                conflicting_overlap = true;
+            }
+
+            if (compare_device_windows(first, second) == 0 ||
+                (first->kind == second->kind &&
+                    first->instance == second->instance)) {
+                duplicate = true;
+            } else if (pair_overlaps) {
+                overlap = true;
+            }
+        }
+    }
+
+    if (conflicting_overlap) {
+        return PAGING_STATUS_CONFLICTING_DEVICE_WINDOW_OVERLAP;
+    }
+
+    if (duplicate) {
+        return PAGING_STATUS_DUPLICATE_DEVICE_WINDOW;
+    }
+
+    if (overlap) {
+        return PAGING_STATUS_OVERLAPPING_DEVICE_WINDOWS;
+    }
+
+    if (!found_vga || !found_local_apic || !found_io_apic) {
+        return PAGING_STATUS_REQUIRED_DEVICE_WINDOW_MISSING;
+    }
+
+    /* A bounded insertion sort produces the canonical installed order. */
+    for (size_t index = 1U; index < normalized.count; ++index) {
+        const struct paging_device_window current = normalized.entries[index];
+        size_t destination = index;
+
+        while (destination > 0U &&
+            compare_device_windows(&current,
+                &normalized.entries[destination - 1U]) < 0) {
+            normalized.entries[destination] =
+                normalized.entries[destination - 1U];
+            --destination;
+        }
+
+        normalized.entries[destination] = current;
+    }
+
+    *validated = normalized;
     return PAGING_STATUS_OK;
 }
 
@@ -1081,70 +1317,19 @@ static enum paging_status decode_processor_support(
     return PAGING_STATUS_OK;
 }
 
-/*
- * The 2 MiB regions that get 4 KiB granularity. The kernel needs it because all
- * four of its load segments share one such region and would otherwise share one
- * permission; the device windows need it so one register page can be made
- * uncacheable without making a whole 2 MiB of the address space uncacheable.
- */
-static enum paging_status collect_kernel_regions(
+static enum paging_status validate_kernel_layout(
     uint64_t kernel_start,
-    uint64_t kernel_end,
-    uint64_t *regions,
-    size_t *count
+    uint64_t kernel_end
 )
 {
-    *count = 0U;
-
-    if (kernel_start >= kernel_end) {
+    if (kernel_start >= kernel_end ||
+        (kernel_start & (PAGING_PAGE_SIZE - 1U)) != 0U ||
+        (kernel_end & (PAGING_PAGE_SIZE - 1U)) != 0U ||
+        kernel_end > PAGING_KERNEL_IMAGE_LIMIT) {
         return PAGING_STATUS_BAD_KERNEL_LAYOUT;
-    }
-
-    if ((kernel_start & (PAGING_PAGE_SIZE - 1U)) != 0U ||
-        (kernel_end & (PAGING_PAGE_SIZE - 1U)) != 0U) {
-        return PAGING_STATUS_BAD_KERNEL_LAYOUT;
-    }
-
-    if (kernel_end > PAGING_KERNEL_IMAGE_LIMIT) {
-        return PAGING_STATUS_BAD_KERNEL_LAYOUT;
-    }
-
-    for (uint64_t base = kernel_start & ~(PAGING_HUGE_PAGE_SIZE - 1U);
-         base < kernel_end; base += PAGING_HUGE_PAGE_SIZE) {
-        regions[*count] = base;
-        ++*count;
     }
 
     return PAGING_STATUS_OK;
-}
-
-static void add_region(uint64_t *regions, size_t *count, uint64_t address)
-{
-    const uint64_t base = address & ~(PAGING_HUGE_PAGE_SIZE - 1U);
-
-    for (size_t index = 0; index < *count; ++index) {
-        if (regions[index] == base) {
-            return;
-        }
-    }
-
-    regions[*count] = base;
-    ++*count;
-}
-
-static bool region_listed(
-    const uint64_t *regions,
-    size_t count,
-    uint64_t base
-)
-{
-    for (size_t index = 0; index < count; ++index) {
-        if (regions[index] == base) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 static void add_section(
@@ -1165,117 +1350,13 @@ static void add_section(
     ++*count;
 }
 
-/*
- * Decide whether a firmware-declared configuration window can become a device
- * region, and return its base if it can. Three things have to be true, and none
- * of them failing is an error: a machine may declare no window at all, and a
- * window OpenSeneri cannot carve out is one it reads through the I/O ports instead.
- *
- * The window must start on a 2 MiB boundary, because a device region is one
- * whole region of the identity map and a window straddling two would need both.
- * It must lie inside the early identity window, because that is the only
- * physical memory this map covers. And only the first declared window is taken:
- * nothing in OpenSeneri yet has a second segment group to address.
- */
-static uint64_t select_ecam_window(const struct acpi_mcfg *mcfg)
-{
-    uint64_t base;
-
-    if (mcfg == NULL || mcfg->allocation_count == 0U) {
-        return 0U;
-    }
-
-    base = mcfg->allocations[0].base_address;
-
-    if (base == 0U || base % PAGING_HUGE_PAGE_SIZE != 0U) {
-        return 0U;
-    }
-
-    if (base > SENERI_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
-        return 0U;
-    }
-
-    return base;
-}
-
-/*
- * The span of identity map a framebuffer needs, rounded out to whole 2 MiB
- * regions because that is the unit a device window is carved in. Returns zero
- * when there is nothing to map or when what the loader set will not fit inside
- * the bound above - a framebuffer that is partly write-combining would be worse
- * than one that is not mapped at all, because half of it would work.
- */
-static uint64_t framebuffer_span(
-    const struct boot_framebuffer *framebuffer,
-    uint64_t *base_out
-)
-{
-    uint64_t base;
-    uint64_t end;
-    uint64_t span;
-
-    *base_out = 0U;
-
-    if (framebuffer == NULL || !framebuffer->present ||
-        framebuffer->size == 0U) {
-        return 0U;
-    }
-
-    base = framebuffer->address & ~(PAGING_HUGE_PAGE_SIZE - 1U);
-    end = framebuffer->address + framebuffer->size;
-
-    if (end > SENERI_EARLY_PHYSICAL_LIMIT) {
-        return 0U;
-    }
-
-    /* Round the end up to the region it falls in. */
-    end = (end + PAGING_HUGE_PAGE_SIZE - 1U) &
-        ~(PAGING_HUGE_PAGE_SIZE - 1U);
-    span = end - base;
-
-    if (span > (uint64_t)PAGING_MAX_FRAMEBUFFER_REGIONS *
-        PAGING_HUGE_PAGE_SIZE) {
-        return 0U;
-    }
-
-    *base_out = base;
-    return span;
-}
-
-/* The precise set of 4 KiB leaves that intersects the framebuffer bytes. */
-static uint64_t framebuffer_page_span(
-    const struct boot_framebuffer *framebuffer,
-    uint64_t *base_out
-)
-{
-    uint64_t region_base = 0U;
-    uint64_t end;
-
-    if (framebuffer_span(framebuffer, &region_base) == 0U) {
-        *base_out = 0U;
-        return 0U;
-    }
-
-    *base_out = framebuffer->address & ~(PAGING_PAGE_SIZE - 1U);
-    end = (framebuffer->address + framebuffer->size + PAGING_PAGE_SIZE - 1U) &
-        ~(PAGING_PAGE_SIZE - 1U);
-    return end - *base_out;
-}
-
-static void collect_sections(
-    const struct acpi_topology *topology,
-    const struct acpi_mcfg *mcfg,
-    const struct boot_framebuffer *framebuffer,
+static void collect_kernel_sections(
     struct paging_section *sections,
     size_t *count
 )
 {
     const uint64_t kernel_start = (uint64_t)(uintptr_t)__kernel_start;
     const uint64_t text_start = (uint64_t)(uintptr_t)__text_start;
-    const uint32_t device = PAGING_WRITE | PAGING_UNCACHED;
-    const uint32_t framebuffer_memory =
-        PAGING_WRITE | PAGING_WRITE_COMBINING;
-    uint64_t ecam;
 
     *count = 0U;
 
@@ -1287,46 +1368,67 @@ static void collect_sections(
         (uint64_t)(uintptr_t)__rodata_end, PAGING_READ);
     add_section(sections, count, (uint64_t)(uintptr_t)__data_start,
         (uint64_t)(uintptr_t)__kernel_end, PAGING_WRITE);
-    add_section(sections, count, VGA_TEXT_BUFFER,
-        VGA_TEXT_BUFFER + DEVICE_WINDOW_SIZE, device);
-    add_section(sections, count, topology->local_apic_address,
-        topology->local_apic_address + DEVICE_WINDOW_SIZE, device);
+}
 
-    for (size_t index = 0; index < topology->io_apic_count; ++index) {
-        const uint64_t address = topology->io_apics[index].address;
+static const struct paging_device_window *device_window_at(
+    const struct paging_device_windows *windows,
+    uint64_t address
+)
+{
+    for (size_t index = 0U; index < windows->count; ++index) {
+        const struct paging_device_window *window = &windows->entries[index];
 
-        add_section(sections, count, address, address + DEVICE_WINDOW_SIZE,
-            device);
-    }
-
-    /*
-     * Configuration space is device memory and has to be read as device memory.
-     * A cached read of a configuration register would be answered from a line
-     * fetched at some earlier unrelated moment, so the window is uncacheable for
-     * exactly the reason the APIC windows are.
-     */
-    ecam = select_ecam_window(mcfg);
-
-    if (ecam != 0U) {
-        add_section(sections, count, ecam, ecam + PAGING_ECAM_WINDOW_SIZE,
-            device);
-    }
-
-    /*
-     * The framebuffer is a sequential store destination, not a register file.
-     * It alone gets write-combining; VGA, APIC, and ECAM register windows stay
-     * strongly uncacheable above. One section covers every framebuffer region.
-     */
-    {
-        uint64_t framebuffer_base = 0U;
-        const uint64_t span =
-            framebuffer_page_span(framebuffer, &framebuffer_base);
-
-        if (span != 0U) {
-            add_section(sections, count, framebuffer_base,
-                framebuffer_base + span, framebuffer_memory);
+        if (address >= window->physical_base &&
+            address < window->physical_base + window->length) {
+            return window;
         }
     }
+
+    return NULL;
+}
+
+static bool region_needs_page_table(
+    const struct paging_device_windows *windows,
+    uint64_t base,
+    uint64_t kernel_start,
+    uint64_t kernel_end
+)
+{
+    const uint64_t end = base + PAGING_HUGE_PAGE_SIZE;
+
+    if (base < kernel_end && kernel_start < end) {
+        return true;
+    }
+
+    for (size_t index = 0U; index < windows->count; ++index) {
+        const struct paging_device_window *window = &windows->entries[index];
+
+        if (base < window->physical_base + window->length &&
+            window->physical_base < end) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static uint32_t device_window_mapping_permissions(
+    const struct paging_device_window *window
+)
+{
+    uint32_t permissions = PAGING_READ;
+
+    if ((window->permissions & PAGING_DEVICE_WINDOW_WRITE) != 0U) {
+        permissions |= PAGING_WRITE;
+    }
+
+    if (window->memory_type == PAGING_MEMORY_UNCACHEABLE) {
+        permissions |= PAGING_UNCACHED;
+    } else if (window->memory_type == PAGING_MEMORY_WRITE_COMBINING) {
+        permissions |= PAGING_WRITE_COMBINING;
+    }
+
+    return permissions;
 }
 
 /*
@@ -1338,9 +1440,17 @@ static void collect_sections(
 static uint32_t section_permissions(
     const struct paging_section *sections,
     size_t count,
+    const struct paging_device_windows *windows,
     uint64_t address
 )
 {
+    const struct paging_device_window *window =
+        device_window_at(windows, address);
+
+    if (window != NULL) {
+        return device_window_mapping_permissions(window);
+    }
+
     for (size_t index = 0; index < count; ++index) {
         if (address >= sections[index].start && address < sections[index].end) {
             return sections[index].permissions;
@@ -1350,13 +1460,36 @@ static uint32_t section_permissions(
     return PAGING_WRITE;
 }
 
-static enum paging_status build_identity_map(struct page_hierarchy *hierarchy)
+static enum paging_status build_identity_map(
+    struct page_hierarchy *hierarchy,
+    const struct paging_device_windows *windows
+)
 {
-    for (size_t index = 0; index < fine_region_count; ++index) {
+    const uint64_t kernel_start = (uint64_t)(uintptr_t)__kernel_start;
+    const uint64_t kernel_end = (uint64_t)(uintptr_t)__kernel_end;
+
+    fine_region_count = 0U;
+
+    for (uint64_t base = 0U; base < SENERI_EARLY_PHYSICAL_LIMIT;
+         base += PAGING_HUGE_PAGE_SIZE) {
+        enum paging_status status;
+
+        if (!region_needs_page_table(windows, base, kernel_start, kernel_end)) {
+            status = map_range(hierarchy, base, base, PAGING_HUGE_PAGE_SIZE,
+                PAGING_WRITE, 2U);
+
+            if (status != PAGING_STATUS_OK) {
+                return status;
+            }
+
+            continue;
+        }
+
+        ++fine_region_count;
+
         for (uint64_t offset = 0U; offset < PAGING_HUGE_PAGE_SIZE;
              offset += PAGING_PAGE_SIZE) {
-            const uint64_t address = fine_regions[index] + offset;
-            enum paging_status status;
+            const uint64_t address = base + offset;
 
             /*
              * The null page stays absent. Nothing in OpenSeneri reads physical
@@ -1370,27 +1503,11 @@ static enum paging_status build_identity_map(struct page_hierarchy *hierarchy)
 
             status = map_range(hierarchy, address, address, PAGING_PAGE_SIZE,
                 section_permissions(kernel_sections, kernel_section_count,
-                    address), 1U);
+                    windows, address), 1U);
 
             if (status != PAGING_STATUS_OK) {
                 return status;
             }
-        }
-    }
-
-    for (uint64_t base = 0U; base < SENERI_EARLY_PHYSICAL_LIMIT;
-         base += PAGING_HUGE_PAGE_SIZE) {
-        enum paging_status status;
-
-        if (region_listed(fine_regions, fine_region_count, base)) {
-            continue;
-        }
-
-        status = map_range(hierarchy, base, base, PAGING_HUGE_PAGE_SIZE,
-            PAGING_WRITE, 2U);
-
-        if (status != PAGING_STATUS_OK) {
-            return status;
         }
     }
 
@@ -1405,15 +1522,37 @@ static enum paging_status build_identity_map(struct page_hierarchy *hierarchy)
  */
 static enum paging_status validate_identity_map(
     struct page_hierarchy *hierarchy,
+    const struct paging_device_windows *windows,
     uint64_t pat
 )
 {
+    const uint64_t kernel_start = (uint64_t)(uintptr_t)__kernel_start;
+    const uint64_t kernel_end = (uint64_t)(uintptr_t)__kernel_end;
     struct paging_translation translation;
 
-    for (size_t index = 0; index < fine_region_count; ++index) {
+    for (uint64_t base = 0U; base < SENERI_EARLY_PHYSICAL_LIMIT;
+         base += PAGING_HUGE_PAGE_SIZE) {
+        const bool fine = region_needs_page_table(windows, base, kernel_start,
+            kernel_end);
+
+        if (!fine) {
+            if (translate_address(hierarchy, base, &translation, pat) !=
+                    PAGING_STATUS_OK ||
+                translation.physical_address != base ||
+                translation.permissions != PAGING_WRITE ||
+                translation.memory_type != PAGING_MEMORY_WRITE_BACK ||
+                translation.level != 2U) {
+                return PAGING_STATUS_VALIDATION_FAILURE;
+            }
+
+            continue;
+        }
+
         for (uint64_t offset = 0U; offset < PAGING_HUGE_PAGE_SIZE;
              offset += PAGING_PAGE_SIZE) {
-            const uint64_t address = fine_regions[index] + offset;
+            const uint64_t address = base + offset;
+            const struct paging_device_window *window =
+                device_window_at(windows, address);
             uint32_t expected;
 
             if (address == 0U) {
@@ -1426,30 +1565,19 @@ static enum paging_status validate_identity_map(
             }
 
             expected = section_permissions(kernel_sections,
-                kernel_section_count, address);
+                kernel_section_count, windows, address);
 
             if (translate_address(hierarchy, address, &translation, pat) !=
                     PAGING_STATUS_OK ||
                 translation.physical_address != address ||
                 translation.permissions != expected ||
+                (window != NULL &&
+                    translation.memory_type != window->memory_type) ||
+                (window == NULL &&
+                    translation.memory_type != PAGING_MEMORY_WRITE_BACK) ||
                 translation.level != 1U) {
                 return PAGING_STATUS_VALIDATION_FAILURE;
             }
-        }
-    }
-
-    for (uint64_t base = 0U; base < SENERI_EARLY_PHYSICAL_LIMIT;
-         base += PAGING_HUGE_PAGE_SIZE) {
-        if (region_listed(fine_regions, fine_region_count, base)) {
-            continue;
-        }
-
-        if (translate_address(hierarchy, base, &translation, pat) !=
-                PAGING_STATUS_OK ||
-            translation.physical_address != base ||
-            translation.permissions != PAGING_WRITE ||
-            translation.level != 2U) {
-            return PAGING_STATUS_VALIDATION_FAILURE;
         }
     }
 
@@ -1461,17 +1589,32 @@ static void reset_state(void)
     state.root_physical_address = 0U;
     state.table_frames = 0U;
     state.fine_regions = 0U;
-    state.ecam_window_base = 0U;
-    state.ecam_window_size = 0U;
-    state.framebuffer_base = 0U;
-    state.framebuffer_size = 0U;
-    state.framebuffer_regions = 0U;
     state.pat_before = 0U;
     state.pat_after = 0U;
     state.write_combining_pat_entry = 0U;
     state.no_execute_active = false;
     state.write_protect_active = false;
     state.active = false;
+    installed_device_windows.count = 0U;
+}
+
+static enum paging_status reject_kernel_device_overlap(
+    const struct paging_device_windows *windows
+)
+{
+    const uint64_t kernel_start = (uint64_t)(uintptr_t)__kernel_start;
+    const uint64_t kernel_end = (uint64_t)(uintptr_t)__kernel_end;
+
+    for (size_t index = 0U; index < windows->count; ++index) {
+        const struct paging_device_window *window = &windows->entries[index];
+
+        if (window->physical_base < kernel_end &&
+            kernel_start < window->physical_base + window->length) {
+            return PAGING_STATUS_DEVICE_WINDOW_KERNEL_OVERLAP;
+        }
+    }
+
+    return PAGING_STATUS_OK;
 }
 
 static enum paging_status enable_processor_features(void)
@@ -1500,19 +1643,9 @@ static enum paging_status enable_processor_features(void)
     return PAGING_STATUS_OK;
 }
 
-enum paging_status paging_initialize(
-    const struct acpi_topology *topology,
-    const struct acpi_mcfg *mcfg,
-    const struct boot_framebuffer *framebuffer
-)
+enum paging_status paging_initialize(const struct paging_device_windows *windows)
 {
-    const uint64_t ecam = select_ecam_window(mcfg);
-    uint64_t framebuffer_region_base = 0U;
-    const uint64_t framebuffer_region_bytes =
-        framebuffer_span(framebuffer, &framebuffer_region_base);
-    uint64_t framebuffer_base = 0U;
-    const uint64_t framebuffer_bytes =
-        framebuffer_page_span(framebuffer, &framebuffer_base);
+    struct paging_device_windows validated_windows;
     struct cpuid_result basic;
     struct cpuid_result extended;
     struct paging_audit audit;
@@ -1524,12 +1657,31 @@ enum paging_status paging_initialize(
     uint64_t root = 0U;
     enum paging_status status;
 
-    if (topology == NULL) {
+    if (windows == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
 
     if (state.active) {
         return PAGING_STATUS_ALREADY_INITIALIZED;
+    }
+
+    status = paging_device_windows_validate(windows, &validated_windows);
+
+    if (status != PAGING_STATUS_OK) {
+        reset_state();
+        return status;
+    }
+
+    status = validate_kernel_layout((uint64_t)(uintptr_t)__kernel_start,
+        (uint64_t)(uintptr_t)__kernel_end);
+
+    if (status == PAGING_STATUS_OK) {
+        status = reject_kernel_device_overlap(&validated_windows);
+    }
+
+    if (status != PAGING_STATUS_OK) {
+        reset_state();
+        return status;
     }
 
     /*
@@ -1572,34 +1724,7 @@ enum paging_status paging_initialize(
         return status;
     }
 
-    status = collect_kernel_regions((uint64_t)(uintptr_t)__kernel_start,
-        (uint64_t)(uintptr_t)__kernel_end, fine_regions, &fine_region_count);
-
-    if (status != PAGING_STATUS_OK) {
-        reset_state();
-        return status;
-    }
-
-    add_region(fine_regions, &fine_region_count, VGA_TEXT_BUFFER);
-    add_region(fine_regions, &fine_region_count, topology->local_apic_address);
-
-    for (size_t index = 0; index < topology->io_apic_count; ++index) {
-        add_region(fine_regions, &fine_region_count,
-            topology->io_apics[index].address);
-    }
-
-    if (ecam != 0U) {
-        add_region(fine_regions, &fine_region_count, ecam);
-    }
-
-    for (uint64_t offset = 0U; offset < framebuffer_region_bytes;
-         offset += PAGING_HUGE_PAGE_SIZE) {
-        add_region(fine_regions, &fine_region_count,
-            framebuffer_region_base + offset);
-    }
-
-    collect_sections(topology, mcfg, framebuffer, kernel_sections,
-        &kernel_section_count);
+    collect_kernel_sections(kernel_sections, &kernel_section_count);
 
     live_hierarchy.arena_base = 0U;
     live_hierarchy.arena_capacity = 0U;
@@ -1614,14 +1739,15 @@ enum paging_status paging_initialize(
     }
 
     live_hierarchy.root = root;
-    status = build_identity_map(&live_hierarchy);
+    status = build_identity_map(&live_hierarchy, &validated_windows);
 
     if (status != PAGING_STATUS_OK) {
         reset_state();
         return status;
     }
 
-    status = validate_identity_map(&live_hierarchy, pat_after);
+    status = validate_identity_map(&live_hierarchy, &validated_windows,
+        pat_after);
 
     if (status != PAGING_STATUS_OK) {
         reset_state();
@@ -1658,18 +1784,13 @@ enum paging_status paging_initialize(
     state.root_physical_address = live_hierarchy.root;
     state.table_frames = live_hierarchy.table_frames;
     state.fine_regions = fine_region_count;
-    state.ecam_window_base = ecam;
-    state.ecam_window_size = ecam == 0U ? 0U : PAGING_ECAM_WINDOW_SIZE;
-    state.framebuffer_base = framebuffer_bytes == 0U ? 0U : framebuffer_base;
-    state.framebuffer_size = framebuffer_bytes;
-    state.framebuffer_regions =
-        (size_t)(framebuffer_region_bytes / PAGING_HUGE_PAGE_SIZE);
     state.pat_before = pat_before;
     state.pat_after = pat_after;
     state.write_combining_pat_entry = PAT_WRITE_COMBINING_ENTRY;
     state.no_execute_active = true;
     state.write_protect_active = true;
     state.active = true;
+    installed_device_windows = validated_windows;
     live_hierarchy.live = true;
 
     /*
@@ -1794,6 +1915,84 @@ enum paging_status paging_audit_hierarchy(struct paging_audit *audit)
     return PAGING_STATUS_OK;
 }
 
+static bool device_windows_equal(
+    const struct paging_device_window *left,
+    const struct paging_device_window *right
+)
+{
+    return left->kind == right->kind &&
+        left->instance == right->instance &&
+        left->physical_base == right->physical_base &&
+        left->length == right->length &&
+        left->memory_type == right->memory_type &&
+        left->permissions == right->permissions;
+}
+
+enum paging_status paging_verify_device_windows(
+    const struct paging_device_windows *expected,
+    size_t *failed_index
+)
+{
+    struct paging_device_windows validated;
+    enum paging_status status;
+
+    if (failed_index == NULL) {
+        return PAGING_STATUS_NULL_ARGUMENT;
+    }
+
+    *failed_index = PAGING_DEVICE_WINDOW_NONE;
+
+    if (!state.active) {
+        return PAGING_STATUS_NOT_INITIALIZED;
+    }
+
+    status = paging_device_windows_validate(expected, &validated);
+
+    if (status != PAGING_STATUS_OK) {
+        return status;
+    }
+
+    if (validated.count != installed_device_windows.count) {
+        return PAGING_STATUS_INSTALLED_DEVICE_WINDOW_MISMATCH;
+    }
+
+    for (size_t index = 0U; index < validated.count; ++index) {
+        const struct paging_device_window *window = &validated.entries[index];
+        const struct paging_device_window *installed =
+            &installed_device_windows.entries[index];
+        const uint32_t permissions =
+            device_window_mapping_permissions(window);
+
+        if (!device_windows_equal(window, installed) ||
+            window->permissions != PAGING_DEVICE_WINDOW_WRITE ||
+            (window->kind == PAGING_DEVICE_WINDOW_VGA_TEXT &&
+                window->physical_base != PAGING_VGA_TEXT_BUFFER_BASE) ||
+            (window->kind != PAGING_DEVICE_WINDOW_FRAMEBUFFER &&
+                window->memory_type != PAGING_MEMORY_UNCACHEABLE)) {
+            *failed_index = index;
+            return PAGING_STATUS_INSTALLED_DEVICE_WINDOW_MISMATCH;
+        }
+
+        for (uint64_t offset = 0U; offset < window->length;
+             offset += PAGING_PAGE_SIZE) {
+            const uint64_t address = window->physical_base + offset;
+            struct paging_translation translation;
+
+            if (translate_address(&live_hierarchy, address, &translation,
+                    state.pat_after) != PAGING_STATUS_OK ||
+                translation.physical_address != address ||
+                translation.permissions != permissions ||
+                translation.memory_type != window->memory_type ||
+                translation.level != 1U) {
+                *failed_index = index;
+                return PAGING_STATUS_INSTALLED_DEVICE_WINDOW_MISMATCH;
+            }
+        }
+    }
+
+    return PAGING_STATUS_OK;
+}
+
 /*
  * What `make verify` cannot check. The ELF assertion proves no load segment is
  * RWX in the file; this proves no page is writable and executable on the
@@ -1868,6 +2067,11 @@ enum paging_status paging_verify(void)
 struct paging_state paging_get_state(void)
 {
     return state;
+}
+
+const struct paging_device_windows *paging_get_device_windows(void)
+{
+    return &installed_device_windows;
 }
 
 bool paging_is_active(void)
@@ -2384,47 +2588,21 @@ static bool test_table_supply(void)
 
 static bool test_layout_and_processor_checks(void)
 {
-    uint64_t regions[PAGING_MAX_FINE_REGIONS];
-    size_t count = 0U;
-
-    /* An image spanning three 2 MiB regions produces exactly three. */
-    if (collect_kernel_regions(UINT64_C(0x100000), UINT64_C(0x500000), regions,
-            &count) != PAGING_STATUS_OK ||
-        count != 3U || regions[0] != 0U ||
-        regions[1] != PAGING_HUGE_PAGE_SIZE ||
-        regions[2] != PAGING_HUGE_PAGE_SIZE * 2U) {
-        return false;
-    }
-
-    if (collect_kernel_regions(UINT64_C(0x200000), UINT64_C(0x100000), regions,
-            &count) != PAGING_STATUS_BAD_KERNEL_LAYOUT ||
-        count != 0U) {
-        return false;
-    }
-
-    if (collect_kernel_regions(UINT64_C(0x100800), UINT64_C(0x200000), regions,
-            &count) != PAGING_STATUS_BAD_KERNEL_LAYOUT ||
-        collect_kernel_regions(UINT64_C(0x100000), UINT64_C(0x200800), regions,
-            &count) != PAGING_STATUS_BAD_KERNEL_LAYOUT) {
+    if (validate_kernel_layout(UINT64_C(0x100000), UINT64_C(0x500000)) !=
+            PAGING_STATUS_OK ||
+        validate_kernel_layout(UINT64_C(0x200000), UINT64_C(0x100000)) !=
+            PAGING_STATUS_BAD_KERNEL_LAYOUT ||
+        validate_kernel_layout(UINT64_C(0x100800), UINT64_C(0x200000)) !=
+            PAGING_STATUS_BAD_KERNEL_LAYOUT ||
+        validate_kernel_layout(UINT64_C(0x100000), UINT64_C(0x200800)) !=
+            PAGING_STATUS_BAD_KERNEL_LAYOUT) {
         return false;
     }
 
     /* An image past the linked bound would need more regions than exist. */
-    if (collect_kernel_regions(UINT64_C(0x100000),
-            PAGING_KERNEL_IMAGE_LIMIT + PAGING_PAGE_SIZE, regions, &count) !=
+    if (validate_kernel_layout(UINT64_C(0x100000),
+            PAGING_KERNEL_IMAGE_LIMIT + PAGING_PAGE_SIZE) !=
         PAGING_STATUS_BAD_KERNEL_LAYOUT) {
-        return false;
-    }
-
-    count = 0U;
-    add_region(regions, &count, UINT64_C(0xFEE00000));
-    add_region(regions, &count, UINT64_C(0xFEE00FFF));
-    add_region(regions, &count, UINT64_C(0xFEC00000));
-
-    if (count != 2U || regions[0] != UINT64_C(0xFEE00000) ||
-        regions[1] != UINT64_C(0xFEC00000) ||
-        !region_listed(regions, count, UINT64_C(0xFEC00000)) ||
-        region_listed(regions, count, 0U)) {
         return false;
     }
 
@@ -2470,6 +2648,198 @@ static bool test_layout_and_processor_checks(void)
                 PAGING_STATUS_PAT_LAYOUT_UNSAFE;
 }
 
+static bool add_test_device_window(
+    struct paging_device_windows *windows,
+    enum paging_device_window_kind kind,
+    uint32_t instance,
+    uint64_t base,
+    uint64_t length,
+    enum paging_memory_type memory_type
+)
+{
+    return paging_device_windows_add(windows, kind, instance, base, length,
+        memory_type, PAGING_DEVICE_WINDOW_WRITE) == PAGING_STATUS_OK;
+}
+
+static bool make_mixed_test_device_windows(
+    struct paging_device_windows *windows
+)
+{
+    paging_device_windows_reset(windows);
+
+    return add_test_device_window(windows, PAGING_DEVICE_WINDOW_VGA_TEXT, 0U,
+            PAGING_VGA_TEXT_BUFFER_BASE, PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) &&
+        add_test_device_window(windows, PAGING_DEVICE_WINDOW_LOCAL_APIC, 0U,
+            UINT64_C(0xFEE00000), PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) &&
+        add_test_device_window(windows, PAGING_DEVICE_WINDOW_IO_APIC, 0U,
+            UINT64_C(0xFEC00000), PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) &&
+        add_test_device_window(windows, PAGING_DEVICE_WINDOW_IO_APIC, 1U,
+            UINT64_C(0xFEC01000), PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) &&
+        add_test_device_window(windows, PAGING_DEVICE_WINDOW_PCI_ECAM, 0U,
+            UINT64_C(0xE0000000), PAGING_ECAM_WINDOW_SIZE,
+            PAGING_MEMORY_WRITE_BACK) &&
+        add_test_device_window(windows, PAGING_DEVICE_WINDOW_FRAMEBUFFER, 0U,
+            UINT64_C(0xFD1FF000), PAGING_PAGE_SIZE * 3U,
+            PAGING_MEMORY_WRITE_COMBINING);
+}
+
+static bool test_device_window_registry(void)
+{
+    struct paging_device_windows mixed;
+    struct paging_device_windows reversed;
+    struct paging_device_windows normalized;
+    struct paging_device_windows normalized_reversed;
+    struct paging_device_windows malformed;
+
+    if (!make_mixed_test_device_windows(&mixed) ||
+        paging_device_windows_validate(&mixed, &normalized) !=
+            PAGING_STATUS_OK) {
+        return false;
+    }
+
+    reversed.count = mixed.count;
+
+    for (size_t index = 0U; index < mixed.count; ++index) {
+        reversed.entries[index] = mixed.entries[mixed.count - index - 1U];
+    }
+
+    if (paging_device_windows_validate(&reversed, &normalized_reversed) !=
+            PAGING_STATUS_OK ||
+        normalized.count != normalized_reversed.count) {
+        return false;
+    }
+
+    for (size_t index = 0U; index < normalized.count; ++index) {
+        if (!device_windows_equal(&normalized.entries[index],
+                &normalized_reversed.entries[index])) {
+            return false;
+        }
+    }
+
+    /* The framebuffer crosses a 2 MiB boundary and stays WC on every page. */
+    for (size_t index = 0U; index < normalized.count; ++index) {
+        const struct paging_device_window *window = &normalized.entries[index];
+
+        if ((window->kind == PAGING_DEVICE_WINDOW_LOCAL_APIC ||
+                window->kind == PAGING_DEVICE_WINDOW_IO_APIC) &&
+            window->memory_type != PAGING_MEMORY_UNCACHEABLE) {
+            return false;
+        }
+
+        if (window->kind == PAGING_DEVICE_WINDOW_FRAMEBUFFER) {
+            if (window->memory_type != PAGING_MEMORY_WRITE_COMBINING ||
+                !region_needs_page_table(&normalized,
+                    UINT64_C(0xFD000000), 0U, 0U) ||
+                !region_needs_page_table(&normalized,
+                    UINT64_C(0xFD200000), 0U, 0U)) {
+                return false;
+            }
+
+            for (uint64_t offset = 0U; offset < window->length;
+                 offset += PAGING_PAGE_SIZE) {
+                const struct paging_device_window *found =
+                    device_window_at(&normalized,
+                        window->physical_base + offset);
+
+                if (found == NULL ||
+                    found->memory_type != PAGING_MEMORY_WRITE_COMBINING) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    malformed = mixed;
+    malformed.entries[0].length = 0U;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_ZERO_LENGTH_DEVICE_WINDOW) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[0].physical_base =
+        UINT64_MAX - PAGING_PAGE_SIZE + 2U;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_DEVICE_WINDOW_RANGE_OVERFLOW) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.count = PAGING_DEVICE_WINDOW_CAPACITY + 1U;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_TOO_MANY_DEVICE_WINDOWS) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[0].kind = PAGING_DEVICE_WINDOW_KIND_COUNT;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_BAD_DEVICE_WINDOW_KIND) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[0].memory_type = PAGING_MEMORY_TYPE_COUNT;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_UNSUPPORTED_DEVICE_WINDOW_MEMORY_TYPE) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[5].physical_base = PAGING_VGA_TEXT_BUFFER_BASE;
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_CONFLICTING_DEVICE_WINDOW_OVERLAP) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[4].physical_base = UINT64_C(0xFD000000);
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_CONFLICTING_DEVICE_WINDOW_OVERLAP) {
+        return false;
+    }
+
+    malformed = mixed;
+    malformed.entries[5] = malformed.entries[0];
+
+    if (paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_DUPLICATE_DEVICE_WINDOW) {
+        return false;
+    }
+
+    /* ECAM and framebuffer are optional; the three boot register kinds are not. */
+    paging_device_windows_reset(&malformed);
+
+    if (!add_test_device_window(&malformed, PAGING_DEVICE_WINDOW_VGA_TEXT, 0U,
+            PAGING_VGA_TEXT_BUFFER_BASE, PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) ||
+        !add_test_device_window(&malformed, PAGING_DEVICE_WINDOW_LOCAL_APIC, 0U,
+            UINT64_C(0xFEE00000), PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) ||
+        !add_test_device_window(&malformed, PAGING_DEVICE_WINDOW_IO_APIC, 0U,
+            UINT64_C(0xFEC00000), PAGING_PAGE_SIZE,
+            PAGING_MEMORY_UNCACHEABLE) ||
+        paging_device_windows_validate(&malformed, &normalized) !=
+            PAGING_STATUS_OK) {
+        return false;
+    }
+
+    malformed.count = 2U;
+    return paging_device_windows_validate(&malformed, &normalized) ==
+        PAGING_STATUS_REQUIRED_DEVICE_WINDOW_MISSING;
+}
+
 /*
  * Everything above the hardware: index arithmetic, canonical form, entry
  * composition, every refusal, and a complete map, protect, translate and unmap
@@ -2486,7 +2856,8 @@ bool paging_self_test(void)
         !test_pat_model() ||
         !test_range_validation() || !test_hierarchy_operations() ||
         !test_table_reclamation() || !test_table_supply() ||
-        !test_layout_and_processor_checks()) {
+        !test_layout_and_processor_checks() ||
+        !test_device_window_registry()) {
         return false;
     }
 
@@ -2521,8 +2892,7 @@ bool paging_self_test(void)
         return false;
     }
 
-    return paging_initialize(NULL, NULL, NULL) ==
-        PAGING_STATUS_NULL_ARGUMENT;
+    return paging_initialize(NULL) == PAGING_STATUS_NULL_ARGUMENT;
 }
 
 const char *paging_status_string(enum paging_status status)
@@ -2542,6 +2912,21 @@ const char *paging_status_string(enum paging_status status)
         "existing page attribute table layout is unsafe",
         "page attribute table readback did not match",
         "linked kernel layout cannot be mapped per section",
+        "device window has an unknown kind",
+        "device window has an invalid instance",
+        "device window requests an unsupported memory type",
+        "device window requests invalid permissions",
+        "device window has zero length",
+        "device window address or length is unaligned",
+        "device window range overflows",
+        "device window is outside the supported physical range",
+        "device window registry is full",
+        "overlapping device windows request conflicting memory types",
+        "device windows overlap",
+        "device window is duplicated",
+        "required device window is missing",
+        "device window overlaps the linked kernel",
+        "installed device window does not match the registry",
         "paging range is empty",
         "paging address or length is unaligned",
         "virtual address is not canonical",
@@ -2593,4 +2978,29 @@ const char *paging_memory_type_string(enum paging_memory_type memory_type)
     }
 
     return names[memory_type];
+}
+
+const char *paging_device_window_kind_string(
+    enum paging_device_window_kind kind
+)
+{
+    static const char *const names[PAGING_DEVICE_WINDOW_KIND_COUNT] = {
+        "VGA",
+        "local APIC",
+        "I/O APIC",
+        "PCI ECAM",
+        "framebuffer"
+    };
+
+    _Static_assert(
+        sizeof(names) / sizeof(names[0]) == PAGING_DEVICE_WINDOW_KIND_COUNT,
+        "device-window kind names are out of sync"
+    );
+
+    if (kind < PAGING_DEVICE_WINDOW_VGA_TEXT ||
+        kind >= PAGING_DEVICE_WINDOW_KIND_COUNT) {
+        return "unknown device window";
+    }
+
+    return names[kind];
 }

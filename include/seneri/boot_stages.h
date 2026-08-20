@@ -9,6 +9,7 @@
 #include <seneri/boot.h>
 #include <seneri/ioapic.h>
 #include <seneri/memory.h>
+#include <seneri/paging.h>
 #include <seneri/pit.h>
 #include <seneri/pm_timer.h>
 
@@ -59,14 +60,11 @@ void report_ioapic(const struct ioapic_state *ioapic);
  */
 void prove_frame_lifecycle(void);
 
-void install_page_tables(
-    const struct acpi_topology *topology,
-    const struct acpi_mcfg *mcfg,
-    const struct boot_framebuffer *framebuffer
-);
+void install_page_tables(const struct paging_device_windows *device_windows);
 void prove_paging_lifecycle(void);
 void prove_write_combining(
     const struct acpi_topology *topology,
+    const struct acpi_mcfg *mcfg,
     const struct boot_framebuffer *framebuffer
 );
 

@@ -1,6 +1,6 @@
 # Where everything is
 
-OpenSeneri is forty-three source files and twenty-eight documents. This page exists
+OpenSeneri is forty-three source files and twenty-nine documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -11,7 +11,8 @@ ordering constraint that cannot be reordered. What makes it readable is knowing
 
 ## Start here, in this order
 
-1. **`src/kernel/kernel.c`** — 456 lines, and almost all of it is a list. This is
+1. **`src/kernel/kernel.c`** — 650 lines, and almost all of it is a list plus the
+   bounded device-window construction. This is
    the order boot happens in, top to bottom, and every step is one call. Read it
    first even if none of the calls mean anything yet, because everything else is
    a detail of one of these lines.
@@ -29,9 +30,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 456 | The order boot happens in. Nothing else. |
+| `kernel.c` | 650 | The order boot happens in, plus construction of the one boot device-window registry. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
-| `boot_proofs.c` | 2243 | Every proof and bring-up boot runs. Panics rather than returning a status. |
+| `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
 ### Getting off the ground
 
@@ -58,7 +59,7 @@ long you will be in there.
 | `acpi_tables.c` | 1612 | RSDT, XSDT, FADT, MCFG. Bounds and checksums on everything. |
 | `acpi_madt.c` | 1058 | The interrupt topology: which APICs exist and how legacy IRQs were rerouted. |
 | `acpi_util.c` | 83 | The checks the above three share. |
-| `pci.c` | 1254 | Every device on every bus, read two independent ways so each checks the other. |
+| `pci.c` | 1260 | Every device on every bus, read two independent ways so each checks the other. |
 
 ### Interrupt hardware
 
@@ -84,7 +85,7 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `physical_memory.c` | 454 | Which physical frames exist and which are free. |
-| `paging.c` | 2596 | Four-level page tables, W^X, PAT ownership, and WB/WC/UC memory types. The densest file here. |
+| `paging.c` | 3006 | Four-level page tables, W^X, the bounded device-window registry, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` before it. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
 ### More than one thing at a time
@@ -98,7 +99,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `framebuffer.c` | 467 | The linear framebuffer, validated field by field, mapped write-combining. |
+| `framebuffer.c` | 477 | The linear framebuffer, validated field by field, mapped write-combining. |
 | `surface.c` | 815 | Cached pixels, clipped primitives, overlap-safe copies, damage, and the WC store fence. |
 | `screen.c` | 604 | Text on the framebuffer: cells, wrapping, scrolling, and reading it back. |
 | `keyboard.c` | 728 | The 8042 and scancode set 1. The first device a person operates. |
@@ -113,7 +114,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 3924 | The twenty-nine QEMU scenarios and what each must print. |
+| `test.c` | 4066 | The thirty QEMU scenarios and what each must print. |
 | `self_test.c` | 588 | Checks that run on synthetic data every boot, before any hardware is touched. |
 
 ## The boot sequence, in order
@@ -127,6 +128,7 @@ it happens.
     boot_context_parse            read what the loader left
     acpi_root_discover            find the firmware tables
     acpi_madt / fadt / mcfg       read them
+    construct_device_windows      validate one bounded mapping description
     pm_timer_initialize           the reference clock
     apic_bring_online             the local APIC
     ioapic_initialize             external interrupt routing
