@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <seneri/cpu.h>
-#include <seneri/pic.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/pic.h>
 
 #define PIC_MASTER_COMMAND UINT16_C(0x20)
 #define PIC_MASTER_DATA UINT16_C(0x21)
@@ -174,8 +174,8 @@ void pic_send_eoi(uint8_t irq)
 
 /*
  * Mask every line and refuse to unmask one again. The masks are read back from
- * the interrupt mask registers rather than from OpenSeneri's shadow copy, because
- * the point of retirement is what the hardware holds, not what OpenSeneri believes.
+ * the interrupt mask registers rather than from Pyrenis's shadow copy, because
+ * the point of retirement is what the hardware holds, not what Pyrenis believes.
  */
 enum pic_status pic_retire(void)
 {

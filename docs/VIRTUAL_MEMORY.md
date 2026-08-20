@@ -1,6 +1,6 @@
 # Owning the page tables
 
-OpenSeneri looked like it enforced W^X. It did not.
+Pyrenis looked like it enforced W^X. It did not.
 
 `linker.ld` has separated the kernel into properly flagged segments since day
 one — `text` is `FLAGS(5)`, `rodata` is `FLAGS(4)`, `data` is `FLAGS(6)` — and
@@ -17,7 +17,7 @@ Every byte below 4 GiB was simultaneously readable, writable and executable:
 kernel text, kernel rodata, the BSS, the frame allocator's bitmaps, the firmware
 ACPI tables, and every page the frame allocator handed out.
 
-This is the third time OpenSeneri has found a property that was verified in name
+This is the third time Pyrenis has found a property that was verified in name
 only. A `.PHONY` bug meant the entire QEMU suite silently never ran (`bbcec6f`).
 The PIT was programmed in mode 3 and delivered two interrupts per period, so
 both calibrated clocks ran at half rate and agreed with each other about it
@@ -76,13 +76,13 @@ Nothing sets the global bit, which is why a CR3 load is a complete flush.
 
 ### The null page is deliberately absent
 
-Nothing in OpenSeneri reads physical address zero. Leaving it unmapped turns a null
+Nothing in Pyrenis reads physical address zero. Leaving it unmapped turns a null
 dereference into a page fault naming `CR2 = 0` instead of a silent read of the
 real-mode interrupt vector table. `paging_verify` re-checks this on every call.
 
 ### Why the identity window is still 4 GiB
 
-`SENERI_EARLY_PHYSICAL_LIMIT` is a promise that every physical address below
+`PYRENIS_EARLY_PHYSICAL_LIMIT` is a promise that every physical address below
 4 GiB is reachable at the same virtual address. It was `boot.S`'s promise; it is
 now `paging.c`'s, deliberately unchanged. Three things depend on it:
 
@@ -104,7 +104,7 @@ worked only because MTRRs happened to override it and because QEMU is forgiving.
 Each discovered register page now sets `PCD` and `PWT`, which with the PAT bit
 clear selects PAT entry 3.
 
-OpenSeneri checks that entry and entry 0 rather than assuming firmware defaults. It
+Pyrenis checks that entry and entry 0 rather than assuming firmware defaults. It
 then changes only unused entry 1 to write-combining, with exact readback and
 cache flushes around the CR3 transition. The bootstrap hierarchy selects entry
 0; live register mappings select entry 3; framebuffer pages select entry 1 with
@@ -129,7 +129,7 @@ are corrected here.
   `CPUID.80000001H:EDX[20]`, checked and refused rather than assumed, the way
   `src/kernel/tsc.c` checks for an invariant TSC.
 - **`CR0.WP`** (bit 16). With it clear, supervisor writes ignore the read-only
-  bit entirely — and ring 0 is the only ring OpenSeneri has, so every permission
+  bit entirely — and ring 0 is the only ring Pyrenis has, so every permission
   installed here would have been advisory. This bit is the difference between
   a W^X guarantee and a comment.
 
@@ -197,7 +197,7 @@ hierarchy that is not installed, so the self-test cannot evict a live entry.
    are deliberately the most permissive the architecture allows, so the leaf is
    the single place a permission is decided. The audit and `paging_translate`
    both compute the conjunction rather than reading the leaf.
-4. Every table frame is below `SENERI_EARLY_PHYSICAL_LIMIT` and identity-mapped,
+4. Every table frame is below `PYRENIS_EARLY_PHYSICAL_LIMIT` and identity-mapped,
    so its physical address is the address the walk reads it through.
 5. Page zero is absent.
 6. A range operation validates the whole range before writing any of it, so a
@@ -283,11 +283,11 @@ read-only, read back again, then unmapped, proved absent, and released. Nothing
 in it faults.
 
 ```text
-OpenSeneri: paging root 0x00000000001A3000 table frames 11 regions 5 NX yes write protect yes
-OpenSeneri: paging leaves 4602 writable 4545 executable 34 both 0
-OpenSeneri: kernel page tables installed
-OpenSeneri: no writable executable mapping
-OpenSeneri: virtual memory established
+Pyrenis: paging root 0x00000000001A3000 table frames 11 regions 5 NX yes write protect yes
+Pyrenis: paging leaves 4602 writable 4545 executable 34 both 0
+Pyrenis: kernel page tables installed
+Pyrenis: no writable executable mapping
+Pyrenis: virtual memory established
 ```
 
 `executable 34` is exactly the pages between `__text_start` and `__text_end`.

@@ -115,7 +115,7 @@ cpu_cpuid:
 /*
  * uint64_t cpu_read_tsc(void) - RDTSC returns EDX:EAX.
  * RDTSC is not a serializing instruction, so a read may be reordered by a few
- * instructions around it. Every interval OpenSeneri measures with it is at least
+ * instructions around it. Every interval Pyrenis measures with it is at least
  * milliseconds wide, far larger than that window. A primitive for short precise
  * intervals would need its own fenced variant.
  */
@@ -193,7 +193,7 @@ cpu_read_cr0:
 
 /*
  * void cpu_write_cr0(uint64_t value)
- * OpenSeneri changes exactly one bit through this, CR0.WP, and only while the
+ * Pyrenis changes exactly one bit through this, CR0.WP, and only while the
  * boot page tables still mark every page writable, so the write cannot revoke
  * a permission from under the instruction performing it.
  */
@@ -221,7 +221,7 @@ cpu_read_cr4:
 /*
  * void cpu_write_cr3(uint64_t value)
  * Intel SDM volume 3A section 4.10.4.1: loading CR3 installs a new translation
- * hierarchy and invalidates every TLB entry that is not global. OpenSeneri sets the
+ * hierarchy and invalidates every TLB entry that is not global. Pyrenis sets the
  * global bit in no entry, so this one instruction replaces the whole address
  * space with no residue. The very next instruction fetch already uses the new
  * hierarchy, so it must map the code executing here.

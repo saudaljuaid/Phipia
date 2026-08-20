@@ -6,11 +6,11 @@
  */
 #include <stdint.h>
 
-#include <seneri/boot_ledger.h>
-#include <seneri/boot_plan.h>
-#include <seneri/console.h>
-#include <seneri/shell.h>
-#include <seneri/test.h>
+#include <pyrenis/boot_ledger.h>
+#include <pyrenis/boot_plan.h>
+#include <pyrenis/console.h>
+#include <pyrenis/shell.h>
+#include <pyrenis/test.h>
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -27,7 +27,7 @@ static void report_ledger_refusal(
     const struct boot_context *context
 )
 {
-    console_write("OpenSeneri: Boot Ledger refusal: ");
+    console_write("Pyrenis: Boot Ledger refusal: ");
     console_write(boot_ledger_status_string(ledger->status));
 
     if (ledger->refusal_stage != BOOT_STAGE_INVALID) {
@@ -87,7 +87,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     }
 
     boot_ledger_publish(&installed_ledger);
-    console_write("OpenSeneri: Boot Ledger installed proof passed\n");
+    console_write("Pyrenis: Boot Ledger installed proof passed\n");
 
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
         kernel_test_complete_normal();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The parts of OpenSeneri written in Rust.
+//! The parts of Pyrenis written in Rust.
 //!
-//! OpenSeneri is a C kernel. Rust is used here for one specific job: parsing input
+//! Pyrenis is a C kernel. Rust is used here for one specific job: parsing input
 //! this kernel did not produce. A bounds check that the compiler inserts and
 //! cannot be talked out of is worth more on a byte stream from outside than
 //! anywhere else, because that is where a missing one becomes an attacker's

@@ -3,17 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/clock.h>
-#include <seneri/boot_ledger.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/heap.h>
-#include <seneri/keyboard.h>
-#include <seneri/memory.h>
-#include <seneri/pci.h>
-#include <seneri/screen.h>
-#include <seneri/shell.h>
-#include <seneri/thread.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/boot_ledger.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/keyboard.h>
+#include <pyrenis/memory.h>
+#include <pyrenis/pci.h>
+#include <pyrenis/screen.h>
+#include <pyrenis/shell.h>
+#include <pyrenis/thread.h>
 
 /*
  * A command line.
@@ -33,7 +33,7 @@
  * mistakes, so an unknown command is a line of output and not an incident.
  */
 
-#define SHELL_PROMPT "open> "
+#define SHELL_PROMPT "pyr> "
 
 /* What splits a command from its arguments. Nothing exotic; space and tab. */
 static bool is_separator(char character)
@@ -211,7 +211,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("OpenSeneri, an x86_64 kernel built from first principles.\n");
+    console_write("Pyrenis, a capability-validated x86_64 kernel.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');

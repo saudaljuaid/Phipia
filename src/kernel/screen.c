@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/font.h>
-#include <seneri/framebuffer.h>
-#include <seneri/screen.h>
-#include <seneri/surface.h>
+#include <pyrenis/font.h>
+#include <pyrenis/framebuffer.h>
+#include <pyrenis/screen.h>
+#include <pyrenis/surface.h>
 
 /*
  * Text on the framebuffer.
@@ -34,17 +34,18 @@
 #define REPLACEMENT_CHARACTER '?'
 
 /*
- * Background and foreground. Deep ocean blue and warm paper give the console
- * the quiet, familiar character of an older home computer without sacrificing
- * contrast or readability.
+ * The Pyrenis console takes its palette directly from the canonical mark.
+ * White makes the logo's committed white field disappear into the screen;
+ * bronze is the mark's exact dominant source colour and remains readable at
+ * terminal scale. There is deliberately no approximate or derived accent.
  */
-#define SCREEN_BACKGROUND_RED UINT8_C(0x13)
-#define SCREEN_BACKGROUND_GREEN UINT8_C(0x23)
-#define SCREEN_BACKGROUND_BLUE UINT8_C(0x2E)
+#define SCREEN_BACKGROUND_RED UINT8_C(0xFF)
+#define SCREEN_BACKGROUND_GREEN UINT8_C(0xFF)
+#define SCREEN_BACKGROUND_BLUE UINT8_C(0xFF)
 
-#define SCREEN_FOREGROUND_RED UINT8_C(0xE7)
-#define SCREEN_FOREGROUND_GREEN UINT8_C(0xD9)
-#define SCREEN_FOREGROUND_BLUE UINT8_C(0xB7)
+#define SCREEN_FOREGROUND_RED UINT8_C(0x80)
+#define SCREEN_FOREGROUND_GREEN UINT8_C(0x62)
+#define SCREEN_FOREGROUND_BLUE UINT8_C(0x30)
 
 static struct screen_state state;
 static uint32_t background_pixel;
@@ -93,7 +94,7 @@ static enum screen_status draw_cell(uint32_t column, uint32_t row, char characte
         code = (uint32_t)REPLACEMENT_CHARACTER;
     }
 
-    if (seneri_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
+    if (pyrenis_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
@@ -221,7 +222,7 @@ enum screen_status screen_initialize(void)
         return SCREEN_STATUS_NO_FRAMEBUFFER;
     }
 
-    if (seneri_font_geometry(&width, &height, &first, &count) !=
+    if (pyrenis_font_geometry(&width, &height, &first, &count) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_BAD_FONT;
     }
@@ -429,7 +430,7 @@ enum screen_status screen_verify_cell(
         code = (uint32_t)REPLACEMENT_CHARACTER;
     }
 
-    if (seneri_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
+    if (pyrenis_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }

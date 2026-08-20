@@ -1,31 +1,31 @@
 <p align="center">
-  <img src="assets/openseneri-logo.png" alt="OpenSeneri dolphin and wave logo" width="187">
+  <img src="assets/pyrenis-logo.png" alt="Pyrenis mark" width="220">
 </p>
 
-<h1 align="center">OpenSeneri</h1>
+<h1 align="center">Pyrenis</h1>
 
 <p align="center">
-  <strong>An open x86_64 operating system, built from the first instruction.</strong><br>
-  Freestanding, close to the hardware, and verified at boot.
-</p>
-
-<p align="center">
-  <a href="https://github.com/saudaljuaid/OpenSeneri/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/OpenSeneri/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
-  <img src="https://img.shields.io/badge/machine-x86__64-173b57" alt="x86_64">
-  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-4caed4" alt="C11 and assembly">
-  <img src="https://img.shields.io/badge/parser-Rust-2f7195" alt="Rust parser">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-173b57" alt="GPL-3.0-only"></a>
+  <strong>A capability-validated x86_64 kernel, built from the first instruction.</strong><br>
+  Freestanding, hardware-close, and checked against the machine it actually boots.
 </p>
 
 <p align="center">
-  <img src="assets/openseneri-shell.png" alt="OpenSeneri graphical console at the open prompt" width="820">
+  <a href="https://github.com/saudaljuaid/Pyrenis/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Pyrenis/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
+  <img src="https://img.shields.io/badge/machine-x86__64-806230" alt="x86_64">
+  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-5A4325" alt="C11 and assembly">
+  <img src="https://img.shields.io/badge/parser-Rust-A9874E" alt="Rust parser">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-2A2117" alt="GPL-3.0-only"></a>
 </p>
 
-<p align="center"><sub>A real 1024×768 OpenSeneri boot in QEMU, waiting at <code>open&gt;</code>.</sub></p>
+<p align="center">
+  <img src="assets/pyrenis-shell.png" alt="Pyrenis graphical console at the pyr prompt" width="820">
+</p>
+
+<p align="center"><sub>A real 1024×768 Pyrenis boot in QEMU, waiting at <code>pyr&gt;</code>.</sub></p>
 
 ## About
 
-OpenSeneri is an independent, freestanding operating-system kernel—not a Linux
+Pyrenis is an independent, freestanding operating-system kernel—not a Linux
 distribution and not a userspace simulation. It boots through Multiboot2,
 constructs its own x86_64 environment, discovers platform hardware, owns its
 interrupt and timekeeping paths, and builds a protected memory foundation from
@@ -34,6 +34,15 @@ first principles.
 The source explains the machine from entry to the shell. Boot-time checks,
 deterministic QEMU scenarios, and deliberate negative controls make correctness
 part of the architecture rather than a claim left to screenshots.
+
+## Identity
+
+The canonical mark is the exact 396×335 RGBA source at
+[`assets/pyrenis-logo.png`](assets/pyrenis-logo.png). Pyrenis uses its bronze
+`#806230` with white throughout the graphical console and repository artwork;
+the source image is never redrawn, recoloured, cropped, or passed through a
+runtime image parser. The complete asset and naming contract is in
+[`docs/BRAND.md`](docs/BRAND.md).
 
 ## What is on the machine today
 
@@ -74,11 +83,12 @@ make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
 
-The build produces `build/openseneri.elf` and `build/openseneri.iso`.
+The build produces `build/pyrenis.elf` and `build/pyrenis.iso`.
 
 ## Documentation
 
 - [`docs/DAY_ONE.md`](docs/DAY_ONE.md) — the boot contract and first verified milestone.
+- [`docs/BRAND.md`](docs/BRAND.md) — canonical name, source logo, palette, and public naming rules.
 - [`docs/BOOT_LEDGER.md`](docs/BOOT_LEDGER.md) — typed startup capabilities, canonical planning, receipts, and installed proof.
 - [`docs/VIRTUAL_MEMORY.md`](docs/VIRTUAL_MEMORY.md) — page-table ownership and W^X proof.
 - [`docs/DEVICE_WINDOWS.md`](docs/DEVICE_WINDOWS.md) — bounded physical windows and their WB/WC/UC policy.
@@ -89,7 +99,7 @@ The build produces `build/openseneri.elf` and `build/openseneri.iso`.
 - [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.
 - [`docs/SCREEN_CONSOLE.md`](docs/SCREEN_CONSOLE.md) and [`docs/SHELL.md`](docs/SHELL.md) — the visible interactive path.
 - [`docs/MAP.md`](docs/MAP.md) — the complete source and boot-order map.
-- [`docs/WORKING_ON_OPENSENERI.md`](docs/WORKING_ON_OPENSENERI.md) — build, proof, and contribution workflow.
+- [`docs/WORKING_ON_PYRENIS.md`](docs/WORKING_ON_PYRENIS.md) — build, proof, and contribution workflow.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — project rules and submission expectations.
 
 Every substantial subsystem has its own document under [`docs/`](docs/), with
@@ -98,7 +108,7 @@ controls.
 
 ## Current limits
 
-OpenSeneri is still a foundation-stage kernel. The current `main` branch is
+Pyrenis is still a foundation-stage kernel. The current `main` branch is
 single-core and kernel-only; it has no userspace, filesystem, storage or network
 driver, process isolation, or general application ABI. Hardware evidence is
 strongest in QEMU, with bare-metal coverage still an explicit goal.
@@ -109,4 +119,4 @@ Small, reviewable increments are welcome. Start with
 [`CONTRIBUTING.md`](CONTRIBUTING.md), install the hooks, and keep every new loop
 bounded and every new refusal named.
 
-OpenSeneri is licensed under [GPL-3.0-only](LICENSE).
+Pyrenis is licensed under [GPL-3.0-only](LICENSE).

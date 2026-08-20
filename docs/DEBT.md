@@ -1,4 +1,4 @@
-# What OpenSeneri owes
+# What Pyrenis owes
 
 Every other document here ends with a *Deferred work* list, which is honest but
 local: each one knows what its own layer is missing and nothing knows what the
@@ -51,7 +51,7 @@ Ordered by what it costs to leave alone, not by size.
 
 **The exit-value collision is resolved.** PR #31
 (`ioapic: route level-triggered sources with directed EOI`) landed first, so it
-keeps `0x22`; later scenarios occupy `0x23` through `0x2D`, and `0x22` is
+keeps `0x22`; later scenarios occupy `0x23` through `0x2E`, and `0x22` is
 reserved by name in both `test.c` and the `Makefile`.
 
 **The pile of unmerged branches was not a pile.** `git branch -r` showed
@@ -64,17 +64,17 @@ question is the wrong one; the patch question is the right one:
     git cherry origin/main <branch>     # '-' means already upstream, '+' means not
 
 Run across all eighteen, sixteen report every commit already upstream. Of the
-remaining two, `seneri-os-tsc-primitive-2gc90u` reports one commit not upstream
-purely because the patch context shifted — the symbol it adds, `cpu_read_tsc`,
+remaining two, the historical TSC branch reports one commit not upstream purely
+because the patch context shifted — the symbol it adds, `cpu_read_tsc`,
 is present in `main` verbatim in `src/arch/x86_64/cpu.S` and declared in
-`include/seneri/cpu.h`. Checked by hand rather than trusted.
+`include/pyrenis/cpu.h`. Checked by hand rather than trusted.
 
 **At the time of the census exactly two branches carried work not in `main`:**
 
-| Branch | Pull request | State |
+| Pull request | Change | State |
 | --- | --- | --- |
-| `seneri-os-ioapic-level-dapmyc` | #31 | merged |
-| `seneri-os-pci-enumeration` | #32 | merged |
+| #31 | level-triggered I/O APIC routing | merged |
+| #32 | PCI enumeration | merged |
 
 The other sixteen are the remains of merged or superseded pull requests. Two of
 them belong to pull requests closed unmerged as duplicates — #23 and #14 — and
@@ -94,14 +94,14 @@ checked:
 | --- | --- |
 | For all sixteen branches, does `main` contain every function symbol the branch adds to `src/` or `include/`? | Yes, every one. The claim survives a symbol-level check, not just a patch-ID one. |
 | Was #31's work genuinely absent from `main` at census time, so the census was not vacuously true? | It was absent. `acknowledgement_targets_are_resolved`, `directed_eoi_is_gated_on_version` and `entries_round_trip` existed on that branch and nowhere in that snapshot of `main`. |
-| Can the checker fail at all? | Yes. Fed `seneri_this_symbol_does_not_exist` it reports missing, so a clean run means something. |
+| Can the checker fail at all? | Yes. Fed `pyrenis_this_symbol_does_not_exist` it reports missing, so a clean run means something. |
 
 **What remained between #31 and #32 was textual.** Measured with
 `git merge-tree --write-tree --name-only`, the two branches touch the same five
 files — `Makefile`, `README.md`, `docs/PIT_RETIREMENT.md`, `src/kernel/kernel.c`
 and `src/kernel/test.c` — in the same regions: the scenario list, the boot
 sequence, and the deferred-work paragraph both changes rewrite.
-`include/seneri/test.h` merges cleanly.
+`include/pyrenis/test.h` merges cleanly.
 
 None were semantic disagreements. They were resolved when #31 landed before
 #32; #33 then landed on their combined `main`. This is retained as the measured
@@ -115,13 +115,13 @@ useful boundary and an incomplete policy: ACPI-before-topology,
 device-windows-before-paging, W^X-before-heap and controller-before-interrupt
 relationships remained understandable only by reading the entire function.
 
-The OpenSeneri Boot Ledger is the second payment:
+The Pyrenis Boot Ledger is the second payment:
 
 | | | |
 | --- | ---: | --- |
 | `src/kernel/kernel.c` | 101 | validates, executes and verifies one ledger; no subsystem call order |
-| `src/kernel/boot_plan.c` | 1170 | private stage functions and typed dependency declarations |
-| `src/kernel/boot_ledger.c` | 1742 | bounded canonical planner, receipts, fingerprint and installed proof |
+| `src/kernel/boot_plan.c` | 1178 | private stage functions and typed dependency declarations |
+| `src/kernel/boot_ledger.c` | 1780 | bounded canonical planner, receipts, fingerprint and installed proof |
 | `src/kernel/boot_report.c` | 281 | describes what was found, never decides |
 | `src/kernel/boot_proofs.c` | 2661 | existing hardware proofs and transition sequences |
 
@@ -259,7 +259,7 @@ Measured, and healthy:
     wc -l src/kernel/*.c | sort -rn | head
     grep -c 'grep -F\|grep -E' Makefile
     grep -rn 'TODO\|FIXME\|XXX\|HACK' src/ include/ docs/ Makefile
-    nm -u build/openseneri.elf
+    nm -u build/pyrenis.elf
     git log --oneline origin/main..HEAD | wc -l
 
 And, for §1 — which branch still holds work that `main` does not:

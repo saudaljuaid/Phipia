@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/cpu.h>
-#include <seneri/pm_timer.h>
-#include <seneri/tsc.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/pm_timer.h>
+#include <pyrenis/tsc.h>
 
 /* Intel SDM volume 3B section 18.17: CPUID.01H:EDX[4] reports a TSC. */
 #define CPUID_FEATURE_LEAF UINT32_C(1)

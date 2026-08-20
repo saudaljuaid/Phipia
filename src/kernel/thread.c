@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <seneri/clock.h>
-#include <seneri/console.h>
-#include <seneri/cpu.h>
-#include <seneri/heap.h>
-#include <seneri/memory.h>
-#include <seneri/paging.h>
-#include <seneri/thread.h>
-#include <seneri/timer.h>
+#include <pyrenis/clock.h>
+#include <pyrenis/console.h>
+#include <pyrenis/cpu.h>
+#include <pyrenis/heap.h>
+#include <pyrenis/memory.h>
+#include <pyrenis/paging.h>
+#include <pyrenis/thread.h>
+#include <pyrenis/timer.h>
 
 /*
  * More than one thread of control, on one core. Scheduling is cooperative until

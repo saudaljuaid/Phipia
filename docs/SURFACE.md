@@ -59,12 +59,12 @@ back from the framebuffer and requires the copied-pixel counters to be 786,432,
 full-screen cost of one union rectangle. A normal boot prints lines of this form:
 
 ```text
-OpenSeneri: surface 1024x768 pitch 4096 buffer 3145728 bytes
-OpenSeneri: surface cycles full present <cycles> one-line update <cycles> scroll <cycles>
-OpenSeneri: surface split cycles full draw <cycles> push <cycles> one-line draw <cycles> push <cycles> scroll draw <cycles> push <cycles>
-OpenSeneri: surface sparse two-corner cycles total <cycles> draw <cycles> push <cycles> union 786432
-OpenSeneri: surface copied 786432 full, 16384 line, 786432 scroll pixels
-OpenSeneri: cached surface established
+Pyrenis: surface 1024x768 pitch 4096 buffer 3145728 bytes
+Pyrenis: surface cycles full present <cycles> one-line update <cycles> scroll <cycles>
+Pyrenis: surface split cycles full draw <cycles> push <cycles> one-line draw <cycles> push <cycles> scroll draw <cycles> push <cycles>
+Pyrenis: surface sparse two-corner cycles total <cycles> draw <cycles> push <cycles> union 786432
+Pyrenis: surface copied 786432 full, 16384 line, 786432 scroll pixels
+Pyrenis: cached surface established
 ```
 
 The dedicated `surface` QEMU scenario uses exit value `0x2B`. It repeats the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare a pre-ledger normal transcript and the installed boot contract."""
+"""Compare the pre-rebrand transcript with the installed Pyrenis contract."""
 
 from __future__ import annotations
 
@@ -44,64 +44,64 @@ SCENARIOS = {
     "boot-ledger": ("0x2E", 93),
 }
 
-LEDGER_PROOF = "OpenSeneri: Boot Ledger installed proof passed"
+LEDGER_PROOF = "Pyrenis: Boot Ledger installed proof passed"
 
 
 def normalize(line: str) -> str:
     """Mask only measured, address, or linked-image-derived numeric fields."""
 
     if line.startswith((
-        "OpenSeneri: allocatable frames:",
-        "OpenSeneri: free frames:",
-        "OpenSeneri: reserved frames:",
+        "Pyrenis: allocatable frames:",
+        "Pyrenis: free frames:",
+        "Pyrenis: reserved frames:",
     )):
         return re.sub(r"[0-9]+$", "<image-count>", line)
 
-    if line.startswith("OpenSeneri: frame probe:"):
+    if line.startswith("Pyrenis: frame probe:"):
         return re.sub(r"0x[0-9A-F]{16}", "<address>", line)
 
-    if line.startswith("OpenSeneri: paging root "):
+    if line.startswith("Pyrenis: paging root "):
         return re.sub(r"0x[0-9A-F]{16}", "<address>", line, count=1)
 
-    if line.startswith("OpenSeneri: paging leaves "):
+    if line.startswith("Pyrenis: paging leaves "):
         return re.sub(
             r"writable [0-9]+ executable [0-9]+",
             "writable <image-count> executable <image-count>",
             line,
         )
 
-    if line.startswith("OpenSeneri: surface cycles "):
+    if line.startswith("Pyrenis: surface cycles "):
         return re.sub(r"[0-9]+", "<cycles>", line)
 
-    if line.startswith("OpenSeneri: surface split cycles "):
+    if line.startswith("Pyrenis: surface split cycles "):
         return re.sub(r"[0-9]+", "<cycles>", line)
 
-    if line.startswith("OpenSeneri: surface sparse two-corner cycles "):
+    if line.startswith("Pyrenis: surface sparse two-corner cycles "):
         line = re.sub(r"(total|draw|push) [0-9]+", r"\1 <cycles>", line)
         return line
 
-    if line.startswith("OpenSeneri: I/O APIC level deliveries "):
+    if line.startswith("Pyrenis: I/O APIC level deliveries "):
         return re.sub(r"in [0-9]+ ns$", "in <time> ns", line)
 
-    if line.startswith("OpenSeneri: PM timer counted "):
+    if line.startswith("Pyrenis: PM timer counted "):
         return re.sub(r"in [0-9]+ ns$", "in <time> ns", line)
 
-    if line.startswith("OpenSeneri: local APIC timer calibrated at "):
+    if line.startswith("Pyrenis: local APIC timer calibrated at "):
         return re.sub(r"at [0-9]+ counts", "at <rate> counts", line)
 
-    if line.startswith("OpenSeneri: TSC calibrated at "):
+    if line.startswith("Pyrenis: TSC calibrated at "):
         return re.sub(r"at [0-9]+ Hz", "at <rate> Hz", line)
 
-    if line.startswith("OpenSeneri: clocks agree: "):
+    if line.startswith("Pyrenis: clocks agree: "):
         return re.sub(r"[0-9]+ ns", "<time> ns", line)
 
-    if line.startswith("OpenSeneri: slept "):
+    if line.startswith("Pyrenis: slept "):
         return re.sub(r"slept [0-9]+ ns", "slept <time> ns", line)
 
-    if line.startswith("OpenSeneri: preempted "):
+    if line.startswith("Pyrenis: preempted "):
         return re.sub(r"in [0-9]+ ms$", "in <time> ms", line)
 
-    if line.startswith("OpenSeneri: unyielding threads ran "):
+    if line.startswith("Pyrenis: unyielding threads ran "):
         return re.sub(r"[0-9]+", "<work>", line)
 
     return line
@@ -111,8 +111,36 @@ def transcript_lines(path: pathlib.Path) -> list[str]:
     return path.read_text(encoding="utf-8", errors="strict").splitlines()
 
 
+def rebrand(line: str) -> str:
+    """Apply only the public identity transition allowed by this change."""
+
+    line = (
+        line.replace("OpenSeneri", "Pyrenis")
+        .replace("openseneri", "pyrenis")
+        .replace("Seneri", "Pyrenis")
+        .replace("seneri", "pyrenis")
+    )
+    line = line.replace(
+        "logo 187x136 from 32543 bytes",
+        "logo 396x335 from 75113 bytes",
+    )
+    line = line.replace(
+        "logo verified 25432 pixels",
+        "logo verified 132660 pixels",
+    )
+    line = line.replace(
+        "screen console drew 203 characters",
+        "screen console drew 197 characters",
+    )
+
+    if line == "open> ":
+        return "pyr> "
+
+    return line
+
+
 def expected_with_ledger(lines: list[str]) -> list[str]:
-    if LEDGER_PROOF in lines:
+    if LEDGER_PROOF in (rebrand(line) for line in lines):
         return lines
 
     try:
@@ -124,7 +152,7 @@ def expected_with_ledger(lines: list[str]) -> list[str]:
 
 
 def compare_transcripts(before: pathlib.Path, after: pathlib.Path) -> bool:
-    expected = [normalize(line) for line in expected_with_ledger(
+    expected = [normalize(rebrand(line)) for line in expected_with_ledger(
         transcript_lines(before)
     )]
     actual = [normalize(line) for line in transcript_lines(after)]
@@ -181,7 +209,7 @@ def main() -> int:
     if not transcript_ok or not scenarios_ok:
         return 1
 
-    print("boot transcript and 31-scenario exit contract match")
+    print("Pyrenis boot transcript and 31-scenario exit contract match")
     return 0
 
 
