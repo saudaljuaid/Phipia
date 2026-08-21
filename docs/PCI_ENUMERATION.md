@@ -287,6 +287,12 @@ and owned memory resources may be mapped in the device-MMIO arena. See
 `docs/PCI_RESOURCES.md`; MSI-X and the VirtIO proof are described in
 `docs/MSI_X.md` and `docs/DMA.md`.
 
+v0.4.0 consumes those immutable records to find exactly one standard xHCI
+class tuple: base class `0Ch`, subclass `03h`, programming interface `30h`.
+Vendor and device IDs and the guest topology are deliberately irrelevant. The
+installed proof supplies only QEMU's emulated PCI function; enumeration never
+reaches through to physical host hardware.
+
 ## Deferred work
 
 - **Enumeration does not mutate resources.** Claims size assigned BARs and map
@@ -298,8 +304,9 @@ and owned memory resources may be mapped in the device-MMIO arena. See
 - **Segment groups beyond the first are recorded and ignored.** The ports cannot
   carry a segment at all, so a second group would have to be read entirely
   through a window, and there is nothing to test that against.
-- **No production driver exists.** The isolated VirtIO RNG transport is an
-  installed substrate proof, not a random service or general driver API.
+- **No general driver model exists.** The isolated VirtIO RNG transport remains
+  a substrate proof, and the production-shaped xHCI lifecycle is intentionally
+  bounded to one controller and one endpoint-zero enumeration.
 - **Bridge windows are not read.** Secondary and subordinate bus numbers are
   recorded because traversal needs them; the memory and prefetch windows a
   bridge forwards are not, because nothing allocates address space yet.

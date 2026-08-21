@@ -56,3 +56,12 @@ Sapote: memory foundation passed
 This is still an early single-core allocator. Interrupt safety, synchronization,
 NUMA policy, memory above 4 GiB, IOMMU isolation, page-table ownership, and virtual mappings are
 explicitly deferred.
+
+## v0.4.0 xHCI consumer
+
+The xHCI proof uses at most eight existing contiguous-DMA records: an
+administration page, three rings, two context pages, the receive page, and one
+optional multi-page scratchpad allocation. It adds no allocator path or hidden
+physical mapping. All requests are bounded below 4 GiB, and reverse teardown
+returns the frame/contiguous-allocation census to its entry snapshot. See
+`docs/XHCI_HOST.md`.

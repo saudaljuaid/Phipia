@@ -38,8 +38,9 @@ Dynamic MSI-X dispatch does not program the I/O APIC and never sends a directed
 EOI. The common interrupt return path acknowledges the local APIC after the
 registered handler returns.
 
-The layout and ordering are based on the current PCI Express Base
-Specification, published from
+The layout and ordering are based on PCI 3.0 §6.8.2 and were cross-checked
+against the current PCI Express Base Specification publication (approved
+revision 7.0), published from
 <https://pcisig.com/specification-overview/pci-express-base>.
 
 ## Deferred work
@@ -47,3 +48,13 @@ Specification, published from
 There is no MSI binding, interrupt remapping, affinity policy, multi-CPU target
 selection, or shared-vector fanout yet. One binding owns one table entry and one
 handler on the bootstrap processor.
+
+## xHCI interrupter zero
+
+The v0.4.0 host binds MSI-X entry zero only after the event ring and handler are
+ready and before xHCI interrupt enablement or bus mastering. Interrupter zero's
+ERST/ERDP state is processed in the handler; a completion counts only when the
+event identity matches the outstanding TRB. The shared dynamic dispatcher then
+uses the normal local-APIC EOI. The descriptor scenario snapshots the bound
+count immediately before its endpoint-zero doorbell and requires an exact `+1`
+transition. It never programs an I/O APIC route or requests directed EOI.

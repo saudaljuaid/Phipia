@@ -193,10 +193,11 @@ firmware generally does not do. That is what section 2 is for: run
 `wpa_supplicant` as an application rather than reimplementing it.
 
 **USB before PCIe, if the choice is free.** A USB FullMAC adapter needs an xHCI
-driver, which is a standardised class driver Sapote wants anyway for keyboards
-and storage, and it moves the device outside the machine so a broken driver
-cannot wedge the platform. One xHCI driver serves every USB controller ever
-made; a PCIe Wi-Fi driver serves one vendor's parts.
+host driver, whose standardised interface Sapote also wants for keyboards and
+storage. A mature xHCI implementation can cover vendors without a per-vendor
+PCIe Wi-Fi driver, but the v0.4.0 foundation is not that implementation: it has
+no hubs, class drivers, or host-hardware support, and without an IOMMU its DMA
+bounds do not isolate memory.
 
 ## 4. What the standards buy, and the order they should be built in
 
@@ -206,7 +207,7 @@ high-value device classes are standardised, so one driver covers every vendor.**
 | Class | Standardised | One driver covers | Prerequisites beyond enumeration |
 | --- | --- | --- | --- |
 | NVMe storage | yes | every NVMe SSD | BAR mapping, MSI-X, DMA |
-| xHCI (USB) | yes | every USB controller, and every class device behind it | BAR mapping, MSI-X, DMA, timers |
+| xHCI (USB) | yes | standardised host controllers; USB classes still need separate drivers | BAR mapping, MSI-X, DMA, timers |
 | AHCI (SATA) | yes | every SATA controller | BAR mapping, MSI/MSI-X, DMA |
 | virtio | yes | every virtual machine's disk, network, console | BAR mapping, MSI-X, DMA |
 | Ethernet | per-vendor, documented | one vendor's parts | BAR mapping, MSI-X, DMA |
@@ -286,9 +287,14 @@ executable failure test, and a boot that proves it or refuses.
    delivery, device-written bytes, ownership transitions, and full teardown in
    QEMU CI. The next VirtIO work must be a separately designed production
    driver API rather than growing fixture code into a general layer.
-6. **xHCI.** One driver, every USB controller, and the road to input devices,
-   mass storage, and a FullMAC Wi-Fi adapter.
-7. **NVMe or AHCI**, then a filesystem — which is also how firmware images get
+6. **A bounded xHCI host foundation — complete in v0.4.0.** One QEMU controller,
+   one direct root-port device, one slot, endpoint zero, and one 18-byte device
+   descriptor prove the full BAR/DMA/MSI-X lifecycle. It is deliberately not a
+   general USB stack: hubs, hotplug, HID service, storage, streams, class
+   drivers, and physical host hardware remain future work. See
+   `docs/XHCI_HOST.md` and `docs/USB_ENUMERATION.md`.
+7. **General USB and class drivers, or NVMe/AHCI**, then a filesystem — which is
+   also how firmware images get
    onto the machine. Before that exists, a Multiboot2 module is the honest
    interim answer, and GRUB already supplies it.
 
