@@ -37,7 +37,7 @@ used before a device notification.
 
 ## Security boundary
 
-Pyrenis has no IOMMU. Address bounds and software ownership prevent accidental
+Sapote has no IOMMU. Address bounds and software ownership prevent accidental
 driver misuse and make teardown auditable; they do **not** isolate a malicious
 or defective bus-mastering device. Such a device can DMA to physical memory
 outside the allocations given to it. Production isolation requires an IOMMU

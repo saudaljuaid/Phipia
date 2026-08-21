@@ -29,6 +29,18 @@ jobs:
                       binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
+            - name: Capture Sapote First Light from QEMU
+              run: |
+                  make iso
+                  python3 tools/capture-first-light.py \
+                      --iso build/sapote.iso \
+                      --output build/first-light-captures
+            - name: Upload Sapote First Light captures
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: sapote-first-light-captures
+                  path: build/first-light-captures
+                  if-no-files-found: error
             - name: Verify the kernel artifact
               run: make verify
             - name: Prove faults and interrupts in QEMU
