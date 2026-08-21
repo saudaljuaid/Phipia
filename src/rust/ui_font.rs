@@ -21,7 +21,7 @@ pub enum Status {
     NullArgument = 1,
     /// The fixed header is short, has the wrong magic, or contradicts its body.
     MalformedHeader = 2,
-    /// The asset names a PUF version this kernel does not implement.
+    /// The asset names a SUF version this kernel does not implement.
     UnsupportedVersion = 3,
     /// Cell, baseline, advance, range, or row metrics are invalid.
     BadMetrics = 4,
