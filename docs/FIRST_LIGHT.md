@@ -6,12 +6,10 @@ a window manager, or a userspace boundary. The same installed framebuffer,
 cached surface, screen console, shell, keyboard, interrupt topology, scheduler,
 and Boot Ledger that existed before the milestone remain underneath it.
 
-The composition is deliberately warm and direct: a platinum desktop, a white
-menu bar, the seven-colour Sapote band, monochrome bitmap labels, hatched window
-titles, one welcome window, and a compact control strip. Its one-pixel chrome
-recalls early personal computers without copying another product's wordmark or
-icons. The mark is decoded from the exact canonical asset and is neither
-recoloured nor redrawn.
+The desktop has a blue-gray line pattern, beveled menu bar, compact workspace
+status, bitmap labels, one workbench window, and a bottom launcher tray. The
+chrome and code-native icons are Sapote's own. The mark is decoded from the
+exact canonical asset and is neither recoloured nor redrawn.
 
 ![First Light at 1024 by 768](../assets/sapote-first-light.png)
 
@@ -45,29 +43,29 @@ Only the documented identity palette is installed:
 | Role | RGB |
 | --- | --- |
 | White windows and highlights | `#FFFFFF` |
-| Sapote orange | `#E96503` |
-| Sapote teal | `#008E92` |
-| Sapote yellow | `#FDDA02` |
-| Sapote purple | `#782CB2` |
-| Sapote red | `#E71F21` |
-| Sapote lime | `#A6DF20` |
-| Sapote blue | `#018DD8` |
-| Black type and outlines | `#000000` |
-| Shadow | `#777777` |
-| Platinum desktop and controls | `#DDDAD5` |
+| Ink and outlines | `#1B1D22` |
+| Desktop | `#6E7FA4` |
+| Desktop rule | `#8294B8` |
+| Active title | `#233A68` |
+| Inactive title | `#65728E` |
+| Teal status | `#2F8B8C` |
+| Gold status | `#D8A43A` |
+| Green status | `#4F8A5B` |
+| Red status | `#B84E4C` |
+| Violet status | `#7B5B89` |
+| Shadow | `#5E626B` |
+| Window face | `#C8CBD0` |
 
-The seven accents follow the mark's left-to-right stripe order and are drawn in
-that order from top to bottom. There is no
-floating point, alpha compositor, kernel-generated gradient, transparency,
-animation, or runtime theme.
+The accents belong to status lights and launcher icons, never to the canonical
+mark. There is no floating point, alpha compositor, kernel-generated gradient,
+transparency, animation, or runtime theme.
 
-The normal desktop contains a 24-pixel menu bar, seven 3-pixel rainbow stripes,
-a fixed welcome window, the canonical mark at its deterministic 277 by 280
-runtime size, `SAPOTE`, `hello from the metal.`, and a 144 by 22 ledger
-indicator. The indicator is
-derived from the published installed ledger: it says `LEDGER PASS` only when
-that ledger is not degraded. No default-desktop label contains an address,
-cycle count, or timing value.
+The normal desktop contains a 24-pixel menu bar, a 22-pixel workspace strip, a
+fixed 600 by 350 Workbench window, the canonical mark at its deterministic 280
+by 248 runtime size, stable readiness rows, a 224 by 28 ledger indicator, and a
+four-item launcher tray. The indicator is derived from the published installed
+ledger: it says `LEDGER PASS` only when that ledger is not degraded. No
+default-desktop label contains an address, cycle count, or timing value.
 
 ## Deterministic layout
 
@@ -78,29 +76,29 @@ first desktop draw.
 
 The constants are:
 
-- menu bar: full width by 24 pixels, followed by seven full-width 3-pixel colour
-  stripes;
-- welcome window: 320 by 398, centred horizontally, at y=50 for 600-pixel
-  modes and y=58 otherwise;
-- mark: 277 by 280, centred horizontally, six pixels below the 22-pixel welcome
-  title region;
-- wordmark: 48 by 16, four pixels below the mark;
-- motto: 168 by 16, twenty pixels below the wordmark origin;
-- ledger indicator: 144 by 22, twenty-two pixels below the motto origin;
-- dock: 438 by 50, centred, eighteen pixels above the bottom edge;
-- dock items: four 104 by 34 half-open rectangles, two pixels apart and eight
-  pixels inside the dock;
-- icons: 16 by 16 at the left of each item;
-- panel width: the lesser of 680 and `surface width - 64`;
-- panel height: 344 at heights of 720 or more, otherwise 300;
+- menu bar: full width by 24 pixels, followed by a full-width 22-pixel workspace
+  strip;
+- Workbench window: 600 by 350, centred horizontally, at y=56 for 600-pixel
+  modes and y=70 otherwise;
+- mark: 280 by 248, 20 pixels from the Workbench's left edge and 18 pixels below
+  its 26-pixel title region;
+- content column: 224 pixels wide, beginning 330 pixels from the Workbench's
+  left edge;
+- ledger indicator: 224 by 28 in the content column;
+- launcher tray: 596 by 64, centred, eighteen pixels above the bottom edge;
+- launcher items: four 142 by 46 half-open rectangles, four pixels apart and
+  eight pixels inside the tray;
+- icons: 28 by 28 at the left of each launcher;
+- panel width: the lesser of 720 and `surface width - 64`;
+- panel height: 400 at heights of 720 or more, otherwise 300;
 - panel position: centred, eighteen pixels above the dock;
-- panel client: eight pixels inside each side, beginning 32 pixels below the
+- panel client: eight pixels inside each side, beginning 36 pixels below the
   panel top.
 
-At 1024 by 768 the welcome window begins at `(352,58)`, the mark at `(373,86)`,
-the dock at `(293,700)`, and the panel at `(172,338)`. At 800 by 600 those
-origins are `(240,50)`, `(261,78)`, `(181,532)`, and `(60,214)`. At 1280 by
-720 they are `(480,58)`, `(501,86)`, `(421,652)`, and `(300,290)`.
+At 1024 by 768 the Workbench begins at `(212,70)`, the mark at `(232,114)`, the
+launcher tray at `(214,686)`, and the panel at `(152,268)`. At 800 by 600 those
+origins are `(100,56)`, `(120,100)`, `(102,518)`, and `(40,200)`. At 1280 by
+720 they are `(340,70)`, `(360,114)`, `(342,638)`, and `(280,220)`.
 
 Validation proves every rectangle is inside the surface, the four items do not
 overlap, the client is non-empty, each baseline fits, the cursor hotspot is
@@ -122,9 +120,10 @@ The first four items are fixed and typed:
 | About | `UI_ELEMENT_DOCK_ABOUT` | `UI_ACTION_TOGGLE_ABOUT` | `UI_PANEL_ABOUT` |
 
 Each has normal, hovered, focused, pressed, and active states. Focus is a
-one-pixel dotted inset, so it remains visible without a pointer. Icons are
-drawn from bounded fill and stroke primitives; there is no icon font, emoji,
-image, callback payload, or launch animation.
+one-pixel dotted gold inset, so it remains visible without a pointer. The
+Terminal, Ledger, System, and About icons are drawn from bounded fill and stroke
+primitives; there is no icon font, emoji, image, callback payload, or launch
+animation.
 
 Only one fixed panel can be open. `Tab` advances focus, `Shift+Tab` moves it
 backward, `Enter` activates, and `Escape` closes. Focus wraps across all four
@@ -147,8 +146,11 @@ direct framebuffer write. The initial activation may present the full surface.
 Later cursor, focus, dock, and panel transitions union bounded damage and
 present only that rectangle. The surface's existing volatile WC row copy and
 post-store `sfence` are unchanged and are statically required by `make verify`.
+The hero, launcher tray, and panel drop shadows have checked bounds. A panel
+transition damages the union of the window and its six-pixel shadow, so closing
+or replacing a panel cannot leave pixels outside the declared window rectangle.
 
-The cursor mask is drawn last in black and white. Movement unions its old and
+The cursor mask is drawn last in ink and white. Movement unions its old and
 new 12 by 18 bounds, restores the cached pixels below the old mask, then draws
 at the new clamped position. The IRQ12 handler never draws. When the pointer is
 declared absent, `pointer_present` is false and no mask is composed.
@@ -245,40 +247,29 @@ control is explicitly a source/comparator assertion.
 | 19 | Delete the permanent installed-proof line. | Normal boot exited normally, then the transcript comparator refused: `normal transcript omitted permanent First Light proof line`. |
 | 20 | Flip one stable screenshot pixel. | Comparator: `single stable-pixel mutation refused`. |
 | 21 | Change the First Light guest exit to `0x30`. | Exit comparator observed host 97 instead of required 95. |
+| 22 | Limit panel-transition damage to the window while retaining its six-pixel shadow. | The final installed redraw proof refused the stale shadow: `First Light final installed redraw proof failed`. |
 
 No correctness control passed unexpectedly.
 
-## Verification record
+## Verification contract
 
-The final TCG record contains 20 complete clean 32-scenario suites: 640
-successful guest boots with every inherited host exit unchanged and First Light
-at host exit 95. Four attempts made while two complete suites were competing for
-the host were retained as flakes rather than counted as clean sweeps:
+The current repository has 34 named QEMU scenarios. Pull requests run
+`make verify`, capture all three First Light frames from QEMU, compare every
+stable pixel, and execute all 34 scenarios. The milestone evidence workflow
+then runs ten complete serial TCG sweeps and records an actual accelerator
+availability check. Execution results and flakes belong in the workflow
+artifacts and release verification summary rather than being copied into this
+interface contract.
 
-| Attempt | Recorded failures | Observed cause | Complete serial rerun |
-| ---: | --- | --- | --- |
-| 6 | `pm-timer` | PM/APIC interval disagreement under host starvation | 32/32 pass |
-| 9 | `normal`, `pm-timer`, `first-light` | PM/APIC interval disagreement; two boots reached the inherited panic path | 32/32 pass |
-| 15 | `pm-timer` | PM/APIC interval disagreement under host starvation | 32/32 pass |
-| 18 | `normal`, `first-light` | inherited sleep overshoot and PM/APIC interval disagreement | 32/32 pass |
-
-That is seven recorded flaky boots. None failed a First Light UI, font,
-pointer, layout, damage, ledger, or screenshot assertion. Serial replacement
-sweeps eliminated the host contention and every affected complete suite passed.
-
-The available Windows hardware accelerator, WHPX, passed one complete 32/32
-suite. KVM was unavailable because this host has no Linux/KVM environment, and
-bare-metal display/input evidence was unavailable. Neither unavailable target
-is represented as tested.
-
-The committed 1024 by 768 clean, focus/hover, and terminal/ledger QEMU captures
-all match their complete stable-pixel references. The comparator's mutation
-self-test refuses a single changed pixel. The inherited transcript plus the
-permanent First Light line matches the 32-scenario contract. Final audits found
-the exact canonical logo SHA-256, a byte-reproducible packed font, no compiler
-or linker warnings, no undefined runtime symbols, no RWX load segment, no
-linked relocations, no floating-point/MMX/SSE/AVX instructions, no legacy
-product names, no direct UI framebuffer writes, and no drawing from IRQ12.
+The dedicated `first-light` scenario must exit through guest value `0x2F` and
+host status 95, with exactly one `ST BEGIN first-light` and one
+`ST PASS first-light`. The committed clean, focus/hover, and terminal/ledger
+images must match fresh QEMU captures, and each comparator mutation self-test
+must refuse one changed stable pixel. `make verify` separately requires the
+canonical logo hash, byte-reproducible packed assets, warning-free link,
+resolved symbols, non-RWX load segments, no linked relocations, no
+floating-point/MMX/SSE/AVX kernel text, no direct UI framebuffer writes, and no
+drawing from IRQ12.
 
 ## Limits
 

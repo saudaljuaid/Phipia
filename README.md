@@ -5,16 +5,16 @@
 <h1 align="center">Sapote</h1>
 
 <p align="center">
-  <strong>A small proof-driven operating system, built from the first instruction.</strong><br>
-  Classic rainbow pixels outside. Bounded machine contracts underneath.
+  <strong>A freestanding x86_64 operating system.</strong><br>
+  Kernel, drivers, tests, and graphical workbench in one repository.
 </p>
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
-  <img src="https://img.shields.io/badge/machine-x86__64-008E92" alt="x86_64">
-  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-E96503" alt="C11 and assembly">
-  <img src="https://img.shields.io/badge/parsers-Rust-782CB2" alt="Rust parsers">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-018DD8" alt="GPL-3.0-only"></a>
+  <img src="https://img.shields.io/badge/machine-x86__64-2F8B8C" alt="x86_64">
+  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-233A68" alt="C11 and assembly">
+  <img src="https://img.shields.io/badge/parsers-Rust-7B5B89" alt="Rust parsers">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-4F8A5B" alt="GPL-3.0-only"></a>
 </p>
 
 <p align="center">
@@ -27,24 +27,22 @@
 
 Sapote is an independent, freestanding operating system—not a Linux
 distribution and not a userspace simulation. It boots through Multiboot2,
-constructs its own x86_64 environment, discovers platform hardware, owns its
-interrupt and timekeeping paths, and builds a protected memory foundation from
-first principles.
+enters long mode, discovers platform hardware, installs interrupt and timekeeping
+paths, and manages its own memory.
 
-Its First Light shell pairs early personal-computer warmth—rainbow colour,
-platinum windows, bitmap type—with an unusually strict machine foundation.
-The source explains that machine from entry to the shell. Boot-time checks,
-deterministic QEMU scenarios, and deliberate negative controls make correctness
-part of the architecture rather than a claim left to screenshots.
+First Light is a fixed kernel workbench with a patterned blue-gray desktop,
+beveled utility windows, bitmap type, direct launchers, and status indicators.
+The Boot Ledger checks installed state. Thirty-four deterministic QEMU
+scenarios cover boot, memory, interrupts, devices, and the interface.
 
 ## Identity
 
-The canonical mark is the supplied 550×556 RGBA source with its three lower
-tail decorations removed, at
-[`assets/sapote-logo.png`](assets/sapote-logo.png). It is never redrawn,
-recoloured, cropped, or passed through a runtime PNG parser. First Light uses
-the mark's seven-colour rainbow with platinum, black, and white classic chrome.
-The complete asset, palette, voice, and naming contract is in
+The canonical mark is the supplied 375×332 RGBA source at
+[`assets/sapote-logo.png`](assets/sapote-logo.png). The repository preserves its
+exact bytes; it is never redrawn, recoloured, cropped, or passed through a
+runtime PNG parser. First Light places the mark unchanged inside its own
+near-white field and uses a separate interface palette around it. The complete
+asset, palette, voice, and naming contract is in
 [`docs/BRAND.md`](docs/BRAND.md).
 
 ## What is on the machine today
