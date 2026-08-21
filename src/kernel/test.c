@@ -12,6 +12,7 @@
 #include <pyrenis/clock.h>
 #include <pyrenis/console.h>
 #include <pyrenis/cpu.h>
+#include <pyrenis/device_substrate.h>
 #include <pyrenis/framebuffer.h>
 #include <pyrenis/font.h>
 #include <pyrenis/heap.h>
@@ -283,6 +284,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_FIRST_LIGHT;
     }
 
+    if (token_equals(value, length, "device-substrate")) {
+        return KERNEL_TEST_DEVICE_SUBSTRATE;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -362,9 +367,23 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2E);
     case KERNEL_TEST_FIRST_LIGHT:
         return UINT8_C(0x2F);
+    case KERNEL_TEST_DEVICE_SUBSTRATE:
+        return UINT8_C(0x30);
     default:
         return QEMU_FAILURE_VALUE;
     }
+}
+
+static bool device_substrate_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x30);
+}
+
+bool kernel_test_device_substrate_exit_self_test(void)
+{
+    return device_substrate_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DEVICE_SUBSTRATE)) &&
+        !device_substrate_exit_contract(UINT8_C(0x31));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -3929,6 +3948,9 @@ void kernel_test_run(
     case KERNEL_TEST_FIRST_LIGHT:
         /* Deferred until the ledger and UI are both installed and published. */
         return;
+    case KERNEL_TEST_DEVICE_SUBSTRATE:
+        /* Deferred until the proof receipt is installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4450,6 +4472,45 @@ _Noreturn void kernel_test_complete_first_light(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_device_substrate(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *receipt;
+    const struct device_substrate_proof proof = device_substrate_get_proof();
+
+    if (active_scenario != KERNEL_TEST_DEVICE_SUBSTRATE) {
+        kernel_test_fail("device-substrate completion used outside its scenario");
+    }
+    receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_DEVICE_SUBSTRATE_PROOF);
+    if (ledger == NULL || receipt == NULL ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != 1U ||
+        receipt->proof_counters[1] != DEVICE_SUBSTRATE_DMA_BYTES ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT)) {
+        kernel_test_fail("device-substrate installed receipt is invalid");
+    }
+    if (proof.queue_size == 0U || proof.used_before != 0U ||
+        proof.used_after != 1U ||
+        proof.used_length != DEVICE_SUBSTRATE_DMA_BYTES ||
+        proof.interrupt_count != 1U ||
+        proof.random_bytes != DEVICE_SUBSTRATE_DMA_BYTES ||
+        proof.nonzero_bytes == 0U ||
+        !proof.dma_device_written || !proof.msix_delivered ||
+        !proof.ownership_round_trip || !proof.teardown_complete ||
+        proof.negative_controls != 2U) {
+        kernel_test_fail("device-substrate installed proof is inconsistent");
+    }
+
+    console_write("ST DEVICE_SUBSTRATE dma 64 msix 1 used 0->1 ");
+    console_write("ownership CPU-DEVICE-CPU teardown clean negatives 14\n");
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -4576,6 +4637,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "boot-ledger";
     case KERNEL_TEST_FIRST_LIGHT:
         return "first-light";
+    case KERNEL_TEST_DEVICE_SUBSTRATE:
+        return "device-substrate";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

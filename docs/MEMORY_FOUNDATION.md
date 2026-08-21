@@ -36,6 +36,12 @@ Allocation is deterministic first-fit with a rotating search hint. Release
 rejects unaligned addresses, addresses beyond the early map, permanent ranges,
 and double frees. Range reservation refuses to steal an allocated frame.
 
+The same bitmap now backs bounded contiguous allocations. Requests name a page
+count, page-sized power-of-two alignment, and inclusive maximum address; typed
+generation handles make release explicit and prevent individual frames from
+being removed from a live extent. `docs/DMA.md` records the checked arithmetic,
+ownership states, exhaustion and wrong-owner controls used by devices.
+
 ## Executable acceptance test
 
 During every QEMU boot the kernel parses the real GRUB memory map, initializes
@@ -48,5 +54,5 @@ Pyrenis: memory foundation passed
 ```
 
 This is still an early single-core allocator. Interrupt safety, synchronization,
-NUMA policy, memory above 4 GiB, page-table ownership, and virtual mappings are
+NUMA policy, memory above 4 GiB, IOMMU isolation, page-table ownership, and virtual mappings are
 explicitly deferred.

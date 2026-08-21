@@ -8,6 +8,7 @@
 #include <pyrenis/cpu.h>
 #include <pyrenis/interrupts.h>
 #include <pyrenis/ioapic.h>
+#include <pyrenis/interrupt_vector.h>
 #include <pyrenis/pic.h>
 #include <pyrenis/thread.h>
 #include <pyrenis/test.h>
@@ -478,6 +479,24 @@ void interrupt_dispatch(struct interrupt_frame *frame)
          * local APIC, and the next one would never arrive. A no-op unless a
          * quantum expired while this thread was running.
          */
+        thread_on_interrupt_return();
+        return;
+    }
+
+    /*
+     * MSI-X writes a dynamic vector directly into the local APIC. It never
+     * traverses an I/O APIC redirection entry, so completion is exactly the
+     * ordinary local-APIC EOI and never a directed I/O APIC EOI.
+     */
+    if (vector >= INTERRUPT_DYNAMIC_BASE &&
+        vector < INTERRUPT_DYNAMIC_LIMIT) {
+        if (slot->handler == NULL || !interrupt_vector_is_allocated(vector)) {
+            apic_send_eoi();
+            fatal_interrupt(frame);
+        }
+
+        slot->handler(frame, slot->context);
+        apic_send_eoi();
         thread_on_interrupt_return();
         return;
     }

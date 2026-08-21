@@ -35,6 +35,7 @@
 /* The configuration space every mechanism reaches, and the dwords in it. */
 #define PCI_CONFIG_SPACE_SIZE 256U
 #define PCI_CONFIG_SPACE_DWORDS (PCI_CONFIG_SPACE_SIZE / 4U)
+#define PCI_ECAM_CONFIG_SPACE_SIZE 4096U
 
 /* PCI Local Bus Specification 3.0 section 6.1, the type 0 and type 1 headers. */
 #define PCI_REGISTER_VENDOR_ID UINT16_C(0x00)
@@ -112,6 +113,7 @@ enum pci_status {
     PCI_STATUS_BAD_OFFSET,
     PCI_STATUS_NO_ECAM,
     PCI_STATUS_OUTSIDE_ECAM_WINDOW,
+    PCI_STATUS_BAD_WIDTH,
     PCI_STATUS_TOO_MANY_FUNCTIONS,
     PCI_STATUS_BAD_CAPABILITY_POINTER,
     PCI_STATUS_CAPABILITY_LOOP,
@@ -209,10 +211,23 @@ enum pci_status pci_config_read_ecam(
     uint16_t offset,
     uint32_t *value
 );
+enum pci_status pci_config_write_port(
+    struct pci_address address,
+    uint16_t offset,
+    size_t width,
+    uint32_t value
+);
+enum pci_status pci_config_write_ecam(
+    struct pci_address address,
+    uint16_t offset,
+    size_t width,
+    uint32_t value
+);
 
 size_t pci_function_count(void);
 const struct pci_function *pci_function_at(size_t index);
 const struct pci_function *pci_find_class(uint8_t class_code, uint8_t subclass);
+const struct pci_function *pci_find_device(uint16_t vendor_id, uint16_t device_id);
 struct pci_state pci_get_state(void);
 enum pci_status pci_verify(void);
 bool pci_self_test(void);
