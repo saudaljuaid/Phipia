@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /*
- * The installed Pyrenis Boot Ledger plan.
+ * The installed Sapote Boot Ledger plan.
  *
  * Every function that performs migrated boot work is private to this file and
  * can only be reached through a typed descriptor. kernel_main constructs,
@@ -10,43 +10,43 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/acpi.h>
-#include <pyrenis/apic.h>
-#include <pyrenis/apic_timer.h>
-#include <pyrenis/boot.h>
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/boot_plan.h>
-#include <pyrenis/boot_stages.h>
-#include <pyrenis/clock.h>
-#include <pyrenis/console.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/device_substrate.h>
-#include <pyrenis/dma.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/interrupt_vector.h>
-#include <pyrenis/font.h>
-#include <pyrenis/logo.h>
-#include <pyrenis/ioapic.h>
-#include <pyrenis/keyboard.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/msix.h>
-#include <pyrenis/paging.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/pci_resource.h>
-#include <pyrenis/pointer.h>
-#include <pyrenis/pm_timer.h>
-#include <pyrenis/screen.h>
-#include <pyrenis/self_test.h>
-#include <pyrenis/shell.h>
-#include <pyrenis/surface.h>
-#include <pyrenis/test.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/timer.h>
-#include <pyrenis/tsc.h>
-#include <pyrenis/ui.h>
-#include <pyrenis/ui_font.h>
+#include <sapote/acpi.h>
+#include <sapote/apic.h>
+#include <sapote/apic_timer.h>
+#include <sapote/boot.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/boot_plan.h>
+#include <sapote/boot_stages.h>
+#include <sapote/clock.h>
+#include <sapote/console.h>
+#include <sapote/cpu.h>
+#include <sapote/device_substrate.h>
+#include <sapote/dma.h>
+#include <sapote/framebuffer.h>
+#include <sapote/heap.h>
+#include <sapote/interrupts.h>
+#include <sapote/interrupt_vector.h>
+#include <sapote/font.h>
+#include <sapote/logo.h>
+#include <sapote/ioapic.h>
+#include <sapote/keyboard.h>
+#include <sapote/memory.h>
+#include <sapote/msix.h>
+#include <sapote/paging.h>
+#include <sapote/pci.h>
+#include <sapote/pci_resource.h>
+#include <sapote/pointer.h>
+#include <sapote/pm_timer.h>
+#include <sapote/screen.h>
+#include <sapote/self_test.h>
+#include <sapote/shell.h>
+#include <sapote/surface.h>
+#include <sapote/test.h>
+#include <sapote/thread.h>
+#include <sapote/timer.h>
+#include <sapote/tsc.h>
+#include <sapote/ui.h>
+#include <sapote/ui_font.h>
 
 static void stage_failed(
     struct boot_context *context,
@@ -98,7 +98,7 @@ static void report_optional_window_refusal(
     enum paging_status status
 )
 {
-    console_write("Pyrenis: ");
+    console_write("Sapote: ");
     console_write(paging_device_window_kind_string(kind));
     console_write(" unavailable: ");
     console_write(paging_status_string(status));
@@ -144,7 +144,7 @@ static enum paging_status construct_device_windows(
         const uint64_t base = mcfg->allocations[0].base_address;
 
         if (base == 0U ||
-            base > PYRENIS_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
+            base > SAPOTE_EARLY_PHYSICAL_LIMIT - PAGING_ECAM_WINDOW_SIZE) {
             report_optional_window_refusal(PAGING_DEVICE_WINDOW_PCI_ECAM,
                 PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
         } else if ((base & (PAGING_HUGE_PAGE_SIZE - 1U)) != 0U) {
@@ -180,7 +180,7 @@ static enum paging_status construct_device_windows(
             const uint64_t framebuffer_end =
                 framebuffer->address + framebuffer->size;
 
-            if (framebuffer_end > PYRENIS_EARLY_PHYSICAL_LIMIT) {
+            if (framebuffer_end > SAPOTE_EARLY_PHYSICAL_LIMIT) {
                 report_optional_window_refusal(
                     PAGING_DEVICE_WINDOW_FRAMEBUFFER,
                     PAGING_STATUS_DEVICE_WINDOW_UNSUPPORTED_RANGE);
@@ -242,7 +242,7 @@ static void execute_interrupt_foundation(
 
     if (status != INTERRUPT_STATUS_OK) {
         if (status == INTERRUPT_STATUS_CPU_TABLE_FAILURE) {
-            console_write("Pyrenis: CPU table detail: ");
+            console_write("Sapote: CPU table detail: ");
             console_write(cpu_status_string(cpu_tables_validate()));
             console_putc('\n');
         }
@@ -251,9 +251,9 @@ static void execute_interrupt_foundation(
         return;
     }
 
-    console_write("Pyrenis: kernel online\n");
-    console_write("Pyrenis: descriptor tables verified\n");
-    console_write("Pyrenis: interrupt foundation online\n");
+    console_write("Sapote: kernel online\n");
+    console_write("Sapote: descriptor tables verified\n");
+    console_write("Sapote: interrupt foundation online\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -311,9 +311,9 @@ static void execute_pure_self_tests(
         failure = ui_font_self_test_failure();
     } else if (!ui_self_test()) {
         failure = ui_self_test_failure();
-    } else if (pyrenis_logo_self_test() != 1) {
+    } else if (sapote_logo_self_test() != 1) {
         failure = "logo decoder self-test failed";
-    } else if (pyrenis_font_self_test() != 1) {
+    } else if (sapote_font_self_test() != 1) {
         failure = "font reader self-test failed";
     }
 
@@ -322,7 +322,7 @@ static void execute_pure_self_tests(
         return;
     }
 
-    console_write("Pyrenis: parser rejection tests passed\n");
+    console_write("Sapote: parser rejection tests passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -430,11 +430,11 @@ static void execute_interrupt_controllers(
     report_acpi_fadt(&context->acpi_fadt);
     report_pm_timer(&pm_timer_state);
     report_acpi_mcfg(&context->acpi_mcfg, context->mcfg_present);
-    console_write("Pyrenis: ACPI root verified\n");
-    console_write("Pyrenis: ACPI MADT verified\n");
-    console_write("Pyrenis: ACPI topology verified\n");
-    console_write("Pyrenis: ACPI FADT verified\n");
-    console_write("Pyrenis: ACPI configuration windows verified\n");
+    console_write("Sapote: ACPI root verified\n");
+    console_write("Sapote: ACPI MADT verified\n");
+    console_write("Sapote: ACPI topology verified\n");
+    console_write("Sapote: ACPI FADT verified\n");
+    console_write("Sapote: ACPI configuration windows verified\n");
 
     apic_status = apic_bring_online(&context->topology);
     if (apic_status != APIC_STATUS_OK) {
@@ -444,7 +444,7 @@ static void execute_interrupt_controllers(
 
     apic_state = apic_get_state();
     report_apic(&apic_state);
-    console_write("Pyrenis: local APIC online\n");
+    console_write("Sapote: local APIC online\n");
     ioapic_status = ioapic_initialize(&context->topology);
 
     if (ioapic_status != IOAPIC_STATUS_OK) {
@@ -454,7 +454,7 @@ static void execute_interrupt_controllers(
 
     ioapic_state = ioapic_get_state();
     report_ioapic(&ioapic_state);
-    console_write("Pyrenis: I/O APIC online\n");
+    console_write("Sapote: I/O APIC online\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -626,10 +626,10 @@ static void execute_ui_font(
         return;
     }
 
-    console_write("Pyrenis: First Light font verified\n");
+    console_write("Sapote: First Light font verified\n");
     boot_stage_result_succeed(descriptor, result);
-    result->proof_counters[0] = pyrenis_ui_font_size();
-    result->proof_counters[1] = pyrenis_ui_font_fingerprint();
+    result->proof_counters[0] = sapote_ui_font_size();
+    result->proof_counters[1] = sapote_ui_font_fingerprint();
     result->proof_counter_count = 2U;
 }
 
@@ -643,9 +643,9 @@ static void execute_pointer_decision(
 
     (void)context;
     if (status == POINTER_STATUS_OK) {
-        console_write("Pyrenis: PS/2 pointer available\n");
+        console_write("Sapote: PS/2 pointer available\n");
     } else {
-        console_write("Pyrenis: PS/2 pointer unavailable: ");
+        console_write("Sapote: PS/2 pointer unavailable: ");
         console_write(pointer_status_string(status));
         console_putc('\n');
     }
@@ -688,7 +688,7 @@ static void execute_ui_layout(
         return;
     }
 
-    console_write("Pyrenis: First Light layout validated\n");
+    console_write("Sapote: First Light layout validated\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = framebuffer.width;
     result->proof_counters[1] = framebuffer.height;
@@ -701,8 +701,8 @@ static void execute_early_scenario(
     struct boot_stage_result *result
 )
 {
-    console_write("Pyrenis: day one passed\n");
-    console_write("Pyrenis: memory foundation passed\n");
+    console_write("Sapote: day one passed\n");
+    console_write("Sapote: memory foundation passed\n");
     context->test_scenario = kernel_test_select(&context->information);
     context->test_context.mcfg = context->mcfg_present ?
         &context->acpi_mcfg : NULL;
@@ -812,8 +812,8 @@ static void execute_pci_resource_foundation(
             "PCI BAR transaction negative controls failed");
         return;
     }
-    console_write("Pyrenis: PCI resource ownership negative controls 4/4 passed\n");
-    console_write("Pyrenis: supervisor NX UC device-MMIO arena established\n");
+    console_write("Sapote: PCI resource ownership negative controls 4/4 passed\n");
+    console_write("Sapote: supervisor NX UC device-MMIO arena established\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] =
         pci_resource_get_state().arena_pages;
@@ -838,8 +838,8 @@ static void execute_dynamic_vector_foundation(
             "dynamic vector or MSI-X negative controls failed");
         return;
     }
-    console_write("Pyrenis: dynamic vector negative controls 4/4 passed\n");
-    console_write("Pyrenis: dynamic interrupt vector foundation established\n");
+    console_write("Sapote: dynamic vector negative controls 4/4 passed\n");
+    console_write("Sapote: dynamic interrupt vector foundation established\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = interrupt_vector_get_state().capacity;
     result->proof_counter_count = 1U;
@@ -861,8 +861,8 @@ static void execute_dma_foundation(
         stage_failed(context, result, "DMA ownership negative controls failed");
         return;
     }
-    console_write("Pyrenis: bounded DMA negative controls 2/2 passed\n");
-    console_write("Pyrenis: contiguous DMA ownership foundation established\n");
+    console_write("Sapote: bounded DMA negative controls 2/2 passed\n");
+    console_write("Sapote: contiguous DMA ownership foundation established\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -940,7 +940,7 @@ static void execute_device_substrate_proof(
 
     status = device_substrate_prove(&proof);
     if (status == DEVICE_SUBSTRATE_STATUS_ABSENT) {
-        console_write("Pyrenis: device-substrate fixture absent\n");
+        console_write("Sapote: device-substrate fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
     }
@@ -948,7 +948,7 @@ static void execute_device_substrate_proof(
         const struct pci_function *function = pci_find_device(
             UINT16_C(0x1AF4), UINT16_C(0x1044));
 
-        console_write("Pyrenis: PCI ");
+        console_write("Sapote: PCI ");
         if (function != NULL) {
             console_write_u64(function->address.segment);
             console_putc(':');
@@ -967,19 +967,19 @@ static void execute_device_substrate_proof(
         return;
     }
 
-    console_write("Pyrenis: VirtIO RNG device DMA wrote ");
+    console_write("Sapote: VirtIO RNG device DMA wrote ");
     console_write_u64(proof.random_bytes);
     console_write(" bytes; nonzero ");
     console_write_u64(proof.nonzero_bytes);
     console_putc('\n');
-    console_write("Pyrenis: MSI-X delivered ");
+    console_write("Sapote: MSI-X delivered ");
     console_write_u64(proof.interrupt_count);
     console_write(" interrupt; used ring ");
     console_write_u64(proof.used_before);
     console_write(" -> ");
     console_write_u64(proof.used_after);
     console_putc('\n');
-    console_write("Pyrenis: device substrate teardown complete\n");
+    console_write("Sapote: device substrate teardown complete\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.interrupt_count;
     result->proof_counters[1] = proof.random_bytes;
@@ -1082,37 +1082,37 @@ static void execute_closing_proofs(
         }
     }
 
-    console_write("Pyrenis: exception probes passed\n");
-    console_write("Pyrenis: PIC spurious paths passed\n");
-    console_write("Pyrenis: PIT delivered eight interrupts\n");
-    console_write("Pyrenis: I/O APIC delivered eight interrupts\n");
-    console_write("Pyrenis: legacy 8259 retired\n");
-    console_write("Pyrenis: timer survives legacy retirement\n");
+    console_write("Sapote: exception probes passed\n");
+    console_write("Sapote: PIC spurious paths passed\n");
+    console_write("Sapote: PIT delivered eight interrupts\n");
+    console_write("Sapote: I/O APIC delivered eight interrupts\n");
+    console_write("Sapote: legacy 8259 retired\n");
+    console_write("Sapote: timer survives legacy retirement\n");
     console_write(
-        "Pyrenis: I/O APIC delivered eight level-triggered interrupts\n"
+        "Sapote: I/O APIC delivered eight level-triggered interrupts\n"
     );
-    console_write("Pyrenis: level-triggered routing established\n");
-    console_write("Pyrenis: local APIC timer delivered eight interrupts\n");
-    console_write("Pyrenis: TSC reference established\n");
-    console_write("Pyrenis: PM timer independent reference established\n");
-    console_write("Pyrenis: PIT retired\n");
-    console_write("Pyrenis: clocks survive PIT retirement\n");
-    console_write("Pyrenis: deadline timers online\n");
-    console_write("Pyrenis: monotonic time established\n");
-    console_write("Pyrenis: virtual memory established\n");
-    console_write("Pyrenis: kernel heap established\n");
-    console_write("Pyrenis: PCI enumeration established\n");
-    console_write("Pyrenis: device foundations established\n");
-    console_write("Pyrenis: kernel threads passed\n");
-    console_write("Pyrenis: preemption passed\n");
+    console_write("Sapote: level-triggered routing established\n");
+    console_write("Sapote: local APIC timer delivered eight interrupts\n");
+    console_write("Sapote: TSC reference established\n");
+    console_write("Sapote: PM timer independent reference established\n");
+    console_write("Sapote: PIT retired\n");
+    console_write("Sapote: clocks survive PIT retirement\n");
+    console_write("Sapote: deadline timers online\n");
+    console_write("Sapote: monotonic time established\n");
+    console_write("Sapote: virtual memory established\n");
+    console_write("Sapote: kernel heap established\n");
+    console_write("Sapote: PCI enumeration established\n");
+    console_write("Sapote: device foundations established\n");
+    console_write("Sapote: kernel threads passed\n");
+    console_write("Sapote: preemption passed\n");
     if (framebuffer_is_active()) {
-        console_write("Pyrenis: framebuffer passed\n");
-        console_write("Pyrenis: logo passed\n");
-        console_write("Pyrenis: screen console passed\n");
-        console_write("Pyrenis: shell passed\n");
+        console_write("Sapote: framebuffer passed\n");
+        console_write("Sapote: logo passed\n");
+        console_write("Sapote: screen console passed\n");
+        console_write("Sapote: shell passed\n");
     }
-    console_write("Pyrenis: keyboard passed\n");
-    console_write("Pyrenis: never triple fault milestone passed\n");
+    console_write("Sapote: keyboard passed\n");
+    console_write("Sapote: never triple fault milestone passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -1129,7 +1129,7 @@ static void execute_desktop_construction(
         return;
     }
 
-    console_write("Pyrenis: First Light desktop constructed\n");
+    console_write("Sapote: First Light desktop constructed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -1146,7 +1146,7 @@ static void execute_desktop_activation(
         return;
     }
 
-    console_write("Pyrenis: First Light desktop activated\n");
+    console_write("Sapote: First Light desktop activated\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -1164,7 +1164,7 @@ static void execute_first_light_proof(
         return;
     }
 
-    console_write("Pyrenis: First Light installed proof passed\n");
+    console_write("Sapote: First Light installed proof passed\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.render_hash;
     result->proof_counters[1] = proof.glyphs;

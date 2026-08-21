@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the pre-rebrand transcript with the installed Pyrenis contract."""
+"""Compare the pre-rebrand transcript with the installed Sapote contract."""
 
 from __future__ import annotations
 
@@ -45,23 +45,23 @@ SCENARIOS = {
     "first-light": ("0x2F", 95),
 }
 
-LEDGER_PROOF = "Pyrenis: Boot Ledger installed proof passed"
+LEDGER_PROOF = "Sapote: Boot Ledger installed proof passed"
 
 
 def normalize(line: str) -> str:
     """Mask only measured, address, or linked-image-derived numeric fields."""
 
     if line.startswith((
-        "Pyrenis: allocatable frames:",
-        "Pyrenis: free frames:",
-        "Pyrenis: reserved frames:",
+        "Sapote: allocatable frames:",
+        "Sapote: free frames:",
+        "Sapote: reserved frames:",
     )):
         return re.sub(r"[0-9]+$", "<image-count>", line)
 
-    if line.startswith("Pyrenis: frame probe:"):
+    if line.startswith("Sapote: frame probe:"):
         return re.sub(r"0x[0-9A-F]{16}", "<address>", line)
 
-    if line.startswith("Pyrenis: paging root "):
+    if line.startswith("Sapote: paging root "):
         line = re.sub(r"0x[0-9A-F]{16}", "<address>", line, count=1)
         return re.sub(
             r"table frames [0-9]+ regions [0-9]+",
@@ -69,47 +69,47 @@ def normalize(line: str) -> str:
             line,
         )
 
-    if line.startswith("Pyrenis: paging leaves "):
-        line = re.sub(r"^Pyrenis: paging leaves [0-9]+",
-                      "Pyrenis: paging leaves <image-count>", line)
+    if line.startswith("Sapote: paging leaves "):
+        line = re.sub(r"^Sapote: paging leaves [0-9]+",
+                      "Sapote: paging leaves <image-count>", line)
         return re.sub(
             r"writable [0-9]+ executable [0-9]+",
             "writable <image-count> executable <image-count>",
             line,
         )
 
-    if line.startswith("Pyrenis: surface cycles "):
+    if line.startswith("Sapote: surface cycles "):
         return re.sub(r"[0-9]+", "<cycles>", line)
 
-    if line.startswith("Pyrenis: surface split cycles "):
+    if line.startswith("Sapote: surface split cycles "):
         return re.sub(r"[0-9]+", "<cycles>", line)
 
-    if line.startswith("Pyrenis: surface sparse two-corner cycles "):
+    if line.startswith("Sapote: surface sparse two-corner cycles "):
         line = re.sub(r"(total|draw|push) [0-9]+", r"\1 <cycles>", line)
         return line
 
-    if line.startswith("Pyrenis: I/O APIC level deliveries "):
+    if line.startswith("Sapote: I/O APIC level deliveries "):
         return re.sub(r"in [0-9]+ ns$", "in <time> ns", line)
 
-    if line.startswith("Pyrenis: PM timer counted "):
+    if line.startswith("Sapote: PM timer counted "):
         return re.sub(r"in [0-9]+ ns$", "in <time> ns", line)
 
-    if line.startswith("Pyrenis: local APIC timer calibrated at "):
+    if line.startswith("Sapote: local APIC timer calibrated at "):
         return re.sub(r"at [0-9]+ counts", "at <rate> counts", line)
 
-    if line.startswith("Pyrenis: TSC calibrated at "):
+    if line.startswith("Sapote: TSC calibrated at "):
         return re.sub(r"at [0-9]+ Hz", "at <rate> Hz", line)
 
-    if line.startswith("Pyrenis: clocks agree: "):
+    if line.startswith("Sapote: clocks agree: "):
         return re.sub(r"[0-9]+ ns", "<time> ns", line)
 
-    if line.startswith("Pyrenis: slept "):
+    if line.startswith("Sapote: slept "):
         return re.sub(r"slept [0-9]+ ns", "slept <time> ns", line)
 
-    if line.startswith("Pyrenis: preempted "):
+    if line.startswith("Sapote: preempted "):
         return re.sub(r"in [0-9]+ ms$", "in <time> ms", line)
 
-    if line.startswith("Pyrenis: unyielding threads ran "):
+    if line.startswith("Sapote: unyielding threads ran "):
         return re.sub(r"[0-9]+", "<work>", line)
 
     return line
@@ -123,18 +123,18 @@ def rebrand(line: str) -> str:
     """Apply only the public identity transition allowed by this change."""
 
     line = (
-        line.replace("OpenSeneri", "Pyrenis")
-        .replace("openseneri", "pyrenis")
-        .replace("Seneri", "Pyrenis")
-        .replace("seneri", "pyrenis")
+        line.replace("OpenSeneri", "Sapote")
+        .replace("openseneri", "sapote")
+        .replace("Seneri", "Sapote")
+        .replace("seneri", "sapote")
     )
     line = line.replace(
         "logo 187x136 from 32543 bytes",
-        "logo 396x335 from 75113 bytes",
+        "logo 280x250 from 232563 bytes",
     )
     line = line.replace(
         "logo verified 25432 pixels",
-        "logo verified 132660 pixels",
+        "logo verified 70000 pixels",
     )
     line = line.replace(
         "screen console drew 203 characters",
@@ -142,7 +142,7 @@ def rebrand(line: str) -> str:
     )
 
     if line == "open> ":
-        return "pyr> "
+        return "sap> "
 
     return line
 
@@ -157,17 +157,17 @@ def expected_with_first_light(lines: list[str]) -> list[str]:
 
     if LEDGER_PROOF not in branded:
         branded.insert(completion, LEDGER_PROOF)
-    if "Pyrenis: First Light font verified" not in branded:
+    if "Sapote: First Light font verified" not in branded:
         branded[begin + 1:begin + 1] = [
-            "Pyrenis: First Light font verified",
-            "Pyrenis: PS/2 pointer available",
-            "Pyrenis: First Light layout validated",
+            "Sapote: First Light font verified",
+            "Sapote: PS/2 pointer available",
+            "Sapote: First Light layout validated",
         ]
         ledger = branded.index(LEDGER_PROOF)
         branded[ledger:ledger] = [
-            "Pyrenis: First Light desktop constructed",
-            "Pyrenis: First Light desktop activated",
-            "Pyrenis: First Light installed proof passed",
+            "Sapote: First Light desktop constructed",
+            "Sapote: First Light desktop activated",
+            "Sapote: First Light installed proof passed",
         ]
     return branded
 
@@ -229,7 +229,7 @@ def main() -> int:
     if not transcript_ok or not scenarios_ok:
         return 1
 
-    print("Pyrenis inherited transcript and 32-scenario exit contract match")
+    print("Sapote inherited transcript and 32-scenario exit contract match")
     return 0
 
 

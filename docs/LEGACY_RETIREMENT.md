@@ -1,6 +1,6 @@
 # Retiring the legacy interrupt path
 
-Pyrenis booted on hardware the PC has carried since 1981 and has been moving off
+Sapote booted on hardware the PC has carried since 1981 and has been moving off
 it one proved layer at a time. This increment closes that path: once the
 discovered route is proved, the 8259 pair is masked and latched shut, and the
 local APIC stops carrying its output.
@@ -14,14 +14,14 @@ line and sets a latch, and every later `pic_set_mask` is refused with
 8259 pair delivers nothing" from a hope into a property the kernel enforces.
 
 The masks are read back from the interrupt mask registers rather than from
-Pyrenis's shadow copy, because what matters is what the hardware holds, not what
-Pyrenis believes it wrote.
+Sapote's shadow copy, because what matters is what the hardware holds, not what
+Sapote believes it wrote.
 
 ## Why LINT0 goes with it
 
 Virtual wire mode existed only to carry the 8259 pair's output to the processor
 after the local APIC was enabled. With the pair retired, an `ExtINT` LINT0 is a
-live path for interrupts Pyrenis has decided not to accept, so it is masked like
+live path for interrupts Sapote has decided not to accept, so it is masked like
 every other unused local vector table entry, with a legal vector so an
 accidental unmask cannot raise an illegal-vector error. LINT1 stays NMI.
 
@@ -60,14 +60,14 @@ I/O APIC, and no spurious interrupt arrives.
 Normal boot additionally requires:
 
 ```text
-Pyrenis: legacy 8259 retired
-Pyrenis: timer survives legacy retirement
+Sapote: legacy 8259 retired
+Sapote: timer survives legacy retirement
 ```
 
 A negative control confirms retirement is not cosmetic. Asking for the legacy
 timer route after retirement fails at the mask, and the guest panics with
 `PIT could not update the PIC mask` rather than quietly delivering interrupts
-through hardware Pyrenis believed it had retired.
+through hardware Sapote believed it had retired.
 
 ## Deferred work
 

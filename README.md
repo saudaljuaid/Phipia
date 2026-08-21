@@ -1,47 +1,49 @@
 <p align="center">
-  <img src="assets/pyrenis-logo.png" alt="Pyrenis mark" width="220">
+  <img src="assets/sapote-logo.png" alt="Sapote mark" width="220">
 </p>
 
-<h1 align="center">Pyrenis</h1>
+<h1 align="center">Sapote</h1>
 
 <p align="center">
-  <strong>A capability-validated x86_64 kernel, built from the first instruction.</strong><br>
-  Freestanding, hardware-close, and checked against the machine it actually boots.
-</p>
-
-<p align="center">
-  <a href="https://github.com/saudaljuaid/Pyrenis/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Pyrenis/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
-  <img src="https://img.shields.io/badge/machine-x86__64-806230" alt="x86_64">
-  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-5A4325" alt="C11 and assembly">
-  <img src="https://img.shields.io/badge/parser-Rust-A9874E" alt="Rust parser">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-2A2117" alt="GPL-3.0-only"></a>
+  <strong>A small proof-driven operating system, built from the first instruction.</strong><br>
+  Classic rainbow pixels outside. Bounded machine contracts underneath.
 </p>
 
 <p align="center">
-  <img src="assets/pyrenis-first-light.png" alt="Pyrenis First Light desktop shell" width="820">
+  <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
+  <img src="https://img.shields.io/badge/machine-x86__64-52A837" alt="x86_64">
+  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-F6850C" alt="C11 and assembly">
+  <img src="https://img.shields.io/badge/parsers-Rust-DF3031" alt="Rust parsers">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-0084CE" alt="GPL-3.0-only"></a>
 </p>
 
-<p align="center"><sub>A real 1024×768 Pyrenis First Light boot captured from QEMU.</sub></p>
+<p align="center">
+  <img src="assets/sapote-first-light.png" alt="Sapote First Light desktop shell" width="820">
+</p>
+
+<p align="center"><sub>A real 1024×768 Sapote First Light boot captured from QEMU.</sub></p>
 
 ## About
 
-Pyrenis is an independent, freestanding operating-system kernel—not a Linux
+Sapote is an independent, freestanding operating system—not a Linux
 distribution and not a userspace simulation. It boots through Multiboot2,
 constructs its own x86_64 environment, discovers platform hardware, owns its
 interrupt and timekeeping paths, and builds a protected memory foundation from
 first principles.
 
-The source explains the machine from entry to the shell. Boot-time checks,
+Its First Light shell pairs early personal-computer warmth—rainbow colour,
+platinum windows, bitmap type—with an unusually strict machine foundation.
+The source explains that machine from entry to the shell. Boot-time checks,
 deterministic QEMU scenarios, and deliberate negative controls make correctness
 part of the architecture rather than a claim left to screenshots.
 
 ## Identity
 
-The canonical mark is the exact 396×335 RGBA source at
-[`assets/pyrenis-logo.png`](assets/pyrenis-logo.png). Pyrenis uses its bronze
-`#806230` with white throughout the graphical console and repository artwork;
-the source image is never redrawn, recoloured, cropped, or passed through a
-runtime image parser. The complete asset and naming contract is in
+The canonical mark is the exact supplied 537×479 RGBA source at
+[`assets/sapote-logo.png`](assets/sapote-logo.png). It is never redrawn,
+recoloured, cropped, or passed through a runtime PNG parser. First Light uses
+the mark's six-colour rainbow with platinum, black, and white classic chrome.
+The complete asset, palette, voice, and naming contract is in
 [`docs/BRAND.md`](docs/BRAND.md).
 
 ## What is on the machine today
@@ -83,7 +85,7 @@ make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
 
-The build produces `build/pyrenis.elf` and `build/pyrenis.iso`.
+The build produces `build/sapote.elf` and `build/sapote.iso`.
 
 ## Documentation
 
@@ -103,7 +105,7 @@ The build produces `build/pyrenis.elf` and `build/pyrenis.iso`.
 - [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.
 - [`docs/SCREEN_CONSOLE.md`](docs/SCREEN_CONSOLE.md) and [`docs/SHELL.md`](docs/SHELL.md) — the visible interactive path.
 - [`docs/MAP.md`](docs/MAP.md) — the complete source and boot-order map.
-- [`docs/WORKING_ON_PYRENIS.md`](docs/WORKING_ON_PYRENIS.md) — build, proof, and contribution workflow.
+- [`docs/WORKING_ON_SAPOTE.md`](docs/WORKING_ON_SAPOTE.md) — build, proof, and contribution workflow.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — project rules and submission expectations.
 
 Every substantial subsystem has its own document under [`docs/`](docs/), with
@@ -112,7 +114,7 @@ controls.
 
 ## Current limits
 
-Pyrenis is still a foundation-stage kernel. First Light is a fixed kernel
+Sapote is still a foundation-stage kernel. First Light is a fixed kernel
 desktop shell, not a window manager or userspace. The current `main` branch is
 single-core and kernel-only; it has no userspace, filesystem, storage or network
 driver, process isolation, IOMMU isolation, or general application ABI. Hardware evidence is
@@ -124,4 +126,4 @@ Small, reviewable increments are welcome. Start with
 [`CONTRIBUTING.md`](CONTRIBUTING.md), install the hooks, and keep every new loop
 bounded and every new refusal named.
 
-Pyrenis is licensed under [GPL-3.0-only](LICENSE).
+Sapote is licensed under [GPL-3.0-only](LICENSE).

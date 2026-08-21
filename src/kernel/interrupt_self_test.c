@@ -3,9 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/cpu.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/pic.h>
+#include <sapote/cpu.h>
+#include <sapote/interrupts.h>
+#include <sapote/pic.h>
 
 extern const uint8_t interrupt_breakpoint_after[];
 

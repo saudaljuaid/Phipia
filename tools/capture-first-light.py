@@ -18,7 +18,7 @@ import zlib
 from pathlib import Path
 
 
-PROOF_LINE = b"Pyrenis: Boot Ledger installed proof passed"
+PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
 LEDGER_LINE = b"boot ledger :: PASS"
 
 
@@ -156,13 +156,13 @@ def main():
         qmp = Qmp(port)
         wait_serial(serial, PROOF_LINE)
         time.sleep(0.25)
-        clean = capture(qmp, output, "pyrenis-first-light")
+        clean = capture(qmp, output, "sapote-first-light")
 
         # Focus remains on Terminal while the real PS/2 cursor hovers Ledger.
         for dx, dy in ((-127, 127), (-127, 127), (-74, 127), (0, 61)):
             qmp.hmp(f"mouse_move {dx} {dy}")
             time.sleep(0.08)
-        focus = capture(qmp, output, "pyrenis-first-light-focus")
+        focus = capture(qmp, output, "sapote-first-light-focus")
 
         qmp.hmp("sendkey ret")
         time.sleep(0.20)
@@ -172,7 +172,7 @@ def main():
         qmp.hmp("sendkey ret")
         wait_serial(serial, LEDGER_LINE)
         time.sleep(0.20)
-        terminal = capture(qmp, output, "pyrenis-first-light-terminal")
+        terminal = capture(qmp, output, "sapote-first-light-terminal")
         print(clean)
         print(focus)
         print(terminal)

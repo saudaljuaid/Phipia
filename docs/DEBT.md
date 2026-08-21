@@ -1,4 +1,4 @@
-# What Pyrenis owes
+# What Sapote owes
 
 Every other document here ends with a *Deferred work* list, which is honest but
 local: each one knows what its own layer is missing and nothing knows what the
@@ -73,7 +73,7 @@ Run across all eighteen, sixteen report every commit already upstream. Of the
 remaining two, the historical TSC branch reports one commit not upstream purely
 because the patch context shifted — the symbol it adds, `cpu_read_tsc`,
 is present in `main` verbatim in `src/arch/x86_64/cpu.S` and declared in
-`include/pyrenis/cpu.h`. Checked by hand rather than trusted.
+`include/sapote/cpu.h`. Checked by hand rather than trusted.
 
 **At the time of the census exactly two branches carried work not in `main`:**
 
@@ -100,14 +100,14 @@ checked:
 | --- | --- |
 | For all sixteen branches, does `main` contain every function symbol the branch adds to `src/` or `include/`? | Yes, every one. The claim survives a symbol-level check, not just a patch-ID one. |
 | Was #31's work genuinely absent from `main` at census time, so the census was not vacuously true? | It was absent. `acknowledgement_targets_are_resolved`, `directed_eoi_is_gated_on_version` and `entries_round_trip` existed on that branch and nowhere in that snapshot of `main`. |
-| Can the checker fail at all? | Yes. Fed `pyrenis_this_symbol_does_not_exist` it reports missing, so a clean run means something. |
+| Can the checker fail at all? | Yes. Fed `sapote_this_symbol_does_not_exist` it reports missing, so a clean run means something. |
 
 **What remained between #31 and #32 was textual.** Measured with
 `git merge-tree --write-tree --name-only`, the two branches touch the same five
 files — `Makefile`, `README.md`, `docs/PIT_RETIREMENT.md`, `src/kernel/kernel.c`
 and `src/kernel/test.c` — in the same regions: the scenario list, the boot
 sequence, and the deferred-work paragraph both changes rewrite.
-`include/pyrenis/test.h` merges cleanly.
+`include/sapote/test.h` merges cleanly.
 
 None were semantic disagreements. They were resolved when #31 landed before
 #32; #33 then landed on their combined `main`. This is retained as the measured
@@ -121,7 +121,7 @@ useful boundary and an incomplete policy: ACPI-before-topology,
 device-windows-before-paging, W^X-before-heap and controller-before-interrupt
 relationships remained understandable only by reading the entire function.
 
-The Pyrenis Boot Ledger is the second payment:
+The Sapote Boot Ledger is the second payment:
 
 | | | |
 | --- | ---: | --- |
@@ -273,7 +273,7 @@ Measured, and healthy:
     wc -l src/kernel/*.c | sort -rn | head
     grep -c 'grep -F\|grep -E' Makefile
     grep -rn 'TODO\|FIXME\|XXX\|HACK' src/ include/ docs/ Makefile
-    nm -u build/pyrenis.elf
+    nm -u build/sapote.elf
     git log --oneline origin/main..HEAD | wc -l
 
 And, for §1 — which branch still holds work that `main` does not:

@@ -16,8 +16,8 @@ use crate::logo::{self, Format, Status};
 use crate::ui_font;
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
-/// The Makefile points `PYRENIS_LOGO_BLOB` at it; there is no committed copy.
-static LOGO: &[u8] = include_bytes!(env!("PYRENIS_LOGO_BLOB"));
+/// The Makefile points `SAPOTE_LOGO_BLOB` at it; there is no committed copy.
+static LOGO: &[u8] = include_bytes!(env!("SAPOTE_LOGO_BLOB"));
 
 fn status_code(status: Status) -> i32 {
     status as i32
@@ -25,13 +25,13 @@ fn status_code(status: Status) -> i32 {
 
 /// Run the decoder's own tests. Returns 1 when they all pass.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_logo_self_test() -> i32 {
+pub extern "C" fn sapote_logo_self_test() -> i32 {
     i32::from(logo::self_test())
 }
 
 /// How many bytes the built-in image occupies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_logo_size() -> usize {
+pub extern "C" fn sapote_logo_size() -> usize {
     LOGO.len()
 }
 
@@ -41,7 +41,7 @@ pub extern "C" fn pyrenis_logo_size() -> usize {
 ///
 /// `width` and `height` must both be non-null and point at writable `u32` values.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_logo_geometry(
+pub unsafe extern "C" fn sapote_logo_geometry(
     width: *mut u32,
     height: *mut u32,
 ) -> i32 {
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn pyrenis_logo_geometry(
 /// `out` must point at `out_pixels` writable, aligned `u32`s, and must not
 /// alias anything else live for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_logo_decode(
+pub unsafe extern "C" fn sapote_logo_decode(
     out: *mut u32,
     out_pixels: usize,
     red_shift: u8,
@@ -106,9 +106,9 @@ pub unsafe extern "C" fn pyrenis_logo_decode(
 }
 
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build
-/// time. The Makefile points `PYRENIS_FONT_BLOB` at it; there is no committed
+/// time. The Makefile points `SAPOTE_FONT_BLOB` at it; there is no committed
 /// copy of the blob, only the ASCII art it is built from.
-static FONT: &[u8] = include_bytes!(env!("PYRENIS_FONT_BLOB"));
+static FONT: &[u8] = include_bytes!(env!("SAPOTE_FONT_BLOB"));
 
 fn font_status_code(status: font::Status) -> i32 {
     status as i32
@@ -116,13 +116,13 @@ fn font_status_code(status: font::Status) -> i32 {
 
 /// Run the font reader's own tests. Returns 1 when they all pass.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_font_self_test() -> i32 {
+pub extern "C" fn sapote_font_self_test() -> i32 {
     i32::from(font::self_test())
 }
 
 /// How many bytes the built-in glyph table occupies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_font_size() -> usize {
+pub extern "C" fn sapote_font_size() -> usize {
     FONT.len()
 }
 
@@ -132,7 +132,7 @@ pub extern "C" fn pyrenis_font_size() -> usize {
 ///
 /// Each pointer must be non-null and address a writable `u32`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_font_geometry(
+pub unsafe extern "C" fn sapote_font_geometry(
     width: *mut u32,
     height: *mut u32,
     first: *mut u32,
@@ -166,7 +166,7 @@ pub unsafe extern "C" fn pyrenis_font_geometry(
 /// `out` must point at `out_len` writable bytes and must not alias anything
 /// else live for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_font_glyph(
+pub unsafe extern "C" fn sapote_font_glyph(
     code: u32,
     out: *mut u8,
     out_len: usize,
@@ -187,27 +187,27 @@ pub unsafe extern "C" fn pyrenis_font_glyph(
 }
 
 /// Build-packed Spleen 12x24 glyphs. No BDF parser enters the kernel image.
-static UI_FONT: &[u8] = include_bytes!(env!("PYRENIS_UI_FONT_BLOB"));
+static UI_FONT: &[u8] = include_bytes!(env!("SAPOTE_UI_FONT_BLOB"));
 
 fn ui_font_status_code(status: ui_font::Status) -> i32 {
     status as i32
 }
 
-/// Run the PUF1 parser's synthetic acceptance and refusal tests.
+/// Run the SUF1 parser's synthetic acceptance and refusal tests.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_ui_font_self_test() -> i32 {
+pub extern "C" fn sapote_ui_font_self_test() -> i32 {
     i32::from(ui_font::self_test())
 }
 
-/// Return the byte length of the built-in PUF1 asset.
+/// Return the byte length of the built-in SUF1 asset.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_ui_font_size() -> usize {
+pub extern "C" fn sapote_ui_font_size() -> usize {
     UI_FONT.len()
 }
 
 /// Return a stable FNV-1a fingerprint of the exact built-in bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn pyrenis_ui_font_fingerprint() -> u64 {
+pub extern "C" fn sapote_ui_font_fingerprint() -> u64 {
     ui_font::fingerprint(UI_FONT)
 }
 
@@ -217,7 +217,7 @@ pub extern "C" fn pyrenis_ui_font_fingerprint() -> u64 {
 ///
 /// `metrics` must be non-null and point to one writable `ui_font::Geometry`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_ui_font_geometry(
+pub unsafe extern "C" fn sapote_ui_font_geometry(
     metrics: *mut ui_font::Geometry,
 ) -> i32 {
     if metrics.is_null() {
@@ -234,13 +234,13 @@ pub unsafe extern "C" fn pyrenis_ui_font_geometry(
     }
 }
 
-/// Copy one glyph from the built-in PUF1 body into a caller-owned buffer.
+/// Copy one glyph from the built-in SUF1 body into a caller-owned buffer.
 ///
 /// # Safety
 ///
 /// `out` must address `out_len` writable, non-aliased bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrenis_ui_font_glyph(
+pub unsafe extern "C" fn sapote_ui_font_glyph(
     code: u32,
     out: *mut u8,
     out_len: usize,

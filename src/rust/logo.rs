@@ -12,18 +12,18 @@
 
 /// Four magic bytes, a little-endian width and a little-endian height.
 const HEADER_SIZE: usize = 8;
-const MAGIC: [u8; 4] = *b"PRL1";
+const MAGIC: [u8; 4] = *b"SRL1";
 
 /// One length byte then four RGBA bytes.
 const RUN_SIZE: usize = 5;
 
-/// A Pyrenis policy bound. The framebuffer this draws into is at least this
+/// A Sapote policy bound. The framebuffer this draws into is at least this
 /// wide on every mode the kernel accepts, and a header claiming more is a
 /// header describing a different image than the one that was built.
 const MAX_DIMENSION: u32 = 1024;
 
 /// What a decode can conclude. Mirrored by `enum logo_status` in
-/// `include/pyrenis/logo.h`; the two are kept in step by a compile-time
+/// `include/sapote/logo.h`; the two are kept in step by a compile-time
 /// assertion on the C side.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -183,7 +183,7 @@ pub fn self_test() -> bool {
 
     // A two-by-two image: one run of three, then one single pixel.
     let good: [u8; 18] = [
-        b'P', b'R', b'L', b'1', 2, 0, 2, 0,
+        b'S', b'R', b'L', b'1', 2, 0, 2, 0,
         3, 0x10, 0x20, 0x30, 0xFF,
         1, 0x40, 0x50, 0x60, 0xFF,
     ];
@@ -200,7 +200,7 @@ pub fn self_test() -> bool {
 
     // Alpha blends against the background rather than being ignored.
     let half: [u8; 13] = [
-        b'P', b'R', b'L', b'1', 1, 0, 1, 0,
+        b'S', b'R', b'L', b'1', 1, 0, 1, 0,
         1, 0xFF, 0xFF, 0xFF, 0x80,
     ];
     let over_black = Format { background: 0, ..format };
@@ -224,7 +224,7 @@ pub fn self_test() -> bool {
 
     // A fully transparent run must leave exactly the background.
     let clear: [u8; 13] = [
-        b'P', b'R', b'L', b'1', 1, 0, 1, 0,
+        b'S', b'R', b'L', b'1', 1, 0, 1, 0,
         1, 0xFF, 0x00, 0x00, 0x00,
     ];
 

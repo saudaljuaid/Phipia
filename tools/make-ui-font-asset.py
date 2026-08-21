@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack printable ASCII from Spleen 8x16 BDF into Pyrenis UI Font v1."""
+"""Pack printable ASCII from Spleen 8x16 BDF into Sapote UI Font v1."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-MAGIC = b"PUF1"
+MAGIC = b"SUF1"
 VERSION = 1
 HEADER_LENGTH = 24
 WIDTH = 8
@@ -100,7 +100,7 @@ def parse_bdf(path: Path) -> dict[int, bytes]:
 
 def main() -> None:
     if len(sys.argv) != 3:
-        raise SystemExit("usage: make-ui-font-asset.py INPUT.bdf OUTPUT.puf")
+        raise SystemExit("usage: make-ui-font-asset.py INPUT.bdf OUTPUT.suf")
 
     source = Path(sys.argv[1])
     output = Path(sys.argv[2])

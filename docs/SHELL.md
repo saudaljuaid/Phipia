@@ -1,6 +1,6 @@
 # The shell
 
-This is the first thing in Pyrenis that exists to be *operated* rather than to be
+This is the first thing in Sapote that exists to be *operated* rather than to be
 correct. Everything under it refuses, verifies and panics, because a wrong
 answer from a page table is worse than a stopped machine. A shell is the
 opposite: it is driven by somebody who will make mistakes, so an unknown command
@@ -15,7 +15,7 @@ supplies them.
 
 First Light does not add another parser. The Terminal dock item installs the
 existing screen console in its validated panel client and leaves this command
-table and the `pyr> ` prompt unchanged. Serial output remains independent.
+table and the `sap> ` prompt unchanged. Serial output remains independent.
 Keyboard characters reach the line editor only while Terminal is active;
 desktop navigation consumes `Tab`, `Shift+Tab`, `Enter`, and `Escape` first.
 Hiding Terminal retains the fixed recent cell store, and reopening it redraws
@@ -78,7 +78,7 @@ practice: `make run` gives you a prompt, `make qemu-tests` never reaches one.
 
 ## Proved end to end
 
-This is the first proof in Pyrenis that runs the whole chain at once, and it is
+This is the first proof in Sapote that runs the whole chain at once, and it is
 worth doing that way because **the chain is the product**. A keystroke that
 decodes perfectly and never reaches a command is worthless, and a command that
 runs while nothing appears on screen is worthless.
@@ -93,9 +93,9 @@ Nothing in that sentence is simulated except the finger.
 
     echo hi
     hi
-    pyr>
-    Pyrenis: shell ran "echo hi" from 8 injected scancodes
-    Pyrenis: shell output verified on screen
+    sap>
+    Sapote: shell ran "echo hi" from 8 injected scancodes
+    Sapote: shell output verified on screen
 
 The three lines checked on the glass are the echo at row 0, the command's output
 at row 1, and the prompt at row 2. The screen is cleared first, so every cell is

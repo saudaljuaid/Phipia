@@ -6,7 +6,7 @@ and read it back, and it has no idea what a character, a window or a cursor is.
 
 ## Why this is where a project like this goes wrong
 
-`CONTRIBUTING.md` says screenshots are not proof. Nowhere else in Pyrenis is that
+`CONTRIBUTING.md` says screenshots are not proof. Nowhere else in Sapote is that
 as tempting as here, because **a framebuffer looks right long before it is
 right**. A pitch mistaken for a width produces a picture that slants — and it is
 still a picture. An off-by-one in the height writes past the mapping. Two
@@ -55,7 +55,7 @@ own name:
 
 ## It is a WC store destination
 
-The framebuffer differs from a register window: Pyrenis writes long sequential
+The framebuffer differs from a register window: Sapote writes long sequential
 pixel runs and does not use reads as device commands. Boot rounds every 4 KiB
 page intersecting its bytes into one `FRAMEBUFFER` registry entry requesting WC;
 `paging.c` carves that semantic entry out of the identity map. `IA32_PAT` entry
@@ -88,11 +88,11 @@ pitch check left the whole suite green — see the controls below.
 Normal boot reports:
 
 ```text
-Pyrenis: IA32_PAT before 0x0007040600070406 after 0x0007040600070106 entry 1 write-combining
-Pyrenis: framebuffer memory type write-combining pages 768
-Pyrenis: framebuffer 1024x768 at 0x00000000FD000000 pitch 4096 RGB 16/8/0
-Pyrenis: framebuffer verified 786432 pixels
-Pyrenis: framebuffer established
+Sapote: IA32_PAT before 0x0007040600070406 after 0x0007040600070106 entry 1 write-combining
+Sapote: framebuffer memory type write-combining pages 768
+Sapote: framebuffer 1024x768 at 0x00000000FD000000 pitch 4096 RGB 16/8/0
+Sapote: framebuffer verified 786432 pixels
+Sapote: framebuffer established
 ```
 
 The `framebuffer` scenario adds the check normal boot cannot make. Boot proves

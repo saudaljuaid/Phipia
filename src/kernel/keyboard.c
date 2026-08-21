@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/cpu.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/ioapic.h>
-#include <pyrenis/keyboard.h>
+#include <sapote/cpu.h>
+#include <sapote/interrupts.h>
+#include <sapote/ioapic.h>
+#include <sapote/keyboard.h>
 
 /*
  * The PS/2 keyboard.
