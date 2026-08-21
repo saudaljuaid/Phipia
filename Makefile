@@ -10,7 +10,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate
+	boot-ledger first-light device-substrate xhci
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -144,7 +144,7 @@ verify: toolchain lint
 		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
 		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
-	@test "$(words $(TEST_SCENARIOS))" -eq 33
+	@test "$(words $(TEST_SCENARIOS))" -eq 34
 	@! git grep -nI -E \
 		'Pyrenis|pyrenis|PYRENIS|OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>|pyr>' \
 		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
@@ -217,6 +217,10 @@ verify: toolchain lint
 		--exclude=dma.c --exclude=virtio_rng_proof.c; then \
 		echo 'device foundation boot operation bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bxhci_descriptor_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=xhci.c; then \
+		echo 'xHCI descriptor proof bypasses the Boot Ledger'; exit 1; \
+	fi
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
@@ -231,6 +235,20 @@ verify: toolchain lint
 	@test "$$(grep -Ec 'proof_interrupt[[:space:]]*[(]' \
 		src/kernel/virtio_rng_proof.c)" -eq 1 || \
 		{ echo 'VirtIO proof directly injects its MSI-X handler'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_XHCI:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x31);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_XHCI:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*xhci) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'xHCI guest and host exits disagree'; exit 1; }
+	@test "$$(grep -Ec 'xhci_interrupt_handler[[:space:]]*[(]' \
+		src/kernel/xhci.c)" -eq 1 || \
+		{ echo 'xHCI proof directly injects its MSI-X handler'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -325,6 +343,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		boot-ledger) expected=93 ;; \
 		first-light) expected=95 ;; \
 		device-substrate) expected=97 ;; \
+		xhci) expected=99 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -341,6 +360,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			device-windows) hardware='-machine q35' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
+			xhci) \
+				hardware='-device qemu-xhci,id=xhci,streams=off -device usb-kbd,bus=xhci.0,port=1,usb_version=2' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -419,6 +440,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: dynamic interrupt vector foundation established' "$$log" || \
 		  ! grep -Fxq 'Sapote: bounded DMA negative controls 2/2 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: contiguous DMA ownership foundation established' "$$log" || \
+		  ! grep -Fxq 'Sapote: xHCI foundation robustness controls 17/17 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: bounded xHCI host-controller foundation established' "$$log" || \
+		  ! grep -Fxq 'Sapote: xHCI fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -519,6 +543,14 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: device substrate teardown complete' "$$log" && \
 			grep -Eq '^Sapote: VirtIO RNG device DMA wrote 64 bytes; nonzero [1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'Sapote: MSI-X delivered 1 interrupt; used ring 0 -> 1' "$$log" || \
+				diagnostics_ok=false ;; \
+		xhci) \
+			grep -Fxq 'ST XHCI descriptor 18 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 19' "$$log" && \
+			grep -Fxq 'Sapote: xHCI controller ready' "$$log" && \
+			grep -Fxq 'Sapote: USB device descriptor DMA completed: 18 bytes' "$$log" && \
+			grep -Fxq 'Sapote: xHCI MSI-X descriptor completion count 1' "$$log" && \
+			grep -Fxq 'Sapote: xHCI DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
+			grep -Fxq 'Sapote: xHCI teardown complete' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

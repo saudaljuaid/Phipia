@@ -457,3 +457,12 @@ identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
 - **Real hardware.** The memory-type layer was exercised under QEMU TCG and
   WHPX. KVM and bare metal remain open; device cacheability is the kind of change
   that can fail only on iron.
+
+## xHCI MMIO in v0.4.0
+
+The xHCI BAR is mapped only through the v0.3.0 PCI MMIO arena as supervisor,
+uncacheable, writable, and non-executable pages. Capability-reported subregions
+are bounded inside that typed mapping; the driver does not identity-map a loose
+physical BAR or add an xHCI-specific paging parameter. Ring and receive pages
+are identity-mapped guest RAM obtained from the bounded DMA owner. No IOMMU
+mapping is implied.

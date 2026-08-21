@@ -14,6 +14,7 @@
 #include <sapote/pointer.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
+#include <sapote/xhci.h>
 
 #define BOOT_FINGERPRINT_OFFSET UINT64_C(14695981039346656037)
 #define BOOT_FINGERPRINT_PRIME UINT64_C(1099511628211)
@@ -24,6 +25,8 @@ _Static_assert(BOOT_CAPABILITY_COUNT <= 64U,
     "every boot capability must fit the bounded private planner set");
 _Static_assert(BOOT_LEDGER_RECEIPT_CAPACITY >= BOOT_LEDGER_STAGE_CAPACITY,
     "every planned stage needs room for one receipt");
+_Static_assert(BOOT_LEDGER_STAGE_CAPACITY + 1U == BOOT_STAGE_COUNT,
+    "the bounded ledger has exactly one slot for every non-invalid stage");
 
 static const char *const stage_names[] = {
     "invalid stage",
@@ -60,7 +63,9 @@ static const char *const stage_names[] = {
     "PCI resource ownership",
     "dynamic interrupt vectors",
     "DMA foundation",
-    "installed device-substrate proof"
+    "installed device-substrate proof",
+    "xHCI host-controller foundation",
+    "installed xHCI descriptor proof"
 };
 
 static const char *const capability_names[] = {
@@ -105,7 +110,10 @@ static const char *const capability_names[] = {
     "dynamic vector foundation available",
     "DMA foundation available",
     "device-substrate installed proof complete",
-    "device-substrate fixture absent"
+    "device-substrate fixture absent",
+    "xHCI foundation available",
+    "xHCI descriptor proof complete",
+    "xHCI fixture absent"
 };
 
 static const char *const status_names[] = {
@@ -181,7 +189,7 @@ static bool descriptor_has_capability(
     return false;
 }
 
-static bool device_substrate_outcome_valid(
+static bool optional_outcome_valid(
     bool stage_planned,
     bool complete,
     bool absent
@@ -1358,7 +1366,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
         BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT);
     const bool substrate_planned = descriptor_for_stage(ledger,
         BOOT_STAGE_DEVICE_SUBSTRATE_PROOF) != NULL;
-    if (!device_substrate_outcome_valid(substrate_planned,
+    if (!optional_outcome_valid(substrate_planned,
             substrate_complete, substrate_absent)) {
         set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
             BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
@@ -1386,6 +1394,41 @@ enum boot_ledger_status boot_ledger_verify_installed(
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
                 BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
+    const bool xhci_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE);
+    const bool xhci_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_XHCI_FIXTURE_ABSENT);
+    const bool xhci_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_XHCI_DESCRIPTOR_PROOF) != NULL;
+    if (!optional_outcome_valid(xhci_planned, xhci_complete, xhci_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_XHCI_DESCRIPTOR_PROOF,
+            BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (xhci_complete || xhci_absent) {
+        const struct boot_stage_receipt *xhci = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_XHCI_DESCRIPTOR_PROOF);
+        const struct xhci_descriptor_proof proof =
+            xhci_get_descriptor_proof();
+
+        if (xhci == NULL ||
+            (xhci_complete &&
+                (xhci->result != BOOT_RECEIPT_RAN ||
+                 xhci->proof_counter_count != 2U ||
+                 xhci->proof_counters[0] != XHCI_DEVICE_DESCRIPTOR_BYTES ||
+                 xhci->proof_counters[1] != 1U ||
+                 !proof.controller_ready || !proof.descriptor_valid ||
+                 !proof.sentinel_changed_while_controller_owned ||
+                 !proof.ownership_complete || !proof.teardown_complete)) ||
+            (xhci_absent && xhci->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_XHCI_DESCRIPTOR_PROOF,
+                BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE);
             return ledger->status;
         }
     }
@@ -1750,11 +1793,11 @@ bool boot_ledger_self_test(void)
     enum boot_capability saved_capability;
     uint32_t saved_sequence;
 
-    if (!device_substrate_outcome_valid(false, false, false) ||
-        device_substrate_outcome_valid(true, false, false) ||
-        device_substrate_outcome_valid(true, true, true) ||
-        !device_substrate_outcome_valid(true, true, false) ||
-        !device_substrate_outcome_valid(true, false, true)) {
+    if (!optional_outcome_valid(false, false, false) ||
+        optional_outcome_valid(true, false, false) ||
+        optional_outcome_valid(true, true, true) ||
+        !optional_outcome_valid(true, true, false) ||
+        !optional_outcome_valid(true, false, true)) {
         return false;
     }
 

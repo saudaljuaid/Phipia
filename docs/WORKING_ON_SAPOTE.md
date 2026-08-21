@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-three bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-four bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -44,6 +44,15 @@ use the standard `virtio-rng-pci` fixture and must retain host exit 97; a green
 run is not evidence if its transcript lacks real MSI-X delivery, a `0 -> 1`
 used-ring transition, 64 device-written bytes, CPU → device → CPU ownership,
 and clean teardown.
+
+xHCI changes apply the same sweep rule. The `xhci` scenario must use only
+`qemu-xhci` plus one directly attached `usb-kbd` and must retain host exit 99.
+Evidence requires an exact endpoint-zero Status-TRB completion, one programmed
+MSI-X count transition, 18 descriptor bytes written while the receive page was
+controller-owned, CPU → controller → CPU ownership, and complete teardown. The
+17 `XHCI_FOUNDATION_ROBUSTNESS_TESTS` controls and the complete 19-control
+`XHCI_CONTROLLED_ROBUSTNESS_TESTS` path remain synthetic; never substitute
+`usb-host` or physical hardware.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build

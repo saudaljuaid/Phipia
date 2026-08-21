@@ -35,6 +35,7 @@
 #include <sapote/tsc.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
+#include <sapote/xhci.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -288,6 +289,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_DEVICE_SUBSTRATE;
     }
 
+    if (token_equals(value, length, "xhci")) {
+        return KERNEL_TEST_XHCI;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -369,6 +374,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2F);
     case KERNEL_TEST_DEVICE_SUBSTRATE:
         return UINT8_C(0x30);
+    case KERNEL_TEST_XHCI:
+        return UINT8_C(0x31);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -383,7 +390,18 @@ bool kernel_test_device_substrate_exit_self_test(void)
 {
     return device_substrate_exit_contract(
             scenario_exit_value(KERNEL_TEST_DEVICE_SUBSTRATE)) &&
-        !device_substrate_exit_contract(UINT8_C(0x31));
+        !device_substrate_exit_contract(UINT8_C(0x32));
+}
+
+static bool xhci_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x31);
+}
+
+bool kernel_test_xhci_exit_self_test(void)
+{
+    return xhci_exit_contract(scenario_exit_value(KERNEL_TEST_XHCI)) &&
+        !xhci_exit_contract(UINT8_C(0x32));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -3951,6 +3969,9 @@ void kernel_test_run(
     case KERNEL_TEST_DEVICE_SUBSTRATE:
         /* Deferred until the proof receipt is installed and published. */
         return;
+    case KERNEL_TEST_XHCI:
+        /* Deferred until the proof receipt is installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4537,6 +4558,53 @@ _Noreturn void kernel_test_complete_device_substrate(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_xhci(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct xhci_descriptor_proof proof = xhci_get_descriptor_proof();
+
+    if (active_scenario != KERNEL_TEST_XHCI) {
+        kernel_test_fail("xHCI completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_XHCI_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_XHCI_DESCRIPTOR_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != XHCI_DEVICE_DESCRIPTOR_BYTES ||
+        receipt->proof_counters[1] != 1U ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_XHCI_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_XHCI_FIXTURE_ABSENT)) {
+        kernel_test_fail("xHCI installed receipt is invalid");
+    }
+    if (proof.descriptor_bytes != XHCI_DEVICE_DESCRIPTOR_BYTES ||
+        proof.msix_completion_count != 1U ||
+        proof.robustness_tests != XHCI_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.controller_ready || !proof.descriptor_valid ||
+        !proof.sentinel_changed_while_controller_owned ||
+        !proof.ownership_complete || !proof.teardown_complete) {
+        kernel_test_fail("xHCI installed proof is inconsistent");
+    }
+
+    console_write("ST XHCI descriptor ");
+    console_write_u64(proof.descriptor_bytes);
+    console_write(" msix ");
+    console_write_u64(proof.msix_completion_count);
+    console_write(" ownership CPU-CONTROLLER-CPU teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -4665,6 +4733,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "first-light";
     case KERNEL_TEST_DEVICE_SUBSTRATE:
         return "device-substrate";
+    case KERNEL_TEST_XHCI:
+        return "xhci";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

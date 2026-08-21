@@ -59,3 +59,16 @@ There is no scatter/gather list, streaming-map API, cache maintenance for
 noncoherent machines, bounce buffering, IOMMU domain, or user mapping. The API
 is intentionally sufficient for first PCI drivers without pretending to offer
 device isolation.
+
+## xHCI object and TRB ownership
+
+v0.4.0 applies the existing allocation owner to administration, command, event,
+control, context, receive, and optional scratchpad allocations. Live rings also
+track producer/consumer TRB ownership: a CPU-owned producer slot may be
+initialized and published, while a controller-owned event may be inspected only
+after the interrupt path returns the event allocation to the CPU. The receive
+page starts with a sentinel, becomes controller-owned before the endpoint-zero
+doorbell, and returns to CPU ownership only on its exact matching transfer
+event. Teardown first proves the controller halted and disables PCI bus
+mastering; only then may it reclaim or release DMA. This does not change the
+no-IOMMU security boundary.
