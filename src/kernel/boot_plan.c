@@ -914,7 +914,8 @@ static void execute_device_substrate_proof(
     struct boot_stage_result *result
 )
 {
-    struct boot_stage_descriptor missing = *descriptor;
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
     struct device_substrate_proof proof;
     enum device_substrate_status status;
 
@@ -923,8 +924,14 @@ static void execute_device_substrate_proof(
             "device-substrate proof prerequisite set is incomplete");
         return;
     }
-    --missing.required_capability_count;
-    if (device_proof_dependencies_complete(&missing) ||
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (device_proof_dependencies_complete(&missing_count) ||
+        device_proof_dependencies_complete(&missing_member) ||
         !kernel_test_device_substrate_exit_self_test()) {
         stage_failed(context, result,
             "device-substrate contract negative controls failed");

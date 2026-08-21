@@ -42,7 +42,7 @@ Found while writing this register, fixed in the same commit.
 | --- | --- |
 | **`framebuffer_verify` ran at the wrong moment.** | It was called inside the framebuffer's own proof, and the logo was then blitted through that same mapping — roughly 800,000 further stores that nothing re-checked. Verifying before the last thing that writes through a mapping is verifying the wrong moment, which is precisely what `paging_verify` and `heap_verify` sit at the end of boot to avoid. Moved. A control that disturbs the mapping after the logo is drawn now panics with `framebuffer does not match the address space`; under the old ordering it passed. |
 | **`docs/MONOTONIC_TIME.md` was factually wrong.** | It listed as deferred: *"The table is a linear scan over fixed storage, because there is no heap."* `timer.c` has taken that table from the heap since the commit before this session. The code changed and the document did not. Corrected, and split — the storage is fixed no longer, the scan is still linear. |
-| **`docs/PIT_RETIREMENT.md` carried a claim already corrected elsewhere.** | That level-triggered routing "gates PCI device interrupts". `README.md` was updated when PCI enumeration showed every PCIe endpoint offers MSI-X; this document was not. |
+| **`docs/PIT_RETIREMENT.md` carried a claim already corrected elsewhere.** | That level-triggered routing "gates PCI device interrupts". The current split is explicit: installed MSI-X devices bypass pin routing, while devices without a supported message-signalled capability still need a legacy fallback. |
 
 The second of those is the one worth dwelling on. These documents are the
 project's contract — the reason `make verify` means something is that someone
@@ -126,8 +126,8 @@ The Pyrenis Boot Ledger is the second payment:
 | | | |
 | --- | ---: | --- |
 | `src/kernel/kernel.c` | 101 | validates, executes and verifies one ledger; no subsystem call order |
-| `src/kernel/boot_plan.c` | 1894 | private stage functions and typed dependency declarations |
-| `src/kernel/boot_ledger.c` | 2047 | bounded canonical planner, receipts, fingerprint and installed proof |
+| `src/kernel/boot_plan.c` | 1899 | private stage functions and typed dependency declarations |
+| `src/kernel/boot_ledger.c` | 2073 | bounded canonical planner, receipts, fingerprint and installed proof |
 | `src/kernel/boot_report.c` | 281 | describes what was found, never decides |
 | `src/kernel/boot_proofs.c` | 2661 | existing hardware proofs and transition sequences |
 
@@ -185,7 +185,7 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 167 shell assertions
+### 4. The harness contract is 166 shell assertions
 
     $ grep -c 'grep -F\|grep -E' Makefile
     167
@@ -193,7 +193,8 @@ its stable words and mapping/device counts.
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
 scenarios and 150 assertions; the device-foundation contract adds the
-thirty-third scenario and reaches 167, including the executable-text ISA audit.
+thirty-third scenario and reaches 166 after replacing one self-referential grep
+with a derived guest/host exit comparison, including the executable-text ISA audit.
 The harness was extended, not refactored, so this debt is explicitly **not
 paid**.
 

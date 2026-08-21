@@ -271,6 +271,7 @@ enum msix_status msix_bind(
     }
     binding->table_size = (uint16_t)((binding->original_control &
         MSIX_CONTROL_TABLE_SIZE) + 1U);
+    /* The encoded N-1 field cannot produce zero; retain a defensive guard. */
     if (binding->table_size == 0U) {
         return MSIX_STATUS_BAD_TABLE_SIZE;
     }

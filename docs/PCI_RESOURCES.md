@@ -15,7 +15,8 @@ and command-register rules. The public specification landing page is
 A claim is accepted only for a function returned by the installed PCI
 enumeration and only while interrupts are disabled. The kernel snapshots the
 command register and every BAR, clears I/O decode, memory decode, and bus
-mastering, writes all ones to each BAR, reads the sizing mask, and restores all
+mastering, reads the command register back to prove decode is actually off,
+writes all ones to each BAR, reads the sizing mask, and restores all
 BARs and the command register exactly. Type 0 headers expose six BAR slots and
 type 1 headers expose two. Unimplemented, I/O, 32-bit memory, and paired 64-bit
 memory BARs are represented explicitly; the low attribute bits are retained in
@@ -35,6 +36,10 @@ Claimed memory BARs are mapped into the 64 MiB arena beginning at virtual
 paging probes, 16 GiB heap, and 32 GiB thread-stack arena and below the
 canonical-address boundary. The allocator rounds physical spans with checked
 arithmetic and tracks each 4 KiB virtual page in a fixed bitmap.
+
+Before installing a mapping, the rounded physical span is checked against the
+frame allocator's usable-memory bitmap. A BAR that aliases allocator-managed
+RAM is refused by name, preventing a writable UC alias of ordinary WB memory.
 
 Mappings use the paging layer's supervisor-only, writable, uncacheable policy.
 They are non-executable. Translation is read back before the mapping becomes
@@ -61,7 +66,8 @@ initialized and device-owned. Drivers must disable it before reclaiming DMA.
 Every boot disables decode before the real probe and injects one failure after
 the first BAR write; it then reads back the command register and every BAR.
 Pure controls reject a probe attempted with decode enabled, a 64-bit BAR in the
-last slot, an overflowing range, and overlapping ranges. The VirtIO proof also
+last slot, an overflowing range, overlapping ranges, and a device mapping that
+aliases allocator-managed RAM. The VirtIO proof also
 attempts to enable bus mastering before its queue and receive buffer change to
 device ownership. Closing proofs require zero live claims, mappings, arena
 pages, and bus masters.

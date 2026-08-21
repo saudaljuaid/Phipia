@@ -16,16 +16,16 @@ all fourteen in its stable scenario line.
 | 1 | Probe a BAR while decode is enabled. | `PCI_RESOURCE_STATUS_DECODE_ENABLED`. |
 | 2 | Inject failure after a BAR write. | `PCI_RESOURCE_STATUS_INJECTED_FAILURE`; command and every BAR read back exactly. |
 | 3 | Present a 64-bit BAR without its upper pair. | `PCI_RESOURCE_STATUS_MALFORMED_64_BIT_PAIR`. |
-| 4 | Validate overflowing and overlapping MMIO ranges. | `PCI_RESOURCE_STATUS_BAR_RANGE_OVERFLOW` and `PCI_RESOURCE_STATUS_MMIO_RANGE_OVERLAP`. |
+| 4 | Validate overflowing, overlapping, and allocator-RAM-aliasing MMIO ranges. | Named range-overflow, MMIO-overlap, and `PCI_RESOURCE_STATUS_MMIO_RAM_OVERLAP` refusals. |
 | 5 | Request fixed controller, self-test, IST, and spurious vectors. | Each returns `INTERRUPT_VECTOR_STATUS_RESERVED`. |
 | 6 | Fill the dynamic interval, allocate once more, then release one handle twice. | `INTERRUPT_VECTOR_STATUS_EXHAUSTED` and `INTERRUPT_VECTOR_STATUS_DOUBLE_RELEASE`; allocation count returns to zero. |
 | 7 | Place an MSI-X table past the sized BAR. | `MSIX_STATUS_TABLE_OUTSIDE_BAR`. |
 | 8 | Enable delivery without an installed handler. | `MSIX_STATUS_HANDLER_NOT_INSTALLED`. |
 | 9 | Inject failure after the live VirtIO handler is installed. | Complete reverse rollback; no binding, handler, vector, or mapping remains before the real bind. |
 | 10 | Request non-power-of-two and impossible DMA alignment. | Bounded frame allocation is refused without changing allocation counts. |
-| 11 | Transfer before initialization, transfer twice, reclaim twice, and release while device-owned. | Named not-prepared, wrong-owner, and double-free results; allocation counts return to their baseline. |
+| 11 | Transfer before initialization, forge a copied handle, transfer twice, reclaim twice, and release while device-owned. | Named not-prepared, wrong-owner, bad-handle, and double-free results; allocation counts return to their baseline. |
 | 12 | Enable bus mastering before both VirtIO allocations are initialized and device-owned. | `PCI_RESOURCE_STATUS_DMA_NOT_PREPARED`; the command register remains non-mastering. |
-| 13 | Remove one of the proof descriptor's eleven prerequisites. | The local descriptor control is rejected as an incomplete prerequisite set before the fixture is touched. |
+| 13 | Remove one proof prerequisite both by shortening the list and by replacing a member at unchanged cardinality. | Both local descriptor controls are rejected before the fixture is touched. |
 | 14 | Mutate the new guest exit from `0x30` to `0x31`. | The exit self-test rejects the mutation; the host contract remains 97. |
 
 The closing installed proof requires zero claims, MMIO mappings and arena pages,
@@ -50,6 +50,11 @@ cannot directly inject delivery.
 | --- | ---: | ---: | --- |
 | TCG | 10 | 330 | 330 passed |
 | WHPX | 1 | 33 | 33 passed |
+
+The complete matrix was repeated after delayed review fixes strengthened BAR
+decode read-back, private DMA authority, Boot Ledger outcome validation, and
+wrong-vector reporting. The repeated matrix was again 330/330 under TCG and
+33/33 under WHPX with no additional flake.
 
 `make verify` also passed from a clean build with warnings promoted to errors.
 Its binary checks found no undefined symbols, unresolved relocations, RWX load

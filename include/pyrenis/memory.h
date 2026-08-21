@@ -70,6 +70,10 @@ enum frame_status frame_release_contiguous(
     struct frame_contiguous_allocation *allocation
 );
 enum frame_status frame_reserve_range(uint64_t base_address, uint64_t length);
+bool frame_range_overlaps_allocatable_memory(
+    uint64_t base_address,
+    uint64_t length
+);
 struct frame_allocator_stats frame_allocator_get_stats(void);
 const char *frame_status_string(enum frame_status status);
 

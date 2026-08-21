@@ -276,6 +276,7 @@ enum pci_status pci_config_write_ecam(
     } else {
         *(volatile uint32_t *)(uintptr_t)location = value;
     }
+    /* Prevent compiler reordering across the volatile PCI register write. */
     __asm__ volatile ("" : : : "memory");
     return PCI_STATUS_OK;
 }

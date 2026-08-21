@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <pyrenis/cpu.h>
+#include <pyrenis/memory.h>
 #include <pyrenis/paging.h>
 #include <pyrenis/pci.h>
 #include <pyrenis/pci_resource.h>
@@ -245,6 +246,7 @@ static enum pci_resource_status probe_bars(
     uint32_t original[PCI_BAR_COUNT] = {0U};
     uint16_t command;
     uint16_t disabled;
+    uint16_t observed = 0U;
     enum pci_resource_status status;
     enum pci_resource_status restore_status;
     size_t bar_count;
@@ -277,7 +279,10 @@ static enum pci_resource_status probe_bars(
     if (status != PCI_RESOURCE_STATUS_OK) {
         return status;
     }
-    status = require_decode_disabled(disabled);
+    status = read_command(function->address, &observed);
+    if (status == PCI_RESOURCE_STATUS_OK) {
+        status = require_decode_disabled(observed);
+    }
 
     for (size_t index = 0U;
          status == PCI_RESOURCE_STATUS_OK && index < bar_count;
@@ -724,6 +729,10 @@ enum pci_resource_status pci_claim_map_bar(
         rounded_length > PCI_DEVICE_MMIO_ARENA_SIZE) {
         return PCI_RESOURCE_STATUS_MMIO_ARENA_EXHAUSTED;
     }
+    if (frame_range_overlaps_allocatable_memory(bar->base - page_offset,
+            rounded_length)) {
+        return PCI_RESOURCE_STATUS_MMIO_RAM_OVERLAP;
+    }
 
     for (size_t index = 0U; index < claim->mapping_count; ++index) {
         const struct pci_mmio_region *other = &claim->mappings[index];
@@ -1021,6 +1030,7 @@ enum pci_resource_status pci_resource_verify(void)
 bool pci_resource_self_test(const struct pci_function *probe_function)
 {
     struct pci_device_claim synthetic = {0};
+    uintptr_t ram_page = 0U;
     uint16_t command_before = 0U;
     uint16_t command_after = 0U;
     uint32_t bar_before[PCI_BAR_COUNT] = {0U};
@@ -1082,6 +1092,15 @@ bool pci_resource_self_test(const struct pci_function *probe_function)
         return false;
     }
 
+    if (frame_allocate(&ram_page) != FRAME_STATUS_OK) {
+        return false;
+    }
+    const bool ram_overlap = frame_range_overlaps_allocatable_memory(
+        (uint64_t)ram_page, PYRENIS_PAGE_SIZE);
+    if (frame_release(ram_page) != FRAME_STATUS_OK || !ram_overlap) {
+        return false;
+    }
+
     return pci_resource_verify() == PCI_RESOURCE_STATUS_OK;
 }
 
@@ -1110,6 +1129,7 @@ const char *pci_resource_status_string(enum pci_resource_status status)
         "MMIO BAR mappings must be released in reverse order",
         "PCI claim mapping table is full", "MMIO page rounding overflows",
         "MMIO mapping overlaps an owned resource",
+        "MMIO mapping aliases allocatable physical memory",
         "device MMIO arena is exhausted", "device MMIO paging failed",
         "MMIO subregion falls outside its mapped BAR",
         "bus mastering requires mapped initialized device-owned DMA",
