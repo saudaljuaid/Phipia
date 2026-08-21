@@ -49,7 +49,10 @@ around the unchanged asset:
 | White windows and highlights | `#FFFFFF` |
 
 Status accents identify compact indicators and launcher icons; they are not
-applied to the logo. The framebuffer console uses black on white; early VGA
+applied to the logo. The First Light workbench displays the exact decoded shape
+as a two-color, two-pixel bitmap with ordered edge dithering. This display-only
+treatment leaves the canonical PNG unchanged. The framebuffer console uses
+black on white; early VGA
 text uses bright white on black. The kernel has no alpha compositor, gradients,
 or runtime theme selection.
 

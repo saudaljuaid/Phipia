@@ -23,6 +23,7 @@
 #define UI_LOGO_WIDTH 280U
 #define UI_LOGO_HEIGHT 248U
 #define UI_LOGO_PIXELS (UI_LOGO_WIDTH * UI_LOGO_HEIGHT)
+#define UI_LOGO_BITMAP_SCALE 2U
 #define UI_MENU_HEIGHT 24U
 #define UI_WORKSPACE_BAR_HEIGHT 22U
 #define UI_HERO_WIDTH 600U
@@ -624,7 +625,14 @@ static enum ui_status draw_text(
 
 static enum ui_status draw_logo_clipped(struct ui_rect damage)
 {
+    static const uint8_t bayer_4x4[4][4] = {
+        { 0U, 8U, 2U, 10U },
+        { 12U, 4U, 14U, 6U },
+        { 3U, 11U, 1U, 9U },
+        { 15U, 7U, 13U, 5U }
+    };
     const struct ui_rect clipped = rect_intersection(state.layout.logo, damage);
+    const struct framebuffer_state framebuffer = framebuffer_get_state();
 
     if (clipped.width == 0U || clipped.height == 0U) {
         return UI_STATUS_OK;
@@ -633,9 +641,36 @@ static enum ui_status draw_logo_clipped(struct ui_rect damage)
         for (uint32_t x = 0U; x < clipped.width; ++x) {
             const uint32_t source_x = clipped.x - state.layout.logo.x + x;
             const uint32_t source_y = clipped.y - state.layout.logo.y + y;
+            const uint32_t sample_x = source_x -
+                source_x % UI_LOGO_BITMAP_SCALE;
+            const uint32_t sample_y = source_y -
+                source_y % UI_LOGO_BITMAP_SCALE;
+            const uint32_t source = logo_pixels[
+                sample_y * UI_LOGO_WIDTH + sample_x];
+            const uint32_t red = (source >> framebuffer.red_position) & 0xFFU;
+            const uint32_t green =
+                (source >> framebuffer.green_position) & 0xFFU;
+            const uint32_t blue =
+                (source >> framebuffer.blue_position) & 0xFFU;
+            const uint32_t luminance =
+                (red * 77U + green * 150U + blue * 29U) >> 8U;
+            uint32_t pixel = state.theme.white;
+
+            if (luminance <= 96U) {
+                pixel = state.theme.ink;
+            } else if (luminance < 248U) {
+                const uint32_t coverage = 255U - luminance;
+                const uint32_t threshold =
+                    (uint32_t)bayer_4x4[(source_y / UI_LOGO_BITMAP_SCALE) & 3U]
+                        [(source_x / UI_LOGO_BITMAP_SCALE) & 3U] * 16U + 8U;
+
+                if (coverage > threshold) {
+                    pixel = state.theme.ink;
+                }
+            }
 
             if (surface_pixel(canvas, clipped.x + x, clipped.y + y,
-                    logo_pixels[source_y * UI_LOGO_WIDTH + source_x]) !=
+                    pixel) !=
                 SURFACE_STATUS_OK) {
                 return UI_STATUS_SURFACE_FAILURE;
             }

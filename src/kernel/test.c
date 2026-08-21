@@ -4416,8 +4416,7 @@ _Noreturn void kernel_test_complete_first_light(void)
         kernel_test_fail("First Light Workbench chrome stable pixel is incorrect");
     }
     if (first_light_pixel(ui->layout.logo.x + 140U,
-            ui->layout.logo.y + 140U) !=
-                framebuffer_pack(0x41U, 0x41U, 0x43U)) {
+            ui->layout.logo.y + 140U) != ui->theme.ink) {
         kernel_test_fail("First Light logo stable pixel is incorrect");
     }
     first_light_expect_text_pixel('S', ui->layout.wordmark.x,
