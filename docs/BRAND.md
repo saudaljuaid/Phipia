@@ -80,9 +80,8 @@ Sapote.
 ## Verification
 
 `make verify` pins the exact source hash, 280-pixel runtime ceiling, branded ABI
-symbols and artifact names, and rejects legacy identity strings or tracked
-legacy filenames. Normal boots require the Sapote transcript. `screen`, `shell`
-and normal scenarios exercise the black-and-white console and `sap>` prompt.
-`first-light` verifies the installed palette, typed layout, exact decoded logo,
-and real framebuffer pixels. QMP captures the committed runtime screenshots;
-the images are not manually edited.
+symbols, artifact names, transcript, and prompt. `screen`, `shell` and normal
+scenarios exercise the black-and-white console and `sap>` prompt. `first-light`
+verifies the installed palette, typed layout, exact decoded logo, and real
+framebuffer pixels. QMP captures the committed runtime screenshots; the images
+are not manually edited.
