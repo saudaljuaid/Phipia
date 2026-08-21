@@ -4302,11 +4302,11 @@ static void first_light_click_dock_item(
     ui = ui_get_state();
     if (ui->pressed != UI_ELEMENT_NONE ||
         ui->active_panel != expected_panel ||
-        first_light_pixel(state_x, state_y) != ui->theme.black) {
+        first_light_pixel(state_x, state_y) != ui->theme.title_active) {
         kernel_test_fail("First Light dock active state pixel is incorrect");
     }
     if (first_light_pixel(ui->layout.panel.x + 4U,
-            ui->layout.panel.y + 4U) != ui->theme.white) {
+            ui->layout.panel.y + 4U) != ui->theme.title_inactive) {
         kernel_test_fail("First Light panel title surface pixel is incorrect");
     }
     if (ui_font_text_width(ui_panel_name(expected_panel), &title_width) !=
@@ -4316,7 +4316,7 @@ static void first_light_click_dock_item(
     first_light_expect_text_pixel(title_initial,
         ui->layout.panel.x + 4U +
             (ui->layout.panel.width - 8U - title_width) / 2U,
-        ui->layout.panel_title_baseline, ui->theme.black,
+        ui->layout.panel_title_baseline, ui->theme.white,
         "First Light panel title glyph pixel is incorrect");
 }
 
@@ -4345,6 +4345,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     const struct ui_point initial_pointer = ui->pointer;
     const struct ui_render_counters initial_renders = ui->renders;
     struct ui_proof proof;
+    enum ui_status proof_status;
 
     if (active_scenario != KERNEL_TEST_FIRST_LIGHT) {
         kernel_test_fail("First Light completion used outside its scenario");
@@ -4405,24 +4406,25 @@ _Noreturn void kernel_test_complete_first_light(void)
 
     if (first_light_pixel(ui->layout.menu_bar.x,
             ui->layout.menu_bar.y) != ui->theme.white ||
-        first_light_pixel(ui->layout.rainbow_bar.x + 4U,
-            ui->layout.rainbow_bar.y) != ui->theme.accent_orange ||
-        first_light_pixel(ui->layout.rainbow_bar.x + 4U,
-            ui->layout.rainbow_bar.y + ui->layout.rainbow_bar.height - 1U) !=
-                ui->theme.accent_blue ||
+        first_light_pixel(ui->layout.workspace_bar.x + 4U,
+            ui->layout.workspace_bar.y + 2U) != ui->theme.title_inactive ||
+        first_light_pixel(ui->layout.workspace_bar.x + 4U,
+            ui->layout.workspace_bar.y + ui->layout.workspace_bar.height - 1U) !=
+                ui->theme.ink ||
         first_light_pixel(ui->layout.hero_window.x,
-            ui->layout.hero_window.y) != ui->theme.black) {
-        kernel_test_fail("First Light classic chrome stable pixel is incorrect");
+            ui->layout.hero_window.y) != ui->theme.ink) {
+        kernel_test_fail("First Light Workbench chrome stable pixel is incorrect");
     }
-    if (first_light_pixel(ui->layout.logo.x + 155U,
-            ui->layout.logo.y + 137U) != ui->theme.accent_red) {
+    if (first_light_pixel(ui->layout.logo.x + 140U,
+            ui->layout.logo.y + 140U) !=
+                framebuffer_pack(0x41U, 0x41U, 0x43U)) {
         kernel_test_fail("First Light logo stable pixel is incorrect");
     }
     first_light_expect_text_pixel('S', ui->layout.wordmark.x,
-        ui->layout.title_baseline, ui->theme.black,
+        ui->layout.title_baseline, ui->theme.ink,
         "First Light wordmark stable pixel is incorrect");
     if (first_light_pixel(ui->layout.dock.x, ui->layout.dock.y) !=
-            ui->theme.black ||
+            ui->theme.ink ||
         first_light_pixel(ui->layout.ledger_status.x + 4U,
             ui->layout.ledger_status.y + 4U) != ui->theme.white) {
         kernel_test_fail("First Light dock or ledger stable pixel is incorrect");
@@ -4435,9 +4437,9 @@ _Noreturn void kernel_test_complete_first_light(void)
     }
     if (initial_pointer.x < 0 || initial_pointer.y < 0 ||
         first_light_pixel((uint32_t)initial_pointer.x,
-            (uint32_t)initial_pointer.y) != ui->theme.platinum ||
+            (uint32_t)initial_pointer.y) != ui->theme.window_face ||
         first_light_pixel((uint32_t)ui->pointer.x,
-            (uint32_t)ui->pointer.y) != ui->theme.black ||
+            (uint32_t)ui->pointer.y) != ui->theme.ink ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||
         ui->renders.damage_rectangles <= initial_renders.damage_rectangles) {
         kernel_test_fail("First Light cursor damage left a trail");
@@ -4479,14 +4481,20 @@ _Noreturn void kernel_test_complete_first_light(void)
     if (!boot_plan_pointer_absence_self_test()) {
         kernel_test_fail("First Light pointer-absence synthetic plan failed");
     }
-    if (ui_verify_installed(&proof) != UI_STATUS_OK ||
-        proof.width != 1024U || proof.height != 768U ||
+    proof_status = ui_verify_installed(&proof);
+    if (proof_status != UI_STATUS_OK) {
+        kernel_test_fail("First Light final installed redraw proof failed");
+    }
+    if (proof.width != 1024U || proof.height != 768U ||
         proof.dock_items != UI_DOCK_ITEM_COUNT ||
         proof.ledger_fingerprint != ledger->fingerprint ||
-        proof.render_hash == 0U || proof.events == 0U ||
-        proof.panels < 5U || proof.cursor_moves == 0U ||
-        proof.damage_rectangles == 0U || proof.glyphs == 0U) {
-        kernel_test_fail("First Light final installed proof is inconsistent");
+        proof.render_hash == 0U) {
+        kernel_test_fail("First Light final installed shape is inconsistent");
+    }
+    if (proof.events == 0U || proof.panels < 5U ||
+        proof.cursor_moves == 0U || proof.damage_rectangles == 0U ||
+        proof.glyphs == 0U) {
+        kernel_test_fail("First Light final interaction counters are incomplete");
     }
 
     console_write("ST FIRST_LIGHT geometry ");

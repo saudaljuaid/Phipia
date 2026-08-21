@@ -111,16 +111,18 @@ struct ui_event {
 
 struct ui_theme {
     uint32_t white;
-    uint32_t accent_orange;
+    uint32_t ink;
+    uint32_t desktop_dark;
+    uint32_t desktop_light;
+    uint32_t title_active;
+    uint32_t title_inactive;
     uint32_t accent_teal;
-    uint32_t accent_yellow;
-    uint32_t accent_purple;
+    uint32_t accent_gold;
+    uint32_t accent_green;
     uint32_t accent_red;
-    uint32_t accent_lime;
-    uint32_t accent_blue;
-    uint32_t black;
+    uint32_t accent_violet;
     uint32_t shadow;
-    uint32_t platinum;
+    uint32_t window_face;
 };
 
 struct ui_dock_item {
@@ -135,7 +137,7 @@ struct ui_dock_item {
 struct ui_layout {
     struct ui_rect surface;
     struct ui_rect menu_bar;
-    struct ui_rect rainbow_bar;
+    struct ui_rect workspace_bar;
     struct ui_rect hero_window;
     struct ui_rect logo;
     struct ui_rect wordmark;

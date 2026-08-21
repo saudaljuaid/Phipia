@@ -29,7 +29,7 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 1,799-line bounded kernel shell and `test.c` is now 4,754
+roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,762
 lines. Splitting panel rendering or scenario helpers may improve shape later,
 but userspace, a process model, a window manager, and a compositor are missing
 architectural layers rather than refactors owed by this milestone.
@@ -197,9 +197,8 @@ thirty-third scenario and reached 166 assertion lines after replacing one
 self-referential grep with a derived guest/host exit comparison, including the
 executable-text ISA audit. The v0.4.0 xHCI contract adds scenario 34 and brings
 the measured line count to 179; the final identity cleanup removes two obsolete
-denylist assertions, leaving 177. (`grep -F` or `grep -E` occurs 178 times
-because one line contains two independent failure checks.) The harness was
-extended, not refactored, so this debt is explicitly **not paid**.
+denylist assertions, leaving the measured 177 lines shown above. The harness
+was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It
 works — renaming any contract line has been shown to turn the suite red, every
@@ -263,9 +262,9 @@ Measured, and healthy:
 
 - **Thirty-four QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
-- **1,550 KiB on-disk kernel ELF**, of which 91 KiB is the packed canonical
-  Sapote mark (1,587,320 and 92,763 bytes respectively in the verified v0.4.0
-  artifact).
+- **1,556 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
+  Sapote mark (1,593,184 and 21,573 bytes respectively in the measured current
+  tree).
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.
 - **No undefined symbols, no global offset table, no RWX segment**, all asserted

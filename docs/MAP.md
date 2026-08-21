@@ -114,7 +114,7 @@ long you will be in there.
 | `screen.c` | 870 | Text on the framebuffer: retained cells, validated viewports, reflow, wrapping, scrolling, and reading it back. |
 | `keyboard.c` | 738 | The 8042 and scancode set 1. The first device a person operates. |
 | `pointer.c` | 529 | Shared-8042 auxiliary discovery, IRQ12, three-byte packets, bounded coordinates, and UI event publication. |
-| `ui.c` | 1953 | First Light state, pure layout, dock/panels, event queue, damage, cursor, and installed render proof. |
+| `ui.c` | 2125 | First Light state, pure layout, launcher/panels, event queue, damage, cursor, and installed render proof. |
 | `ui_font.c` | 312 | Verified Spleen metrics, clipped glyph drawing, representative pixel proof, and named refusals. |
 | `shell.c` | 740 | One command parser shared by serial and the First Light Terminal panel. |
 | `font.c` | 38 | The C side of the font: names for what the reader can refuse. |
@@ -128,7 +128,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4754 | The thirty-four QEMU scenarios and what each must print. |
+| `test.c` | 4762 | The thirty-four QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order

@@ -11,58 +11,57 @@ separate product.
 ## Canonical mark
 
 [`assets/sapote-logo.png`](../assets/sapote-logo.png) is the source of truth. It
-is the supplied mark with its three lower tail decorations removed, on the
-original 550×556 opaque RGBA canvas. Its SHA-256 is:
+is the exact supplied 375×332 opaque RGBA image. Its SHA-256 is:
 
-    807CB475A547B371EBB731DB1F07AA8FBE223BFCC235D9554F15B69F4E1CAD1C
+    DBDA2F52A5F66CD2F9EFA202CB892C7AB45A29DF83DB37C5C6FDD79B1DEE7CB0
 
-The file is fully opaque, including its warm-white field. Do not redraw, trace,
-recolour, crop, mirror, key out its background, add type to it, or substitute a
-visually similar mark. Public uses preserve its aspect ratio.
+The 18,756-byte file is fully opaque. Its near-white field and charcoal
+anti-aliased pixels are part of the asset. Do not redraw, trace, recolour, crop,
+mirror, key out its background, add type to it, or substitute a visually
+similar mark. Public uses preserve its aspect ratio.
 
 The kernel does not parse PNG. `tools/make-logo-asset.py` deterministically
 fits the source within a 280-pixel ceiling using a bounded premultiplied box
-filter. The resulting 277×280 image is encoded as a 92,763-byte `SRL1` stream
+filter. The resulting 280×248 image is encoded as a 21,573-byte `SRL1` stream
 and embedded by Rust. This is a runtime presentation size, not a replacement
 source asset. The boot proof decodes it into guest memory and compares every
 drawn pixel with the decoded stream before reporting success.
 
 ## Palette
 
-First Light takes its rainbow directly from the supplied mark and gives it
-classic monochrome personal-computer chrome:
+The logo supplies no interface palette. First Light uses a separate palette
+around the unchanged asset:
 
 | Role | Value |
 | --- | --- |
-| Orange | `#E96503` |
-| Teal | `#008E92` |
-| Yellow | `#FDDA02` |
-| Purple | `#782CB2` |
-| Red | `#E71F21` |
-| Lime | `#A6DF20` |
-| Blue | `#018DD8` |
-| Platinum desktop | `#DDDAD5` |
-| Shadow | `#777777` |
-| Black type and outlines | `#000000` |
+| Ink and outlines | `#1B1D22` |
+| Desktop | `#6E7FA4` |
+| Desktop rule | `#8294B8` |
+| Active title | `#233A68` |
+| Inactive title | `#65728E` |
+| Teal status | `#2F8B8C` |
+| Gold status | `#D8A43A` |
+| Green status | `#4F8A5B` |
+| Red status | `#B84E4C` |
+| Violet status | `#7B5B89` |
+| Shadow | `#5E626B` |
+| Window face | `#C8CBD0` |
 | White windows and highlights | `#FFFFFF` |
 
-The seven accents follow the mark's left-to-right stripe order and appear in
-that order from top to bottom in First Light. The framebuffer
-console uses black on white; early VGA text uses bright white on black. There
-is no floating-point compositor, translucent theme layer, gradient invented by
-the kernel, or runtime theme selection.
+Status accents identify compact indicators and launcher icons; they are not
+applied to the logo. The framebuffer console uses black on white; early VGA
+text uses bright white on black. The kernel has no alpha compositor, gradients,
+or runtime theme selection.
 
-The interface deliberately recalls early personal computers: one-pixel
-outlines, platinum controls, high-contrast bitmap type, horizontal title-bar
-hatching, a menu strip, and the seven-colour band. It does not use or claim
-another company's name, wordmark, icons, or trade dress.
+First Light uses one-pixel outlines, beveled controls, bitmap type, a compact
+menu strip, patterned desktop, utility status window, and bottom launcher tray.
+The composition and code-native icons are Sapote's own; it does not use or
+claim another company's name, wordmark, icons, or trade dress.
 
 ## Voice
 
-Sapote is small, direct, warm, and technically exact. Public copy should prefer
-plain descriptions such as “a small proof-driven operating system” over grand
-platform claims. First Light's greeting is `hello from the metal.` Engineering
-documents remain precise and formal where a machine contract demands it.
+Public copy uses short technical descriptions and avoids broad platform claims.
+First Light's greeting is `hello from the metal.`
 
 ## Public surfaces
 
@@ -73,9 +72,9 @@ command-line key, internal asset magic, ELF, map, static library and ISO
 artifacts. A current surface containing an earlier project name is a rebrand
 defect.
 
-Historical commit objects and already-published tags are immutable records and
-are not rewritten or deleted. New commits, tags, releases, and artifacts use
-Sapote.
+New commits, tags, releases, and artifacts use Sapote. Repository history is
+changed only by an explicit, reviewed maintenance operation with a recovery
+bundle and tree-equivalence proof.
 
 ## Verification
 
