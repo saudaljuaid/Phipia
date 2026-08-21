@@ -18,6 +18,18 @@ static struct frame_allocator_stats allocator_stats;
 static size_t next_search_index;
 static bool allocator_initialized;
 
+struct contiguous_record {
+    uintptr_t physical_base;
+    size_t page_count;
+    uint64_t identifier;
+    bool active;
+};
+
+static struct contiguous_record contiguous_records[
+    FRAME_CONTIGUOUS_ALLOCATION_CAPACITY
+];
+static uint64_t next_contiguous_identifier;
+
 static bool bitmap_get(const uint8_t *bitmap, size_t frame_index)
 {
     const uint8_t mask = (uint8_t)(1U << (frame_index % 8U));
@@ -52,6 +64,29 @@ static bool checked_range_end(uint64_t base, uint64_t length, uint64_t *end)
 
     *end = base + length;
     return true;
+}
+
+static bool power_of_two(uint64_t value)
+{
+    return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+static bool frame_in_contiguous_allocation(size_t frame)
+{
+    for (size_t index = 0U;
+         index < FRAME_CONTIGUOUS_ALLOCATION_CAPACITY;
+         ++index) {
+        const struct contiguous_record *record = &contiguous_records[index];
+        const size_t first = (size_t)((uint64_t)record->physical_base /
+            PYRENIS_PAGE_SIZE);
+
+        if (record->active && frame >= first &&
+            frame - first < record->page_count) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static enum frame_status available_frame_bounds(
@@ -266,8 +301,18 @@ enum frame_status frame_allocator_initialize(
 
     allocator_initialized = false;
     next_search_index = 0;
+    next_contiguous_identifier = 1U;
     bitmap_fill(eligible_bitmap, 0U);
     bitmap_fill(used_bitmap, UINT8_MAX);
+
+    for (size_t index = 0U;
+         index < FRAME_CONTIGUOUS_ALLOCATION_CAPACITY;
+         ++index) {
+        contiguous_records[index].active = false;
+        contiguous_records[index].physical_base = 0U;
+        contiguous_records[index].page_count = 0U;
+        contiguous_records[index].identifier = 0U;
+    }
 
     status = apply_memory_map(context);
 
@@ -379,6 +424,10 @@ enum frame_status frame_release(uintptr_t physical_address)
         return FRAME_STATUS_DOUBLE_FREE;
     }
 
+    if (frame_in_contiguous_allocation(frame)) {
+        return FRAME_STATUS_FRAME_IN_USE;
+    }
+
     bitmap_set(used_bitmap, frame, false);
     ++allocator_stats.free_frames;
     --allocator_stats.allocated_frames;
@@ -387,6 +436,197 @@ enum frame_status frame_release(uintptr_t physical_address)
         next_search_index = frame;
     }
 
+    return FRAME_STATUS_OK;
+}
+
+enum frame_status frame_allocate_contiguous(
+    const struct frame_contiguous_request *request,
+    struct frame_contiguous_allocation *allocation
+)
+{
+    struct contiguous_record *record = NULL;
+    uint64_t length;
+    uint64_t bound_end;
+    size_t maximum_past_frame;
+
+    if (request == NULL || allocation == NULL) {
+        return FRAME_STATUS_NULL_ARGUMENT;
+    }
+
+    allocation->physical_base = 0U;
+    allocation->page_count = 0U;
+    allocation->alignment = 0U;
+    allocation->maximum_physical_address = 0U;
+    allocation->identifier = 0U;
+    allocation->active = false;
+
+    if (!allocator_initialized) {
+        return FRAME_STATUS_NOT_INITIALIZED;
+    }
+
+    if (request->page_count == 0U) {
+        return FRAME_STATUS_ZERO_PAGE_COUNT;
+    }
+
+    if (!power_of_two(request->alignment) ||
+        request->alignment < PYRENIS_PAGE_SIZE ||
+        request->alignment % PYRENIS_PAGE_SIZE != 0U) {
+        return FRAME_STATUS_BAD_ALIGNMENT;
+    }
+
+    if (request->alignment > PYRENIS_EARLY_PHYSICAL_LIMIT ||
+        request->alignment > request->maximum_physical_address +
+            (request->maximum_physical_address != UINT64_MAX ? 1U : 0U)) {
+        return FRAME_STATUS_ALIGNMENT_UNSATISFIABLE;
+    }
+
+    if (request->page_count > UINT64_MAX / PYRENIS_PAGE_SIZE) {
+        return FRAME_STATUS_RANGE_OVERFLOW;
+    }
+
+    length = (uint64_t)request->page_count * PYRENIS_PAGE_SIZE;
+    if (length == 0U || request->maximum_physical_address < length - 1U) {
+        return FRAME_STATUS_ADDRESS_BOUND_UNSATISFIED;
+    }
+
+    bound_end = request->maximum_physical_address == UINT64_MAX
+        ? UINT64_MAX
+        : request->maximum_physical_address + 1U;
+    if (bound_end > PYRENIS_EARLY_PHYSICAL_LIMIT) {
+        bound_end = PYRENIS_EARLY_PHYSICAL_LIMIT;
+    }
+    maximum_past_frame = (size_t)(bound_end / PYRENIS_PAGE_SIZE);
+    if (maximum_past_frame < request->page_count) {
+        return FRAME_STATUS_ADDRESS_BOUND_UNSATISFIED;
+    }
+
+    for (size_t index = 0U;
+         index < FRAME_CONTIGUOUS_ALLOCATION_CAPACITY;
+         ++index) {
+        if (!contiguous_records[index].active) {
+            record = &contiguous_records[index];
+            break;
+        }
+    }
+
+    if (record == NULL) {
+        return FRAME_STATUS_TOO_MANY_CONTIGUOUS_ALLOCATIONS;
+    }
+
+    for (size_t first = 0U;
+         first <= maximum_past_frame - request->page_count;
+         ++first) {
+        const uint64_t base = (uint64_t)first * PYRENIS_PAGE_SIZE;
+        bool available = true;
+
+        if ((base & (request->alignment - 1U)) != 0U) {
+            continue;
+        }
+
+        for (size_t offset = 0U; offset < request->page_count; ++offset) {
+            const size_t frame = first + offset;
+
+            if (!bitmap_get(eligible_bitmap, frame) ||
+                bitmap_get(used_bitmap, frame)) {
+                available = false;
+                break;
+            }
+        }
+
+        if (!available) {
+            continue;
+        }
+
+        for (size_t offset = 0U; offset < request->page_count; ++offset) {
+            bitmap_set(used_bitmap, first + offset, true);
+        }
+
+        record->physical_base = (uintptr_t)base;
+        record->page_count = request->page_count;
+        record->identifier = next_contiguous_identifier++;
+        if (next_contiguous_identifier == 0U) {
+            next_contiguous_identifier = 1U;
+        }
+        record->active = true;
+
+        allocator_stats.free_frames -= request->page_count;
+        allocator_stats.allocated_frames += request->page_count;
+        next_search_index = first + request->page_count;
+        if (next_search_index >= FRAME_COUNT) {
+            next_search_index = 0U;
+        }
+
+        allocation->physical_base = record->physical_base;
+        allocation->page_count = record->page_count;
+        allocation->alignment = request->alignment;
+        allocation->maximum_physical_address =
+            request->maximum_physical_address;
+        allocation->identifier = record->identifier;
+        allocation->active = true;
+        return FRAME_STATUS_OK;
+    }
+
+    return FRAME_STATUS_OUT_OF_MEMORY;
+}
+
+enum frame_status frame_release_contiguous(
+    struct frame_contiguous_allocation *allocation
+)
+{
+    struct contiguous_record *record = NULL;
+    size_t first;
+
+    if (allocation == NULL) {
+        return FRAME_STATUS_NULL_ARGUMENT;
+    }
+
+    if (!allocator_initialized) {
+        return FRAME_STATUS_NOT_INITIALIZED;
+    }
+
+    if (!allocation->active) {
+        return FRAME_STATUS_DOUBLE_FREE;
+    }
+
+    for (size_t index = 0U;
+         index < FRAME_CONTIGUOUS_ALLOCATION_CAPACITY;
+         ++index) {
+        if (contiguous_records[index].active &&
+            contiguous_records[index].identifier == allocation->identifier) {
+            record = &contiguous_records[index];
+            break;
+        }
+    }
+
+    if (record == NULL) {
+        return FRAME_STATUS_DOUBLE_FREE;
+    }
+
+    if (record->physical_base != allocation->physical_base ||
+        record->page_count != allocation->page_count) {
+        return FRAME_STATUS_BAD_CONTIGUOUS_ALLOCATION;
+    }
+
+    first = (size_t)((uint64_t)record->physical_base / PYRENIS_PAGE_SIZE);
+    for (size_t offset = 0U; offset < record->page_count; ++offset) {
+        if (!bitmap_get(eligible_bitmap, first + offset) ||
+            !bitmap_get(used_bitmap, first + offset)) {
+            return FRAME_STATUS_BAD_CONTIGUOUS_ALLOCATION;
+        }
+    }
+
+    for (size_t offset = 0U; offset < record->page_count; ++offset) {
+        bitmap_set(used_bitmap, first + offset, false);
+    }
+
+    allocator_stats.free_frames += record->page_count;
+    allocator_stats.allocated_frames -= record->page_count;
+    if (first < next_search_index) {
+        next_search_index = first;
+    }
+
+    record->active = false;
+    allocation->active = false;
     return FRAME_STATUS_OK;
 }
 
@@ -452,7 +692,23 @@ const char *frame_status_string(enum frame_status status)
         return "physical frame is already allocated";
     case FRAME_STATUS_DOUBLE_FREE:
         return "physical frame was released twice";
+    case FRAME_STATUS_ZERO_PAGE_COUNT:
+        return "contiguous allocation requests zero pages";
+    case FRAME_STATUS_BAD_ALIGNMENT:
+        return "contiguous allocation alignment is not a page-sized power of two";
+    case FRAME_STATUS_ALIGNMENT_UNSATISFIABLE:
+        return "contiguous allocation alignment cannot fit below its address bound";
+    case FRAME_STATUS_ADDRESS_BOUND_UNSATISFIED:
+        return "contiguous allocation cannot fit below its inclusive address bound";
+    case FRAME_STATUS_TOO_MANY_CONTIGUOUS_ALLOCATIONS:
+        return "contiguous allocation record table is full";
+    case FRAME_STATUS_BAD_CONTIGUOUS_ALLOCATION:
+        return "contiguous allocation handle does not own its frame range";
+    case FRAME_STATUS_COUNT:
+        break;
     default:
-        return "unknown frame allocator status";
+        break;
     }
+
+    return "unknown frame allocator status";
 }

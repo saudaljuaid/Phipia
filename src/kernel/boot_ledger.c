@@ -4,8 +4,13 @@
 #include <stdint.h>
 
 #include <pyrenis/boot_ledger.h>
+#include <pyrenis/device_substrate.h>
+#include <pyrenis/dma.h>
 #include <pyrenis/framebuffer.h>
+#include <pyrenis/interrupt_vector.h>
+#include <pyrenis/msix.h>
 #include <pyrenis/paging.h>
+#include <pyrenis/pci_resource.h>
 #include <pyrenis/pointer.h>
 #include <pyrenis/ui.h>
 #include <pyrenis/ui_font.h>
@@ -51,7 +56,11 @@ static const char *const stage_names[] = {
     "First Light layout",
     "desktop construction",
     "desktop activation",
-    "First Light installed proof"
+    "First Light installed proof",
+    "PCI resource ownership",
+    "dynamic interrupt vectors",
+    "DMA foundation",
+    "installed device-substrate proof"
 };
 
 static const char *const capability_names[] = {
@@ -91,7 +100,12 @@ static const char *const capability_names[] = {
     "UI layout validated",
     "desktop shell available",
     "desktop shell activated",
-    "First Light installed proof complete"
+    "First Light installed proof complete",
+    "PCI resource ownership available",
+    "dynamic vector foundation available",
+    "DMA foundation available",
+    "device-substrate installed proof complete",
+    "device-substrate fixture absent"
 };
 
 static const char *const status_names[] = {
@@ -1300,6 +1314,62 @@ enum boot_ledger_status boot_ledger_verify_installed(
             BOOT_STAGE_FRAMEBUFFER_OUTPUT,
             BOOT_CAPABILITY_FRAMEBUFFER_WC_INDEPENDENTLY_PROVED);
         return ledger->status;
+    }
+
+    if (boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE)) {
+        const struct pci_resource_state resources = pci_resource_get_state();
+        const struct interrupt_vector_state vectors =
+            interrupt_vector_get_state();
+        const struct dma_state installed_dma = dma_get_state();
+
+        if (!boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE) ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE) ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE) ||
+            pci_resource_verify() != PCI_RESOURCE_STATUS_OK ||
+            dma_verify() != DMA_STATUS_OK || !resources.active ||
+            !vectors.active || !installed_dma.active) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
+                BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE);
+            return ledger->status;
+        }
+    }
+
+    const bool substrate_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE);
+    const bool substrate_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT);
+    if (substrate_complete || substrate_absent) {
+        const struct boot_stage_receipt *substrate =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_DEVICE_SUBSTRATE_PROOF);
+        const struct device_substrate_proof proof =
+            device_substrate_get_proof();
+
+        if (substrate_complete == substrate_absent || substrate == NULL ||
+            (substrate_complete &&
+                (substrate->result != BOOT_RECEIPT_RAN ||
+                 substrate->proof_counter_count != 2U ||
+                 substrate->proof_counters[0] != 1U ||
+                 substrate->proof_counters[1] !=
+                    DEVICE_SUBSTRATE_DMA_BYTES ||
+                 !proof.dma_device_written || !proof.msix_delivered ||
+                 !proof.ownership_round_trip || !proof.teardown_complete)) ||
+            (substrate_absent &&
+                substrate->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
+                BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE);
+            return ledger->status;
+        }
     }
 
     if (boot_ledger_has_capability(ledger,

@@ -26,9 +26,9 @@ installed-state proof whose assertions run in the same kernel they check.
 
 | Object | Capacity |
 | --- | ---: |
-| descriptors and canonical plan | 32 stages |
-| receipts | 32 receipts |
-| required, success or fallback capabilities per descriptor | 10 each |
+| descriptors and canonical plan | 34 stages |
+| receipts | 34 receipts |
+| required, success or fallback capabilities per descriptor | 11 each |
 | stable proof counters per receipt | 2 |
 
 Plan construction, validation, execution bookkeeping and the pure planner test
@@ -79,6 +79,10 @@ no new public capability; it still receives one ordered receipt.
 | 20 | PCI access | page tables, timer calibration | PCI access available | required | services |
 | 21 | threading | heap, timer calibration | threading available | required | services |
 | 22 | scheduler | heap, threading, timer calibration, interrupts | scheduler available | required | services / scheduler |
+| 31 | PCI resource ownership | paging, PCI, frames | PCI resource ownership available | required | services |
+| 32 | dynamic interrupt vectors | IDT, controllers, local APIC, interrupts | dynamic vector foundation available | required | services |
+| 33 | DMA foundation | paging, frames | DMA foundation available | required | services |
+| 34 | installed device-substrate proof | paging, PCI, heap, frames, local APIC, interrupts, threading, scheduler, PCI resources, vectors, DMA | installed device-substrate proof; declared fixture absence on neutral skip | optional neutral | services |
 | 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler | boot proofs complete | required | proofs |
 | 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
 | 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
@@ -128,8 +132,18 @@ The complete capability enumeration is:
 32. pointer input absent;
 33. UI layout validated;
 34. desktop shell available;
-35. desktop shell activated; and
-36. First Light installed proof complete.
+35. desktop shell activated;
+36. First Light installed proof complete;
+37. PCI resource ownership available;
+38. dynamic vector foundation available;
+39. DMA foundation available;
+40. device-substrate installed proof complete; and
+41. device-substrate fixture absent.
+
+The four appended identifiers preserve every pre-v0.3.0 stable stage and
+capability number. Their declared phase and requirements place all three
+foundations and the proof after the scheduler but before closing proofs; raw
+enum position and descriptor declaration order do not define execution order.
 
 The framebuffer decision and framebuffer WC proof are intentionally distinct.
 The device-window registry says what paging installed. The independent WC stage
@@ -180,6 +194,16 @@ Desktop activation is not an irreversible-class member, but installed semantic
 verification requires its exact ten prerequisites. In particular, it rejects
 removal of the independent WC or scheduler edge by naming desktop activation
 and the missing capability, even if phases happen to preserve observed order.
+
+The device-substrate proof similarly is not an irreversible-class member, but
+its descriptor must carry exactly eleven prerequisites: paging, PCI, heap,
+frames, local APIC/controllers, interrupts, threading, scheduler, and all three
+new foundations. Its execution function deletes one edge from a local copy and
+requires the semantic prerequisite checker to reject it. The installed verifier
+then requires either the ran receipt with counters `1` interrupt and `64` DMA
+bytes, or a neutral skipped receipt with the fixture-absent capability, never
+both. Closing proofs independently require every claim, MMIO page, DMA handle,
+vector, handler, MSI-X binding, and bus-master count to be zero.
 
 The framebuffer and cached-surface store fences remain in their existing
 implementation paths. The ledger changes who may call those paths, not their
@@ -278,13 +302,12 @@ permanent boot output is a host-test failure.
 At `pyr>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
-    plan 30  run 30  skip 0  caps 34  receipts 30
-    fingerprint 0x44D80F3C1AA68CB9
+    plan 34  run 33  skip 1  caps 38  receipts 34
+    fingerprint 0xHHHHHHHHHHHHHHHH
 
-The exact fingerprint is build-plan dependent; the normal pointer-present shape
-above is stable. The pointer-absence path has one neutral skip, 34 established
-capabilities, fingerprint `0x60D92F66EE5D2890`, and remains `PASS`. Other
-optional fallback or failure changes the state to `DEGRADED`.
+The exact fingerprint is build-plan dependent. Fixture and pointer absence use
+declared neutral-skip capabilities and remain `PASS`; other optional fallback or
+failure changes the state to `DEGRADED`.
 
 The `boot-ledger` QEMU scenario owns guest exit `0x2E`, host status 93. It emits
 exactly one begin and pass marker, walks the actual published ledger, checks all
@@ -308,7 +331,9 @@ build; the narrowest scenario was used and the snapshot was restored without
 | duplicate a stable stage ID | named duplicate-stage refusal | PASS — `duplicate stage`; `early serial` |
 | duplicate one exclusive capability provider | named duplicate-provider refusal | PASS — `duplicate capability provider`; `device-window registry`; `IDT installed` |
 | add capacity plus one descriptors | named stage-capacity refusal | PASS — `too many stages` before execution |
-| reverse descriptor declarations | identical order, receipts, fingerprint and boot | PASS — all 30 receipts and guest status 93 identical; fingerprint `0x44D80F3C1AA68CB9` |
+| reverse descriptor declarations | identical order, receipts, fingerprint and boot | PASS — canonical receipt order and guest status remain identical |
+| remove one of the device proof's eleven prerequisites | semantic prerequisite refusal before touching the fixture | PASS — local descriptor copy is rejected on every boot |
+| change device-substrate guest exit `0x30` | exit-contract negative control | PASS — mutated `0x31` is rejected; host contract remains 97 |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
 | allow framebuffer output before WC | framebuffer/WC refusal | PASS — `irreversible stage ordered too early`; framebuffer output; independent WC capability |

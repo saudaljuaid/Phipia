@@ -62,7 +62,11 @@ static uint32_t port_config_address(struct pci_address address, uint16_t offset)
  * window's base is a firmware address that discovery already refused to accept
  * as zero.
  */
-static uint64_t ecam_address(struct pci_address address, uint16_t offset)
+static uint64_t ecam_access_address(
+    struct pci_address address,
+    uint16_t offset,
+    size_t width
+)
 {
     uint64_t displacement;
 
@@ -82,16 +86,25 @@ static uint64_t ecam_address(struct pci_address address, uint16_t offset)
      * so the mapped size is the bound that matters rather than the declared
      * one. A register past it is refused, not wrapped.
      */
-    if (displacement + sizeof(uint32_t) > state.ecam_size) {
+    if (displacement > UINT64_MAX - width ||
+        displacement + width > state.ecam_size ||
+        state.ecam_base > UINT64_MAX - displacement) {
         return 0U;
     }
 
     return state.ecam_base + displacement;
 }
 
+static uint64_t ecam_address(struct pci_address address, uint16_t offset)
+{
+    return ecam_access_address(address, offset, sizeof(uint32_t));
+}
+
 static enum pci_status validate_access(
     struct pci_address address,
-    uint16_t offset
+    uint16_t offset,
+    size_t width,
+    size_t limit
 )
 {
     if (address.device >= PCI_DEVICES_PER_BUS ||
@@ -104,8 +117,13 @@ static enum pci_status validate_access(
      * read of configuration space is not a narrower read, it is a different
      * register, so it is refused rather than rounded down.
      */
-    if (offset % sizeof(uint32_t) != 0U ||
-        offset > PCI_CONFIG_SPACE_SIZE - sizeof(uint32_t)) {
+    if (width != sizeof(uint8_t) && width != sizeof(uint16_t) &&
+        width != sizeof(uint32_t)) {
+        return PCI_STATUS_BAD_WIDTH;
+    }
+
+    if ((size_t)offset % width != 0U || width > limit ||
+        (size_t)offset > limit - width) {
         return PCI_STATUS_BAD_OFFSET;
     }
 
@@ -125,7 +143,8 @@ enum pci_status pci_config_read_port(
     }
 
     *value = 0U;
-    status = validate_access(address, offset);
+    status = validate_access(address, offset, sizeof(uint32_t),
+        PCI_CONFIG_SPACE_SIZE);
 
     if (status != PCI_STATUS_OK) {
         return status;
@@ -159,7 +178,8 @@ enum pci_status pci_config_read_ecam(
     }
 
     *value = 0U;
-    status = validate_access(address, offset);
+    status = validate_access(address, offset, sizeof(uint32_t),
+        PCI_ECAM_CONFIG_SPACE_SIZE);
 
     if (status != PCI_STATUS_OK) {
         return status;
@@ -181,6 +201,82 @@ enum pci_status pci_config_read_ecam(
      * rather than a cache hit; docs/PCI_ENUMERATION.md says why that matters.
      */
     *value = *(const volatile uint32_t *)(uintptr_t)location;
+    return PCI_STATUS_OK;
+}
+
+enum pci_status pci_config_write_port(
+    struct pci_address address,
+    uint16_t offset,
+    size_t width,
+    uint32_t value
+)
+{
+    enum pci_status status = validate_access(address, offset, width,
+        PCI_CONFIG_SPACE_SIZE);
+
+    if (status != PCI_STATUS_OK) {
+        return status;
+    }
+
+    if (address.segment != 0U) {
+        return PCI_STATUS_BAD_ADDRESS;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return PCI_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    cpu_out32(PCI_CONFIG_ADDRESS_PORT,
+        port_config_address(address, (uint16_t)(offset & ~UINT16_C(3))));
+    if (width == sizeof(uint8_t)) {
+        cpu_out8((uint16_t)(PCI_CONFIG_DATA_PORT + offset % 4U),
+            (uint8_t)value);
+    } else if (width == sizeof(uint16_t)) {
+        cpu_out16((uint16_t)(PCI_CONFIG_DATA_PORT + offset % 4U),
+            (uint16_t)value);
+    } else {
+        cpu_out32(PCI_CONFIG_DATA_PORT, value);
+    }
+
+    return PCI_STATUS_OK;
+}
+
+enum pci_status pci_config_write_ecam(
+    struct pci_address address,
+    uint16_t offset,
+    size_t width,
+    uint32_t value
+)
+{
+    enum pci_status status = validate_access(address, offset, width,
+        PCI_ECAM_CONFIG_SPACE_SIZE);
+    uint64_t location;
+
+    if (status != PCI_STATUS_OK) {
+        return status;
+    }
+
+    if (cpu_interrupts_enabled()) {
+        return PCI_STATUS_INTERRUPTS_ENABLED;
+    }
+
+    if (!state.ecam_active) {
+        return PCI_STATUS_NO_ECAM;
+    }
+
+    location = ecam_access_address(address, offset, width);
+    if (location == 0U) {
+        return PCI_STATUS_OUTSIDE_ECAM_WINDOW;
+    }
+
+    if (width == sizeof(uint8_t)) {
+        *(volatile uint8_t *)(uintptr_t)location = (uint8_t)value;
+    } else if (width == sizeof(uint16_t)) {
+        *(volatile uint16_t *)(uintptr_t)location = (uint16_t)value;
+    } else {
+        *(volatile uint32_t *)(uintptr_t)location = value;
+    }
+    __asm__ volatile ("" : : : "memory");
     return PCI_STATUS_OK;
 }
 
@@ -787,6 +883,22 @@ const struct pci_function *pci_find_class(uint8_t class_code, uint8_t subclass)
     return NULL;
 }
 
+const struct pci_function *pci_find_device(uint16_t vendor_id, uint16_t device_id)
+{
+    if (!state.active) {
+        return NULL;
+    }
+
+    for (size_t index = 0U; index < state.function_count; ++index) {
+        if (functions[index].vendor_id == vendor_id &&
+            functions[index].device_id == device_id) {
+            return &functions[index];
+        }
+    }
+
+    return NULL;
+}
+
 struct pci_state pci_get_state(void)
 {
     return state;
@@ -885,6 +997,7 @@ const char *pci_status_string(enum pci_status status)
         "PCI configuration offset is unaligned or out of range",
         "no PCI Express configuration window is mapped",
         "PCI register is outside the mapped configuration window",
+        "PCI configuration access width is unsupported",
         "PCI enumeration exceeds the early function limit",
         "PCI capability pointer is inside the standard header",
         "PCI capability list contains a cycle",

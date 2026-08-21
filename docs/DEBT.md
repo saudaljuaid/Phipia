@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-two scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-three scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -29,7 +29,7 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 1,799-line bounded kernel shell and `test.c` is now 4,595
+roadmap. `ui.c` is one 1,799-line bounded kernel shell and `test.c` is now 4,658
 lines. Splitting panel rendering or scenario helpers may improve shape later,
 but userspace, a process model, a window manager, and a compositor are missing
 architectural layers rather than refactors owed by this milestone.
@@ -126,8 +126,8 @@ The Pyrenis Boot Ledger is the second payment:
 | | | |
 | --- | ---: | --- |
 | `src/kernel/kernel.c` | 101 | validates, executes and verifies one ledger; no subsystem call order |
-| `src/kernel/boot_plan.c` | 1178 | private stage functions and typed dependency declarations |
-| `src/kernel/boot_ledger.c` | 1780 | bounded canonical planner, receipts, fingerprint and installed proof |
+| `src/kernel/boot_plan.c` | 1894 | private stage functions and typed dependency declarations |
+| `src/kernel/boot_ledger.c` | 2047 | bounded canonical planner, receipts, fingerprint and installed proof |
 | `src/kernel/boot_report.c` | 281 | describes what was found, never decides |
 | `src/kernel/boot_proofs.c` | 2661 | existing hardware proofs and transition sequences |
 
@@ -185,10 +185,17 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is ninety-one shell assertions
+### 4. The harness contract is 167 shell assertions
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    91
+    167
+
+The stale figures before this remeasurement were thirty-one scenarios and 91
+matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
+scenarios and 150 assertions; the device-foundation contract adds the
+thirty-third scenario and reaches 167, including the executable-text ISA audit.
+The harness was extended, not refactored, so this debt is explicitly **not
+paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It
 works — renaming any contract line has been shown to turn the suite red, every
@@ -250,7 +257,7 @@ this is not a surprise, and the number above is what it will cost.
 
 Measured, and healthy:
 
-- **Thirty-one QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty-three QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
 - **726 KB kernel image**, of which 66 KB is the logo.
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`

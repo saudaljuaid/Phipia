@@ -169,11 +169,11 @@ and inherited closing boot proofs. Installed verification also asserts the WC
 and scheduler edges semantically, so deleting either requirement after plan
 validation is rejected by the named capability.
 
-The bounded capacities are 32 stages, 32 receipts, ten capabilities per stage,
-and two proof counters per receipt. With the QEMU pointer present, the installed
-shape is 30 stages, 30 receipts, 34 established capabilities, zero skips, and
-fingerprint `0x44D80F3C1AA68CB9`. The forced absence control is 30/30/34 with
-one neutral skip and fingerprint `0x60D92F66EE5D2890`.
+The bounded capacities are 34 stages, 34 receipts, eleven capabilities per
+stage, and two proof counters per receipt. A normal QEMU boot records all 34
+receipts; the absent device-substrate fixture contributes one neutral skip.
+Fingerprints remain build-plan dependent. Pointer absence contributes its own
+neutral skip without degrading the installed ledger.
 
 Framebuffer, font, layout, construction, or activation failure is an optional
 degraded path. It cannot forge later capabilities, and the already-established
