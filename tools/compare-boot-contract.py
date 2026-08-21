@@ -130,11 +130,11 @@ def rebrand(line: str) -> str:
     )
     line = line.replace(
         "logo 187x136 from 32543 bytes",
-        "logo 280x250 from 232563 bytes",
+        "logo 277x280 from 92763 bytes",
     )
     line = line.replace(
         "logo verified 25432 pixels",
-        "logo verified 70000 pixels",
+        "logo verified 77560 pixels",
     )
     line = line.replace(
         "screen console drew 203 characters",

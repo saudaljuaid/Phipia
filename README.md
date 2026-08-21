@@ -11,10 +11,10 @@
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verify"></a>
-  <img src="https://img.shields.io/badge/machine-x86__64-52A837" alt="x86_64">
-  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-F6850C" alt="C11 and assembly">
-  <img src="https://img.shields.io/badge/parsers-Rust-DF3031" alt="Rust parsers">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-0084CE" alt="GPL-3.0-only"></a>
+  <img src="https://img.shields.io/badge/machine-x86__64-008E92" alt="x86_64">
+  <img src="https://img.shields.io/badge/kernel-C11%20%2B%20assembly-E96503" alt="C11 and assembly">
+  <img src="https://img.shields.io/badge/parsers-Rust-782CB2" alt="Rust parsers">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-018DD8" alt="GPL-3.0-only"></a>
 </p>
 
 <p align="center">
@@ -39,10 +39,11 @@ part of the architecture rather than a claim left to screenshots.
 
 ## Identity
 
-The canonical mark is the exact supplied 537×479 RGBA source at
+The canonical mark is the supplied 550×556 RGBA source with only the three
+user-identified lower tail decorations removed, at
 [`assets/sapote-logo.png`](assets/sapote-logo.png). It is never redrawn,
 recoloured, cropped, or passed through a runtime PNG parser. First Light uses
-the mark's six-colour rainbow with platinum, black, and white classic chrome.
+the mark's seven-colour rainbow with platinum, black, and white classic chrome.
 The complete asset, palette, voice, and naming contract is in
 [`docs/BRAND.md`](docs/BRAND.md).
 
