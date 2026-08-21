@@ -3,11 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/cpu.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/paging.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/pci_resource.h>
+#include <sapote/cpu.h>
+#include <sapote/memory.h>
+#include <sapote/paging.h>
+#include <sapote/pci.h>
+#include <sapote/pci_resource.h>
 
 #define PCI_REGISTER_BAR_BASE UINT16_C(0x10)
 #define PCI_BAR_STRIDE UINT16_C(4)
@@ -1096,7 +1096,7 @@ bool pci_resource_self_test(const struct pci_function *probe_function)
         return false;
     }
     const bool ram_overlap = frame_range_overlaps_allocatable_memory(
-        (uint64_t)ram_page, PYRENIS_PAGE_SIZE);
+        (uint64_t)ram_page, SAPOTE_PAGE_SIZE);
     if (frame_release(ram_page) != FRAME_STATUS_OK || !ram_overlap) {
         return false;
     }

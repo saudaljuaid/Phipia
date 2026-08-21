@@ -6,12 +6,12 @@
  */
 #include <stdint.h>
 
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/boot_plan.h>
-#include <pyrenis/console.h>
-#include <pyrenis/shell.h>
-#include <pyrenis/test.h>
-#include <pyrenis/ui.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/boot_plan.h>
+#include <sapote/console.h>
+#include <sapote/shell.h>
+#include <sapote/test.h>
+#include <sapote/ui.h>
 
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information);
 
@@ -28,7 +28,7 @@ static void report_ledger_refusal(
     const struct boot_context *context
 )
 {
-    console_write("Pyrenis: Boot Ledger refusal: ");
+    console_write("Sapote: Boot Ledger refusal: ");
     console_write(boot_ledger_status_string(ledger->status));
 
     if (ledger->refusal_stage != BOOT_STAGE_INVALID) {
@@ -88,9 +88,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     }
 
     boot_ledger_publish(&installed_ledger);
-    console_write("Pyrenis: Boot Ledger installed proof passed\n");
+    console_write("Sapote: Boot Ledger installed proof passed\n");
     if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
-        console_write("Pyrenis: First Light ledger status redraw failed\n");
+        console_write("Sapote: First Light ledger status redraw failed\n");
     }
 
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {

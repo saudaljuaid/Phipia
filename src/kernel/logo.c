@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/logo.h>
+#include <sapote/logo.h>
 
 /*
  * The C half of the boot logo: nothing but the names for what the Rust decoder

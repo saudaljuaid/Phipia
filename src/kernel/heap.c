@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/cpu.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/paging.h>
+#include <sapote/cpu.h>
+#include <sapote/heap.h>
+#include <sapote/memory.h>
+#include <sapote/paging.h>
 
 _Static_assert(HEAP_SIZE % PAGING_PAGE_SIZE == 0U,
                "the heap window is not a whole number of pages");
