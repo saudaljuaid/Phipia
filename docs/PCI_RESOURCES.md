@@ -77,3 +77,13 @@ pages, and bus masters.
 This layer does not reassign BARs, arbitrate bridge windows, implement SR-IOV,
 or provide hotplug. It is the resource substrate for later drivers, not a
 driver model.
+
+## xHCI claim consumer
+
+v0.4.0's xHCI host keeps one typed claim across BAR validation, reset, DMA
+preparation, MSI-X binding, operation, slot disable, and teardown. Bus mastering
+is enabled only after the complete seven-or-eight-allocation request is
+initialized and device-owned. Halt is confirmed and bus mastering is disabled
+before any allocation returns to the CPU. Every partial failure releases the
+same claim and mapping in reverse order; the final resource snapshot must equal
+the entry snapshot.

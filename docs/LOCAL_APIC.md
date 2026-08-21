@@ -107,3 +107,8 @@ and owned MSI-X vectors.
 
 - **Multi-CPU affinity.** Every vector targets the bootstrap processor.
 - **Interrupt remapping.** See `docs/MSI_X.md`.
+
+The v0.4.0 xHCI interrupter uses the same dynamic MSI-X dispatch and bootstrap
+local-APIC acknowledgement. Its handler processes IMAN/ERDP and USBSTS first;
+the common dispatcher sends the local EOI afterward. No I/O APIC or directed
+EOI participates.

@@ -268,6 +268,9 @@ I/O-APIC version bits alone are not presented as proof that directed EOI ran.
   APIC acknowledgement; see `docs/MSI_X.md`. Conventional MSI remains deferred.
   It is not a substitute for this path: pin-based delivery still carries every
   device that predates message-signalled interrupts.
+  The v0.4.0 xHCI proof reinforces that separation: the programmed MSI-X vector
+  enters the dynamic dispatcher directly, and no redirection entry, remote-IRR
+  state, or directed EOI is allocated for the controller.
 - **The older scenarios still wait unbounded.** `apic`, `ioapic`, `retired`,
   `pit` and the clock scenarios halt for their interrupts, so a regression in
   their delivery is a harness timeout rather than a diagnosis. Normal boot's

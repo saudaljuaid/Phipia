@@ -109,5 +109,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_device_substrate();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_XHCI) {
+        kernel_test_complete_xhci();
+    }
+
     shell_run();
 }

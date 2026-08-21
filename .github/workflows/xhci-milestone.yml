@@ -1,0 +1,149 @@
+name: xHCI milestone evidence
+
+on:
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: xhci-milestone-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    bounded-evidence:
+        name: bounded-xhci-evidence
+        runs-on: ubuntu-24.04
+        timeout-minutes: 60
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install build tools
+              run: |
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+            - name: Install the Rust bare-metal target
+              run: rustup target add x86_64-unknown-none
+            - name: Record the fixture and accelerator surface
+              run: |
+                  mkdir -p evidence/xhci
+                  qemu-system-x86_64 -version | tee evidence/xhci/qemu-version.txt
+                  qemu-system-x86_64 -device qemu-xhci,help \
+                      | tee evidence/xhci/qemu-xhci-help.txt
+                  qemu-system-x86_64 -device usb-kbd,help \
+                      | tee evidence/xhci/usb-kbd-help.txt
+                  qemu-system-x86_64 -accel help \
+                      | tee evidence/xhci/accelerator-help.txt
+            - name: Verify the kernel artifact
+              run: make verify
+            - name: Run ten complete serial TCG sweeps
+              shell: bash
+              run: |
+                  set -o pipefail
+                  for sweep in $(seq -w 1 10); do
+                      make qemu-tests QEMU_ACCEL=tcg \
+                          | tee "evidence/xhci/tcg-sweep-${sweep}.txt"
+                      mkdir -p "evidence/xhci/tcg-sweep-${sweep}-logs"
+                      for log in build/tests/*/serial.log; do
+                          scenario=$(basename "$(dirname "$log")")
+                          cp "$log" \
+                              "evidence/xhci/tcg-sweep-${sweep}-logs/${scenario}.log"
+                      done
+                  done
+                  cp evidence/xhci/tcg-sweep-10-logs/xhci.log \
+                      evidence/xhci/xhci-proof-transcript.txt
+            - name: Check and exercise available hardware accelerators
+              shell: bash
+              run: |
+                  set -o pipefail
+                  if test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm; then
+                      printf '%s\n' \
+                          'KVM available: /dev/kvm is a readable and writable character device.' \
+                          | tee evidence/xhci/accelerator-results.txt
+                      make qemu-tests QEMU_ACCEL=kvm \
+                          | tee evidence/xhci/kvm-sweep.txt
+                      printf '%s\n' 'KVM complete 34-scenario sweep: passed.' \
+                          | tee -a evidence/xhci/accelerator-results.txt
+                  else
+                      printf '%s\n' \
+                          'KVM unavailable: /dev/kvm is not a readable and writable character device.' \
+                          | tee evidence/xhci/accelerator-results.txt
+                      printf '%s\n' \
+                          'No hardware accelerator is available on this Linux runner; no hardware-accelerated sweep can run.' \
+                          | tee -a evidence/xhci/accelerator-results.txt
+                  fi
+            - name: Assemble release evidence
+              shell: bash
+              run: |
+                  set -o pipefail
+                  make iso
+                  cp build/sapote.iso evidence/xhci/Sapote-v0.4.0.iso
+                  proof=evidence/xhci/xhci-proof-transcript.txt
+                  expected_lines=(
+                      'Sapote: xHCI foundation robustness controls 17/17 passed'
+                      'Sapote: xHCI controller ready'
+                      'Sapote: USB device descriptor DMA completed: 18 bytes'
+                      'Sapote: xHCI MSI-X descriptor completion count 1'
+                      'Sapote: xHCI DMA ownership CPU-CONTROLLER-CPU complete'
+                      'Sapote: xHCI teardown complete'
+                      'ST XHCI descriptor 18 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 19'
+                  )
+                  for expected_line in "${expected_lines[@]}"; do
+                      if ! grep -Fxq "$expected_line" "$proof"; then
+                          printf 'Missing xHCI evidence: %s\n' "$expected_line" >&2
+                          exit 1
+                      fi
+                  done
+                  proof_record=$(grep -Fx \
+                      'ST XHCI descriptor 18 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 19' \
+                      "$proof")
+                  scenario_count=$(
+                      sed -n '/^TEST_SCENARIOS :=/,/^TEST_TARGETS :=/p' Makefile \
+                          | sed '$d; s/^TEST_SCENARIOS :=//; s/\\//g' \
+                          | wc -w
+                  )
+                  assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  if test "$scenario_count" -ne 34 || \
+                      test "$assertion_count" -ne 179; then
+                      printf 'Measured contract drifted: %s scenarios, %s assertion lines.\n' \
+                          "$scenario_count" "$assertion_count" >&2
+                      exit 1
+                  fi
+                  {
+                      printf 'Sapote xHCI Host Foundation verification\n'
+                      printf 'commit: %s\n' "$GITHUB_SHA"
+                      printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
+                      printf 'scenarios per sweep: %s\n' "$scenario_count"
+                      printf 'shell assertion lines: %s\n' "$assertion_count"
+                      printf 'make verify: passed\n'
+                      printf 'serial TCG complete sweeps: 10 passed\n'
+                      cat evidence/xhci/accelerator-results.txt
+                      printf '%s\n' \
+                          'xHCI descriptor proof: 18 bytes, MSI-X delta 1, ownership CPU-CONTROLLER-CPU, teardown clean'
+                      printf '%s\n' \
+                          'controlled robustness results: 19 passed'
+                  } >evidence/xhci/verification-summary.txt
+                  {
+                      printf 'Controlled xHCI robustness results\n'
+                      printf 'Execution: deterministic guest-local values and explicit test hooks only.\n'
+                      printf 'Result: %s\n' "$proof_record"
+                      printf 'Matrix: docs/USB_ENUMERATION.md, controlled robustness matrix 1-19.\n'
+                  } >evidence/xhci/controlled-robustness-results.txt
+                  (cd evidence/xhci && sha256sum \
+                      Sapote-v0.4.0.iso \
+                      xhci-proof-transcript.txt \
+                      verification-summary.txt \
+                      controlled-robustness-results.txt >SHA256SUMS)
+                  cat evidence/xhci/verification-summary.txt
+                  cat evidence/xhci/SHA256SUMS
+            - name: Upload the bounded milestone evidence
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: sapote-xhci-milestone-${{ github.sha }}
+                  path: evidence/xhci
+                  if-no-files-found: error
+                  retention-days: 30

@@ -47,6 +47,7 @@
 #include <sapote/tsc.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
+#include <sapote/xhci.h>
 
 static void stage_failed(
     struct boot_context *context,
@@ -866,6 +867,36 @@ static void execute_dma_foundation(
     boot_stage_result_succeed(descriptor, result);
 }
 
+static bool dependencies_complete(
+    const struct boot_stage_descriptor *descriptor,
+    const enum boot_capability *required,
+    size_t required_count
+)
+{
+    if (descriptor == NULL || descriptor->required_capability_count !=
+            required_count) {
+        return false;
+    }
+    for (size_t required_index = 0U;
+         required_index < required_count;
+         ++required_index) {
+        bool found = false;
+        for (size_t declared_index = 0U;
+             declared_index < descriptor->required_capability_count;
+             ++declared_index) {
+            if (descriptor->required_capabilities[declared_index] ==
+                    required[required_index]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool device_proof_dependencies_complete(
     const struct boot_stage_descriptor *descriptor
 )
@@ -884,28 +915,8 @@ static bool device_proof_dependencies_complete(
         BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE
     };
 
-    if (descriptor == NULL || descriptor->required_capability_count !=
-            sizeof(required) / sizeof(required[0])) {
-        return false;
-    }
-    for (size_t required_index = 0U;
-         required_index < sizeof(required) / sizeof(required[0]);
-         ++required_index) {
-        bool found = false;
-        for (size_t declared_index = 0U;
-             declared_index < descriptor->required_capability_count;
-             ++declared_index) {
-            if (descriptor->required_capabilities[declared_index] ==
-                    required[required_index]) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return false;
-        }
-    }
-    return true;
+    return dependencies_complete(descriptor, required,
+        sizeof(required) / sizeof(required[0]));
 }
 
 static void execute_device_substrate_proof(
@@ -983,6 +994,163 @@ static void execute_device_substrate_proof(
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.interrupt_count;
     result->proof_counters[1] = proof.random_bytes;
+    result->proof_counter_count = 2U;
+}
+
+static void execute_xhci_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!xhci_foundation_self_test(&completed) ||
+        completed != XHCI_FOUNDATION_ROBUSTNESS_TESTS) {
+        stage_failed(context, result,
+            "xHCI foundation robustness controls failed");
+        return;
+    }
+    console_write("Sapote: xHCI foundation robustness controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(XHCI_FOUNDATION_ROBUSTNESS_TESTS);
+    console_write(" passed\n");
+    console_write(
+        "Sapote: bounded xHCI host-controller foundation established\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static bool xhci_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    static const enum boot_capability required[] = {
+        BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+        BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+        BOOT_CAPABILITY_HEAP_AVAILABLE,
+        BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+        BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+        BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+        BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+        BOOT_CAPABILITY_THREADING_AVAILABLE,
+        BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+        BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+        BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_XHCI_FOUNDATION_AVAILABLE
+    };
+
+    return dependencies_complete(descriptor, required,
+        sizeof(required) / sizeof(required[0]));
+}
+
+static const struct pci_function *xhci_pci_function(void)
+{
+    for (size_t index = 0U; index < pci_function_count(); ++index) {
+        const struct pci_function *function = pci_function_at(index);
+
+        if (function != NULL &&
+            function->class_code == XHCI_PCI_CLASS_SERIAL_BUS &&
+            function->subclass == XHCI_PCI_SUBCLASS_USB &&
+            function->prog_if == XHCI_PCI_PROGRAMMING_INTERFACE) {
+            return function;
+        }
+    }
+    return NULL;
+}
+
+static void execute_xhci_descriptor_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct xhci_descriptor_proof proof;
+    enum xhci_status status;
+
+    if (!xhci_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "xHCI descriptor proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (xhci_proof_dependencies_complete(&missing_count) ||
+        xhci_proof_dependencies_complete(&missing_member) ||
+        !kernel_test_xhci_exit_self_test()) {
+        stage_failed(context, result,
+            "xHCI descriptor contract negative controls failed");
+        return;
+    }
+
+    status = xhci_descriptor_prove(&proof);
+    if (status == XHCI_STATUS_ABSENT) {
+        console_write("Sapote: xHCI fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != XHCI_STATUS_OK) {
+        const struct pci_function *function = xhci_pci_function();
+
+        console_write("Sapote: PCI ");
+        if (function == NULL) {
+            console_write("unknown");
+        } else {
+            console_write_u64(function->address.segment);
+            console_putc(':');
+            console_write_u64(function->address.bus);
+            console_putc(':');
+            console_write_u64(function->address.device);
+            console_putc('.');
+            console_write_u64(function->address.function);
+        }
+        console_write(" operation xHCI descriptor proof violated invariant: ");
+        console_write(xhci_status_string(status));
+        if (status == XHCI_STATUS_UNSUPPORTED_VERSION) {
+            console_write("; HCIVERSION ");
+            console_write_hex(proof.controller_version);
+        }
+        if (proof.root_port != 0U) {
+            console_write("; port ");
+            console_write_u64(proof.root_port);
+        }
+        if (proof.slot != 0U) {
+            console_write("; slot ");
+            console_write_u64(proof.slot);
+        }
+        if (proof.trb_type != 0U) {
+            console_write("; TRB type ");
+            console_write_u64(proof.trb_type);
+        }
+        if (proof.vector != 0U) {
+            console_write("; vector ");
+            console_write_u64(proof.vector);
+        }
+        console_putc('\n');
+        stage_failed(context, result, xhci_status_string(status));
+        return;
+    }
+
+    console_write("Sapote: xHCI controller ready\n");
+    console_write("Sapote: USB device descriptor DMA completed: ");
+    console_write_u64(proof.descriptor_bytes);
+    console_write(" bytes\n");
+    console_write("Sapote: xHCI MSI-X descriptor completion count ");
+    console_write_u64(proof.msix_completion_count);
+    console_putc('\n');
+    console_write(
+        "Sapote: xHCI DMA ownership CPU-CONTROLLER-CPU complete\n");
+    console_write("Sapote: xHCI teardown complete\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.descriptor_bytes;
+    result->proof_counters[1] = proof.msix_completion_count;
     result->proof_counter_count = 2U;
 }
 
@@ -1276,6 +1444,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     REQUIRED_STAGE(BOOT_STAGE_DMA_FOUNDATION, "DMA foundation",
         BOOT_PHASE_SERVICES, BOOT_IRREVERSIBLE_NONE,
         execute_dma_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_XHCI_FOUNDATION,
+        "xHCI host-controller foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_xhci_foundation),
     REQUIRED_STAGE(BOOT_STAGE_THREADING, "threading", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_threading),
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
@@ -1283,6 +1454,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
         "installed device-substrate proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_device_substrate_proof),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_XHCI_DESCRIPTOR_PROOF,
+        "installed xHCI descriptor proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_xhci_descriptor_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -1645,6 +1819,55 @@ static bool declare_dependencies(
         descriptor->provided_capability_count = 1U;
         descriptor->skipped_capabilities[0] =
             BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_XHCI_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capability_count = 4U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_XHCI_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_XHCI_DESCRIPTOR_PROOF:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_THREADING_AVAILABLE;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
+        descriptor->required_capabilities[9] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[10] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[11] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[12] =
+            BOOT_CAPABILITY_XHCI_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 13U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_XHCI_FIXTURE_ABSENT;
         descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_CLOSING_PROOFS:

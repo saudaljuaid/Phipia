@@ -39,6 +39,11 @@ merge an unreviewed kernel change.
 - A DMA teardown disables bus mastering before reclaiming buffers. Until an
   IOMMU exists, every review must treat a bus-mastering device as capable of
   reaching all physical memory.
+- xHCI work stays inside the bounded host foundation in `xhci.c`. Do not grow
+  the QEMU descriptor fixture into a generic USB, HID, storage, or hotplug
+  framework. Preserve typed controller and TRB ownership, use monotonic
+  deadlines for every wait, and keep the proof reachable only through its Boot
+  Ledger descriptor.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 
