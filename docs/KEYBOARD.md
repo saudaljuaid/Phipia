@@ -1,6 +1,6 @@
 # The keyboard
 
-This is the first device Pyrenis talks to that a person operates. Everything
+This is the first device Sapote talks to that a person operates. Everything
 before it was discovered, counted, or timed. This one waits.
 
 ## What the 8042 actually is
@@ -66,7 +66,7 @@ items wrap under keyboard navigation.
 
 ## Proving it without a person
 
-Every other device Pyrenis brings up either announces itself or can be asked a
+Every other device Sapote brings up either announces itself or can be asked a
 question. A keyboard does neither — it says nothing until somebody presses a key,
 and boot cannot wait for that.
 
@@ -80,8 +80,8 @@ Boot injects five scancodes: `h`, `i`, left shift down, `i`, left shift up, and
 requires `"hiI"` to come out. The capital is the point: it is only correct if the
 modifier state was carried across three separate interrupts.
 
-    Pyrenis: keyboard 8042 online, IRQ 1 routed, 5 interrupts for 5 events
-    Pyrenis: keyboard decoded "hiI" from injected scancodes
+    Sapote: keyboard 8042 online, IRQ 1 routed, 5 interrupts for 5 events
+    Sapote: keyboard decoded "hiI" from injected scancodes
 
 ## Deliberate breakage
 

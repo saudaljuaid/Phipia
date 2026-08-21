@@ -75,7 +75,7 @@ physical hand movement is injected.
 ## Cursor composition
 
 The cursor is a code-native 12 by 18 outer/inner bit mask with hotspot `(0,0)`.
-It is drawn last through the cached surface, bronze at the outline and white
+It is drawn last through the cached surface, black at the outline and white
 inside. Movement damages the union of old and new bounds so cached content is
 restored before the mask is composed again. Edge clipping may reduce the
 visible rectangle but never changes the hotspot. Pointer absence skips cursor

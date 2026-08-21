@@ -1,6 +1,6 @@
 # Where everything is
 
-Pyrenis is fifty-four source files and thirty-eight documents. This page exists
+Sapote is fifty-four source files and thirty-eight documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -126,7 +126,7 @@ long you will be in there.
 | `rust/font.rs` | 276 | The glyph table reader. Rust, on the first hot path in this kernel. |
 | `logo.c` | 39 | The C side of the logo: three lines of glue. |
 | `rust/logo.rs` | 329 | The decoder. Rust, because it parses bytes the kernel did not produce. |
-| `rust/ui_font.rs` | 265 | Bounded `PUF1` parser and glyph reader for the build-packed Spleen face. |
+| `rust/ui_font.rs` | 265 | Bounded `SUF1` parser and glyph reader for the build-packed Spleen face. |
 | `rust/abi.rs`, `rust/lib.rs` | 186 + 44 | What the two languages promise each other. |
 
 ### Proving it
@@ -173,7 +173,7 @@ PAT/CR3, interrupt enable, framebuffer output, APIC timer and scheduler classes.
 | "what does this function actually do?" | its `*_self_test` — it is the shortest complete description, because it has to be |
 | "why is this line here?" | `git log -S'<the line>' -- <file>` — most non-obvious lines were explained by whoever added them |
 | "what is this kernel carrying?" | `docs/DEBT.md`, measured rather than remembered |
-| "how do I change something?" | `docs/WORKING_ON_PYRENIS.md` |
+| "how do I change something?" | `docs/WORKING_ON_SAPOTE.md` |
 | "what is the plan?" | `docs/HARDWARE_AND_APPLICATIONS.md` |
 
 ## How to re-measure this page
