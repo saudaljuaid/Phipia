@@ -35,7 +35,7 @@
 
 /*
  * Black on white is the deliberate classic Sapote console contract. It keeps
- * the shell legible while matching First Light's one-bit Macintosh-era chrome.
+ * the shell legible while matching First Light's one-bit computer-era chrome.
  */
 #define SCREEN_BACKGROUND_RED UINT8_C(0xFF)
 #define SCREEN_BACKGROUND_GREEN UINT8_C(0xFF)
