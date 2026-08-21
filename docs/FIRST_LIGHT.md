@@ -210,7 +210,9 @@ It then redraws the same state and requires an identical complete surface hash.
 the real installed ledger, injects real three-byte packets through 8042 command
 `0xD3`, exercises hover/press/release and every panel, runs keyboard navigation,
 checks the synthetic absence plan, proves old/new cursor damage, reads selected
-logo/text/dock/panel/cursor pixels, and recomputes the ledger fingerprint.
+logo/text/dock/panel/cursor pixels, and recomputes the ledger fingerprint. The
+workbench renders the decoded logo as a two-color, two-pixel bitmap and applies
+ordered dithering only to its antialiased edge shades.
 
 `tools/capture-first-light.py` uses QMP to capture the emulated display itself.
 It produces clean, focus/hover, and terminal-with-ledger frames. The committed
