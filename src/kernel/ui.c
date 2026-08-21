@@ -20,14 +20,14 @@
 #define UI_MIN_HEIGHT 600U
 #define UI_MAX_WIDTH 1920U
 #define UI_MAX_HEIGHT 1200U
-#define UI_LOGO_WIDTH 280U
-#define UI_LOGO_HEIGHT 250U
+#define UI_LOGO_WIDTH 277U
+#define UI_LOGO_HEIGHT 280U
 #define UI_LOGO_PIXELS (UI_LOGO_WIDTH * UI_LOGO_HEIGHT)
 #define UI_MENU_HEIGHT 24U
 #define UI_RAINBOW_STRIPE_HEIGHT 3U
-#define UI_RAINBOW_HEIGHT (6U * UI_RAINBOW_STRIPE_HEIGHT)
+#define UI_RAINBOW_HEIGHT (7U * UI_RAINBOW_STRIPE_HEIGHT)
 #define UI_HERO_WIDTH 320U
-#define UI_HERO_HEIGHT 368U
+#define UI_HERO_HEIGHT 398U
 #define UI_HERO_TITLE_HEIGHT 22U
 #define UI_DOCK_ITEM_WIDTH 104U
 #define UI_DOCK_ITEM_HEIGHT 34U
@@ -433,12 +433,13 @@ enum ui_status ui_hit_test(
 static void install_theme(struct ui_theme *theme)
 {
     theme->white = framebuffer_pack(0xFFU, 0xFFU, 0xFFU);
-    theme->accent_green = framebuffer_pack(0x52U, 0xA8U, 0x37U);
-    theme->accent_yellow = framebuffer_pack(0xFDU, 0xB2U, 0x12U);
-    theme->accent_orange = framebuffer_pack(0xF6U, 0x85U, 0x0CU);
-    theme->accent_red = framebuffer_pack(0xDFU, 0x30U, 0x31U);
-    theme->accent_purple = framebuffer_pack(0x93U, 0x2FU, 0x97U);
-    theme->accent_blue = framebuffer_pack(0x00U, 0x84U, 0xCEU);
+    theme->accent_orange = framebuffer_pack(0xE9U, 0x65U, 0x03U);
+    theme->accent_teal = framebuffer_pack(0x00U, 0x8EU, 0x92U);
+    theme->accent_yellow = framebuffer_pack(0xFDU, 0xDAU, 0x02U);
+    theme->accent_purple = framebuffer_pack(0x78U, 0x2CU, 0xB2U);
+    theme->accent_red = framebuffer_pack(0xE7U, 0x1FU, 0x21U);
+    theme->accent_lime = framebuffer_pack(0xA6U, 0xDFU, 0x20U);
+    theme->accent_blue = framebuffer_pack(0x01U, 0x8DU, 0xD8U);
     theme->black = framebuffer_pack(0x00U, 0x00U, 0x00U);
     theme->shadow = framebuffer_pack(0x77U, 0x77U, 0x77U);
     theme->platinum = framebuffer_pack(0xDDU, 0xDAU, 0xD5U);
@@ -732,11 +733,12 @@ static enum ui_status draw_classic_title(
 static enum ui_status draw_rainbow_bar(struct ui_rect damage)
 {
     const uint32_t stripes[] = {
-        state.theme.accent_green,
-        state.theme.accent_yellow,
         state.theme.accent_orange,
-        state.theme.accent_red,
+        state.theme.accent_teal,
+        state.theme.accent_yellow,
         state.theme.accent_purple,
+        state.theme.accent_red,
+        state.theme.accent_lime,
         state.theme.accent_blue
     };
 
@@ -789,7 +791,7 @@ static enum ui_status draw_dock_item(
     }
     if (status == UI_STATUS_OK && focused) {
         status = focus_mark_clipped(item->bounds, damage,
-            active ? state.theme.white : state.theme.accent_green);
+            active ? state.theme.white : state.theme.accent_lime);
     }
     if (status == UI_STATUS_OK) {
         status = draw_icon(item->id, item->icon_bounds, damage, foreground);
@@ -1142,7 +1144,7 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
     }
     if (status == UI_STATUS_OK) {
         status = stroke_clipped(state.layout.ledger_status, damage, 1U,
-            state.ledger_pass ? state.theme.accent_green :
+            state.ledger_pass ? state.theme.accent_lime :
                 state.theme.shadow);
     }
     if (status == UI_STATUS_OK) {
@@ -1603,19 +1605,20 @@ static uint64_t synthetic_render_hash(bool active)
 {
     uint32_t pixels[64U * 32U];
     const uint32_t white = UINT32_C(0x00FFFFFF);
-    const uint32_t accent_green = UINT32_C(0x0052A837);
+    const uint32_t accent_lime = UINT32_C(0x00A6DF20);
     const uint32_t black = UINT32_C(0x00000000);
     const uint32_t platinum = UINT32_C(0x00DDDAD5);
     const uint32_t stripes[] = {
-        UINT32_C(0x0052A837), UINT32_C(0x00FDB212),
-        UINT32_C(0x00F6850C), UINT32_C(0x00DF3031),
-        UINT32_C(0x00932F97), UINT32_C(0x000084CE)
+        UINT32_C(0x00E96503), UINT32_C(0x00008E92),
+        UINT32_C(0x00FDDA02), UINT32_C(0x00782CB2),
+        UINT32_C(0x00E71F21), UINT32_C(0x00A6DF20),
+        UINT32_C(0x00018DD8)
     };
 
     for (size_t index = 0U; index < sizeof(pixels) / sizeof(pixels[0]); ++index) {
         pixels[index] = platinum;
     }
-    for (uint32_t y = 0U; y < 6U; ++y) {
+    for (uint32_t y = 0U; y < 7U; ++y) {
         for (uint32_t x = 0U; x < 64U; ++x) {
             pixels[y * 64U + x] = stripes[y];
         }
@@ -1628,7 +1631,7 @@ static uint64_t synthetic_render_hash(bool active)
     }
     for (uint32_t y = 23U; y < 28U; ++y) {
         for (uint32_t x = 12U; x < 22U; ++x) {
-            pixels[y * 64U + x] = active ? black : accent_green;
+            pixels[y * 64U + x] = active ? black : accent_lime;
         }
     }
     for (uint32_t y = 0U; y < UI_CURSOR_HEIGHT && y + 4U < 32U; ++y) {
@@ -1803,7 +1806,7 @@ bool ui_self_test(void)
     }
 
     const uint64_t stable = synthetic_render_hash(false);
-    if (stable != UINT64_C(0x0308EFDC703D4CE4) ||
+    if (stable != UINT64_C(0x9EC4876CA1CEB91F) ||
         stable == synthetic_render_hash(true)) {
         self_test_failure = "synthetic First Light render hash is invalid";
         return false;
@@ -1839,12 +1842,13 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         }
     }
     if (state.theme.white != framebuffer_pack(0xFFU, 0xFFU, 0xFFU) ||
-        state.theme.accent_green != framebuffer_pack(0x52U, 0xA8U, 0x37U) ||
-        state.theme.accent_yellow != framebuffer_pack(0xFDU, 0xB2U, 0x12U) ||
-        state.theme.accent_orange != framebuffer_pack(0xF6U, 0x85U, 0x0CU) ||
-        state.theme.accent_red != framebuffer_pack(0xDFU, 0x30U, 0x31U) ||
-        state.theme.accent_purple != framebuffer_pack(0x93U, 0x2FU, 0x97U) ||
-        state.theme.accent_blue != framebuffer_pack(0x00U, 0x84U, 0xCEU) ||
+        state.theme.accent_orange != framebuffer_pack(0xE9U, 0x65U, 0x03U) ||
+        state.theme.accent_teal != framebuffer_pack(0x00U, 0x8EU, 0x92U) ||
+        state.theme.accent_yellow != framebuffer_pack(0xFDU, 0xDAU, 0x02U) ||
+        state.theme.accent_purple != framebuffer_pack(0x78U, 0x2CU, 0xB2U) ||
+        state.theme.accent_red != framebuffer_pack(0xE7U, 0x1FU, 0x21U) ||
+        state.theme.accent_lime != framebuffer_pack(0xA6U, 0xDFU, 0x20U) ||
+        state.theme.accent_blue != framebuffer_pack(0x01U, 0x8DU, 0xD8U) ||
         state.theme.black != framebuffer_pack(0x00U, 0x00U, 0x00U) ||
         state.theme.shadow != framebuffer_pack(0x77U, 0x77U, 0x77U) ||
         state.theme.platinum != framebuffer_pack(0xDDU, 0xDAU, 0xD5U)) {

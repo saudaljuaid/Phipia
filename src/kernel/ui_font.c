@@ -17,7 +17,7 @@
 #define SPLEEN_DATA_LENGTH 1520U
 #define SPLEEN_ASSET_LENGTH 1544U
 #define SPLEEN_FINGERPRINT UINT64_C(0xF072CBC7D84A2A20)
-#define LABEL_PIXEL_HASH UINT64_C(0x758397732814F8AF)
+#define LABEL_PIXEL_HASH UINT64_C(0xB4C8837DDB7D81CD)
 
 static bool verified;
 static struct ui_font_metrics installed_metrics;
@@ -262,7 +262,7 @@ bool ui_font_self_test(void)
         return false;
     }
     if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 12U, "SAPOTE",
-            UINT32_C(0x0052A837), NULL) != UI_FONT_STATUS_OK ||
+            UINT32_C(0x00008E92), NULL) != UI_FONT_STATUS_OK ||
         pixel_hash(pixels, sizeof(pixels) / sizeof(pixels[0])) !=
             LABEL_PIXEL_HASH) {
         self_test_failure = "UI font representative label pixels changed";

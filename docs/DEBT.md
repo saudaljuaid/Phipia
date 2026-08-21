@@ -185,10 +185,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 179 shell assertion lines
+### 4. The harness contract is 177 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    179
+    177
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -196,7 +196,8 @@ scenarios and 150 assertions; the device-foundation contract adds the
 thirty-third scenario and reached 166 assertion lines after replacing one
 self-referential grep with a derived guest/host exit comparison, including the
 executable-text ISA audit. The v0.4.0 xHCI contract adds scenario 34 and brings
-the same measured line count to 179. (`grep -F` or `grep -E` occurs 180 times
+the measured line count to 179; the final identity cleanup removes two obsolete
+denylist assertions, leaving 177. (`grep -F` or `grep -E` occurs 178 times
 because one line contains two independent failure checks.) The harness was
 extended, not refactored, so this debt is explicitly **not paid**.
 
@@ -262,13 +263,15 @@ Measured, and healthy:
 
 - **Thirty-four QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
-- **726 KB kernel image**, of which 66 KB is the logo.
+- **1,550 KiB on-disk kernel ELF**, of which 91 KiB is the packed canonical
+  Sapote mark (1,587,320 and 92,763 bytes respectively in the verified v0.4.0
+  artifact).
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.
 - **No undefined symbols, no global offset table, no RWX segment**, all asserted
   at link or build time rather than checked by hand.
-- **Every subsystem has a document, a self-test, and a negative-control table.**
-  That has not slipped once, across five increments and two languages.
+- **Every substantial subsystem has a focused document, a self-test, and a
+  negative-control table.**
 
 ## How to re-measure this
 

@@ -4406,7 +4406,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     if (first_light_pixel(ui->layout.menu_bar.x,
             ui->layout.menu_bar.y) != ui->theme.white ||
         first_light_pixel(ui->layout.rainbow_bar.x + 4U,
-            ui->layout.rainbow_bar.y) != ui->theme.accent_green ||
+            ui->layout.rainbow_bar.y) != ui->theme.accent_orange ||
         first_light_pixel(ui->layout.rainbow_bar.x + 4U,
             ui->layout.rainbow_bar.y + ui->layout.rainbow_bar.height - 1U) !=
                 ui->theme.accent_blue ||
@@ -4414,8 +4414,8 @@ _Noreturn void kernel_test_complete_first_light(void)
             ui->layout.hero_window.y) != ui->theme.black) {
         kernel_test_fail("First Light classic chrome stable pixel is incorrect");
     }
-    if (first_light_pixel(ui->layout.logo.x + 93U,
-            ui->layout.logo.y + 60U) != ui->theme.accent_green) {
+    if (first_light_pixel(ui->layout.logo.x + 155U,
+            ui->layout.logo.y + 137U) != ui->theme.accent_red) {
         kernel_test_fail("First Light logo stable pixel is incorrect");
     }
     first_light_expect_text_pixel('S', ui->layout.wordmark.x,

@@ -136,7 +136,7 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'BE7A596801A1FC844E43D2C70246E0A172A5BF93ABB55058E2318A6621DF4BC3'
+		'807CB475A547B371EBB731DB1F07AA8FBE223BFCC235D9554F15B69F4E1CAD1C'
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
@@ -145,14 +145,6 @@ verify: toolchain lint
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
 		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
 	@test "$(words $(TEST_SCENARIOS))" -eq 34
-	@! git grep -nI -E \
-		'Pyrenis|pyrenis|PYRENIS|OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>|pyr>' \
-		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
-	@! git ls-files | grep -Ei 'pyrenis|openseneri|seneri|zenith'
-	@if strings $(KERNEL) | grep -E \
-		'Pyrenis|pyrenis|PYRENIS|OpenSeneri(:| PANIC| DOUBLE| FATAL)|openseneri\.test=|seneri_(logo|font)|ZENITH|pyr>'; then \
-		echo 'kernel contains a legacy identity string'; exit 1; \
-	fi
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'

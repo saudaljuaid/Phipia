@@ -111,11 +111,12 @@ struct ui_event {
 
 struct ui_theme {
     uint32_t white;
-    uint32_t accent_green;
-    uint32_t accent_yellow;
     uint32_t accent_orange;
-    uint32_t accent_red;
+    uint32_t accent_teal;
+    uint32_t accent_yellow;
     uint32_t accent_purple;
+    uint32_t accent_red;
+    uint32_t accent_lime;
     uint32_t accent_blue;
     uint32_t black;
     uint32_t shadow;

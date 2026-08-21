@@ -7,7 +7,7 @@ cached surface, screen console, shell, keyboard, interrupt topology, scheduler,
 and Boot Ledger that existed before the milestone remain underneath it.
 
 The composition is deliberately warm and direct: a platinum desktop, a white
-menu bar, the six-colour Sapote band, monochrome bitmap labels, hatched window
+menu bar, the seven-colour Sapote band, monochrome bitmap labels, hatched window
 titles, one welcome window, and a compact control strip. Its one-pixel chrome
 recalls early personal computers without copying another product's wordmark or
 icons. The mark is decoded from the exact canonical asset and is neither
@@ -45,22 +45,24 @@ Only the documented identity palette is installed:
 | Role | RGB |
 | --- | --- |
 | White windows and highlights | `#FFFFFF` |
-| Sapote green | `#52A837` |
-| Sapote yellow | `#FDB212` |
-| Sapote orange | `#F6850C` |
-| Sapote red | `#DF3031` |
-| Sapote purple | `#932F97` |
-| Sapote blue | `#0084CE` |
+| Sapote orange | `#E96503` |
+| Sapote teal | `#008E92` |
+| Sapote yellow | `#FDDA02` |
+| Sapote purple | `#782CB2` |
+| Sapote red | `#E71F21` |
+| Sapote lime | `#A6DF20` |
+| Sapote blue | `#018DD8` |
 | Black type and outlines | `#000000` |
 | Shadow | `#777777` |
 | Platinum desktop and controls | `#DDDAD5` |
 
-The six accents are drawn in that order from top to bottom. There is no
+The seven accents follow the mark's left-to-right stripe order and are drawn in
+that order from top to bottom. There is no
 floating point, alpha compositor, kernel-generated gradient, transparency,
 animation, or runtime theme.
 
-The normal desktop contains a 24-pixel menu bar, six 3-pixel rainbow stripes,
-a fixed welcome window, the canonical mark at its deterministic 280 by 250
+The normal desktop contains a 24-pixel menu bar, seven 3-pixel rainbow stripes,
+a fixed welcome window, the canonical mark at its deterministic 277 by 280
 runtime size, `SAPOTE`, `hello from the metal.`, and a 144 by 22 ledger
 indicator. The indicator is
 derived from the published installed ledger: it says `LEDGER PASS` only when
@@ -76,11 +78,11 @@ first desktop draw.
 
 The constants are:
 
-- menu bar: full width by 24 pixels, followed by six full-width 3-pixel colour
+- menu bar: full width by 24 pixels, followed by seven full-width 3-pixel colour
   stripes;
-- welcome window: 320 by 368, centred horizontally, at y=50 for 600-pixel
+- welcome window: 320 by 398, centred horizontally, at y=50 for 600-pixel
   modes and y=58 otherwise;
-- mark: 280 by 250, centred horizontally, six pixels below the 22-pixel welcome
+- mark: 277 by 280, centred horizontally, six pixels below the 22-pixel welcome
   title region;
 - wordmark: 48 by 16, four pixels below the mark;
 - motto: 168 by 16, twenty pixels below the wordmark origin;
@@ -95,10 +97,10 @@ The constants are:
 - panel client: eight pixels inside each side, beginning 32 pixels below the
   panel top.
 
-At 1024 by 768 the welcome window begins at `(352,58)`, the mark at `(372,86)`,
+At 1024 by 768 the welcome window begins at `(352,58)`, the mark at `(373,86)`,
 the dock at `(293,700)`, and the panel at `(172,338)`. At 800 by 600 those
-origins are `(240,50)`, `(260,78)`, `(181,532)`, and `(60,214)`. At 1280 by
-720 they are `(480,58)`, `(500,86)`, `(421,652)`, and `(300,290)`.
+origins are `(240,50)`, `(261,78)`, `(181,532)`, and `(60,214)`. At 1280 by
+720 they are `(480,58)`, `(501,86)`, `(421,652)`, and `(300,290)`.
 
 Validation proves every rectangle is inside the surface, the four items do not
 overlap, the client is non-empty, each baseline fits, the cursor hotspot is
