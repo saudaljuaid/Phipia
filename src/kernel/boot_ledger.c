@@ -3,17 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/device_substrate.h>
-#include <pyrenis/dma.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/interrupt_vector.h>
-#include <pyrenis/msix.h>
-#include <pyrenis/paging.h>
-#include <pyrenis/pci_resource.h>
-#include <pyrenis/pointer.h>
-#include <pyrenis/ui.h>
-#include <pyrenis/ui_font.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/device_substrate.h>
+#include <sapote/dma.h>
+#include <sapote/framebuffer.h>
+#include <sapote/interrupt_vector.h>
+#include <sapote/msix.h>
+#include <sapote/paging.h>
+#include <sapote/pci_resource.h>
+#include <sapote/pointer.h>
+#include <sapote/ui.h>
+#include <sapote/ui_font.h>
 
 #define BOOT_FINGERPRINT_OFFSET UINT64_C(14695981039346656037)
 #define BOOT_FINGERPRINT_PRIME UINT64_C(1099511628211)
@@ -1423,8 +1423,8 @@ enum boot_ledger_status boot_ledger_verify_installed(
 
         if (font == NULL || font->result != BOOT_RECEIPT_RAN ||
             font->proof_counter_count != 2U ||
-            font->proof_counters[0] != pyrenis_ui_font_size() ||
-            font->proof_counters[1] != pyrenis_ui_font_fingerprint() ||
+            font->proof_counters[0] != sapote_ui_font_size() ||
+            font->proof_counters[1] != sapote_ui_font_fingerprint() ||
             !ui_font_is_verified() || metrics.width != 8U ||
             metrics.height != 16U || metrics.ascent != 12U ||
             metrics.descent != 4U || metrics.advance != 8U ||
