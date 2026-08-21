@@ -262,7 +262,9 @@ Measured, and healthy:
 
 - **Thirty-four QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
-- **726 KB kernel image**, of which 66 KB is the logo.
+- **1,550 KiB on-disk kernel ELF**, of which 91 KiB is the packed canonical
+  Sapote mark (1,587,320 and 92,763 bytes respectively in the verified v0.4.0
+  artifact).
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.
 - **No undefined symbols, no global offset table, no RWX segment**, all asserted
