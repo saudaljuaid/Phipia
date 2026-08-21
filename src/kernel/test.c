@@ -3,38 +3,38 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/acpi.h>
-#include <pyrenis/acpi_util.h>
-#include <pyrenis/apic.h>
-#include <pyrenis/apic_timer.h>
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/boot_plan.h>
-#include <pyrenis/clock.h>
-#include <pyrenis/console.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/device_substrate.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/font.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/ioapic.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/paging.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/pic.h>
-#include <pyrenis/pit.h>
-#include <pyrenis/pointer.h>
-#include <pyrenis/keyboard.h>
-#include <pyrenis/screen.h>
-#include <pyrenis/shell.h>
-#include <pyrenis/pm_timer.h>
-#include <pyrenis/surface.h>
-#include <pyrenis/test.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/timer.h>
-#include <pyrenis/tsc.h>
-#include <pyrenis/ui.h>
-#include <pyrenis/ui_font.h>
+#include <sapote/acpi.h>
+#include <sapote/acpi_util.h>
+#include <sapote/apic.h>
+#include <sapote/apic_timer.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/boot_plan.h>
+#include <sapote/clock.h>
+#include <sapote/console.h>
+#include <sapote/cpu.h>
+#include <sapote/device_substrate.h>
+#include <sapote/framebuffer.h>
+#include <sapote/font.h>
+#include <sapote/heap.h>
+#include <sapote/interrupts.h>
+#include <sapote/ioapic.h>
+#include <sapote/memory.h>
+#include <sapote/paging.h>
+#include <sapote/pci.h>
+#include <sapote/pic.h>
+#include <sapote/pit.h>
+#include <sapote/pointer.h>
+#include <sapote/keyboard.h>
+#include <sapote/screen.h>
+#include <sapote/shell.h>
+#include <sapote/pm_timer.h>
+#include <sapote/surface.h>
+#include <sapote/test.h>
+#include <sapote/thread.h>
+#include <sapote/timer.h>
+#include <sapote/tsc.h>
+#include <sapote/ui.h>
+#include <sapote/ui_font.h>
 
 #define QEMU_EXIT_PORT UINT16_C(0x00F4)
 #define QEMU_FAILURE_VALUE UINT8_C(0x7F)
@@ -408,7 +408,7 @@ enum kernel_test_scenario kernel_test_select(
     const struct boot_information *context
 )
 {
-    static const char prefix[] = "pyrenis.test=";
+    static const char prefix[] = "sapote.test=";
     enum kernel_test_scenario selected = KERNEL_TEST_NONE;
     size_t offset = 0;
 
@@ -653,7 +653,7 @@ static void ioapic_level_scenario(void)
 
     /*
      * Read the entry off the hardware. An entry programmed edge triggered while
-     * Pyrenis's records called it level triggered would deliver every interrupt
+     * Sapote's records called it level triggered would deliver every interrupt
      * below and latch nothing, so this is the check that catches it.
      */
     if (ioapic_read_redirection(pit_active_vector(), &entry) !=
@@ -1544,7 +1544,7 @@ static volatile uint8_t paging_scratch;
  * recorded in a table.
  *
  * `make verify` has always refused an RWX load segment, and until this
- * increment that assertion was the only thing standing behind Pyrenis's W^X
+ * increment that assertion was the only thing standing behind Sapote's W^X
  * claim - and it inspects the ELF file, not the machine the kernel runs on.
  * Everything below the rejections is the part a file check can never do: a
  * fresh frame is mapped writable, written, narrowed to read-only, and written
@@ -1609,23 +1609,23 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
     }
 
     /* Every refusal, through the public interface, against the live tables. */
-    if (paging_map(PAGING_PROBE_ADDRESS + 1U, 0U, PYRENIS_PAGE_SIZE,
+    if (paging_map(PAGING_PROBE_ADDRESS + 1U, 0U, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_UNALIGNED_ADDRESS ||
         paging_map(PAGING_PROBE_ADDRESS, 0U, 0U, PAGING_WRITE) !=
             PAGING_STATUS_ZERO_LENGTH ||
-        paging_map(UINT64_C(0x0000800000000000), 0U, PYRENIS_PAGE_SIZE,
+        paging_map(UINT64_C(0x0000800000000000), 0U, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_NONCANONICAL_ADDRESS ||
-        paging_map(PAGING_PROBE_ADDRESS, 0U, PYRENIS_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, 0U, SAPOTE_PAGE_SIZE,
             PAGING_WRITE | PAGING_EXECUTE) !=
             PAGING_STATUS_WRITABLE_AND_EXECUTABLE) {
         kernel_test_fail("a malformed mapping request was accepted");
     }
 
-    if (paging_map(text & ~(PYRENIS_PAGE_SIZE - 1U), 0U, PYRENIS_PAGE_SIZE,
+    if (paging_map(text & ~(SAPOTE_PAGE_SIZE - 1U), 0U, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED ||
-        paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
+        paging_unmap(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE) !=
             PAGING_STATUS_NOT_MAPPED ||
-        paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
+        paging_protect(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE, PAGING_READ) !=
             PAGING_STATUS_NOT_MAPPED) {
         kernel_test_fail("an impossible mapping change was accepted");
     }
@@ -1635,9 +1635,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
      * so a 4 KiB change inside one is refused rather than silently applied to
      * the whole 2 MiB.
      */
-    if (paging_protect(PAGING_TEST_HUGE_ADDRESS, PYRENIS_PAGE_SIZE,
+    if (paging_protect(PAGING_TEST_HUGE_ADDRESS, SAPOTE_PAGE_SIZE,
             PAGING_READ) != PAGING_STATUS_HUGE_PAGE_PRESENT ||
-        paging_unmap(PAGING_TEST_HUGE_ADDRESS, PYRENIS_PAGE_SIZE) !=
+        paging_unmap(PAGING_TEST_HUGE_ADDRESS, SAPOTE_PAGE_SIZE) !=
             PAGING_STATUS_HUGE_PAGE_PRESENT) {
         kernel_test_fail("a 2 MiB mapping accepted a 4 KiB change");
     }
@@ -1651,9 +1651,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         kernel_test_fail("no frame was available for the probe page");
     }
 
-    if (paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
+    if (paging_map(PAGING_PROBE_ADDRESS, frame, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_OK ||
-        paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, frame, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_ALREADY_MAPPED) {
         kernel_test_fail("the probe page would not map exactly once");
     }
@@ -1672,7 +1672,7 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         kernel_test_fail("the probe page does not translate to its frame");
     }
 
-    if (paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
+    if (paging_protect(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE, PAGING_READ) !=
         PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not narrow to read-only");
     }
@@ -1695,7 +1695,7 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
      * kernel, so the check that matters is that the frame count is identical
      * after sixty-four cycles - and the paging state's own table count with it.
      */
-    if (paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
+    if (paging_unmap(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE) !=
         PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not unmap before the cycle");
     }
@@ -1707,9 +1707,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
         uintptr_t cycle_frame;
 
         if (frame_allocate(&cycle_frame) != FRAME_STATUS_OK ||
-            paging_map(PAGING_PROBE_ADDRESS, cycle_frame, PYRENIS_PAGE_SIZE,
+            paging_map(PAGING_PROBE_ADDRESS, cycle_frame, SAPOTE_PAGE_SIZE,
                 PAGING_WRITE) != PAGING_STATUS_OK ||
-            paging_unmap(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE) !=
+            paging_unmap(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE) !=
                 PAGING_STATUS_OK ||
             frame_release(cycle_frame) != FRAME_STATUS_OK) {
             kernel_test_fail("a map and unmap cycle did not complete");
@@ -1730,9 +1730,9 @@ static void paging_scenario(const struct paging_device_windows *device_windows)
 
     /* Put the probe page back so the fault below has something to narrow. */
     if (frame_allocate(&frame) != FRAME_STATUS_OK ||
-        paging_map(PAGING_PROBE_ADDRESS, frame, PYRENIS_PAGE_SIZE,
+        paging_map(PAGING_PROBE_ADDRESS, frame, SAPOTE_PAGE_SIZE,
             PAGING_WRITE) != PAGING_STATUS_OK ||
-        paging_protect(PAGING_PROBE_ADDRESS, PYRENIS_PAGE_SIZE, PAGING_READ) !=
+        paging_protect(PAGING_PROBE_ADDRESS, SAPOTE_PAGE_SIZE, PAGING_READ) !=
             PAGING_STATUS_OK) {
         kernel_test_fail("the probe page would not come back read-only");
     }
@@ -2371,7 +2371,7 @@ static void pci_ecam_scenario(
     }
 
     /*
-     * A bus past what Pyrenis mapped is refused rather than folded back into the
+     * A bus past what Sapote mapped is refused rather than folded back into the
      * window, which is the failure that would read one bus as another.
      */
     address.segment = 0U;
@@ -2958,7 +2958,7 @@ static void shell_scenario(void)
     }
 
     after = shell_get_state();
-    console_write("Pyrenis: shell scenario ran ");
+    console_write("Sapote: shell scenario ran ");
     console_write_u64(after.commands);
     console_write(" commands and refused ");
     console_write_u64(after.unknown);
@@ -3119,7 +3119,7 @@ static void keyboard_scenario(void)
         kernel_test_fail("the keyboard lost events it never accounted for");
     }
 
-    console_write("Pyrenis: keyboard scenario queued ");
+    console_write("Sapote: keyboard scenario queued ");
     console_write_u64((uint64_t)after.queued);
     console_write(" and dropped ");
     console_write_u64(after.dropped - before.dropped);
@@ -3139,7 +3139,7 @@ static void screen_scenario(void)
         kernel_test_fail("the screen scenario has no console");
     }
 
-    if (pyrenis_font_geometry(&width, &height, &first, &count) !=
+    if (sapote_font_geometry(&width, &height, &first, &count) !=
         FONT_STATUS_OK) {
         kernel_test_fail("the font table would not describe itself");
     }
@@ -3236,7 +3236,7 @@ static void screen_scenario(void)
         }
     }
 
-    console_write("Pyrenis: screen scenario drew ");
+    console_write("Sapote: screen scenario drew ");
     console_write_u64((uint64_t)count);
     console_write(" glyphs and read every one back\n");
 }
@@ -3956,7 +3956,7 @@ void kernel_test_run(
         interrupt_test_set_gate_present(14U, false);
         interrupt_trigger_page_fault();
     case KERNEL_TEST_INVALID:
-        kernel_test_fail("invalid or duplicate pyrenis.test argument");
+        kernel_test_fail("invalid or duplicate sapote.test argument");
     case KERNEL_TEST_NONE:
     default:
         kernel_test_fail("unreachable test scenario");
@@ -4154,7 +4154,7 @@ static void first_light_expect_text_pixel(
     const struct ui_font_metrics metrics = ui_font_get_metrics();
     uint8_t glyph[UI_FONT_MAX_HEIGHT * UI_FONT_MAX_ROW_BYTES];
 
-    if (pyrenis_ui_font_glyph((uint32_t)(unsigned char)character, glyph,
+    if (sapote_ui_font_glyph((uint32_t)(unsigned char)character, glyph,
             sizeof(glyph)) != UI_FONT_STATUS_OK ||
         baseline < metrics.ascent) {
         kernel_test_fail("First Light stable text probe has no glyph");
@@ -4258,6 +4258,7 @@ static void first_light_click_dock_item(
     const uint32_t state_x = item->bounds.x + 4U;
     const uint32_t state_y = item->bounds.y + 4U;
     const struct ui_state *ui;
+    uint32_t title_width;
 
     first_light_move_pointer(target_x, target_y,
         "First Light real pointer movement failed");
@@ -4271,7 +4272,7 @@ static void first_light_click_dock_item(
         "First Light pointer press failed");
     ui = ui_get_state();
     if (ui->pressed != item->id ||
-        first_light_pixel(state_x, state_y) != ui->theme.muted_bronze) {
+        first_light_pixel(state_x, state_y) != ui->theme.shadow) {
         kernel_test_fail("First Light dock pressed state pixel is incorrect");
     }
 
@@ -4280,15 +4281,21 @@ static void first_light_click_dock_item(
     ui = ui_get_state();
     if (ui->pressed != UI_ELEMENT_NONE ||
         ui->active_panel != expected_panel ||
-        first_light_pixel(state_x, state_y) != ui->theme.deep_brown) {
+        first_light_pixel(state_x, state_y) != ui->theme.black) {
         kernel_test_fail("First Light dock active state pixel is incorrect");
     }
     if (first_light_pixel(ui->layout.panel.x + 4U,
-            ui->layout.panel.y + 4U) != ui->theme.deep_brown) {
+            ui->layout.panel.y + 4U) != ui->theme.white) {
         kernel_test_fail("First Light panel title surface pixel is incorrect");
     }
-    first_light_expect_text_pixel(title_initial, ui->layout.panel.x + 10U,
-        ui->layout.panel_title_baseline, ui->theme.white,
+    if (ui_font_text_width(ui_panel_name(expected_panel), &title_width) !=
+            UI_FONT_STATUS_OK) {
+        kernel_test_fail("First Light panel title width is unavailable");
+    }
+    first_light_expect_text_pixel(title_initial,
+        ui->layout.panel.x + 4U +
+            (ui->layout.panel.width - 8U - title_width) / 2U,
+        ui->layout.panel_title_baseline, ui->theme.black,
         "First Light panel title glyph pixel is incorrect");
 }
 
@@ -4375,17 +4382,28 @@ _Noreturn void kernel_test_complete_first_light(void)
         }
     }
 
-    if (first_light_pixel(ui->layout.logo.x + 198U,
-            ui->layout.logo.y + 100U) != ui->theme.bronze) {
+    if (first_light_pixel(ui->layout.menu_bar.x,
+            ui->layout.menu_bar.y) != ui->theme.white ||
+        first_light_pixel(ui->layout.rainbow_bar.x + 4U,
+            ui->layout.rainbow_bar.y) != ui->theme.accent_green ||
+        first_light_pixel(ui->layout.rainbow_bar.x + 4U,
+            ui->layout.rainbow_bar.y + ui->layout.rainbow_bar.height - 1U) !=
+                ui->theme.accent_blue ||
+        first_light_pixel(ui->layout.hero_window.x,
+            ui->layout.hero_window.y) != ui->theme.black) {
+        kernel_test_fail("First Light classic chrome stable pixel is incorrect");
+    }
+    if (first_light_pixel(ui->layout.logo.x + 93U,
+            ui->layout.logo.y + 60U) != ui->theme.accent_green) {
         kernel_test_fail("First Light logo stable pixel is incorrect");
     }
-    first_light_expect_text_pixel('P', ui->layout.wordmark.x,
-        ui->layout.title_baseline, ui->theme.deep_brown,
+    first_light_expect_text_pixel('S', ui->layout.wordmark.x,
+        ui->layout.title_baseline, ui->theme.black,
         "First Light wordmark stable pixel is incorrect");
     if (first_light_pixel(ui->layout.dock.x, ui->layout.dock.y) !=
-            ui->theme.deep_brown ||
+            ui->theme.black ||
         first_light_pixel(ui->layout.ledger_status.x + 4U,
-            ui->layout.ledger_status.y + 4U) != ui->theme.deep_brown) {
+            ui->layout.ledger_status.y + 4U) != ui->theme.white) {
         kernel_test_fail("First Light dock or ledger stable pixel is incorrect");
     }
 
@@ -4396,9 +4414,9 @@ _Noreturn void kernel_test_complete_first_light(void)
     }
     if (initial_pointer.x < 0 || initial_pointer.y < 0 ||
         first_light_pixel((uint32_t)initial_pointer.x,
-            (uint32_t)initial_pointer.y) != ui->theme.white ||
+            (uint32_t)initial_pointer.y) != ui->theme.platinum ||
         first_light_pixel((uint32_t)ui->pointer.x,
-            (uint32_t)ui->pointer.y) != ui->theme.bronze ||
+            (uint32_t)ui->pointer.y) != ui->theme.black ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||
         ui->renders.damage_rectangles <= initial_renders.damage_rectangles) {
         kernel_test_fail("First Light cursor damage left a trail");

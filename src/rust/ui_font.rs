@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Bounded reader for the build-packed First Light UI font.
 //!
-//! Development tools parse Spleen's BDF source. The kernel sees only PUF1: a
+//! Development tools parse Spleen's BDF source. The kernel sees only SUF1: a
 //! fixed 24-byte header followed by consecutive, tightly packed glyph rows.
 
 const HEADER_SIZE: usize = 24;
-const MAGIC: [u8; 4] = *b"PUF1";
+const MAGIC: [u8; 4] = *b"SUF1";
 const VERSION: u8 = 1;
 const MAX_WIDTH: u32 = 16;
 const MAX_HEIGHT: u32 = 32;
 const MAX_ADVANCE: u32 = 32;
 
-/// Every conclusion the PUF1 parser and renderer can report.
+/// Every conclusion the SUF1 parser and renderer can report.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -37,7 +37,7 @@ pub enum Status {
     DestinationClippingFailure = 9,
 }
 
-/// Validated PUF1 metrics, copied across the C boundary by value.
+/// Validated SUF1 metrics, copied across the C boundary by value.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Geometry {
@@ -68,7 +68,7 @@ fn read_u32(blob: &[u8], offset: usize) -> Result<u32, Status> {
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-/// Validate the complete PUF1 asset before returning its metrics.
+/// Validate the complete SUF1 asset before returning its metrics.
 pub fn geometry(blob: &[u8]) -> Result<Geometry, Status> {
     if blob.len() < HEADER_SIZE || blob[0..4] != MAGIC || blob[5] != HEADER_SIZE as u8 {
         return Err(Status::MalformedHeader);

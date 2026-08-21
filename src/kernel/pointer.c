@@ -3,12 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/cpu.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/ioapic.h>
-#include <pyrenis/keyboard.h>
-#include <pyrenis/pointer.h>
-#include <pyrenis/ui.h>
+#include <sapote/cpu.h>
+#include <sapote/interrupts.h>
+#include <sapote/ioapic.h>
+#include <sapote/keyboard.h>
+#include <sapote/pointer.h>
+#include <sapote/ui.h>
 
 #define PS2_DATA_PORT UINT16_C(0x0060)
 #define PS2_COMMAND_PORT UINT16_C(0x0064)

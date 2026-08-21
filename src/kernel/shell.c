@@ -3,19 +3,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/clock.h>
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/console.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/keyboard.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/screen.h>
-#include <pyrenis/shell.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/ui.h>
+#include <sapote/clock.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/console.h>
+#include <sapote/cpu.h>
+#include <sapote/framebuffer.h>
+#include <sapote/heap.h>
+#include <sapote/keyboard.h>
+#include <sapote/memory.h>
+#include <sapote/pci.h>
+#include <sapote/screen.h>
+#include <sapote/shell.h>
+#include <sapote/thread.h>
+#include <sapote/ui.h>
 
 /*
  * A command line.
@@ -35,7 +35,7 @@
  * mistakes, so an unknown command is a line of output and not an incident.
  */
 
-#define SHELL_PROMPT "pyr> "
+#define SHELL_PROMPT "sap> "
 
 /* What splits a command from its arguments. Nothing exotic; space and tab. */
 static bool is_separator(char character)
@@ -213,7 +213,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Pyrenis, a capability-validated x86_64 kernel.\n");
+    console_write("Sapote 0.4.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -438,7 +438,7 @@ _Noreturn void shell_run(void)
                 (void)screen_set_viewport((struct surface_rect){
                     0U, 0U, framebuffer.width, framebuffer.height
                 }, true);
-                console_write("Pyrenis: First Light runtime disabled: ");
+                console_write("Sapote: First Light runtime disabled: ");
                 console_write(ui_status_string(status));
                 console_putc('\n');
             }

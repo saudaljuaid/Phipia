@@ -3,26 +3,32 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/boot_ledger.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/logo.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/pointer.h>
-#include <pyrenis/screen.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/ui.h>
-#include <pyrenis/ui_font.h>
+#include <sapote/boot_ledger.h>
+#include <sapote/cpu.h>
+#include <sapote/framebuffer.h>
+#include <sapote/heap.h>
+#include <sapote/logo.h>
+#include <sapote/memory.h>
+#include <sapote/pci.h>
+#include <sapote/pointer.h>
+#include <sapote/screen.h>
+#include <sapote/thread.h>
+#include <sapote/ui.h>
+#include <sapote/ui_font.h>
 
 #define UI_MIN_WIDTH 800U
 #define UI_MIN_HEIGHT 600U
 #define UI_MAX_WIDTH 1920U
 #define UI_MAX_HEIGHT 1200U
-#define UI_LOGO_WIDTH 396U
-#define UI_LOGO_HEIGHT 335U
+#define UI_LOGO_WIDTH 280U
+#define UI_LOGO_HEIGHT 250U
 #define UI_LOGO_PIXELS (UI_LOGO_WIDTH * UI_LOGO_HEIGHT)
+#define UI_MENU_HEIGHT 24U
+#define UI_RAINBOW_STRIPE_HEIGHT 3U
+#define UI_RAINBOW_HEIGHT (6U * UI_RAINBOW_STRIPE_HEIGHT)
+#define UI_HERO_WIDTH 320U
+#define UI_HERO_HEIGHT 368U
+#define UI_HERO_TITLE_HEIGHT 22U
 #define UI_DOCK_ITEM_WIDTH 104U
 #define UI_DOCK_ITEM_HEIGHT 34U
 #define UI_DOCK_GAP 2U
@@ -191,7 +197,7 @@ enum ui_status ui_layout_build(
     const uint32_t dock_width = UI_DOCK_PADDING * 2U +
         UI_DOCK_ITEM_COUNT * UI_DOCK_ITEM_WIDTH +
         (UI_DOCK_ITEM_COUNT - 1U) * UI_DOCK_GAP;
-    uint32_t logo_y;
+    uint32_t hero_y;
     uint32_t panel_width;
     uint32_t panel_height;
 
@@ -205,21 +211,31 @@ enum ui_status ui_layout_build(
 
     *layout = (struct ui_layout){ 0 };
     layout->surface = (struct ui_rect){ 0U, 0U, width, height };
-    logo_y = height == UI_MIN_HEIGHT ? 18U : 30U;
+    layout->menu_bar = (struct ui_rect){ 0U, 0U, width, UI_MENU_HEIGHT };
+    layout->rainbow_bar = (struct ui_rect){
+        0U, UI_MENU_HEIGHT, width, UI_RAINBOW_HEIGHT
+    };
+    layout->menu_baseline = 17U;
+    hero_y = height == UI_MIN_HEIGHT ? 50U : 58U;
+    layout->hero_window = (struct ui_rect){
+        (width - UI_HERO_WIDTH) / 2U, hero_y,
+        UI_HERO_WIDTH, UI_HERO_HEIGHT
+    };
+    layout->hero_title_baseline = hero_y + 17U;
     layout->logo = (struct ui_rect){
-        (width - UI_LOGO_WIDTH) / 2U, logo_y,
+        (width - UI_LOGO_WIDTH) / 2U, hero_y + UI_HERO_TITLE_HEIGHT + 6U,
         UI_LOGO_WIDTH, UI_LOGO_HEIGHT
     };
     layout->wordmark = (struct ui_rect){
-        (width - 7U * UI_FONT_ADVANCE) / 2U,
-        logo_y + UI_LOGO_HEIGHT + 4U,
-        7U * UI_FONT_ADVANCE, 16U
+        (width - 6U * UI_FONT_ADVANCE) / 2U,
+        layout->logo.y + UI_LOGO_HEIGHT + 4U,
+        6U * UI_FONT_ADVANCE, 16U
     };
     layout->title_baseline = layout->wordmark.y + UI_FONT_ASCENT;
     layout->motto = (struct ui_rect){
-        (width - 22U * UI_FONT_ADVANCE) / 2U,
+        (width - 21U * UI_FONT_ADVANCE) / 2U,
         layout->wordmark.y + 20U,
-        22U * UI_FONT_ADVANCE, 16U
+        21U * UI_FONT_ADVANCE, 16U
     };
     layout->motto_baseline = layout->motto.y + UI_FONT_ASCENT;
     layout->ledger_status = (struct ui_rect){
@@ -317,7 +333,8 @@ enum ui_status ui_layout_validate(const struct ui_layout *layout)
     }
 
     const struct ui_rect rectangles[] = {
-        layout->surface, layout->logo, layout->wordmark, layout->motto,
+        layout->surface, layout->menu_bar, layout->rainbow_bar,
+        layout->hero_window, layout->logo, layout->wordmark, layout->motto,
         layout->ledger_status, layout->dock, layout->panel,
         layout->panel_client
     };
@@ -367,7 +384,9 @@ enum ui_status ui_layout_validate(const struct ui_layout *layout)
         }
     }
 
-    if (!baseline_fits(layout->wordmark, layout->title_baseline) ||
+    if (!baseline_fits(layout->menu_bar, layout->menu_baseline) ||
+        !baseline_fits(layout->hero_window, layout->hero_title_baseline) ||
+        !baseline_fits(layout->wordmark, layout->title_baseline) ||
         !baseline_fits(layout->motto, layout->motto_baseline) ||
         !baseline_fits(layout->ledger_status, layout->status_baseline) ||
         !baseline_fits(layout->panel, layout->panel_title_baseline) ||
@@ -411,21 +430,18 @@ enum ui_status ui_hit_test(
     return UI_STATUS_OK;
 }
 
-static uint32_t blend_channel(uint8_t foreground, uint8_t background)
-{
-    return ((uint32_t)foreground + 4U * (uint32_t)background) / 5U;
-}
-
 static void install_theme(struct ui_theme *theme)
 {
     theme->white = framebuffer_pack(0xFFU, 0xFFU, 0xFFU);
-    theme->bronze = framebuffer_pack(0x80U, 0x62U, 0x30U);
-    theme->deep_brown = framebuffer_pack(0x2AU, 0x21U, 0x17U);
-    theme->muted_bronze = framebuffer_pack(0xA9U, 0x87U, 0x4EU);
-    theme->pale_bronze = framebuffer_pack(
-        (uint8_t)blend_channel(0x80U, 0xFFU),
-        (uint8_t)blend_channel(0x62U, 0xFFU),
-        (uint8_t)blend_channel(0x30U, 0xFFU));
+    theme->accent_green = framebuffer_pack(0x52U, 0xA8U, 0x37U);
+    theme->accent_yellow = framebuffer_pack(0xFDU, 0xB2U, 0x12U);
+    theme->accent_orange = framebuffer_pack(0xF6U, 0x85U, 0x0CU);
+    theme->accent_red = framebuffer_pack(0xDFU, 0x30U, 0x31U);
+    theme->accent_purple = framebuffer_pack(0x93U, 0x2FU, 0x97U);
+    theme->accent_blue = framebuffer_pack(0x00U, 0x84U, 0xCEU);
+    theme->black = framebuffer_pack(0x00U, 0x00U, 0x00U);
+    theme->shadow = framebuffer_pack(0x77U, 0x77U, 0x77U);
+    theme->platinum = framebuffer_pack(0xDDU, 0xDAU, 0xD5U);
 }
 
 static enum ui_status fill_clipped(
@@ -482,8 +498,8 @@ static enum ui_status bevel_clipped(
         return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
     }
     const uint32_t upper = raised ? state.theme.white :
-        state.theme.deep_brown;
-    const uint32_t lower = raised ? state.theme.deep_brown :
+        state.theme.black;
+    const uint32_t lower = raised ? state.theme.black :
         state.theme.white;
     const struct ui_rect upper_edges[2] = {
         { rectangle.x, rectangle.y, rectangle.width, 1U },
@@ -654,6 +670,93 @@ static uint32_t centered_text_x(struct ui_rect bounds, const char *text)
     return bounds.x + (bounds.width - width) / 2U;
 }
 
+static enum ui_status draw_classic_title(
+    struct ui_rect title,
+    struct ui_rect damage,
+    uint32_t baseline,
+    const char *label,
+    bool close_box
+)
+{
+    uint32_t label_width = 0U;
+    const uint32_t label_x = centered_text_x(title, label);
+    const uint32_t hatch_start = title.x + (close_box ? 24U : 4U);
+    enum ui_status status = fill_clipped(title, damage, state.theme.white);
+
+    if (status != UI_STATUS_OK ||
+        ui_font_text_width(label, &label_width) != UI_FONT_STATUS_OK) {
+        return status == UI_STATUS_OK ? UI_STATUS_FONT_FAILURE : status;
+    }
+    for (uint32_t offset = 4U; offset + 1U < title.height; offset += 3U) {
+        if (hatch_start + 2U < label_x) {
+            status = fill_clipped((struct ui_rect){
+                hatch_start, title.y + offset,
+                label_x - hatch_start - 2U, 1U
+            }, damage, state.theme.black);
+        }
+        const uint32_t right_start = label_x + label_width + 2U;
+        if (status == UI_STATUS_OK && right_start + 4U < title.x + title.width) {
+            status = fill_clipped((struct ui_rect){
+                right_start, title.y + offset,
+                title.x + title.width - right_start - 4U, 1U
+            }, damage, state.theme.black);
+        }
+        if (status != UI_STATUS_OK) {
+            return status;
+        }
+    }
+    if (close_box) {
+        const struct ui_rect close = {
+            title.x + 4U, title.y + 4U, 14U, 14U
+        };
+
+        status = fill_clipped(close, damage, state.theme.white);
+        if (status == UI_STATUS_OK) {
+            status = stroke_clipped(close, damage, 1U, state.theme.black);
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        const struct ui_rect label_back = {
+            label_x - 2U, title.y + 1U, label_width + 4U,
+            title.height - 2U
+        };
+        status = fill_clipped(label_back, damage, state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(title, damage, label_x, baseline, label,
+            state.theme.black);
+    }
+    return status;
+}
+
+static enum ui_status draw_rainbow_bar(struct ui_rect damage)
+{
+    const uint32_t stripes[] = {
+        state.theme.accent_green,
+        state.theme.accent_yellow,
+        state.theme.accent_orange,
+        state.theme.accent_red,
+        state.theme.accent_purple,
+        state.theme.accent_blue
+    };
+
+    for (size_t index = 0U; index < sizeof(stripes) / sizeof(stripes[0]);
+         ++index) {
+        const enum ui_status status = fill_clipped((struct ui_rect){
+            state.layout.rainbow_bar.x,
+            state.layout.rainbow_bar.y +
+                (uint32_t)index * UI_RAINBOW_STRIPE_HEIGHT,
+            state.layout.rainbow_bar.width,
+            UI_RAINBOW_STRIPE_HEIGHT
+        }, damage, stripes[index]);
+
+        if (status != UI_STATUS_OK) {
+            return status;
+        }
+    }
+    return UI_STATUS_OK;
+}
+
 static bool panel_is_active_for(enum ui_element_id element)
 {
     return panel_for_element(element) == state.active_panel;
@@ -668,14 +771,14 @@ static enum ui_status draw_dock_item(
     const bool hovered = state.hover == item->id;
     const bool focused = state.focus == item->id;
     const bool pressed = state.pressed == item->id;
-    uint32_t background = state.theme.pale_bronze;
-    uint32_t foreground = state.theme.deep_brown;
+    uint32_t background = state.theme.platinum;
+    uint32_t foreground = state.theme.black;
 
     if (active) {
-        background = state.theme.deep_brown;
+        background = state.theme.black;
         foreground = state.theme.white;
     } else if (pressed) {
-        background = state.theme.muted_bronze;
+        background = state.theme.shadow;
     } else if (hovered) {
         background = state.theme.white;
     }
@@ -686,7 +789,7 @@ static enum ui_status draw_dock_item(
     }
     if (status == UI_STATUS_OK && focused) {
         status = focus_mark_clipped(item->bounds, damage,
-            active ? state.theme.white : state.theme.bronze);
+            active ? state.theme.white : state.theme.accent_green);
     }
     if (status == UI_STATUS_OK) {
         status = draw_icon(item->id, item->icon_bounds, damage, foreground);
@@ -756,7 +859,7 @@ static enum ui_status draw_panel_line(
         return UI_STATUS_TEXT_BASELINE_OUT_OF_BOUNDS;
     }
     return draw_text(state.layout.panel_client, damage,
-        state.layout.panel_client.x, baseline, text, state.theme.deep_brown);
+        state.layout.panel_client.x, baseline, text, state.theme.black);
 }
 
 static enum ui_status draw_ledger_panel(struct ui_rect damage)
@@ -834,10 +937,10 @@ static enum ui_status draw_system_panel(struct ui_rect damage)
 static enum ui_status draw_about_panel(struct ui_rect damage)
 {
     static const char *const lines[] = {
-        "Pyrenis 0.2.0",
+        "Sapote 0.4.0",
         "First Light",
-        "bounded desktop shell",
-        "machine state, proved."
+        "a small operating system",
+        "hello from the metal."
     };
 
     for (size_t index = 0U; index < sizeof(lines) / sizeof(lines[0]); ++index) {
@@ -858,10 +961,10 @@ static enum ui_status draw_panel(struct ui_rect damage)
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_STATUS_OK;
     }
-    status = fill_clipped(state.layout.panel, damage, state.theme.pale_bronze);
+    status = fill_clipped(state.layout.panel, damage, state.theme.platinum);
     if (status == UI_STATUS_OK) {
         status = stroke_clipped(state.layout.panel, damage, 1U,
-            state.theme.deep_brown);
+            state.theme.black);
     }
     if (status == UI_STATUS_OK) {
         status = bevel_clipped((struct ui_rect){ state.layout.panel.x + 1U,
@@ -869,32 +972,11 @@ static enum ui_status draw_panel(struct ui_rect damage)
             state.layout.panel.height - 2U }, damage, true);
     }
     if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ state.layout.panel.x + 4U,
-            state.layout.panel.y + 4U, state.layout.panel.width - 8U,
-            UI_PANEL_TITLE_HEIGHT }, damage,
-            state.theme.deep_brown);
-    }
-    if (status == UI_STATUS_OK) {
-        status = draw_text((struct ui_rect){ state.layout.panel.x + 10U,
-            state.layout.panel.y + 4U, state.layout.panel.width - 44U,
-            UI_PANEL_TITLE_HEIGHT }, damage,
-            state.layout.panel.x + 10U, state.layout.panel_title_baseline,
-            ui_panel_name(state.active_panel), state.theme.white);
-    }
-    if (status == UI_STATUS_OK) {
-        const struct ui_rect close = {
-            state.layout.panel.x + state.layout.panel.width - 22U,
-            state.layout.panel.y + 8U, 14U, 14U
-        };
-
-        status = fill_clipped(close, damage, state.theme.pale_bronze);
-        if (status == UI_STATUS_OK) {
-            status = bevel_clipped(close, damage, true);
-        }
-        if (status == UI_STATUS_OK) {
-            status = fill_clipped((struct ui_rect){ close.x + 4U,
-                close.y + 6U, 6U, 2U }, damage, state.theme.deep_brown);
-        }
+        status = draw_classic_title((struct ui_rect){
+            state.layout.panel.x + 4U, state.layout.panel.y + 4U,
+            state.layout.panel.width - 8U, UI_PANEL_TITLE_HEIGHT
+        }, damage, state.layout.panel_title_baseline,
+            ui_panel_name(state.active_panel), true);
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.panel_client, damage,
@@ -975,7 +1057,7 @@ static enum ui_status draw_cursor(struct ui_rect damage)
                 continue;
             }
             pixel = (cursor_inner[y] & bit) != 0U ?
-                state.theme.white : state.theme.bronze;
+                state.theme.white : state.theme.black;
             if (surface_pixel(canvas, cursor.x + x, cursor.y + y, pixel) !=
                 SURFACE_STATUS_OK) {
                 return UI_STATUS_SURFACE_FAILURE;
@@ -988,7 +1070,57 @@ static enum ui_status draw_cursor(struct ui_rect damage)
 static enum ui_status render_region(struct ui_rect damage, bool full)
 {
     enum ui_status status = fill_clipped(state.layout.surface, damage,
-        state.theme.white);
+        state.theme.platinum);
+
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(state.layout.menu_bar, damage,
+            state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped((struct ui_rect){
+            state.layout.menu_bar.x,
+            state.layout.menu_bar.y + state.layout.menu_bar.height - 1U,
+            state.layout.menu_bar.width, 1U
+        }, damage, state.theme.black);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 10U,
+            state.layout.menu_baseline, "SAPOTE  File  View  Special",
+            state.theme.black);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage,
+            state.layout.menu_bar.width - 96U,
+            state.layout.menu_baseline, "First Light", state.theme.black);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_rainbow_bar(damage);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(state.layout.hero_window, damage,
+            state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(state.layout.hero_window, damage, 1U,
+            state.theme.black);
+    }
+    if (status == UI_STATUS_OK) {
+        status = bevel_clipped((struct ui_rect){
+            state.layout.hero_window.x + 1U,
+            state.layout.hero_window.y + 1U,
+            state.layout.hero_window.width - 2U,
+            state.layout.hero_window.height - 2U
+        }, damage, true);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_classic_title((struct ui_rect){
+            state.layout.hero_window.x + 2U,
+            state.layout.hero_window.y + 2U,
+            state.layout.hero_window.width - 4U,
+            UI_HERO_TITLE_HEIGHT
+        }, damage, state.layout.hero_title_baseline,
+            "Welcome to Sapote", false);
+    }
 
     if (status == UI_STATUS_OK) {
         status = draw_logo_clipped(damage);
@@ -996,36 +1128,37 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
     if (status == UI_STATUS_OK) {
         status = draw_text(state.layout.wordmark, damage,
             state.layout.wordmark.x, state.layout.title_baseline,
-            "PYRENIS", state.theme.deep_brown);
+            "SAPOTE", state.theme.black);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(state.layout.motto, damage,
             state.layout.motto.x, state.layout.motto_baseline,
-            "machine state, proved.", state.theme.bronze);
+            "hello from the metal.", state.theme.black);
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.ledger_status, damage,
-            state.ledger_pass ? state.theme.deep_brown :
-                state.theme.muted_bronze);
+            state.ledger_pass ? state.theme.white :
+                state.theme.platinum);
     }
     if (status == UI_STATUS_OK) {
         status = stroke_clipped(state.layout.ledger_status, damage, 1U,
-            state.theme.bronze);
+            state.ledger_pass ? state.theme.accent_green :
+                state.theme.shadow);
     }
     if (status == UI_STATUS_OK) {
         const char *label = state.ledger_pass ?
             "LEDGER PASS" : "LEDGER DEGRADED";
         status = draw_text(state.layout.ledger_status, damage,
             centered_text_x(state.layout.ledger_status, label),
-            state.layout.status_baseline, label, state.theme.white);
+            state.layout.status_baseline, label, state.theme.black);
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.dock, damage,
-            state.theme.pale_bronze);
+            state.theme.platinum);
     }
     if (status == UI_STATUS_OK) {
         status = stroke_clipped(state.layout.dock, damage, 1U,
-            state.theme.deep_brown);
+            state.theme.black);
     }
     if (status == UI_STATUS_OK) {
         status = bevel_clipped((struct ui_rect){ state.layout.dock.x + 1U,
@@ -1094,9 +1227,9 @@ enum ui_status ui_construct(bool pointer_present)
         canvas = NULL;
         return status;
     }
-    if (pyrenis_logo_geometry(&logo_width, &logo_height) != LOGO_STATUS_OK ||
+    if (sapote_logo_geometry(&logo_width, &logo_height) != LOGO_STATUS_OK ||
         logo_width != UI_LOGO_WIDTH || logo_height != UI_LOGO_HEIGHT ||
-        pyrenis_logo_decode(logo_pixels, UI_LOGO_PIXELS,
+        sapote_logo_decode(logo_pixels, UI_LOGO_PIXELS,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position, framebuffer_pack(0xFFU, 0xFFU, 0xFFU)) !=
             LOGO_STATUS_OK) {
@@ -1470,27 +1603,38 @@ static uint64_t synthetic_render_hash(bool active)
 {
     uint32_t pixels[64U * 32U];
     const uint32_t white = UINT32_C(0x00FFFFFF);
-    const uint32_t bronze = UINT32_C(0x00806230);
-    const uint32_t brown = UINT32_C(0x002A2117);
+    const uint32_t accent_green = UINT32_C(0x0052A837);
+    const uint32_t black = UINT32_C(0x00000000);
+    const uint32_t platinum = UINT32_C(0x00DDDAD5);
+    const uint32_t stripes[] = {
+        UINT32_C(0x0052A837), UINT32_C(0x00FDB212),
+        UINT32_C(0x00F6850C), UINT32_C(0x00DF3031),
+        UINT32_C(0x00932F97), UINT32_C(0x000084CE)
+    };
 
     for (size_t index = 0U; index < sizeof(pixels) / sizeof(pixels[0]); ++index) {
-        pixels[index] = white;
+        pixels[index] = platinum;
+    }
+    for (uint32_t y = 0U; y < 6U; ++y) {
+        for (uint32_t x = 0U; x < 64U; ++x) {
+            pixels[y * 64U + x] = stripes[y];
+        }
     }
     for (uint32_t y = 20U; y < 30U; ++y) {
         for (uint32_t x = 8U; x < 56U; ++x) {
             const bool edge = y == 20U || y == 29U || x == 8U || x == 55U;
-            pixels[y * 64U + x] = edge ? brown : white;
+            pixels[y * 64U + x] = edge ? black : white;
         }
     }
     for (uint32_t y = 23U; y < 28U; ++y) {
         for (uint32_t x = 12U; x < 22U; ++x) {
-            pixels[y * 64U + x] = active ? brown : bronze;
+            pixels[y * 64U + x] = active ? black : accent_green;
         }
     }
     for (uint32_t y = 0U; y < UI_CURSOR_HEIGHT && y + 4U < 32U; ++y) {
         for (uint32_t x = 0U; x < UI_CURSOR_WIDTH && x + 44U < 64U; ++x) {
             if ((cursor_outer[y] & (uint16_t)(0x800U >> x)) != 0U) {
-                pixels[(y + 4U) * 64U + x + 44U] = bronze;
+                pixels[(y + 4U) * 64U + x + 44U] = black;
             }
         }
     }
@@ -1659,7 +1803,7 @@ bool ui_self_test(void)
     }
 
     const uint64_t stable = synthetic_render_hash(false);
-    if (stable != UINT64_C(0xD9EB40E104EB9620) ||
+    if (stable != UINT64_C(0x0308EFDC703D4CE4) ||
         stable == synthetic_render_hash(true)) {
         self_test_failure = "synthetic First Light render hash is invalid";
         return false;
@@ -1695,9 +1839,15 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         }
     }
     if (state.theme.white != framebuffer_pack(0xFFU, 0xFFU, 0xFFU) ||
-        state.theme.bronze != framebuffer_pack(0x80U, 0x62U, 0x30U) ||
-        state.theme.deep_brown != framebuffer_pack(0x2AU, 0x21U, 0x17U) ||
-        state.theme.muted_bronze != framebuffer_pack(0xA9U, 0x87U, 0x4EU)) {
+        state.theme.accent_green != framebuffer_pack(0x52U, 0xA8U, 0x37U) ||
+        state.theme.accent_yellow != framebuffer_pack(0xFDU, 0xB2U, 0x12U) ||
+        state.theme.accent_orange != framebuffer_pack(0xF6U, 0x85U, 0x0CU) ||
+        state.theme.accent_red != framebuffer_pack(0xDFU, 0x30U, 0x31U) ||
+        state.theme.accent_purple != framebuffer_pack(0x93U, 0x2FU, 0x97U) ||
+        state.theme.accent_blue != framebuffer_pack(0x00U, 0x84U, 0xCEU) ||
+        state.theme.black != framebuffer_pack(0x00U, 0x00U, 0x00U) ||
+        state.theme.shadow != framebuffer_pack(0x77U, 0x77U, 0x77U) ||
+        state.theme.platinum != framebuffer_pack(0xDDU, 0xDAU, 0xD5U)) {
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {

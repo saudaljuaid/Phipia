@@ -19,18 +19,18 @@
 /// Four magic bytes, then glyph width, glyph height, first code point and
 /// glyph count, one byte each.
 const HEADER_SIZE: usize = 8;
-const MAGIC: [u8; 4] = *b"PNF1";
+const MAGIC: [u8; 4] = *b"SNF1";
 
 /// A row is one byte, so a glyph can be no wider than eight pixels. This is a
 /// property of the format rather than a policy: a wider cell needs a wider row.
 const MAX_WIDTH: u32 = 8;
 
-/// A Pyrenis policy bound. The smallest mode the kernel accepts is 640x480, so a
+/// A Sapote policy bound. The smallest mode the kernel accepts is 640x480, so a
 /// cell taller than this could not fit a single row of text on screen.
 const MAX_HEIGHT: u32 = 32;
 
 /// What reading the table can conclude. Mirrored by `enum font_status` in
-/// `include/pyrenis/font.h`; a compile-time assertion on the C side keeps the
+/// `include/sapote/font.h`; a compile-time assertion on the C side keeps the
 /// two in step.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
