@@ -433,7 +433,8 @@ compiler accepts instead.
 The runtime mapper now has one dedicated consumer above the older fixed
 regions: the 64 MiB supervisor-only device-MMIO arena at 48 GiB. PCI claims map
 only sized memory BARs there as writable, NX, UC leaves, verify translations,
-and return every page on rollback. The chosen range is disjoint from the 4 GiB
+refuse a rounded span that aliases allocator-managed RAM, and return every page
+on rollback. The chosen range is disjoint from the 4 GiB
 identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
 `docs/PCI_RESOURCES.md`.
 

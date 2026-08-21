@@ -18,9 +18,10 @@ machine off its own console. Writing to configuration space belongs to the
 increment that also owns a device, not to the one that counts them.
 
 The public PCI interface now also exposes checked configuration writes for the
-resource and MSI-X owners. Those calls are not used by enumeration. Mechanism
-#1 writes reach segment zero and the first 256 bytes; ECAM writes reach the
-mapped segment and its full 4096-byte function. Width, alignment, address,
+resource and MSI-X owners. Those calls are not used by enumeration.
+PCI configuration mechanism #1 writes reach segment zero and the first 256
+bytes; ECAM writes reach the mapped segment and its full 4096-byte function.
+Width, alignment, address,
 offset, interrupt state, and ECAM window bounds are validated before the store.
 `pci_verify` remains read-only and never repairs hardware.
 

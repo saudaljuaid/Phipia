@@ -34,8 +34,8 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `kernel.c` | 101 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
-| `boot_plan.c` | 1574 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 1977 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `boot_plan.c` | 1899 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 2073 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -70,11 +70,11 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `pci_resource.c` | 1129 | Decode-safe BAR sizing, explicit claims, and the bounded supervisor-only MMIO arena. |
+| `pci_resource.c` | 1149 | Decode-safe BAR sizing, explicit claims, and the bounded supervisor-only MMIO arena. |
 | `interrupt_vector.c` | 281 | Audited dynamic vector allocation, exhaustion, and generation-checked release. |
-| `msix.c` | 475 | Validated MSI-X table/PBA binding and strict reverse rollback. |
-| `dma.c` | 324 | CPU/device ownership over bounded contiguous frame allocations. |
-| `virtio_rng_proof.c` | 661 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
+| `msix.c` | 476 | Validated MSI-X table/PBA binding and strict reverse rollback. |
+| `dma.c` | 469 | Private-record-validated CPU/device ownership over bounded contiguous frame allocations. |
+| `virtio_rng_proof.c` | 669 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 
 ### Interrupt hardware
 
@@ -99,7 +99,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `physical_memory.c` | 714 | Which physical frames exist and which are free, including aligned bounded contiguous extents. |
+| `physical_memory.c` | 747 | Which physical frames exist and which are free, including aligned bounded contiguous extents and usable-range overlap queries. |
 | `paging.c` | 3006 | Four-level page tables, W^X, the bounded device-window registry, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` before it. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 

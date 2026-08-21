@@ -269,10 +269,9 @@ executable failure test, and a boot that proves it or refuses.
    `docs/IO_APIC.md`'s deferred work entirely: **a message-signalled interrupt is
    a memory write to the local APIC, so it is edge-triggered by construction and
    needs no redirection entry, no trigger-mode decision, and no directed
-   end-of-interrupt.** Every PCIe device Pyrenis would want — including every
-   Wi-Fi part — supports it. Level-triggered I/O APIC routing remains worth
-   having for legacy devices, but it stops being on the critical path to
-   hardware.
+   end-of-interrupt.** MSI-X and MSI are optional PCI capabilities. A future
+   driver must either provide a legacy interrupt fallback or explicitly limit
+   support to devices that expose a supported message-signalled capability.
 3. **DMA-capable memory — complete.** Physically contiguous allocation with an
    address-width bound, and explicit ownership transfer between CPU and device.
    `docs/DMA.md` states the no-IOMMU security boundary.

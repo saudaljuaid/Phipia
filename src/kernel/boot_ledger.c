@@ -181,6 +181,15 @@ static bool descriptor_has_capability(
     return false;
 }
 
+static bool device_substrate_outcome_valid(
+    bool stage_planned,
+    bool complete,
+    bool absent
+)
+{
+    return !stage_planned || complete != absent;
+}
+
 static bool descriptor_requires(
     const struct boot_stage_descriptor *descriptor,
     enum boot_capability capability
@@ -1347,6 +1356,15 @@ enum boot_ledger_status boot_ledger_verify_installed(
         BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE);
     const bool substrate_absent = boot_ledger_has_capability(ledger,
         BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT);
+    const bool substrate_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_DEVICE_SUBSTRATE_PROOF) != NULL;
+    if (!device_substrate_outcome_valid(substrate_planned,
+            substrate_complete, substrate_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
+            BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE);
+        return ledger->status;
+    }
     if (substrate_complete || substrate_absent) {
         const struct boot_stage_receipt *substrate =
             boot_ledger_receipt_for(ledger,
@@ -1354,7 +1372,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
         const struct device_substrate_proof proof =
             device_substrate_get_proof();
 
-        if (substrate_complete == substrate_absent || substrate == NULL ||
+        if (substrate == NULL ||
             (substrate_complete &&
                 (substrate->result != BOOT_RECEIPT_RAN ||
                  substrate->proof_counter_count != 2U ||
@@ -1731,6 +1749,14 @@ bool boot_ledger_self_test(void)
     struct boot_stage_descriptor three;
     enum boot_capability saved_capability;
     uint32_t saved_sequence;
+
+    if (!device_substrate_outcome_valid(false, false, false) ||
+        device_substrate_outcome_valid(true, false, false) ||
+        device_substrate_outcome_valid(true, true, true) ||
+        !device_substrate_outcome_valid(true, true, false) ||
+        !device_substrate_outcome_valid(true, false, true)) {
+        return false;
+    }
 
     if (!self_test_mixed_plan(&first, false) ||
         !self_test_mixed_plan(&second, true) ||

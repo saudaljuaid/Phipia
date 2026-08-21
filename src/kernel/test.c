@@ -4477,6 +4477,8 @@ _Noreturn void kernel_test_complete_device_substrate(void)
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *receipt;
     const struct device_substrate_proof proof = device_substrate_get_proof();
+    const size_t negative_controls = 4U + 4U + 2U + 2U +
+        proof.negative_controls;
 
     if (active_scenario != KERNEL_TEST_DEVICE_SUBSTRATE) {
         kernel_test_fail("device-substrate completion used outside its scenario");
@@ -4502,12 +4504,18 @@ _Noreturn void kernel_test_complete_device_substrate(void)
         proof.nonzero_bytes == 0U ||
         !proof.dma_device_written || !proof.msix_delivered ||
         !proof.ownership_round_trip || !proof.teardown_complete ||
-        proof.negative_controls != 2U) {
+        proof.negative_controls != 2U || negative_controls != 14U) {
         kernel_test_fail("device-substrate installed proof is inconsistent");
     }
 
-    console_write("ST DEVICE_SUBSTRATE dma 64 msix 1 used 0->1 ");
-    console_write("ownership CPU-DEVICE-CPU teardown clean negatives 14\n");
+    console_write("ST DEVICE_SUBSTRATE dma ");
+    console_write_u64(proof.random_bytes);
+    console_write(" msix ");
+    console_write_u64(proof.interrupt_count);
+    console_write(" used 0->1 ownership CPU-DEVICE-CPU teardown clean ");
+    console_write("negatives ");
+    console_write_u64(negative_controls);
+    console_putc('\n');
     kernel_test_pass();
 }
 
