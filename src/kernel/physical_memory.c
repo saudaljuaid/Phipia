@@ -662,6 +662,39 @@ enum frame_status frame_reserve_range(uint64_t base_address, uint64_t length)
     return FRAME_STATUS_OK;
 }
 
+bool frame_range_overlaps_allocatable_memory(
+    uint64_t base_address,
+    uint64_t length
+)
+{
+    uint64_t end;
+    size_t first_frame;
+    size_t past_last_frame;
+
+    if (!allocator_initialized || length == 0U ||
+        !checked_range_end(base_address, length, &end)) {
+        return false;
+    }
+    if (base_address >= PYRENIS_EARLY_PHYSICAL_LIMIT) {
+        return false;
+    }
+    if (end > PYRENIS_EARLY_PHYSICAL_LIMIT) {
+        end = PYRENIS_EARLY_PHYSICAL_LIMIT;
+    }
+
+    first_frame = (size_t)(base_address / PYRENIS_PAGE_SIZE);
+    past_last_frame = (size_t)(end / PYRENIS_PAGE_SIZE);
+    if ((end & (PYRENIS_PAGE_SIZE - 1U)) != 0U) {
+        ++past_last_frame;
+    }
+    for (size_t frame = first_frame; frame < past_last_frame; ++frame) {
+        if (bitmap_get(eligible_bitmap, frame)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 struct frame_allocator_stats frame_allocator_get_stats(void)
 {
     return allocator_stats;

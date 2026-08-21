@@ -23,6 +23,12 @@ initialization, repeated transfers, CPU access claimed while device-owned, and
 release from device ownership are rejected. Completion transfers ownership
 back to the CPU before validation or release.
 
+The public handle is evidence, not authority by itself. A private fixed record
+binds its address, frame-generation identifier, physical range, initialization
+state, and owner to the exact live handle. Every lifecycle operation and the
+bus-master predicate compare against that record, so copying or fabricating the
+public fields cannot manufacture device ownership.
+
 PCI bus mastering is gated by this state machine. It may be enabled only for a
 live claim with mapped memory resources and a bounded list of initialized,
 device-owned DMA allocations. It must be disabled before ownership is reclaimed
@@ -41,7 +47,8 @@ and interrupt remapping.
 
 The DMA boot stage exercises zero-page, malformed and impossible alignment,
 transfer-before-initialization, repeated and wrong-owner transfers,
-device-owned release, valid round-trip, and double release paths. The VirtIO RNG
+device-owned release, a forged copied handle, valid round-trip, and double
+release paths. The VirtIO RNG
 proof additionally bounds both pages below 4 GiB, refuses premature bus
 mastering, observes CPU → device → CPU ownership, and requires all allocation
 counts to return to zero.

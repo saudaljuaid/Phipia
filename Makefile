@@ -176,7 +176,7 @@ verify: toolchain lint
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
-		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)[[:space:]]' | \
+		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
 		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
@@ -219,7 +219,15 @@ verify: toolchain lint
 	fi
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
-	@grep -Fq 'device-substrate) expected=97 ;;' Makefile
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_DEVICE_SUBSTRATE:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*device-substrate) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'device-substrate guest and host exits disagree'; exit 1; }
 	@test "$$(grep -Ec 'proof_interrupt[[:space:]]*[(]' \
 		src/kernel/virtio_rng_proof.c)" -eq 1 || \
 		{ echo 'VirtIO proof directly injects its MSI-X handler'; exit 1; }

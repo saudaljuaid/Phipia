@@ -92,14 +92,18 @@ The virtual wire invariant was confirmed by negative control: masking LINT0
 instead of routing it stops PIT delivery and hangs the guest until the scenario
 times out. The routing is load-bearing and the scenario detects its absence.
 
-## Deferred work
+## MSI-X on the bootstrap local APIC
 
 MSI-X now targets the bootstrap local APIC directly. Dynamic vectors
 `0x90`-`0xEF` carry fixed-delivery message data, use the normal local-APIC EOI
 after their registered handler, and never acquire an I/O APIC route or directed
-EOI record. Multi-CPU affinity and interrupt remapping remain deferred; see
-`docs/MSI_X.md`.
+EOI record. `docs/IO_APIC.md` records pin routing and directed EOI;
+`docs/MSI_X.md` records the path that intentionally bypasses it.
 
 The local APIC now carries retired legacy routes, the calibrated local timer,
-and owned MSI-X vectors. `docs/IO_APIC.md` records pin routing and directed EOI;
-`docs/MSI_X.md` records the path that intentionally bypasses it.
+and owned MSI-X vectors.
+
+## Deferred work
+
+- **Multi-CPU affinity.** Every vector targets the bootstrap processor.
+- **Interrupt remapping.** See `docs/MSI_X.md`.

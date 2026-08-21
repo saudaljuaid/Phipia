@@ -198,11 +198,13 @@ and the missing capability, even if phases happen to preserve observed order.
 The device-substrate proof similarly is not an irreversible-class member, but
 its descriptor must carry exactly eleven prerequisites: paging, PCI, heap,
 frames, local APIC/controllers, interrupts, threading, scheduler, and all three
-new foundations. Its execution function deletes one edge from a local copy and
-requires the semantic prerequisite checker to reject it. The installed verifier
+new foundations. Its execution function both shortens a local copy and replaces
+one member while preserving cardinality; the semantic prerequisite checker must
+reject both. The installed verifier
 then requires either the ran receipt with counters `1` interrupt and `64` DMA
-bytes, or a neutral skipped receipt with the fixture-absent capability, never
-both. Closing proofs independently require every claim, MMIO page, DMA handle,
+bytes, or a neutral skipped receipt with the fixture-absent capability, exactly
+one and never neither or both. Closing proofs independently require every claim,
+MMIO page, DMA handle,
 vector, handler, MSI-X binding, and bus-master count to be zero.
 
 The framebuffer and cached-surface store fences remain in their existing

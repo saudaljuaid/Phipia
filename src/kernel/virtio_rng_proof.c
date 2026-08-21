@@ -73,6 +73,9 @@ struct proof_interrupt_context {
 
 static struct device_substrate_proof installed_proof;
 
+_Static_assert(VIRTIO_RNG_BYTES <= PYRENIS_PAGE_SIZE,
+    "VirtIO RNG proof receive buffer exceeds its DMA page");
+
 static uint32_t config_dword(
     const struct pci_function *function,
     uint16_t offset,
@@ -446,6 +449,8 @@ enum device_substrate_status device_substrate_prove(
     write_u16(queue, available_offset + 4U, 0U);
     write_u16(queue, available_offset + 2U, 1U);
     proof->used_before = read_u16(queue, used_offset + 2U);
+    interrupt_context.queue = &queue_dma;
+    interrupt_context.buffer = &buffer_dma;
 
     msix_test_inject_failure_once();
     if (msix_bind(&claim, 0U, proof_interrupt, &interrupt_context,
@@ -462,8 +467,6 @@ enum device_substrate_status device_substrate_prove(
         result = DEVICE_SUBSTRATE_STATUS_MSIX_FAILURE;
         goto cleanup;
     }
-    interrupt_context.queue = &queue_dma;
-    interrupt_context.buffer = &buffer_dma;
     interrupt_context.expected_vector = binding.vector.vector;
     mmio_write16(common.base, VIRTIO_COMMON_QUEUE_MSIX_VECTOR, 0U);
     if (mmio_read16(common.base, VIRTIO_COMMON_QUEUE_MSIX_VECTOR) ==
@@ -527,15 +530,20 @@ enum device_substrate_status device_substrate_prove(
     deadline = clock_monotonic_ns() + VIRTIO_PROOF_TIMEOUT_NS;
     cpu_interrupt_enable();
     while (interrupt_context.count == 0U &&
+        !interrupt_context.wrong_vector &&
         clock_monotonic_ns() < deadline) {
         __asm__ volatile ("" : : : "memory");
     }
     cpu_interrupt_disable();
+    if (interrupt_context.wrong_vector) {
+        result = DEVICE_SUBSTRATE_STATUS_WRONG_INTERRUPT;
+        goto cleanup;
+    }
     if (interrupt_context.count == 0U) {
         result = DEVICE_SUBSTRATE_STATUS_INTERRUPT_TIMEOUT;
         goto cleanup;
     }
-    if (interrupt_context.wrong_vector || interrupt_context.count != 1U) {
+    if (interrupt_context.count != 1U) {
         result = DEVICE_SUBSTRATE_STATUS_WRONG_INTERRUPT;
         goto cleanup;
     }
