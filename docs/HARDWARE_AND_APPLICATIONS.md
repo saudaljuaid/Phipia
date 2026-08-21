@@ -258,13 +258,13 @@ allocation, and eventually the IOMMU.
 Each of these is one change, in this repository's sense: an invariant, an
 executable failure test, and a boot that proves it or refuses.
 
-**Substrate — everything else waits on these.**
+**Kernel device substrate — complete in v0.3.0.**
 
-1. **Base address registers: size, and map them.** The first increment that
+1. **Base address registers: size, and map them — complete.** The first increment that
    *writes* configuration space, and the first that can take a working device
    away from whoever is using it, so it must disable a function's decode while it
    probes and put it back. Prerequisite for every driver.
-2. **Interrupt vectors, and MSI-X.** A vector allocator, then programming a
+2. **Interrupt vectors, and MSI-X — complete.** A vector allocator, then programming a
    device's MSI-X table. This is the increment that routes around
    `docs/IO_APIC.md`'s deferred work entirely: **a message-signalled interrupt is
    a memory write to the local APIC, so it is edge-triggered by construction and
@@ -273,17 +273,20 @@ executable failure test, and a boot that proves it or refuses.
    Wi-Fi part — supports it. Level-triggered I/O APIC routing remains worth
    having for legacy devices, but it stops being on the critical path to
    hardware.
-3. **DMA-capable memory.** Physically contiguous allocation with an
+3. **DMA-capable memory — complete.** Physically contiguous allocation with an
    address-width bound, and explicit ownership transfer between CPU and device.
-   The frame allocator cannot express either today.
-4. **Threads and a scheduler.** Firmware loading, link establishment and command
+   `docs/DMA.md` states the no-IOMMU security boundary.
+4. **Threads and a scheduler — complete.** Firmware loading, link establishment and command
    completion are all long blocking operations. `docs/MONOTONIC_TIME.md` already
    names this as the thing the deadline layer exists to make possible.
 
 **First hardware.**
 
-5. **A virtio driver.** Cheapest possible exercise of steps 1–4, testable in the
-   QEMU this project already uses, in CI.
+5. **A VirtIO RNG transport proof — complete, deliberately not a service.** It
+   exercises modern PCI capabilities, bounded split-ring DMA, one real MSI-X
+   delivery, device-written bytes, ownership transitions, and full teardown in
+   QEMU CI. The next VirtIO work must be a separately designed production
+   driver API rather than growing fixture code into a general layer.
 6. **xHCI.** One driver, every USB controller, and the road to input devices,
    mass storage, and a FullMAC Wi-Fi adapter.
 7. **NVMe or AHCI**, then a filesystem — which is also how firmware images get
@@ -319,9 +322,9 @@ executable failure test, and a boot that proves it or refuses.
   behind a driver that looks the same size as an Ethernet one.
 - **Do not attempt a modern GPU.** A framebuffer from firmware is enough for a
   very long time.
-- **Do not write drivers before threads.** Every real device has an operation
-  that takes milliseconds, and a kernel with one thread of control must busy-wait
-  through all of them.
+- **Do not turn the RNG proof into an accidental driver framework.** Fixture
+  transport stays isolated; production driver lifetime and concurrency need a
+  focused design.
 - **Do not size a BAR without disabling the function's decode first.** The
   console is behind a device on the same bus.
 

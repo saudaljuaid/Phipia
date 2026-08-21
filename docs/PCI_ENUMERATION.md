@@ -1,15 +1,15 @@
 # PCI configuration space
 
-Every driver Pyrenis will ever have begins by being found. This increment finds
-what is on the machine — buses, devices, functions, what class each one is, and
-which of them can raise a message-signalled interrupt — and does nothing else
-with it.
+Every driver Pyrenis will ever have begins by being found. This layer discovers
+buses, devices, functions, classes, and capabilities. Resource mutation remains
+separate: `docs/PCI_RESOURCES.md` describes the claim required before BAR
+probing, mapping, MSI-X, or bus mastering.
 
-## What this layer does not do
+## Enumeration remains read-only
 
 It is worth stating first, because the restraint is the design.
 
-Every access this layer makes is a **read**. Configuration reads have no side
+Every enumeration access is a **read**. Configuration reads have no side
 effects, so enumerating a machine cannot disturb a device that is already
 working — including the one the serial console is talking through. Sizing a base
 address register means writing all ones into it and reading back which bits
@@ -17,8 +17,12 @@ stuck, and doing that to the wrong function is how an enumerator takes a working
 machine off its own console. Writing to configuration space belongs to the
 increment that also owns a device, not to the one that counts them.
 
-So there is no bus mastering enabled, no interrupt routed, no BAR sized, no
-device claimed. `pci_verify` re-reads and compares; it does not repair.
+The public PCI interface now also exposes checked configuration writes for the
+resource and MSI-X owners. Those calls are not used by enumeration. Mechanism
+#1 writes reach segment zero and the first 256 bytes; ECAM writes reach the
+mapped segment and its full 4096-byte function. Width, alignment, address,
+offset, interrupt state, and ECAM window bounds are validated before the store.
+`pci_verify` remains read-only and never repairs hardware.
 
 ## Two mechanisms, and why both
 
@@ -131,7 +135,9 @@ One consequence is stated rather than hidden: Pyrenis maps **two buses** of a
 window firmware may declare as 256. That is every bus any machine it is tested
 on populates, and a register past the mapped region is refused rather than
 wrapped. Reaching further, and reaching extended configuration space at all,
-needs the window mapped somewhere of its own; that is a later increment.
+needs the window mapped somewhere of its own. ECAM accesses now accept extended
+offsets that fit this installed window, while the agreement proof compares only
+the first 256 bytes both mechanisms share.
 
 ## Executable proof
 
@@ -271,28 +277,28 @@ would blow through is worth more than a green run. It is written down because a
 25% tolerance on a 50 ms sleep is not as much headroom as it looks on a loaded
 CI machine, and the next person to see it should not have to rediscover this.
 
+## Resource handoff
+
+The list returned here is the sole source from which `pci_claim_device` accepts
+a function. A claim performs the first configuration writes in Pyrenis: decode
+is disabled, BARs are sized and exactly restored, bus mastering is kept off,
+and owned memory resources may be mapped in the device-MMIO arena. See
+`docs/PCI_RESOURCES.md`; MSI-X and the VirtIO proof are described in
+`docs/MSI_X.md` and `docs/DMA.md`.
+
 ## Deferred work
 
-- **No base address register is sized, and nothing is mapped.** That is the next
-  increment and the one that first *writes* configuration space. It has to
-  disable a function's decode while it probes, which is the first operation here
-  that can take a working device away from whoever is using it.
-- **Extended configuration space is unreachable.** Both readers stop at 256
-  bytes. The window would reach 4096, but Pyrenis maps two buses of it as one
-  identity-map region and reads no further than the ports can, so the two
-  mechanisms compare like for like. Reaching the rest needs the window mapped in
-  its own virtual range.
-- **MSI and MSI-X are found, not programmed.** They are why capabilities are
-  read at all: a message-signalled interrupt is a memory write to the local
-  APIC, so it is edge-triggered by construction and needs no I/O APIC
-  redirection entry — and therefore none of what `docs/IO_APIC.md` defers.
-  Programming one needs a vector allocator, which does not exist yet.
+- **Enumeration does not mutate resources.** Claims size assigned BARs and map
+  them, but no allocator reassigns platform addresses or bridge windows.
+- **Only the installed ECAM slice is reachable.** Accesses may use all 4096
+  bytes per mapped function, but only the bounded two-bus window is installed.
+- **MSI remains discovery-only.** MSI-X has a typed binding transaction;
+  conventional MSI is not programmed.
 - **Segment groups beyond the first are recorded and ignored.** The ports cannot
   carry a segment at all, so a second group would have to be read entirely
   through a window, and there is nothing to test that against.
-- **No device is claimed and no driver exists.** Enumeration is a list;
-  `docs/HARDWARE_AND_APPLICATIONS.md` is the argument about what should be built
-  on it.
+- **No production driver exists.** The isolated VirtIO RNG transport is an
+  installed substrate proof, not a random service or general driver API.
 - **Bridge windows are not read.** Secondary and subordinate bus numbers are
   recorded because traversal needs them; the memory and prefetch windows a
   bridge forwards are not, because nothing allocates address space yet.

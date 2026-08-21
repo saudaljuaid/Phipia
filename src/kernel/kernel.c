@@ -105,5 +105,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_first_light();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_DEVICE_SUBSTRATE) {
+        kernel_test_complete_device_substrate();
+    }
+
     shell_run();
 }

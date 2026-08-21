@@ -1,0 +1,63 @@
+# Device-foundation verification record
+
+This record covers the BAR, dynamic-vector, MSI-X, DMA, and VirtIO RNG proof
+increment. The measured source baseline was
+`55dd4beabafdbe9f6efa4e521ff29815095db1e8`. Tests used QEMU 11.1.0, Clang
+22.1.8, Rust 1.97.0, and the existing cross-binutils link contract.
+
+## Executed negative controls
+
+The controls below execute during boot or as a source/host contract assertion;
+they are not uncalled helper branches. A passing `device-substrate` boot reports
+all fourteen in its stable scenario line.
+
+| # | Control | Observed refusal or proof |
+| ---: | --- | --- |
+| 1 | Probe a BAR while decode is enabled. | `PCI_RESOURCE_STATUS_DECODE_ENABLED`. |
+| 2 | Inject failure after a BAR write. | `PCI_RESOURCE_STATUS_INJECTED_FAILURE`; command and every BAR read back exactly. |
+| 3 | Present a 64-bit BAR without its upper pair. | `PCI_RESOURCE_STATUS_MALFORMED_64_BIT_PAIR`. |
+| 4 | Validate overflowing and overlapping MMIO ranges. | `PCI_RESOURCE_STATUS_BAR_RANGE_OVERFLOW` and `PCI_RESOURCE_STATUS_MMIO_RANGE_OVERLAP`. |
+| 5 | Request fixed controller, self-test, IST, and spurious vectors. | Each returns `INTERRUPT_VECTOR_STATUS_RESERVED`. |
+| 6 | Fill the dynamic interval, allocate once more, then release one handle twice. | `INTERRUPT_VECTOR_STATUS_EXHAUSTED` and `INTERRUPT_VECTOR_STATUS_DOUBLE_RELEASE`; allocation count returns to zero. |
+| 7 | Place an MSI-X table past the sized BAR. | `MSIX_STATUS_TABLE_OUTSIDE_BAR`. |
+| 8 | Enable delivery without an installed handler. | `MSIX_STATUS_HANDLER_NOT_INSTALLED`. |
+| 9 | Inject failure after the live VirtIO handler is installed. | Complete reverse rollback; no binding, handler, vector, or mapping remains before the real bind. |
+| 10 | Request non-power-of-two and impossible DMA alignment. | Bounded frame allocation is refused without changing allocation counts. |
+| 11 | Transfer before initialization, transfer twice, reclaim twice, and release while device-owned. | Named not-prepared, wrong-owner, and double-free results; allocation counts return to their baseline. |
+| 12 | Enable bus mastering before both VirtIO allocations are initialized and device-owned. | `PCI_RESOURCE_STATUS_DMA_NOT_PREPARED`; the command register remains non-mastering. |
+| 13 | Remove one of the proof descriptor's eleven prerequisites. | The local descriptor control is rejected as an incomplete prerequisite set before the fixture is touched. |
+| 14 | Mutate the new guest exit from `0x30` to `0x31`. | The exit self-test rejects the mutation; the host contract remains 97. |
+
+The closing installed proof requires zero claims, MMIO mappings and arena pages,
+bus masters, contiguous frame records, DMA allocations, vectors, handlers, and
+MSI-X bindings.
+
+## End-to-end evidence
+
+The standard `virtio-rng-pci` fixture was enumerated normally as `1AF4:1044`.
+The proof claimed its modern capabilities, allocated a bounded split virtqueue
+and receive page below 4 GiB, installed one MSI-X binding, transferred both DMA
+allocations to the device, and submitted one 64-byte request. The installed
+checks observed one real interrupt, used index `0 -> 1`, descriptor id zero,
+used length 64, nonzero device-written bytes, CPU -> device -> CPU ownership,
+and complete teardown. The source assertion also permits exactly one occurrence
+of the proof handler call syntax: the handler definition itself, so the proof
+cannot directly inject delivery.
+
+## Complete-suite matrix
+
+| Executor | Complete sweeps | Scenario boots | Result |
+| --- | ---: | ---: | --- |
+| TCG | 10 | 330 | 330 passed |
+| WHPX | 1 | 33 | 33 passed |
+
+`make verify` also passed from a clean build with warnings promoted to errors.
+Its binary checks found no undefined symbols, unresolved relocations, RWX load
+segment, or floating-point, MMX, SSE, or AVX instructions. All inherited stable
+transcripts and exit values passed the host comparator.
+
+One preliminary TCG attempt, before the ten recorded sweeps, failed in the
+inherited clock-agreement proof: PM-timer elapsed time was 279,441,381 ns while
+the local-APIC interval was 200,000,000 ns. It occurred before PCI-resource,
+vector, DMA, or fixture execution. The affected complete sweep was discarded
+and rerun serially; the rerun passed all 33 scenarios. No other flake occurred.

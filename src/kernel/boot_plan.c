@@ -20,16 +20,21 @@
 #include <pyrenis/clock.h>
 #include <pyrenis/console.h>
 #include <pyrenis/cpu.h>
+#include <pyrenis/device_substrate.h>
+#include <pyrenis/dma.h>
 #include <pyrenis/framebuffer.h>
 #include <pyrenis/heap.h>
 #include <pyrenis/interrupts.h>
+#include <pyrenis/interrupt_vector.h>
 #include <pyrenis/font.h>
 #include <pyrenis/logo.h>
 #include <pyrenis/ioapic.h>
 #include <pyrenis/keyboard.h>
 #include <pyrenis/memory.h>
+#include <pyrenis/msix.h>
 #include <pyrenis/paging.h>
 #include <pyrenis/pci.h>
+#include <pyrenis/pci_resource.h>
 #include <pyrenis/pointer.h>
 #include <pyrenis/pm_timer.h>
 #include <pyrenis/screen.h>
@@ -775,6 +780,205 @@ static void execute_pci(
     boot_stage_result_succeed(descriptor, result);
 }
 
+static const struct pci_function *resource_probe_function(void)
+{
+    for (size_t index = 0U; index < pci_function_count(); ++index) {
+        const struct pci_function *function = pci_function_at(index);
+
+        if (function != NULL &&
+            (function->header_type == PCI_HEADER_TYPE_ENDPOINT ||
+                function->header_type == PCI_HEADER_TYPE_BRIDGE)) {
+            return function;
+        }
+    }
+    return NULL;
+}
+
+static void execute_pci_resource_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const struct pci_function *probe = resource_probe_function();
+    const enum pci_resource_status status = pci_resource_initialize();
+
+    if (status != PCI_RESOURCE_STATUS_OK) {
+        stage_failed(context, result, pci_resource_status_string(status));
+        return;
+    }
+    if (!pci_resource_self_test(probe)) {
+        stage_failed(context, result,
+            "PCI BAR transaction negative controls failed");
+        return;
+    }
+    console_write("Pyrenis: PCI resource ownership negative controls 4/4 passed\n");
+    console_write("Pyrenis: supervisor NX UC device-MMIO arena established\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] =
+        pci_resource_get_state().arena_pages;
+    result->proof_counter_count = 1U;
+}
+
+static void execute_dynamic_vector_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum interrupt_vector_status status = interrupt_vector_initialize();
+
+    if (status != INTERRUPT_VECTOR_STATUS_OK) {
+        stage_failed(context, result,
+            interrupt_vector_status_string(status));
+        return;
+    }
+    if (!interrupt_vector_self_test() || !msix_self_test()) {
+        stage_failed(context, result,
+            "dynamic vector or MSI-X negative controls failed");
+        return;
+    }
+    console_write("Pyrenis: dynamic vector negative controls 4/4 passed\n");
+    console_write("Pyrenis: dynamic interrupt vector foundation established\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = interrupt_vector_get_state().capacity;
+    result->proof_counter_count = 1U;
+}
+
+static void execute_dma_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    const enum dma_status status = dma_initialize();
+
+    if (status != DMA_STATUS_OK) {
+        stage_failed(context, result, dma_status_string(status));
+        return;
+    }
+    if (!dma_self_test()) {
+        stage_failed(context, result, "DMA ownership negative controls failed");
+        return;
+    }
+    console_write("Pyrenis: bounded DMA negative controls 2/2 passed\n");
+    console_write("Pyrenis: contiguous DMA ownership foundation established\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static bool device_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    static const enum boot_capability required[] = {
+        BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+        BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+        BOOT_CAPABILITY_HEAP_AVAILABLE,
+        BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+        BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+        BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+        BOOT_CAPABILITY_THREADING_AVAILABLE,
+        BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+        BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+        BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE
+    };
+
+    if (descriptor == NULL || descriptor->required_capability_count !=
+            sizeof(required) / sizeof(required[0])) {
+        return false;
+    }
+    for (size_t required_index = 0U;
+         required_index < sizeof(required) / sizeof(required[0]);
+         ++required_index) {
+        bool found = false;
+        for (size_t declared_index = 0U;
+             declared_index < descriptor->required_capability_count;
+             ++declared_index) {
+            if (descriptor->required_capabilities[declared_index] ==
+                    required[required_index]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void execute_device_substrate_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing = *descriptor;
+    struct device_substrate_proof proof;
+    enum device_substrate_status status;
+
+    if (!device_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "device-substrate proof prerequisite set is incomplete");
+        return;
+    }
+    --missing.required_capability_count;
+    if (device_proof_dependencies_complete(&missing) ||
+        !kernel_test_device_substrate_exit_self_test()) {
+        stage_failed(context, result,
+            "device-substrate contract negative controls failed");
+        return;
+    }
+
+    status = device_substrate_prove(&proof);
+    if (status == DEVICE_SUBSTRATE_STATUS_ABSENT) {
+        console_write("Pyrenis: device-substrate fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != DEVICE_SUBSTRATE_STATUS_OK) {
+        const struct pci_function *function = pci_find_device(
+            UINT16_C(0x1AF4), UINT16_C(0x1044));
+
+        console_write("Pyrenis: PCI ");
+        if (function != NULL) {
+            console_write_u64(function->address.segment);
+            console_putc(':');
+            console_write_u64(function->address.bus);
+            console_putc(':');
+            console_write_u64(function->address.device);
+            console_putc('.');
+            console_write_u64(function->address.function);
+        } else {
+            console_write("unknown");
+        }
+        console_write(" operation device-substrate proof violated invariant: ");
+        console_write(device_substrate_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, device_substrate_status_string(status));
+        return;
+    }
+
+    console_write("Pyrenis: VirtIO RNG device DMA wrote ");
+    console_write_u64(proof.random_bytes);
+    console_write(" bytes; nonzero ");
+    console_write_u64(proof.nonzero_bytes);
+    console_putc('\n');
+    console_write("Pyrenis: MSI-X delivered ");
+    console_write_u64(proof.interrupt_count);
+    console_write(" interrupt; used ring ");
+    console_write_u64(proof.used_before);
+    console_write(" -> ");
+    console_write_u64(proof.used_after);
+    console_putc('\n');
+    console_write("Pyrenis: device substrate teardown complete\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.interrupt_count;
+    result->proof_counters[1] = proof.random_bytes;
+    result->proof_counter_count = 2U;
+}
+
 static void execute_threading(
     struct boot_context *context,
     const struct boot_stage_descriptor *descriptor,
@@ -806,6 +1010,8 @@ static void execute_closing_proofs(
     enum paging_status paging_status = paging_verify();
     enum heap_status heap_status;
     enum pci_status pci_status;
+    enum pci_resource_status pci_resource_status;
+    enum dma_status dma_status;
 
     if (paging_status != PAGING_STATUS_OK) {
         stage_failed(context, result, paging_status_string(paging_status));
@@ -821,6 +1027,40 @@ static void execute_closing_proofs(
     pci_status = pci_verify();
     if (pci_status != PCI_STATUS_OK) {
         stage_failed(context, result, pci_status_string(pci_status));
+        return;
+    }
+
+    pci_resource_status = pci_resource_verify();
+    if (pci_resource_status != PCI_RESOURCE_STATUS_OK) {
+        stage_failed(context, result,
+            pci_resource_status_string(pci_resource_status));
+        return;
+    }
+
+    dma_status = dma_verify();
+    if (dma_status != DMA_STATUS_OK) {
+        stage_failed(context, result, dma_status_string(dma_status));
+        return;
+    }
+
+    const struct pci_resource_state resource_state =
+        pci_resource_get_state();
+    const struct dma_state installed_dma_state = dma_get_state();
+    const struct interrupt_vector_state vector_state =
+        interrupt_vector_get_state();
+    const struct msix_state installed_msix_state = msix_get_state();
+    if (resource_state.active_claims != 0U ||
+        resource_state.active_mappings != 0U ||
+        resource_state.mapped_pages != 0U ||
+        resource_state.bus_masters != 0U ||
+        installed_dma_state.active_allocations != 0U ||
+        installed_dma_state.cpu_owned_allocations != 0U ||
+        installed_dma_state.device_owned_allocations != 0U ||
+        vector_state.allocated != 0U ||
+        installed_msix_state.active_bindings != 0U ||
+        installed_msix_state.failure_injection_armed) {
+        stage_failed(context, result,
+            "device foundation ownership leaked across teardown");
         return;
     }
 
@@ -855,6 +1095,7 @@ static void execute_closing_proofs(
     console_write("Pyrenis: virtual memory established\n");
     console_write("Pyrenis: kernel heap established\n");
     console_write("Pyrenis: PCI enumeration established\n");
+    console_write("Pyrenis: device foundations established\n");
     console_write("Pyrenis: kernel threads passed\n");
     console_write("Pyrenis: preemption passed\n");
     if (framebuffer_is_active()) {
@@ -1019,10 +1260,22 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
         execute_timer_calibration),
     REQUIRED_STAGE(BOOT_STAGE_PCI, "PCI access", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_pci),
+    REQUIRED_STAGE(BOOT_STAGE_PCI_RESOURCE_FOUNDATION,
+        "PCI resource ownership", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_pci_resource_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_DYNAMIC_VECTOR_FOUNDATION,
+        "dynamic interrupt vectors", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_dynamic_vector_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_DMA_FOUNDATION, "DMA foundation",
+        BOOT_PHASE_SERVICES, BOOT_IRREVERSIBLE_NONE,
+        execute_dma_foundation),
     REQUIRED_STAGE(BOOT_STAGE_THREADING, "threading", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_threading),
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_SCHEDULER, execute_scheduler),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
+        "installed device-substrate proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_device_substrate_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -1298,6 +1551,40 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
         descriptor->provided_capability_count = 1U;
         break;
+    case BOOT_STAGE_PCI_RESOURCE_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capability_count = 3U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_DYNAMIC_VECTOR_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_IDT_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capability_count = 3U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_DMA_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
     case BOOT_STAGE_THREADING:
         descriptor->required_capabilities[0] =
             BOOT_CAPABILITY_HEAP_AVAILABLE;
@@ -1321,6 +1608,37 @@ static bool declare_dependencies(
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
         descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_DEVICE_SUBSTRATE_PROOF:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_THREADING_AVAILABLE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[9] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[10] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 11U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DEVICE_SUBSTRATE_INSTALLED_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_DEVICE_SUBSTRATE_FIXTURE_ABSENT;
+        descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_CLOSING_PROOFS:
         descriptor->required_capabilities[0] =

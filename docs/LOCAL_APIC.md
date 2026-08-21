@@ -94,8 +94,12 @@ times out. The routing is load-bearing and the scenario detects its absence.
 
 ## Deferred work
 
-Pyrenis now has a running local APIC that carries legacy interrupts unchanged.
-`docs/IO_APIC.md` covers the next increment, which programs redirection entries
-from the discovered overrides and delivers the timer through the I/O APIC.
-Masking the 8259 pair permanently follows it, and only after that may the local
-APIC timer replace the PIT proof, with its own calibration and acceptance test.
+MSI-X now targets the bootstrap local APIC directly. Dynamic vectors
+`0x90`-`0xEF` carry fixed-delivery message data, use the normal local-APIC EOI
+after their registered handler, and never acquire an I/O APIC route or directed
+EOI record. Multi-CPU affinity and interrupt remapping remain deferred; see
+`docs/MSI_X.md`.
+
+The local APIC now carries retired legacy routes, the calibrated local timer,
+and owned MSI-X vectors. `docs/IO_APIC.md` records pin routing and directed EOI;
+`docs/MSI_X.md` records the path that intentionally bypasses it.

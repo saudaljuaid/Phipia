@@ -33,6 +33,12 @@ merge an unreviewed kernel change.
 - Undefined behavior, unbounded waits, silent truncation, RWX mappings, and
   unexplained `volatile` or inline assembly are rejected.
 - A new subsystem needs a documented invariant and an executable failure test.
+- PCI drivers claim enumerated functions and use typed BAR/MMIO, vector/MSI-X,
+  and DMA handles. Loose physical mappings, fixed private vectors, and bus
+  mastering before device ownership are rejected in review.
+- A DMA teardown disables bus mastering before reclaiming buffers. Until an
+  IOMMU exists, every review must treat a bus-mastering device as capable of
+  reaching all physical memory.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

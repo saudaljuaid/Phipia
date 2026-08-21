@@ -1,6 +1,6 @@
 # Where everything is
 
-Pyrenis is forty-nine source files and thirty-four documents. This page exists
+Pyrenis is fifty-four source files and thirty-eight documents. This page exists
 so you never have to find your way through that by opening files at random.
 
 If you are here because the code looked impenetrable: it is not that you are
@@ -64,7 +64,17 @@ long you will be in there.
 | `acpi_tables.c` | 1652 | RSDT, XSDT, FADT, MCFG. Bounds and checksums on everything. |
 | `acpi_madt.c` | 1058 | The interrupt topology: which APICs exist and how legacy IRQs were rerouted. |
 | `acpi_util.c` | 83 | The checks the above three share. |
-| `pci.c` | 1260 | Every device on every bus, read two independent ways so each checks the other. |
+| `pci.c` | 1260 | Every device on every bus, read two independent ways so each checks the other; checked writes are exposed only to owners. |
+
+### Device substrate
+
+| File | | |
+| --- | ---: | --- |
+| `pci_resource.c` | 1129 | Decode-safe BAR sizing, explicit claims, and the bounded supervisor-only MMIO arena. |
+| `interrupt_vector.c` | 281 | Audited dynamic vector allocation, exhaustion, and generation-checked release. |
+| `msix.c` | 475 | Validated MSI-X table/PBA binding and strict reverse rollback. |
+| `dma.c` | 324 | CPU/device ownership over bounded contiguous frame allocations. |
+| `virtio_rng_proof.c` | 661 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 
 ### Interrupt hardware
 
@@ -89,7 +99,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `physical_memory.c` | 458 | Which physical frames exist and which are free. |
+| `physical_memory.c` | 714 | Which physical frames exist and which are free, including aligned bounded contiguous extents. |
 | `paging.c` | 3006 | Four-level page tables, W^X, the bounded device-window registry, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` before it. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
@@ -123,7 +133,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4595 | The thirty-two QEMU scenarios and what each must print. |
+| `test.c` | 4658 | The thirty-three QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
@@ -145,7 +155,9 @@ The canonical descriptor sequence is:
     -> optional UI font -> pointer decision/outcome -> optional UI layout
     -> early scenario gate
     -> interrupt proofs -> routing -> timer calibration
-    -> PCI -> threading -> scheduler -> closing proofs
+    -> PCI -> threading -> scheduler
+    -> PCI resources -> dynamic vectors -> DMA -> device-substrate proof
+    -> closing proofs
     -> optional desktop construction -> activation -> installed UI proof
 
 That order is produced from declared capability edges, bounded phases and stable

@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-two bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-three bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -36,6 +36,14 @@ You do not have to remember which of `smoke` and `qemu-tests` your change needs,
 because `git push` runs `qemu-tests` regardless. The reason to run them by hand
 first is speed: finding out in eight seconds is better than finding out ninety
 seconds into a push you thought was finished.
+
+Device-substrate changes also run at least ten complete TCG suite sweeps and one
+complete sweep under every accelerator the host exposes. Record flakes and
+rerun an affected complete sweep serially. The `device-substrate` scenario must
+use the standard `virtio-rng-pci` fixture and must retain host exit 97; a green
+run is not evidence if its transcript lacks real MSI-X delivery, a `0 -> 1`
+used-ring transition, 64 device-written bytes, CPU → device → CPU ownership,
+and clean teardown.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build

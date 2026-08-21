@@ -430,9 +430,13 @@ compiler accepts instead.
 
 ## Deferred work
 
-- **The kernel heap.** It needs this increment first; it is the increment after.
-  `paging_map` at a fresh virtual address with frames from the allocator is
-  exactly what it will be built on.
+The runtime mapper now has one dedicated consumer above the older fixed
+regions: the 64 MiB supervisor-only device-MMIO arena at 48 GiB. PCI claims map
+only sized memory BARs there as writable, NX, UC leaves, verify translations,
+and return every page on rollback. The chosen range is disjoint from the 4 GiB
+identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
+`docs/PCI_RESOURCES.md`.
+
 - **Splitting a huge leaf.** A 4 KiB change inside a 2 MiB mapping is refused,
   not performed. Splitting means allocating a page table, populating 512 entries
   from the huge entry, and swapping it in under a live translation.
@@ -440,9 +444,9 @@ compiler accepts instead.
   the tables would have made the CR3 switch far harder to review.
 - **Narrowing the identity window**, and re-pointing the frame allocator, the
   ACPI readers and the table walk together.
-- **A general device cache policy.** The bounded registry covers APIC, VGA, PCI
-  ECAM and the framebuffer, but the rest of the MMIO hole is still write-back.
-  MTRR inspection and a physical-alias audit remain missing.
+- **A general device cache policy.** The registry covers boot windows and the
+  claim arena maps BARs UC. No typed write-combining or write-protected BAR
+  policy exists yet; MTRR inspection and a physical-alias audit remain missing.
 - **Userspace, ring 3, per-process address spaces.** The user bit is refused, not
   supported.
 - **Demand paging, swap, or any fault-driven mapping.** The page-fault handler

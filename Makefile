@@ -10,7 +10,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light
+	boot-ledger first-light device-substrate
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -19,6 +19,7 @@ NM := nm
 OBJDUMP := objdump
 RUSTC := rustc
 PYTHON := python3
+QEMU_ACCEL ?= tcg
 
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
@@ -143,7 +144,7 @@ verify: toolchain lint
 		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
 		'D90CF6ECE73D212C58C97E6F72694C4DAB774FADD09FC77D4E2D7A9C61A55B2F'
-	@test "$(words $(TEST_SCENARIOS))" -eq 32
+	@test "$(words $(TEST_SCENARIOS))" -eq 33
 	@! git grep -nI -E \
 		'OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>' \
 		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
@@ -174,6 +175,10 @@ verify: toolchain lint
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
+	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
+		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)[[:space:]]' | \
+		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
+		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __rodata_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'
@@ -195,22 +200,35 @@ verify: toolchain lint
 		include/pyrenis/test.h
 	# Migrated boot operations are reachable only from typed ledger descriptors.
 	@if grep -ERn \
-		'\b(prove_frame_lifecycle|install_page_tables|prove_paging_lifecycle|prove_write_combining|bring_up_heap|prove_heap_lifecycle|prove_timer_route|retire_legacy_interrupt_path|prove_level_route|prove_pm_timer|prove_apic_timer|prove_tsc|retire_pit|prove_clocks_without_pit|prove_monotonic_time|bring_up_pci|prove_threads|prove_preemption|prove_framebuffer|prove_surface|draw_logo|prove_screen_console|prove_keyboard|prove_shell)[[:space:]]*\(' \
+		'\b(prove_frame_lifecycle|install_page_tables|prove_paging_lifecycle|prove_write_combining|bring_up_heap|prove_heap_lifecycle|prove_timer_route|retire_legacy_interrupt_path|prove_level_route|prove_pm_timer|prove_apic_timer|prove_tsc|retire_pit|prove_clocks_without_pit|prove_monotonic_time|bring_up_pci|prove_threads|prove_preemption|prove_framebuffer|prove_surface|draw_logo|prove_screen_console|prove_keyboard|prove_shell)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=boot_proofs.c; then \
 		echo 'migrated boot stage bypasses the Boot Ledger'; exit 1; \
 	fi
 	@if grep -ERn \
-		'\b(ui_font_initialize|pointer_initialize|ui_construct|ui_activate)[[:space:]]*\(' \
+		'\b(ui_font_initialize|pointer_initialize|ui_construct|ui_activate)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=boot_plan.c \
 		--exclude=ui.c --exclude=ui_font.c --exclude=pointer.c; then \
 		echo 'First Light boot stage bypasses the Boot Ledger'; exit 1; \
 	fi
-	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*\(' \
+	@if grep -ERn \
+		'\b(pci_resource_initialize|interrupt_vector_initialize|dma_initialize|device_substrate_prove)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=pci_resource.c --exclude=interrupt_vector.c \
+		--exclude=dma.c --exclude=virtio_rng_proof.c; then \
+		echo 'device foundation boot operation bypasses the Boot Ledger'; exit 1; \
+	fi
+	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
+	@grep -Fq 'device-substrate) expected=97 ;;' Makefile
+	@test "$$(grep -Ec 'proof_interrupt[[:space:]]*[(]' \
+		src/kernel/virtio_rng_proof.c)" -eq 1 || \
+		{ echo 'VirtIO proof directly injects its MSI-X handler'; exit 1; }
+	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
 	fi
 	@if grep -En \
-		'\b(ui_process_events|ui_flush|surface_present)[[:space:]]*\(' \
+		'\b(ui_process_events|ui_flush|surface_present)[[:space:]]*[(]' \
 		src/kernel/pointer.c; then \
 		echo 'PS/2 pointer interrupt path attempts UI drawing'; exit 1; \
 	fi
@@ -298,6 +316,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		device-windows) expected=91 ;; \
 		boot-ledger) expected=93 ;; \
 		first-light) expected=95 ;; \
+		device-substrate) expected=97 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -312,13 +331,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 			pci-ecam) \
 				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
 			device-windows) hardware='-machine q35' ;; \
+			device-substrate) \
+				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
 	rm -f "$$log"; \
 	set +e; \
 	timeout 15s qemu-system-x86_64 \
-		-machine accel=tcg -m 128M -smp 1 $$hardware \
+		-machine accel=$(QEMU_ACCEL) -m 128M -smp 1 $$hardware \
 		-cdrom '$<' -display none -monitor none -serial stdio \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		-no-reboot >"$$log" 2>&1; result=$$?; \
@@ -384,6 +405,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		  ! grep -Eq '^Pyrenis: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
 		  ! grep -Fq 'Pyrenis: PCI configuration space enumerated' "$$log" || \
 		  ! grep -Fq 'Pyrenis: PCI enumeration established' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: PCI resource ownership negative controls 4/4 passed' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: supervisor NX UC device-MMIO arena established' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: dynamic vector negative controls 4/4 passed' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: dynamic interrupt vector foundation established' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: bounded DMA negative controls 2/2 passed' "$$log" || \
+		  ! grep -Fxq 'Pyrenis: contiguous DMA ownership foundation established' "$$log" || \
 		  ! grep -Eq '^Pyrenis: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Pyrenis: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Pyrenis: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -478,6 +505,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		first-light) \
 			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Pyrenis: First Light installed proof passed' "$$log" || \
+				diagnostics_ok=false ;; \
+		device-substrate) \
+			grep -Fxq 'ST DEVICE_SUBSTRATE dma 64 msix 1 used 0->1 ownership CPU-DEVICE-CPU teardown clean negatives 14' "$$log" && \
+			grep -Fxq 'Pyrenis: device substrate teardown complete' "$$log" && \
+			grep -Eq '^Pyrenis: VirtIO RNG device DMA wrote 64 bytes; nonzero [1-9][0-9]*$$' "$$log" && \
+			grep -Fxq 'Pyrenis: MSI-X delivered 1 interrupt; used ring 0 -> 1' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

@@ -49,13 +49,13 @@ runtime image parser. The complete asset and naming contract is in
 | Area | Current capability |
 | --- | --- |
 | Boot and CPU | Protected-mode entry, long mode, GDT, TSS, IDT, exception diagnostics, and a bounded typed Boot Ledger |
-| Memory | Firmware memory map, physical frames, four-level paging, W^X, a validated device-window registry, explicit PAT memory types, guarded heap and stacks |
-| Interrupts and time | Local APIC, I/O APIC edge and level routes, retired PIC/PIT paths, PM timer, TSC, deadlines |
-| Hardware discovery | Checksummed ACPI tables, PCI configuration through ports and ECAM, bridge-aware enumeration |
+| Memory | Firmware memory map, bounded contiguous DMA, four-level paging, W^X, a validated device-window registry and MMIO arena, explicit PAT memory types, guarded heap and stacks |
+| Interrupts and time | Local APIC, I/O APIC edge and level routes, dynamic vectors and MSI-X, retired PIC/PIT paths, PM timer, TSC, deadlines |
+| Hardware discovery | Checksummed ACPI tables, checked PCI configuration reads/writes, bridge-aware enumeration, sized BAR claims, and explicit resource ownership |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
 | Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console and shell, PS/2 keyboard/pointer, software cursor, and bounded First Light desktop shell |
 | Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, actual framebuffer screenshots, and 32 deterministic QEMU scenarios |
+| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, real VirtIO RNG DMA/MSI-X, actual framebuffer screenshots, and 33 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -78,7 +78,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 32 deterministic fault, memory, device, and UI scenarios
+make qemu-tests   # all 33 deterministic fault, memory, device, and UI scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -97,6 +97,8 @@ The build produces `build/pyrenis.elf` and `build/pyrenis.iso`.
 - [`docs/IO_APIC.md`](docs/IO_APIC.md) — discovered interrupt routing and its controls.
 - [`docs/MONOTONIC_TIME.md`](docs/MONOTONIC_TIME.md) — clocks, deadlines, and bounded waits.
 - [`docs/PCI_ENUMERATION.md`](docs/PCI_ENUMERATION.md) — hardware discovery through two configuration paths.
+- [`docs/PCI_RESOURCES.md`](docs/PCI_RESOURCES.md), [`docs/MSI_X.md`](docs/MSI_X.md), and [`docs/DMA.md`](docs/DMA.md) — claimed BARs, dynamic MSI-X delivery, and bounded DMA ownership.
+- [`docs/DEVICE_FOUNDATION_VERIFICATION.md`](docs/DEVICE_FOUNDATION_VERIFICATION.md) — executed controls, proof evidence, accelerator sweeps, and the recorded flake.
 - [`docs/THREADS.md`](docs/THREADS.md) — guarded threads, switching, and preemption.
 - [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.
 - [`docs/SCREEN_CONSOLE.md`](docs/SCREEN_CONSOLE.md) and [`docs/SHELL.md`](docs/SHELL.md) — the visible interactive path.
@@ -113,7 +115,7 @@ controls.
 Pyrenis is still a foundation-stage kernel. First Light is a fixed kernel
 desktop shell, not a window manager or userspace. The current `main` branch is
 single-core and kernel-only; it has no userspace, filesystem, storage or network
-driver, process isolation, or general application ABI. Hardware evidence is
+driver, process isolation, IOMMU isolation, or general application ABI. Hardware evidence is
 strongest in QEMU, with bare-metal coverage still an explicit goal.
 
 ## Contributing

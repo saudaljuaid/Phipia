@@ -261,13 +261,13 @@ I/O-APIC version bits alone are not presented as proof that directed EOI ran.
   ordering, but the available QEMU TCG target does not advertise the feature.
   A supporting accelerator or physical machine is needed to execute that path.
 - **A real level-triggered device.** The 8254 in mode 0 is a faithful model of
-  one — it holds its line until software puts it down — but it is a model. Every
-  PCI device shares a level-triggered line, and none of them can be reached
-  until there is PCI enumeration.
-- **MSI and MSI-X.** They remove the I/O APIC from the path entirely, which is a
-  separate increment and not a substitute for this one: a message-signalled
-  interrupt is edge-like by construction, and the pin-based path still carries
-  every device that predates it.
+  one — it holds its line until software puts it down — but it is a model.
+  Pin-based PCI proof remains separate from the installed MSI-X fixture.
+- **MSI.** It removes the I/O APIC from the path entirely, as the new MSI-X
+  binding already does. MSI-X uses a dynamic vector and only the normal local
+  APIC acknowledgement; see `docs/MSI_X.md`. Conventional MSI remains deferred.
+  It is not a substitute for this path: pin-based delivery still carries every
+  device that predates message-signalled interrupts.
 - **The older scenarios still wait unbounded.** `apic`, `ioapic`, `retired`,
   `pit` and the clock scenarios halt for their interrupts, so a regression in
   their delivery is a harness timeout rather than a diagnosis. Normal boot's
