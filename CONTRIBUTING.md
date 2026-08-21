@@ -1,4 +1,4 @@
-# Sapote engineering law
+# Contributing to Sapote
 
 Kernel code does not get the benefit of a forgiving runtime. A plausible change
 is not a correct change. These rules are mandatory.

@@ -269,8 +269,8 @@ Measured, and healthy:
   or the `Makefile`.
 - **No undefined symbols, no global offset table, no RWX segment**, all asserted
   at link or build time rather than checked by hand.
-- **Every subsystem has a document, a self-test, and a negative-control table.**
-  That has not slipped once, across five increments and two languages.
+- **Every substantial subsystem has a focused document, a self-test, and a
+  negative-control table.**
 
 ## How to re-measure this
 

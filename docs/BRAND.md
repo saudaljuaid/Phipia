@@ -11,8 +11,8 @@ separate product.
 ## Canonical mark
 
 [`assets/sapote-logo.png`](../assets/sapote-logo.png) is the source of truth. It
-is the supplied mark with only the three user-identified lower tail decorations
-removed, on the original 550×556 opaque RGBA canvas. Its SHA-256 is:
+is the supplied mark with its three lower tail decorations removed, on the
+original 550×556 opaque RGBA canvas. Its SHA-256 is:
 
     807CB475A547B371EBB731DB1F07AA8FBE223BFCC235D9554F15B69F4E1CAD1C
 

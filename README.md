@@ -39,8 +39,8 @@ part of the architecture rather than a claim left to screenshots.
 
 ## Identity
 
-The canonical mark is the supplied 550×556 RGBA source with only the three
-user-identified lower tail decorations removed, at
+The canonical mark is the supplied 550×556 RGBA source with its three lower
+tail decorations removed, at
 [`assets/sapote-logo.png`](assets/sapote-logo.png). It is never redrawn,
 recoloured, cropped, or passed through a runtime PNG parser. First Light uses
 the mark's seven-colour rainbow with platinum, black, and white classic chrome.
@@ -119,8 +119,9 @@ controls.
 Sapote is still a foundation-stage kernel. First Light is a fixed kernel
 desktop shell, not a window manager or userspace. The current `main` branch is
 single-core and kernel-only; it has no userspace, filesystem, storage or network
-driver, process isolation, IOMMU isolation, or general application ABI. Hardware evidence is
-strongest in QEMU, with bare-metal coverage still an explicit goal.
+driver, process isolation, IOMMU isolation, or general application ABI.
+Hardware evidence is strongest in QEMU, with bare-metal coverage still an
+explicit goal.
 
 ## Contributing
 
