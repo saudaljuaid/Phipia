@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/font.h>
+#include <sapote/font.h>
 
 /*
  * The C half of the console font: the names for what the Rust reader can

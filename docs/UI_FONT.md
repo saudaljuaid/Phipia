@@ -10,7 +10,7 @@ The BDF SHA-256 is:
 
     4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE
 
-This is a dedicated licensed face. It is not the existing Pyrenis console
+This is a dedicated licensed face. It is not the existing Sapote console
 glyph table, even though both deliberately occupy an 8 by 16 cell.
 
 ## Build boundary
@@ -21,11 +21,11 @@ ASCII glyph from U+0020 through U+007E. Each row is packed into one byte. A
 clone therefore needs no host font library and the running kernel never parses
 BDF, PCF, TTF, or OTF.
 
-The build output is Pyrenis UI Font version 1 (`PUF1`):
+The build output is Sapote UI Font version 1 (`SUF1`):
 
 | Offset | Size | Meaning |
 | ---: | ---: | --- |
-| 0 | 4 | ASCII magic `PUF1` |
+| 0 | 4 | ASCII magic `SUF1` |
 | 4 | 1 | format version, currently 1 |
 | 5 | 1 | header length, 24 |
 | 6..11 | 6 | width, height, ascent, descent, advance, row bytes |
@@ -35,8 +35,8 @@ The build output is Pyrenis UI Font version 1 (`PUF1`):
 | 24 | 1520 | 95 consecutive glyphs, 16 rows each |
 
 The complete asset is 1544 bytes. Its SHA-256 is
-`D90CF6ECE73D212C58C97E6F72694C4DAB774FADD09FC77D4E2D7A9C61A55B2F`
-and its FNV-1a receipt fingerprint is `0xC20DA66731661127`.
+`D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74`
+and its FNV-1a receipt fingerprint is `0xF072CBC7D84A2A20`.
 
 ## Runtime validation
 
@@ -53,9 +53,9 @@ foreground-only bitmap coverage with integer coordinates. Every glyph is
 clipped against both its declared text bounds and the current damage clip.
 
 The Rust pure test constructs one valid synthetic asset and changes one field
-at a time to exercise every parser refusal. The C pure test draws `PYRENIS`
+at a time to exercise every parser refusal. The C pure test draws `SAPOTE`
 into a 64 by 16 synthetic surface and requires stable pixel hash
-`0xC3057B7D58A0DFC5`; it separately proves vertical clipping and a missing
+`0x758397732814F8AF`; it separately proves vertical clipping and a missing
 glyph. Corrupting the embedded asset's magic or removing its final byte is
 reported respectively as `UI font header is missing or malformed` and
 `UI font bitmap is truncated` before any desktop draw.

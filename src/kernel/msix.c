@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/apic.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/interrupt_vector.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/msix.h>
-#include <pyrenis/pci.h>
-#include <pyrenis/pci_resource.h>
+#include <sapote/apic.h>
+#include <sapote/cpu.h>
+#include <sapote/interrupt_vector.h>
+#include <sapote/interrupts.h>
+#include <sapote/msix.h>
+#include <sapote/pci.h>
+#include <sapote/pci_resource.h>
 
 #define MSIX_CAPABILITY_LENGTH UINT16_C(12)
 #define MSIX_CONTROL_OFFSET UINT16_C(2)

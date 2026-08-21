@@ -1,6 +1,6 @@
 # Never Triple Fault
 
-This milestone gives Pyrenis a deterministic failure boundary. Every x86_64 IDT
+This milestone gives Sapote a deterministic failure boundary. Every x86_64 IDT
 vector is present, every entry reaches a normalized Assembly ABI, and every
 unexpected event either returns through a registered handler or emits a bounded
 diagnostic and halts. A dedicated double-fault path does not call ordinary C.
@@ -31,7 +31,7 @@ Vector `0xF0` temporarily shares IST1 solely for a recoverable stack-routing
 proof.
 
 The IDT is the first subsystem initialized by C. It is first loaded without IST
-selectors while the bootstrap GDT is still active. Pyrenis then loads the
+selectors while the bootstrap GDT is still active. Sapote then loads the
 permanent GDT and task register, patches the live IDT with IST selectors, and
 validates GDTR, IDTR, TR, all 256 gates, the TSS, and stack canaries before the
 boot parser, memory allocator, or any `sti`.

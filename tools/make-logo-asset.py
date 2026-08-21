@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Turn assets/pyrenis-logo.png into the run-length asset the kernel draws.
+"""Turn assets/sapote-logo.png into the run-length asset the kernel draws.
 
 The kernel deliberately does not carry a PNG or DEFLATE parser.  The expensive
 and general-purpose half happens here, at development time, and the kernel is
@@ -8,7 +8,7 @@ left with a small format it can validate in a single bounded pass.
 
 Run it only when the logo itself changes:
 
-    python3 tools/make-logo-asset.py assets/pyrenis-logo.png 1024 build/logo.prl
+    python3 tools/make-logo-asset.py assets/sapote-logo.png 280 build/logo.srl
 
 The result is a build artifact and is not committed; the kernel includes it at
 compile time.  The wire format is four magic bytes, a little-endian width and
@@ -135,17 +135,17 @@ def encode(pixels, width, height):
 
 
 def main():
-    source = sys.argv[1] if len(sys.argv) > 1 else 'assets/pyrenis-logo.png'
-    maximum = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
+    source = sys.argv[1] if len(sys.argv) > 1 else 'assets/sapote-logo.png'
+    maximum = int(sys.argv[2]) if len(sys.argv) > 2 else 280
     width, height, pixels = read_png(source)
     out_width, out_height = fit_within(width, height, maximum)
     scaled = downscale(pixels, width, height, out_width, out_height)
     body = encode(scaled, out_width, out_height)
-    blob = bytearray(b'PRL1')
+    blob = bytearray(b'SRL1')
     blob += struct.pack('<HH', out_width, out_height)
     blob += body
 
-    destination = sys.argv[3] if len(sys.argv) > 3 else 'build/logo.prl'
+    destination = sys.argv[3] if len(sys.argv) > 3 else 'build/logo.srl'
     with open(destination, 'wb') as handle:
         handle.write(blob)
 

@@ -3,10 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/font.h>
-#include <pyrenis/framebuffer.h>
-#include <pyrenis/screen.h>
-#include <pyrenis/surface.h>
+#include <sapote/font.h>
+#include <sapote/framebuffer.h>
+#include <sapote/screen.h>
+#include <sapote/surface.h>
 
 /*
  * Text on the framebuffer.
@@ -34,18 +34,16 @@
 #define REPLACEMENT_CHARACTER '?'
 
 /*
- * The Pyrenis console takes its palette directly from the canonical mark.
- * White makes the logo's committed white field disappear into the screen;
- * bronze is the mark's exact dominant source colour and remains readable at
- * terminal scale. There is deliberately no approximate or derived accent.
+ * Black on white is the deliberate classic Sapote console contract. It keeps
+ * the shell legible while matching First Light's one-bit Macintosh-era chrome.
  */
 #define SCREEN_BACKGROUND_RED UINT8_C(0xFF)
 #define SCREEN_BACKGROUND_GREEN UINT8_C(0xFF)
 #define SCREEN_BACKGROUND_BLUE UINT8_C(0xFF)
 
-#define SCREEN_FOREGROUND_RED UINT8_C(0x80)
-#define SCREEN_FOREGROUND_GREEN UINT8_C(0x62)
-#define SCREEN_FOREGROUND_BLUE UINT8_C(0x30)
+#define SCREEN_FOREGROUND_RED UINT8_C(0x00)
+#define SCREEN_FOREGROUND_GREEN UINT8_C(0x00)
+#define SCREEN_FOREGROUND_BLUE UINT8_C(0x00)
 
 static struct screen_state state;
 static uint32_t background_pixel;
@@ -99,7 +97,7 @@ static enum screen_status paint_cell(
         code = (uint32_t)REPLACEMENT_CHARACTER;
     }
 
-    if (pyrenis_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
+    if (sapote_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
@@ -265,7 +263,7 @@ enum screen_status screen_initialize(void)
         return SCREEN_STATUS_NO_FRAMEBUFFER;
     }
 
-    if (pyrenis_font_geometry(&width, &height, &first, &count) !=
+    if (sapote_font_geometry(&width, &height, &first, &count) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_BAD_FONT;
     }
@@ -687,7 +685,7 @@ enum screen_status screen_verify_cell(
         code = (uint32_t)REPLACEMENT_CHARACTER;
     }
 
-    if (pyrenis_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
+    if (sapote_font_glyph(code, glyph_rows, sizeof(glyph_rows)) !=
         FONT_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }

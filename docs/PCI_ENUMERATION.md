@@ -1,6 +1,6 @@
 # PCI configuration space
 
-Every driver Pyrenis will ever have begins by being found. This layer discovers
+Every driver Sapote will ever have begins by being found. This layer discovers
 buses, devices, functions, classes, and capabilities. Resource mutation remains
 separate: `docs/PCI_RESOURCES.md` describes the claim required before BAR
 probing, mapping, MSI-X, or bus mastering.
@@ -132,7 +132,7 @@ there is right because there is no other way to route a level-triggered
 interrupt, and refusing here would be wrong because there is a complete, tested,
 universally available alternative.
 
-One consequence is stated rather than hidden: Pyrenis maps **two buses** of a
+One consequence is stated rather than hidden: Sapote maps **two buses** of a
 window firmware may declare as 256. That is every bus any machine it is tested
 on populates, and a register past the mapped region is refused rather than
 wrapped. Reaching further, and reaching extended configuration space at all,
@@ -173,11 +173,11 @@ region is refused.
 Normal boot reports:
 
 ```text
-Pyrenis: PCI mechanism 1 online, no window mapped
-Pyrenis: PCI buses 1 functions 6 bridges 0
-Pyrenis: PCI configuration space enumerated
-Pyrenis: PCI mechanisms agree on 0 registers of 0 functions, 0 unstable
-Pyrenis: PCI enumeration established
+Sapote: PCI mechanism 1 online, no window mapped
+Sapote: PCI buses 1 functions 6 bridges 0
+Sapote: PCI configuration space enumerated
+Sapote: PCI mechanisms agree on 0 registers of 0 functions, 0 unstable
+Sapote: PCI enumeration established
 ```
 
 and on q35 with the scenario's hardware:
@@ -281,7 +281,7 @@ CI machine, and the next person to see it should not have to rediscover this.
 ## Resource handoff
 
 The list returned here is the sole source from which `pci_claim_device` accepts
-a function. A claim performs the first configuration writes in Pyrenis: decode
+a function. A claim performs the first configuration writes in Sapote: decode
 is disabled, BARs are sized and exactly restored, bus mastering is kept off,
 and owned memory resources may be mapped in the device-MMIO arena. See
 `docs/PCI_RESOURCES.md`; MSI-X and the VirtIO proof are described in

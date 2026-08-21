@@ -1,6 +1,6 @@
 # Drivers, wireless, and applications
 
-How Pyrenis gets real hardware and real programs, and what each route actually
+How Sapote gets real hardware and real programs, and what each route actually
 costs. This document decides direction; it implements nothing.
 
 The short version: **for applications, copy Linux's interface and none of its
@@ -24,7 +24,7 @@ the other, so a combined work cannot be distributed under either.
 The consequence is concrete, but it is **narrower than it first appears**, and
 an earlier draft of this document overstated it. The correct statement is:
 
-> **A GPL-2.0-only file cannot be compiled into the Pyrenis kernel.** Not
+> **A GPL-2.0-only file cannot be compiled into the Sapote kernel.** Not
 > "difficult" - not permitted, no matter how good the shim layer is.
 >
 > But **not every file in Linux is GPL-2.0-only.** A great deal of it,
@@ -38,18 +38,18 @@ Section 3 works that correction through on the case where it matters most.
 FreeBSD's LinuxKPI is not evidence that GPL-2.0-only driver code may be absorbed
 wholesale. The compatibility layer and imported drivers carry their own
 permissive or dual licences, and the usable answer still comes from the SPDX
-identifier and dependencies of each file. Pyrenis requires that review for every
+identifier and dependencies of each file. Sapote requires that review for every
 file; a GPL-2.0-only dependency remains incompatible with this GPL-3.0-only
 kernel.
 
 Three ways out, and only the third needs no permission:
 
-1. **Relicense Pyrenis** to GPL-2.0-or-later, or dual-license it. This is a
+1. **Relicense Sapote** to GPL-2.0-or-later, or dual-license it. This is a
    decision only the copyright holder can make, it is effectively irreversible,
    and it should not be made to acquire a driver.
 2. **Separate the driver architecturally.** A driver in its own address space,
    talking over a documented IPC boundary, is more plausibly a separate work
-   than one linked into `pyrenis.elf`, but placement in userspace is not an
+   than one linked into `sapote.elf`, but placement in userspace is not an
    automatic licence exemption. Review each driver, dependency, transport, and
    shared-memory interface on its actual coupling.
 3. **Check the SPDX line before assuming either way.** A dual-licensed
@@ -193,7 +193,7 @@ firmware generally does not do. That is what section 2 is for: run
 `wpa_supplicant` as an application rather than reimplementing it.
 
 **USB before PCIe, if the choice is free.** A USB FullMAC adapter needs an xHCI
-driver, which is a standardised class driver Pyrenis wants anyway for keyboards
+driver, which is a standardised class driver Sapote wants anyway for keyboards
 and storage, and it moves the device outside the machine so a broken driver
 cannot wedge the platform. One xHCI driver serves every USB controller ever
 made; a PCIe Wi-Fi driver serves one vendor's parts.
@@ -222,14 +222,14 @@ public and stable.
 
 `virtio` deserves a specific note: it is the cheapest of all of them, it works in
 exactly the QEMU this project already tests in, and it makes a networked,
-disk-backed Pyrenis testable in CI long before any physical hardware is involved.
+disk-backed Sapote testable in CI long before any physical hardware is involved.
 
 ## 5. Drivers belong in userspace
 
 The licence argument in section 1 and this project's stated values point the same
 way, which is a good sign.
 
-A driver linked into `pyrenis.elf` is part of the kernel's licence domain, runs
+A driver linked into `sapote.elf` is part of the kernel's licence domain, runs
 with full supervisory privilege, and can take the machine down. A driver running
 in ring 3, in its own address space, reaching its device through a mapping the
 kernel granted and talking to the rest of the system over a documented IPC

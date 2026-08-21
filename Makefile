@@ -2,8 +2,8 @@ SHELL := /bin/sh
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso-root
-KERNEL := $(BUILD_DIR)/pyrenis.elf
-ISO := $(BUILD_DIR)/pyrenis.iso
+KERNEL := $(BUILD_DIR)/sapote.elf
+ISO := $(BUILD_DIR)/sapote.iso
 SERIAL_LOG := $(BUILD_DIR)/serial.log
 TEST_BUILD_DIR := $(BUILD_DIR)/tests
 TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected \
@@ -24,19 +24,19 @@ QEMU_ACCEL ?= tcg
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
-RUST_LIB := $(BUILD_DIR)/libpyrenis.a
+RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_SOURCES := $(wildcard src/rust/*.rs)
-LOGO_SOURCE := assets/pyrenis-logo.png
-LOGO_BLOB := $(BUILD_DIR)/logo.prl
-LOGO_MAX_DIMENSION := 1024
+LOGO_SOURCE := assets/sapote-logo.png
+LOGO_BLOB := $(BUILD_DIR)/logo.srl
+LOGO_MAX_DIMENSION := 280
 FONT_SOURCE := tools/font8x16.txt
-FONT_BLOB := $(BUILD_DIR)/font.pnf
+FONT_BLOB := $(BUILD_DIR)/font.snf
 UI_FONT_SOURCE := assets/fonts/spleen-8x16.bdf
 UI_FONT_LICENSE := assets/fonts/Spleen-LICENSE
-UI_FONT_BLOB := $(BUILD_DIR)/ui-font.puf
-FIRST_LIGHT_IMAGE := assets/pyrenis-first-light.png
-FIRST_LIGHT_FOCUS_IMAGE := assets/pyrenis-first-light-focus.png
-FIRST_LIGHT_TERMINAL_IMAGE := assets/pyrenis-first-light-terminal.png
+UI_FONT_BLOB := $(BUILD_DIR)/ui-font.suf
+FIRST_LIGHT_IMAGE := assets/sapote-first-light.png
+FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-first-light-focus.png
+FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
 
 CPPFLAGS := -Iinclude
@@ -52,7 +52,7 @@ ASFLAGS := $(COMMON_FLAGS) -Wa,--fatal-warnings
 # the first time one was linked in. Now an unnamed section is a link error.
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
 	--orphan-handling=error --build-id=none -T linker.ld \
-	-Map=$(BUILD_DIR)/pyrenis.map
+	-Map=$(BUILD_DIR)/sapote.map
 
 C_SOURCES := $(wildcard src/kernel/*.c)
 C_OBJECTS := $(patsubst src/kernel/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
@@ -64,7 +64,7 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # to the stricter rule that an unsafe operation inside an unsafe function still
 # needs its own unsafe block naming why it is sound.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
-	--crate-name pyrenis -C panic=abort -C opt-level=2 \
+	--crate-name sapote -C panic=abort -C opt-level=2 \
 	-C relocation-model=static -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
@@ -103,9 +103,9 @@ $(UI_FONT_BLOB): $(UI_FONT_SOURCE) tools/make-ui-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) $@
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
-	PYRENIS_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
-	PYRENIS_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
-	PYRENIS_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
+	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
+	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
@@ -136,24 +136,24 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'32CB82EE804EEE0E3F8D3583BDAA4CA88D8E05994F6F58DAA674364883FA92E6'
-	@test '$(LOGO_MAX_DIMENSION)' -eq 1024
+		'BE7A596801A1FC844E43D2C70246E0A172A5BF93ABB55058E2318A6621DF4BC3'
+	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
 	@test "$$(sha256sum $(UI_FONT_LICENSE) | awk '{ print toupper($$1) }')" = \
 		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
-		'D90CF6ECE73D212C58C97E6F72694C4DAB774FADD09FC77D4E2D7A9C61A55B2F'
+		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
 	@test "$(words $(TEST_SCENARIOS))" -eq 33
 	@! git grep -nI -E \
-		'OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>' \
+		'Pyrenis|pyrenis|PYRENIS|OpenSeneri|openseneri|Seneri|seneri|Zenith|ZENITH|open>|pyr>' \
 		-- . ':!Makefile' ':!tools/compare-boot-contract.py'
-	@! git ls-files | grep -Ei 'openseneri|seneri|zenith'
+	@! git ls-files | grep -Ei 'pyrenis|openseneri|seneri|zenith'
 	@if strings $(KERNEL) | grep -E \
-		'OpenSeneri(:| PANIC| DOUBLE| FATAL)|openseneri\.test=|seneri_(logo|font)|ZENITH'; then \
+		'Pyrenis|pyrenis|PYRENIS|OpenSeneri(:| PANIC| DOUBLE| FATAL)|openseneri\.test=|seneri_(logo|font)|ZENITH|pyr>'; then \
 		echo 'kernel contains a legacy identity string'; exit 1; \
 	fi
-	@grep -Fq '#define SHELL_PROMPT "pyr> "' src/kernel/shell.c
+	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
 	readelf -h $(KERNEL) | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64'
@@ -167,7 +167,7 @@ verify: toolchain lint
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'ltr'
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'lidt'
 	# This inspects the ELF file, and for a long time it was the only thing
-	# behind Pyrenis's W^X claim - while the kernel ran on boot.S's huge pages
+	# behind Sapote's W^X claim - while the kernel ran on boot.S's huge pages
 	# with no NX bit enabled at all. It is kept because it catches a bad link
 	# before anything boots, but the guarantee now rests on paging.c walking
 	# the installed tables at runtime; see docs/VIRTUAL_MEMORY.md.
@@ -184,20 +184,20 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'
 	# The Rust half has to actually be in the image, and has to have been
 	# linked as ordinary code rather than as something with its own runtime.
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_logo_decode$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_logo_self_test$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_glyph$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_font_self_test$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_ui_font_glyph$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T pyrenis_ui_font_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_logo_decode$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_logo_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_font_glyph$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_font_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_glyph$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_self_test$$'
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
 	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \
-		include/pyrenis/paging.h
+		include/sapote/paging.h
 	@! grep -Eq 'struct (acpi_topology|acpi_mcfg|boot_framebuffer)' \
 		src/kernel/paging.c
 	@grep -Fq 'const struct kernel_test_context *context' \
-		include/pyrenis/test.h
+		include/sapote/test.h
 	# Migrated boot operations are reachable only from typed ledger descriptors.
 	@if grep -ERn \
 		'\b(prove_frame_lifecycle|install_page_tables|prove_paging_lifecycle|prove_write_combining|bring_up_heap|prove_heap_lifecycle|prove_timer_route|retire_legacy_interrupt_path|prove_level_route|prove_pm_timer|prove_apic_timer|prove_tsc|retire_pit|prove_clocks_without_pit|prove_monotonic_time|bring_up_pci|prove_threads|prove_preemption|prove_framebuffer|prove_surface|draw_logo|prove_screen_console|prove_keyboard|prove_shell)[[:space:]]*[(]' \
@@ -242,7 +242,7 @@ verify: toolchain lint
 	fi
 	@grep -Fq '    cpu_store_fence();' src/kernel/surface.c || \
 		{ echo 'cached-surface WC present lost its sfence'; exit 1; }
-	@grep -Fq 'Pyrenis: First Light installed proof passed' \
+	@grep -Fq 'Sapote: First Light installed proof passed' \
 		src/kernel/boot_plan.c
 	$(MAKE) screenshot-proof
 
@@ -259,33 +259,33 @@ capture-first-light: iso
 	$(PYTHON) tools/capture-first-light.py --iso $(ISO) \
 		--output $(FIRST_LIGHT_CAPTURE_DIR)
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
-		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light.png
+		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light.png
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode focus \
 		$(FIRST_LIGHT_FOCUS_IMAGE) \
-		$(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light-focus.png
+		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-focus.png
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
 		$(FIRST_LIGHT_TERMINAL_IMAGE) \
-		$(FIRST_LIGHT_CAPTURE_DIR)/pyrenis-first-light-terminal.png
+		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
-	cp $(KERNEL) $(ISO_ROOT)/boot/pyrenis.elf
+	cp $(KERNEL) $(ISO_ROOT)/boot/sapote.elf
 	cp grub/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(ISO_ROOT)
 
 iso: $(ISO)
 
-$(TEST_BUILD_DIR)/%/pyrenis.iso: $(KERNEL) Makefile
+$(TEST_BUILD_DIR)/%/sapote.iso: $(KERNEL) Makefile
 	rm -rf $(TEST_BUILD_DIR)/$*
 	mkdir -p $(TEST_BUILD_DIR)/$*/iso-root/boot/grub
-	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/pyrenis.elf
+	cp $(KERNEL) $(TEST_BUILD_DIR)/$*/iso-root/boot/sapote.elf
 	printf '%s\n' 'set default=0' 'set timeout=0' '' \
-		'menuentry "Pyrenis test" {' \
-		'    multiboot2 /boot/pyrenis.elf pyrenis.test=$*' \
+		'menuentry "Sapote test" {' \
+		'    multiboot2 /boot/sapote.elf sapote.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
-qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
+qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
@@ -355,103 +355,103 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
-		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Pyrenis PANIC' "$$log"; then \
+		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Sapote PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
 		exit 1; \
 	fi; \
 	if test '$*' = normal && \
-		{ ! grep -Fq 'Pyrenis: ACPI root verified' "$$log" || \
-		  ! grep -Fq 'Pyrenis: ACPI MADT verified' "$$log" || \
-		  ! grep -Fq 'Pyrenis: ACPI topology verified' "$$log" || \
-		  ! grep -Eq '^Pyrenis: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
-		  ! grep -Fq 'Pyrenis: local APIC online' "$$log" || \
-		  ! grep -Fq 'Pyrenis: local APIC legacy routing LINT0 ExtINT' "$$log" || \
-		  ! grep -Eq '^Pyrenis: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: I/O APIC online' "$$log" || \
-		  ! grep -Eq '^Pyrenis: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: I/O APIC delivered eight interrupts' "$$log" || \
-		  ! grep -Fq 'Pyrenis: legacy 8259 retired' "$$log" || \
-		  ! grep -Fq 'Pyrenis: timer survives legacy retirement' "$$log" || \
-		  ! grep -Eq '^Pyrenis: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
-		  ! grep -Fq 'Pyrenis: level-triggered routing established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
-		  ! grep -Fq 'Pyrenis: local APIC timer delivered eight interrupts' "$$log" || \
-		  ! grep -Eq '^Pyrenis: TSC calibrated at [0-9]+ Hz' "$$log" || \
-		  ! grep -Fq 'Pyrenis: TSC reference established' "$$log" || \
-		  ! grep -Fq 'Pyrenis: ACPI FADT verified' "$$log" || \
-		  ! grep -Fq 'Pyrenis: ACPI MCFG absent' "$$log" || \
-		  ! grep -Fq 'Pyrenis: ACPI configuration windows verified' "$$log" || \
-		  ! grep -Eq '^Pyrenis: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: PM timer independent reference established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: PIT retired' "$$log" || \
-		  ! grep -Fq 'Pyrenis: clocks survive PIT retirement' "$$log" || \
-		  ! grep -Fq 'Pyrenis: monotonic clock on time-stamp counter' "$$log" || \
-		  ! grep -Eq '^Pyrenis: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: deadline timers online' "$$log" || \
-		  ! grep -Fq 'Pyrenis: monotonic time established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: kernel page tables installed' "$$log" || \
-		  ! grep -Fq 'Pyrenis: no writable executable mapping' "$$log" || \
-		  ! grep -Eq '^Pyrenis: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: write-combining established' "$$log" || \
-		  ! grep -Fq 'Pyrenis: virtual memory established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: kernel heap online' "$$log" || \
-		  ! grep -Fq 'Pyrenis: heap coalesced to one free block' "$$log" || \
-		  ! grep -Fq 'Pyrenis: kernel heap established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: PCI mechanism 1 online, no window mapped$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
-		  ! grep -Fq 'Pyrenis: PCI configuration space enumerated' "$$log" || \
-		  ! grep -Fq 'Pyrenis: PCI enumeration established' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: PCI resource ownership negative controls 4/4 passed' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: supervisor NX UC device-MMIO arena established' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: dynamic vector negative controls 4/4 passed' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: dynamic interrupt vector foundation established' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: bounded DMA negative controls 2/2 passed' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: contiguous DMA ownership foundation established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: thread rotation 123123123123' "$$log" || \
-		  ! grep -Eq '^Pyrenis: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: kernel threads established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: framebuffer verified 786432 pixels' "$$log" || \
-		  ! grep -Fq 'Pyrenis: framebuffer established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: cached surface established' "$$log" || \
-		  ! grep -Eq '^Pyrenis: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
-		  ! grep -Eq '^Pyrenis: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: screen console established' "$$log" || \
-		  ! grep -Fq 'Pyrenis: screen console passed' "$$log" || \
-		  ! grep -Eq '^Pyrenis: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: keyboard decoded "hiI" from injected scancodes' "$$log" || \
-		  ! grep -Fq 'Pyrenis: keyboard established' "$$log" || \
-		  ! grep -Fq 'Pyrenis: keyboard passed' "$$log" || \
-		  ! grep -Fq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
-		  ! grep -Fq 'Pyrenis: First Light font verified' "$$log" || \
-		  ! grep -Eq '^Pyrenis: PS/2 pointer (available|unavailable: .+)$$' "$$log" || \
-		  ! grep -Fq 'Pyrenis: First Light layout validated' "$$log" || \
-		  ! grep -Fq 'Pyrenis: First Light desktop constructed' "$$log" || \
-		  ! grep -Fq 'Pyrenis: First Light desktop activated' "$$log" || \
-		  ! grep -Fq 'Pyrenis: First Light installed proof passed' "$$log" || \
-		  ! grep -Fxq 'Pyrenis: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
-		  ! grep -Fq 'Pyrenis: shell output verified on screen' "$$log" || \
-		  ! grep -Fq 'Pyrenis: shell established' "$$log" || \
-		  ! grep -Fq 'Pyrenis: shell passed' "$$log" || \
-		  ! grep -Fq 'Pyrenis: never triple fault milestone passed' "$$log"; }; then \
+		{ ! grep -Fq 'Sapote: ACPI root verified' "$$log" || \
+		  ! grep -Fq 'Sapote: ACPI MADT verified' "$$log" || \
+		  ! grep -Fq 'Sapote: ACPI topology verified' "$$log" || \
+		  ! grep -Eq '^Sapote: ACPI I/O APIC id [0-9]+ at 0x' "$$log" || \
+		  ! grep -Fq 'Sapote: local APIC online' "$$log" || \
+		  ! grep -Fq 'Sapote: local APIC legacy routing LINT0 ExtINT' "$$log" || \
+		  ! grep -Eq '^Sapote: local APIC EOI-broadcast suppression (supported|unsupported) active (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'Sapote: I/O APIC online' "$$log" || \
+		  ! grep -Eq '^Sapote: I/O APIC id [0-9]+ version 0x[0-9A-F]+ entries [0-9]+ base GSI [0-9]+ directed EOI (yes|no)$$' "$$log" || \
+		  ! grep -Fq 'Sapote: I/O APIC delivered eight interrupts' "$$log" || \
+		  ! grep -Fq 'Sapote: legacy 8259 retired' "$$log" || \
+		  ! grep -Fq 'Sapote: timer survives legacy retirement' "$$log" || \
+		  ! grep -Eq '^Sapote: I/O APIC level route id [0-9]+ GSI [0-9]+ vector [0-9]+ active (high|low) acknowledgement (directed|broadcast)$$' "$$log" || \
+		  ! grep -Eq '^Sapote: I/O APIC level deliveries [0-9]+ remote IRR [0-9]+ directed EOI [0-9]+ in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Sapote: I/O APIC delivered eight level-triggered interrupts' "$$log" || \
+		  ! grep -Fq 'Sapote: level-triggered routing established' "$$log" || \
+		  ! grep -Eq '^Sapote: local APIC timer calibrated at [0-9]+ counts' "$$log" || \
+		  ! grep -Fq 'Sapote: local APIC timer delivered eight interrupts' "$$log" || \
+		  ! grep -Eq '^Sapote: TSC calibrated at [0-9]+ Hz' "$$log" || \
+		  ! grep -Fq 'Sapote: TSC reference established' "$$log" || \
+		  ! grep -Fq 'Sapote: ACPI FADT verified' "$$log" || \
+		  ! grep -Fq 'Sapote: ACPI MCFG absent' "$$log" || \
+		  ! grep -Fq 'Sapote: ACPI configuration windows verified' "$$log" || \
+		  ! grep -Eq '^Sapote: ACPI PM timer port 0x[0-9A-F]+ width (24|32) bits address (fixed|extended)$$' "$$log" || \
+		  ! grep -Eq '^Sapote: PM timer counted [0-9]+ ticks in [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Sapote: PM timer independent reference established' "$$log" || \
+		  ! grep -Eq '^Sapote: clocks agree: PM [0-9]+ ns, APIC timer [0-9]+ ns, TSC [0-9]+ ns$$' "$$log" || \
+		  ! grep -Fq 'Sapote: PIT retired' "$$log" || \
+		  ! grep -Fq 'Sapote: clocks survive PIT retirement' "$$log" || \
+		  ! grep -Fq 'Sapote: monotonic clock on time-stamp counter' "$$log" || \
+		  ! grep -Eq '^Sapote: slept [0-9]+ ns for a [0-9]+ ns deadline$$' "$$log" || \
+		  ! grep -Fq 'Sapote: deadline timers online' "$$log" || \
+		  ! grep -Fq 'Sapote: monotonic time established' "$$log" || \
+		  ! grep -Eq '^Sapote: paging root 0x[0-9A-F]+ table frames [0-9]+ regions [0-9]+ NX yes write protect yes$$' "$$log" || \
+		  ! grep -Eq '^Sapote: paging leaves [0-9]+ writable [0-9]+ executable [0-9]+ both 0$$' "$$log" || \
+		  ! grep -Fq 'Sapote: kernel page tables installed' "$$log" || \
+		  ! grep -Fq 'Sapote: no writable executable mapping' "$$log" || \
+		  ! grep -Eq '^Sapote: IA32_PAT before 0x[0-9A-F]{16} after 0x[0-9A-F]{16} entry 1 write-combining$$' "$$log" || \
+		  ! grep -Eq '^Sapote: framebuffer memory type write-combining pages [1-9][0-9]*$$' "$$log" || \
+		  ! grep -Fq 'Sapote: write-combining established' "$$log" || \
+		  ! grep -Fq 'Sapote: virtual memory established' "$$log" || \
+		  ! grep -Eq '^Sapote: heap window 0x[0-9A-F]+ size [0-9]+ guards 0x[0-9A-F]+ 0x[0-9A-F]+$$' "$$log" || \
+		  ! grep -Eq '^Sapote: heap committed [0-9]+ bytes in [0-9]+ pages, live 3$$' "$$log" || \
+		  ! grep -Fq 'Sapote: kernel heap online' "$$log" || \
+		  ! grep -Fq 'Sapote: heap coalesced to one free block' "$$log" || \
+		  ! grep -Fq 'Sapote: kernel heap established' "$$log" || \
+		  ! grep -Eq '^Sapote: deadline table of [0-9]+ entries on the heap$$' "$$log" || \
+		  ! grep -Eq '^Sapote: PCI mechanism 1 online, no window mapped$$' "$$log" || \
+		  ! grep -Eq '^Sapote: PCI buses [1-9][0-9]* functions [1-9][0-9]* bridges [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Sapote: PCI 0:0\.0 vendor 0x[0-9A-F]+ device 0x[0-9A-F]+ class 0x0*6\.0x0* ' "$$log" || \
+		  ! grep -Fq 'Sapote: PCI configuration space enumerated' "$$log" || \
+		  ! grep -Fq 'Sapote: PCI enumeration established' "$$log" || \
+		  ! grep -Fxq 'Sapote: PCI resource ownership negative controls 4/4 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: supervisor NX UC device-MMIO arena established' "$$log" || \
+		  ! grep -Fxq 'Sapote: dynamic vector negative controls 4/4 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: dynamic interrupt vector foundation established' "$$log" || \
+		  ! grep -Fxq 'Sapote: bounded DMA negative controls 2/2 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: contiguous DMA ownership foundation established' "$$log" || \
+		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
+		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
+		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
+		  ! grep -Fq 'Sapote: kernel threads established' "$$log" || \
+		  ! grep -Eq '^Sapote: framebuffer [0-9]+x[0-9]+ at 0x[0-9A-F]+ pitch [0-9]+ RGB [0-9]+/[0-9]+/[0-9]+$$' "$$log" || \
+		  ! grep -Fxq 'Sapote: framebuffer verified 786432 pixels' "$$log" || \
+		  ! grep -Fq 'Sapote: framebuffer established' "$$log" || \
+		  ! grep -Eq '^Sapote: surface [0-9]+x[0-9]+ pitch [0-9]+ buffer [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Sapote: surface cycles full present [0-9]+ one-line update [0-9]+ scroll [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Sapote: surface split cycles full draw [0-9]+ push [0-9]+ one-line draw [0-9]+ push [0-9]+ scroll draw [0-9]+ push [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Sapote: surface sparse two-corner cycles total [0-9]+ draw [0-9]+ push [0-9]+ union [0-9]+$$' "$$log" || \
+		  ! grep -Eq '^Sapote: surface copied [0-9]+ full, [0-9]+ line, [0-9]+ scroll pixels$$' "$$log" || \
+		  ! grep -Fq 'Sapote: cached surface established' "$$log" || \
+		  ! grep -Eq '^Sapote: screen console [0-9]+x[0-9]+ cells of 8x16, font [0-9]+ bytes$$' "$$log" || \
+		  ! grep -Eq '^Sapote: screen console drew [0-9]+ characters and scrolled [0-9]+ times$$' "$$log" || \
+		  ! grep -Fq 'Sapote: screen console established' "$$log" || \
+		  ! grep -Fq 'Sapote: screen console passed' "$$log" || \
+		  ! grep -Eq '^Sapote: keyboard 8042 online, IRQ 1 routed, [0-9]+ interrupts for [0-9]+ events$$' "$$log" || \
+		  ! grep -Fxq 'Sapote: keyboard decoded "hiI" from injected scancodes' "$$log" || \
+		  ! grep -Fq 'Sapote: keyboard established' "$$log" || \
+		  ! grep -Fq 'Sapote: keyboard passed' "$$log" || \
+		  ! grep -Fq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
+		  ! grep -Fq 'Sapote: First Light font verified' "$$log" || \
+		  ! grep -Eq '^Sapote: PS/2 pointer (available|unavailable: .+)$$' "$$log" || \
+		  ! grep -Fq 'Sapote: First Light layout validated' "$$log" || \
+		  ! grep -Fq 'Sapote: First Light desktop constructed' "$$log" || \
+		  ! grep -Fq 'Sapote: First Light desktop activated' "$$log" || \
+		  ! grep -Fq 'Sapote: First Light installed proof passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
+		  ! grep -Fq 'Sapote: shell output verified on screen' "$$log" || \
+		  ! grep -Fq 'Sapote: shell established' "$$log" || \
+		  ! grep -Fq 'Sapote: shell passed' "$$log" || \
+		  ! grep -Fq 'Sapote: never triple fault milestone passed' "$$log"; }; then \
 		echo 'normal scenario did not complete the integrated production path'; \
 		cat "$$log"; \
 		exit 1; \
@@ -468,7 +468,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 		unexpected) \
 			grep -Fq '  vector=128 name=unexpected vector' "$$log" || diagnostics_ok=false ;; \
 		double-fault) \
-			grep -Fq 'Pyrenis DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
+			grep -Fq 'Sapote DOUBLE FAULT - HALTED' "$$log" || diagnostics_ok=false ;; \
 		paging) \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000200000000' "$$log" && \
@@ -484,10 +484,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 				diagnostics_ok=false ;; \
 		pci) \
 			grep -Eq '^ST PCI ports functions [0-9]+ buses [0-9]+$$' "$$log" && \
-			! grep -Fq 'Pyrenis: ACPI MCFG at' "$$log" || \
+			! grep -Fq 'Sapote: ACPI MCFG at' "$$log" || \
 				diagnostics_ok=false ;; \
 		pci-ecam) \
-			grep -Fq 'Pyrenis: ACPI MCFG at' "$$log" && \
+			grep -Fq 'Sapote: ACPI MCFG at' "$$log" && \
 			grep -Eq '^ST PCI window agreed on [0-9]+ registers of [0-9]+ functions across [0-9]+ buses, [0-9]+ with MSI-X$$' "$$log" && \
 			! grep -Eq '^ST PCI window agreed on [0-9]+ registers of 0 functions' "$$log" || \
 				diagnostics_ok=false ;; \
@@ -508,17 +508,17 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/pyrenis.iso
 				diagnostics_ok=false ;; \
 		boot-ledger) \
 			grep -Eq '^ST LEDGER stages [1-9][0-9]* receipts [1-9][0-9]* capabilities [1-9][0-9]* skips [0-9]+ fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
-			grep -Fxq 'Pyrenis: Boot Ledger installed proof passed' "$$log" || \
+			grep -Fxq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		first-light) \
 			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
-			grep -Fxq 'Pyrenis: First Light installed proof passed' "$$log" || \
+			grep -Fxq 'Sapote: First Light installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		device-substrate) \
 			grep -Fxq 'ST DEVICE_SUBSTRATE dma 64 msix 1 used 0->1 ownership CPU-DEVICE-CPU teardown clean negatives 14' "$$log" && \
-			grep -Fxq 'Pyrenis: device substrate teardown complete' "$$log" && \
-			grep -Eq '^Pyrenis: VirtIO RNG device DMA wrote 64 bytes; nonzero [1-9][0-9]*$$' "$$log" && \
-			grep -Fxq 'Pyrenis: MSI-X delivered 1 interrupt; used ring 0 -> 1' "$$log" || \
+			grep -Fxq 'Sapote: device substrate teardown complete' "$$log" && \
+			grep -Eq '^Sapote: VirtIO RNG device DMA wrote 64 bytes; nonzero [1-9][0-9]*$$' "$$log" && \
+			grep -Fxq 'Sapote: MSI-X delivered 1 interrupt; used ring 0 -> 1' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

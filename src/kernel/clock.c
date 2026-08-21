@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/clock.h>
-#include <pyrenis/tsc.h>
+#include <sapote/clock.h>
+#include <sapote/tsc.h>
 
 static struct clock_state state;
 

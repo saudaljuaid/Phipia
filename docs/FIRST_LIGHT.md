@@ -1,18 +1,19 @@
-# Pyrenis First Light
+# Sapote First Light
 
-First Light is Pyrenis's first stateful graphical interface. It is a bounded
+First Light is Sapote's first stateful graphical interface. It is a bounded
 desktop shell in the kernel, not a boot splash, a general desktop environment,
 a window manager, or a userspace boundary. The same installed framebuffer,
 cached surface, screen console, shell, keyboard, interrupt topology, scheduler,
 and Boot Ledger that existed before the milestone remain underneath it.
 
-The composition is deliberately spare: the canonical mark on a white field,
-small Spleen bitmap labels, one dark ledger indicator, and a compact control
-strip whose one-pixel bevels recall late workstation interfaces without
-copying a contemporary desktop. The mark is decoded from the exact canonical
-asset and is neither recoloured nor redrawn.
+The composition is deliberately warm and direct: a platinum desktop, a white
+menu bar, the six-colour Sapote band, monochrome bitmap labels, hatched window
+titles, one welcome window, and a compact control strip. Its one-pixel chrome
+recalls early personal computers without copying another product's wordmark or
+icons. The mark is decoded from the exact canonical asset and is neither
+recoloured nor redrawn.
 
-![First Light at 1024 by 768](../assets/pyrenis-first-light.png)
+![First Light at 1024 by 768](../assets/sapote-first-light.png)
 
 ## Ownership and lifetime
 
@@ -32,7 +33,7 @@ only transitions refuses the new event and increments `dropped`; it never
 overwrites unreported state. Idle control flow executes `hlt` and does not
 redraw or busy-spin.
 
-Public types are in `include/pyrenis/ui.h`: named status, event, element,
+Public types are in `include/sapote/ui.h`: named status, event, element,
 panel, action, and pointer-button enums plus `ui_point`, half-open `ui_rect`,
 `ui_event`, `ui_theme`, `ui_layout`, `ui_dock_item`, `ui_state`, and
 `ui_proof`. The cursor is a 12 by 18 code-native mask with hotspot `(0, 0)`.
@@ -43,18 +44,25 @@ Only the documented identity palette is installed:
 
 | Role | RGB |
 | --- | --- |
-| White field and highlights | `#FFFFFF` |
-| Pyrenis bronze | `#806230` |
-| Deep brown | `#2A2117` |
-| Muted bronze | `#A9874E` |
-| Pale bronze tint | `#E5DFD5` |
+| White windows and highlights | `#FFFFFF` |
+| Sapote green | `#52A837` |
+| Sapote yellow | `#FDB212` |
+| Sapote orange | `#F6850C` |
+| Sapote red | `#DF3031` |
+| Sapote purple | `#932F97` |
+| Sapote blue | `#0084CE` |
+| Black type and outlines | `#000000` |
+| Shadow | `#777777` |
+| Platinum desktop and controls | `#DDDAD5` |
 
-The pale tint is computed independently for each channel as
-`(bronze + 4 * white) / 5` with integer arithmetic. There is no floating point,
-alpha compositor, gradient, shadow, transparency, animation, or runtime theme.
+The six accents are drawn in that order from top to bottom. There is no
+floating point, alpha compositor, kernel-generated gradient, transparency,
+animation, or runtime theme.
 
-The normal desktop contains the exact 396 by 335 mark, `PYRENIS`,
-`machine state, proved.`, and a 144 by 22 ledger indicator. The indicator is
+The normal desktop contains a 24-pixel menu bar, six 3-pixel rainbow stripes,
+a fixed welcome window, the canonical mark at its deterministic 280 by 250
+runtime size, `SAPOTE`, `hello from the metal.`, and a 144 by 22 ledger
+indicator. The indicator is
 derived from the published installed ledger: it says `LEDGER PASS` only when
 that ledger is not degraded. No default-desktop label contains an address,
 cycle count, or timing value.
@@ -68,10 +76,14 @@ first desktop draw.
 
 The constants are:
 
-- mark: 396 by 335, centred horizontally, at y=18 for 600-pixel modes and y=30
-  otherwise;
-- wordmark: 56 by 16, four pixels below the mark;
-- motto: 176 by 16, twenty pixels below the wordmark origin;
+- menu bar: full width by 24 pixels, followed by six full-width 3-pixel colour
+  stripes;
+- welcome window: 320 by 368, centred horizontally, at y=50 for 600-pixel
+  modes and y=58 otherwise;
+- mark: 280 by 250, centred horizontally, six pixels below the 22-pixel welcome
+  title region;
+- wordmark: 48 by 16, four pixels below the mark;
+- motto: 168 by 16, twenty pixels below the wordmark origin;
 - ledger indicator: 144 by 22, twenty-two pixels below the motto origin;
 - dock: 438 by 50, centred, eighteen pixels above the bottom edge;
 - dock items: four 104 by 34 half-open rectangles, two pixels apart and eight
@@ -83,10 +95,10 @@ The constants are:
 - panel client: eight pixels inside each side, beginning 32 pixels below the
   panel top.
 
-At 1024 by 768 the mark begins at `(314,30)`, the dock at `(293,700)`, and the
-panel at `(172,338)`. At 800 by 600 those origins are `(202,18)`, `(181,532)`,
-and `(60,214)`. At 1280 by 720 they are `(442,30)`, `(421,652)`, and
-`(300,290)`.
+At 1024 by 768 the welcome window begins at `(352,58)`, the mark at `(372,86)`,
+the dock at `(293,700)`, and the panel at `(172,338)`. At 800 by 600 those
+origins are `(240,50)`, `(260,78)`, `(181,532)`, and `(60,214)`. At 1280 by
+720 they are `(480,58)`, `(500,86)`, `(421,652)`, and `(300,290)`.
 
 Validation proves every rectangle is inside the surface, the four items do not
 overlap, the client is non-empty, each baseline fits, the cursor hotspot is
@@ -117,7 +129,7 @@ backward, `Enter` activates, and `Escape` closes. Focus wraps across all four
 items. Terminal installs the existing screen console into the validated panel
 client and uses the existing shell parser. Ledger reads the published receipt
 set. System reports stable CPU, memory, PCI, timer, and framebuffer shapes with
-no physical addresses. About identifies Pyrenis 0.2.0 and the First Light
+no physical addresses. About identifies Sapote 0.4.0 and the First Light
 milestone. Panels are neither draggable nor resizable.
 
 Shell characters are routed to the graphical terminal only while Terminal is
@@ -134,7 +146,7 @@ Later cursor, focus, dock, and panel transitions union bounded damage and
 present only that rectangle. The surface's existing volatile WC row copy and
 post-store `sfence` are unchanged and are statically required by `make verify`.
 
-The cursor mask is drawn last in white and bronze. Movement unions its old and
+The cursor mask is drawn last in black and white. Movement unions its old and
 new 12 by 18 bounds, restores the cached pixels below the old mask, then draws
 at the new clamped position. The IRQ12 handler never draws. When the pointer is
 declared absent, `pointer_present` is false and no mask is composed.
@@ -224,7 +236,7 @@ control is explicitly a source/comparator assertion.
 | 13 | Disable adjacent movement coalescing. | Pure boot stage: `pointer movement did not coalesce in the fixed event queue`. The valid test also fills 64 entries and retains the button transition by evicting movement. |
 | 14 | Accept an unsynchronised first packet byte. | Pure boot stage: `PS/2 packet desynchronization did not recover`; the valid continuation produces no phantom button. |
 | 15 | Force declared pointer absence. | `boot-ledger` passed with 30 stages, 30 receipts, 34 capabilities, one neutral skip, no pointer-success capability, and active keyboard focus. |
-| 16 | Force desktop construction failure. | Interactive boot retained `pyr>`; activation/proof lines and their capabilities were absent. |
+| 16 | Force desktop construction failure. | Interactive boot retained `sap>`; activation/proof lines and their capabilities were absent. |
 | 17 | Falsify the UI-font receipt size. | Installed ledger: `stage First Light UI font; capability UI font verified`. |
 | 18 | Change the UI-font stage ID after validation. | `plan fingerprint mismatch`. |
 | 19 | Delete the permanent installed-proof line. | Normal boot exited normally, then the transcript comparator refused: `normal transcript omitted permanent First Light proof line`. |

@@ -3,14 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/clock.h>
-#include <pyrenis/console.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/heap.h>
-#include <pyrenis/memory.h>
-#include <pyrenis/paging.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/timer.h>
+#include <sapote/clock.h>
+#include <sapote/console.h>
+#include <sapote/cpu.h>
+#include <sapote/heap.h>
+#include <sapote/memory.h>
+#include <sapote/paging.h>
+#include <sapote/thread.h>
+#include <sapote/timer.h>
 
 /*
  * More than one thread of control, on one core. Scheduling is cooperative until

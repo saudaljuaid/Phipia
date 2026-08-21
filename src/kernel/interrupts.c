@@ -3,15 +3,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/apic.h>
-#include <pyrenis/console.h>
-#include <pyrenis/cpu.h>
-#include <pyrenis/interrupts.h>
-#include <pyrenis/ioapic.h>
-#include <pyrenis/interrupt_vector.h>
-#include <pyrenis/pic.h>
-#include <pyrenis/thread.h>
-#include <pyrenis/test.h>
+#include <sapote/apic.h>
+#include <sapote/console.h>
+#include <sapote/cpu.h>
+#include <sapote/interrupts.h>
+#include <sapote/ioapic.h>
+#include <sapote/interrupt_vector.h>
+#include <sapote/pic.h>
+#include <sapote/thread.h>
+#include <sapote/test.h>
 
 #define IDT_GATE_PRESENT UINT8_C(0x80)
 #define IDT_GATE_INTERRUPT UINT8_C(0x0E)
@@ -218,7 +218,7 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     }
 
     fatal_depth = 1U;
-    console_write("Pyrenis FATAL INTERRUPT\n");
+    console_write("Sapote FATAL INTERRUPT\n");
     console_write("  vector=");
     console_write_u64(frame->vector);
     console_write(" name=");

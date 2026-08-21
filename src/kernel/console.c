@@ -2,13 +2,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/console.h>
-#include <pyrenis/screen.h>
+#include <sapote/console.h>
+#include <sapote/screen.h>
 
 #define VGA_WIDTH 80U
 #define VGA_HEIGHT 25U
 #define VGA_MEMORY ((volatile uint16_t *)(uintptr_t)0xB8000U)
-#define VGA_COLOR UINT8_C(0x06)
+#define VGA_COLOR UINT8_C(0x0F)
 #define COM1 UINT16_C(0x03F8)
 #define SERIAL_TRANSMIT_READY UINT8_C(0x20)
 #define SERIAL_WAIT_LIMIT UINT32_C(100000)
@@ -193,7 +193,7 @@ _Noreturn void console_halt(void)
 
 _Noreturn void console_panic(const char *message)
 {
-    console_write("Pyrenis PANIC: ");
+    console_write("Sapote PANIC: ");
     console_write(message);
     console_putc('\n');
     console_halt();

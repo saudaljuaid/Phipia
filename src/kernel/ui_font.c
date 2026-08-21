@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <pyrenis/surface.h>
-#include <pyrenis/ui_font.h>
+#include <sapote/surface.h>
+#include <sapote/ui_font.h>
 
 #define SPLEEN_WIDTH 8U
 #define SPLEEN_HEIGHT 16U
@@ -16,8 +16,8 @@
 #define SPLEEN_COUNT 95U
 #define SPLEEN_DATA_LENGTH 1520U
 #define SPLEEN_ASSET_LENGTH 1544U
-#define SPLEEN_FINGERPRINT UINT64_C(0xC20DA66731661127)
-#define LABEL_PIXEL_HASH UINT64_C(0xC3057B7D58A0DFC5)
+#define SPLEEN_FINGERPRINT UINT64_C(0xF072CBC7D84A2A20)
+#define LABEL_PIXEL_HASH UINT64_C(0x758397732814F8AF)
 
 static bool verified;
 static struct ui_font_metrics installed_metrics;
@@ -49,14 +49,14 @@ static bool metrics_are_spleen(const struct ui_font_metrics *metrics)
 enum ui_font_status ui_font_initialize(void)
 {
     struct ui_font_metrics metrics;
-    const int32_t status = pyrenis_ui_font_geometry(&metrics);
+    const int32_t status = sapote_ui_font_geometry(&metrics);
 
     if (status != UI_FONT_STATUS_OK) {
         return (enum ui_font_status)status;
     }
     if (!metrics_are_spleen(&metrics) ||
-        pyrenis_ui_font_size() != SPLEEN_ASSET_LENGTH ||
-        pyrenis_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
+        sapote_ui_font_size() != SPLEEN_ASSET_LENGTH ||
+        sapote_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
         return UI_FONT_STATUS_BAD_METRICS;
     }
 
@@ -141,7 +141,7 @@ static enum ui_font_status draw_with_metrics(
 
     for (size_t index = 0U; text[index] != '\0'; ++index) {
         const uint32_t code = (uint32_t)(unsigned char)text[index];
-        const int32_t status = pyrenis_ui_font_glyph(code, bitmap,
+        const int32_t status = sapote_ui_font_glyph(code, bitmap,
             sizeof(bitmap));
 
         if (status != UI_FONT_STATUS_OK) {
@@ -246,23 +246,23 @@ bool ui_font_self_test(void)
     const struct surface_rect short_box = { 0U, 0U, 64U, 15U };
 
     self_test_failure = "First Light UI font self-test passed";
-    if (pyrenis_ui_font_self_test() != 1) {
+    if (sapote_ui_font_self_test() != 1) {
         self_test_failure = "UI font bounded parser refusals are incomplete";
         return false;
     }
-    status = pyrenis_ui_font_geometry(&metrics);
+    status = sapote_ui_font_geometry(&metrics);
     if (status != UI_FONT_STATUS_OK) {
         self_test_failure = ui_font_status_string((enum ui_font_status)status);
         return false;
     }
     if (!metrics_are_spleen(&metrics) ||
-        pyrenis_ui_font_size() != SPLEEN_ASSET_LENGTH ||
-        pyrenis_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
+        sapote_ui_font_size() != SPLEEN_ASSET_LENGTH ||
+        sapote_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
         self_test_failure = "UI font pinned asset metrics or fingerprint changed";
         return false;
     }
-    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 12U, "PYRENIS",
-            UINT32_C(0x00806230), NULL) != UI_FONT_STATUS_OK ||
+    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 12U, "SAPOTE",
+            UINT32_C(0x0052A837), NULL) != UI_FONT_STATUS_OK ||
         pixel_hash(pixels, sizeof(pixels) / sizeof(pixels[0])) !=
             LABEL_PIXEL_HASH) {
         self_test_failure = "UI font representative label pixels changed";

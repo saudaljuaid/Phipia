@@ -1,67 +1,85 @@
-# Pyrenis identity
+# Sapote identity
 
-Pyrenis is the only current public name of this project. Public prose uses
-`Pyrenis`; paths, command-line keys, symbols, crate and build artifact names use
-`pyrenis`; preprocessor guards and build environment variables use `PYRENIS`.
-The interactive prompt is `pyr>`.
+Sapote is the only current public name of this project. Public prose uses
+`Sapote`; paths, command-line keys, symbols, crate and build artifact names use
+`sapote`; preprocessor guards and build environment variables use `SAPOTE`.
+The interactive prompt is `sap>`.
 
-`Pyrenis First Light` is the public milestone name and `Pyrenis desktop shell`
-describes the implemented interface. First Light does not rename the operating
-system and is not presented as a separate product.
+`Sapote First Light` names the graphical milestone. It is part of Sapote, not a
+separate product.
 
 ## Canonical mark
 
-`assets/pyrenis-logo.png` is the source of truth. It is the exact supplied
-396×335, non-interlaced, 8-bit RGBA PNG and has SHA-256:
+[`assets/sapote-logo.png`](../assets/sapote-logo.png) is the source of truth. It
+is the exact supplied 537×479, non-interlaced, 8-bit RGBA PNG and has SHA-256:
 
-    32CB82EE804EEE0E3F8D3583BDAA4CA88D8E05994F6F58DAA674364883FA92E6
+    BE7A596801A1FC844E43D2C70246E0A172A5BF93ABB55058E2318A6621DF4BC3
 
-Do not redraw, trace, recolour, crop, mirror, add type to, or replace this file
-with a visually similar asset. Resizing for a presentation is allowed only when
-the aspect ratio is preserved. The kernel build ceiling is 1024 pixels, so this
-source enters the runtime asset at its native 396×335 geometry with no resize.
+The file is fully opaque, including its warm-white field. Do not redraw, trace,
+recolour, crop, mirror, key out its background, add type to it, or substitute a
+visually similar mark. Public uses preserve its aspect ratio.
 
-The kernel does not parse PNG. `tools/make-logo-asset.py` converts the committed
-source to the bounded `PRL1` stream embedded by Rust, and the boot proof compares
-every drawn pixel with the decoded source before reporting success.
+The kernel does not parse PNG. `tools/make-logo-asset.py` deterministically
+fits the source within a 280-pixel ceiling using a bounded premultiplied box
+filter. The resulting 280×250 image is encoded as a 232,563-byte `SRL1` stream
+and embedded by Rust. This is a runtime presentation size, not a replacement
+source asset. The boot proof decodes it into guest memory and compares every
+drawn pixel with the decoded stream before reporting success.
 
 ## Palette
 
-The palette is deliberately small:
+First Light takes its rainbow directly from the supplied mark and gives it
+classic monochrome personal-computer chrome:
 
-| Role | Value | Use |
-| --- | --- | --- |
-| Pyrenis bronze | `#806230` | Mark and graphical-console text |
-| White | `#FFFFFF` | Mark field and graphical-console background |
-| Deep brown | `#2A2117` | Repository contrast, First Light title bars and active controls |
-| Muted bronze | `#A9874E` | Secondary accents and pressed controls |
-| Pale bronze | `#E5DFD5` | First Light one-pixel chrome and control strip |
+| Role | Value |
+| --- | --- |
+| Green | `#52A837` |
+| Yellow | `#FDB212` |
+| Orange | `#F6850C` |
+| Red | `#DF3031` |
+| Purple | `#932F97` |
+| Blue | `#0084CE` |
+| Platinum desktop | `#DDDAD5` |
+| Shadow | `#777777` |
+| Black type and outlines | `#000000` |
+| White windows and highlights | `#FFFFFF` |
 
-The pale value is the documented bounded tint `(bronze + 4 * white) / 5`,
-computed per channel with integer division. No unrelated colour is introduced.
+The six accents appear in that order from top to bottom. The framebuffer
+console uses black on white; early VGA text uses bright white on black. There
+is no floating-point compositor, translucent theme layer, gradient invented by
+the kernel, or runtime theme selection.
 
-The graphical console uses bronze on white. White is intentional: it joins the
-exact white field of the source logo to the surrounding framebuffer without
-keying out, editing, or inventing transparency. Early VGA text uses the closest
-bounded hardware brown until the framebuffer console exists.
+The interface deliberately recalls early personal computers: one-pixel
+outlines, platinum controls, high-contrast bitmap type, horizontal title-bar
+hatching, a menu strip, and the six-colour band. It does not use or claim
+another company's name, wordmark, icons, or trade dress.
+
+## Voice
+
+Sapote is small, direct, warm, and technically exact. Public copy should prefer
+plain descriptions such as “a small proof-driven operating system” over grand
+platform claims. First Light's greeting is `hello from the metal.` Engineering
+documents remain precise and formal where a machine contract demands it.
 
 ## Public surfaces
 
-The identity applies to the repository name and description, release titles and
-tag annotations, boot menu, kernel transcript, panic diagnostics, shell prompt
-and version command, documentation, include namespace, C/Rust ABI symbols,
-crate, command-line key, ELF, map, static library and ISO artifacts. A current
-surface containing an earlier project name is a rebrand defect.
+The identity applies to the repository name and description, topics, release
+titles, boot menu, kernel transcript, panic diagnostics, shell prompt and
+version command, documentation, include namespace, C/Rust ABI symbols, crate,
+command-line key, internal asset magic, ELF, map, static library and ISO
+artifacts. A current surface containing an earlier project name is a rebrand
+defect.
 
-Historical commit objects are immutable records and are not rewritten. A
-release or annotated tag is a current presentation surface and therefore uses
-Pyrenis even when it points to an older milestone commit.
+Historical commit objects and already-published tags are immutable records and
+are not rewritten or deleted. New commits, tags, releases, and artifacts use
+Sapote.
 
 ## Verification
 
-The source asset hash above is checked during review. `make verify` builds the
-native-size mark, verifies the branded ABI symbols and artifact names, and the
-normal boot contract requires the Pyrenis transcript. The `screen`, `shell` and
-normal scenarios exercise the white-and-bronze console and `pyr>` prompt on the
-actual framebuffer. `first-light` verifies the same palette in the installed
-desktop, and QMP captures the three unedited runtime PNGs under `assets/`.
+`make verify` pins the exact source hash, 280-pixel runtime ceiling, branded ABI
+symbols and artifact names, and rejects legacy identity strings or tracked
+legacy filenames. Normal boots require the Sapote transcript. `screen`, `shell`
+and normal scenarios exercise the black-and-white console and `sap>` prompt.
+`first-light` verifies the installed palette, typed layout, exact decoded logo,
+and real framebuffer pixels. QMP captures the committed runtime screenshots;
+the images are not manually edited.

@@ -1,6 +1,6 @@
 # Dynamic vectors and MSI-X
 
-Pyrenis now allocates interrupt vectors instead of assigning new devices fixed
+Sapote now allocates interrupt vectors instead of assigning new devices fixed
 numbers. Exceptions `0x00`-`0x1F`, PIC `0x20`-`0x2F`, I/O APIC `0x30`-`0x3F`,
 local-APIC `0x40`-`0x47`, the unexpected-vector proof at `0x80`, the IST proof
 at `0xF0`, and the spurious vector at `0xFF` are compile-time audited. The fixed

@@ -1,6 +1,6 @@
 # Text on the screen
 
-Until this layer existed Pyrenis could draw pixels and could write words, but
+Until this layer existed Sapote could draw pixels and could write words, but
 never both. The console spoke to a serial port and a VGA text buffer; the
 framebuffer knew about pixels and nothing about characters. This is what joins
 them, and it is the first thing in this project a person standing in front of
@@ -30,10 +30,10 @@ the machine can read.
 - **The picture is buffered, but its proof is not.** Glyphs are drawn into one
   heap-backed surface in ordinary write-back memory. Damage is one bounding
   rectangle and only that rectangle is presented to the framebuffer.
-- **The palette is the identity, not decoration.** The screen uses white
-  `#FFFFFF` behind the exact bronze `#806230` taken from the canonical mark.
-  This joins the logo's white field to the framebuffer without editing the
-  source image or pretending that its opaque pixels are transparent.
+- **The palette is the identity, not decoration.** The screen uses crisp black
+  `#000000` on white `#FFFFFF`, matching First Light's classic window chrome.
+  The logo remains an independently decoded exact asset; the console never
+  edits it or pretends that its opaque pixels are transparent.
 
 Buffering changes where drawing happens, not where correctness is checked.
 `screen_verify_cell` still reads the framebuffer after present and compares the
@@ -60,7 +60,7 @@ The reader is `src/rust/font.rs`. Every field in that header is a length or an
 index that becomes an offset into the blob, which is the rule `docs/RUST.md`
 states. The difference from the logo is frequency: a logo is decoded once, a
 glyph is looked up once per character printed, so this is the first Rust in
-Pyrenis on a hot path.
+Sapote on a hot path.
 
 ## Where it sits in boot
 
@@ -91,7 +91,7 @@ panel state.
 The font's 32-byte row buffer and the at-most 8x32 pixel tile are local to each
 draw, never shared scratch storage. A thread switched out while building a glyph
 therefore cannot hand another caller half of its tile. The screen cursor, damage
-rectangle and surface are shared state and remain unsynchronised; Pyrenis has one
+rectangle and surface are shared state and remain unsynchronised; Sapote has one
 CPU and no interrupt handler writes text, so no two callers currently execute
 this path at once. A lock belongs with the first real concurrent writer.
 
