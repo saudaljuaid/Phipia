@@ -38,6 +38,7 @@ So the split is not "dangerous code in Rust". It is:
 | Fixed-shape firmware tables (ACPI) | C | Bounded, already proved, and rewriting working proved code is churn |
 | Decoders of external byte streams | **Rust** | Every length is attacker-controlled; the checks should not be optional |
 | FAT16 metadata and file-content validation | **Rust** | Checked external byte slices; only pointer-free values cross back to C |
+| ELF64 executable metadata | **Rust** | Exact checked decoding before C can allocate or map executable frames |
 | Future: USB descriptors, network and 802.11 frames | **Rust** | Same argument, much larger surface |
 
 That last row is the point. The logo decoder is small; it is here to establish
@@ -66,6 +67,15 @@ retained pointer or unsafe block and returns only fixed `repr(C)` values.
 Its twenty-two mutation families run both through the guest C ABI and as a
 host Rust unit test; the large fixture builders are test-only and are not part
 of the freestanding image.
+
+`src/rust/elf64.rs` — the v0.7.0 exact executable parser. It accepts only the
+independently recorded 128-byte ELF64 `ET_EXEC` image with one RX `PT_LOAD`,
+checked lower-half canonical placement and an entry inside its file-backed
+bytes. It decodes every scalar with checked little-endian readers, retains no
+pointer, and returns one 88-byte fixed `repr(C)` value. Its 26 host/guest
+families include every truncation boundary and every rejected identifier,
+header, table, extent, alignment, permission, address and entry state. C owns
+frame allocation, copying, mappings and lifecycle; see `docs/ELF64_LOADER.md`.
 
 `src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
 blocks appear only where an ABI function turns validated C pointers into Rust

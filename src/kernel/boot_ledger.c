@@ -6,6 +6,7 @@
 #include <sapote/boot_ledger.h>
 #include <sapote/device_substrate.h>
 #include <sapote/dma.h>
+#include <sapote/elf64.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
 #include <sapote/interrupt_vector.h>
@@ -14,6 +15,7 @@
 #include <sapote/paging.h>
 #include <sapote/pci_resource.h>
 #include <sapote/pointer.h>
+#include <sapote/process.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
@@ -71,7 +73,10 @@ static const char *const stage_names[] = {
     "NVMe block-controller foundation",
     "installed NVMe read proof",
     "bounded read-only FAT16 foundation",
-    "installed FAT16 file-read proof"
+    "installed FAT16 file-read proof",
+    "private process address-space foundation",
+    "bounded ELF64 loader foundation",
+    "installed Ring 3 process proof"
 };
 
 static const char *const capability_names[] = {
@@ -125,7 +130,13 @@ static const char *const capability_names[] = {
     "NVMe fixture absent",
     "FAT16 foundation available",
     "filesystem file proof complete",
-    "filesystem fixture absent"
+    "filesystem fixture absent",
+    "private one-file read available",
+    "process address-space foundation available",
+    "ELF64 loader foundation available",
+    "process installed proof complete",
+    "process fixture absent",
+    "process outcome decided"
 };
 
 static const char *const status_names[] = {
@@ -564,14 +575,25 @@ enum boot_ledger_status boot_ledger_validate(struct boot_ledger *ledger)
                 return ledger->status;
             }
 
-            if (providers[capability] != BOOT_NO_PROVIDER) {
+            const bool common_outcome = skipped &&
+                providers[capability] == index &&
+                descriptor_has_capability(
+                    descriptor->provided_capabilities,
+                    descriptor->provided_capability_count, capability) &&
+                !descriptor_has_capability(
+                    descriptor->skipped_capabilities, source_index,
+                    capability);
+
+            if (providers[capability] != BOOT_NO_PROVIDER &&
+                !common_outcome) {
                 set_refusal(ledger,
                     BOOT_LEDGER_STATUS_DUPLICATE_CAPABILITY_PROVIDER,
                     descriptor->id, capability);
                 return ledger->status;
             }
-
-            providers[capability] = index;
+            if (providers[capability] == BOOT_NO_PROVIDER) {
+                providers[capability] = index;
+            }
         }
     }
 
@@ -1525,6 +1547,54 @@ enum boot_ledger_status boot_ledger_verify_installed(
         }
     }
 
+    const bool process_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+    const bool process_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT);
+    const bool process_decided = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED);
+    const bool process_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_PROCESS_INSTALLED_PROOF) != NULL;
+    if (process_decided != process_planned ||
+        !optional_outcome_valid(process_planned, process_complete,
+            process_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+            BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (process_complete || process_absent) {
+        const struct boot_stage_receipt *process =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_PROCESS_INSTALLED_PROOF);
+        const struct process_proof_result proof = process_get_proof_result();
+
+        if (process == NULL ||
+            (process_complete &&
+                (process->result != BOOT_RECEIPT_RAN ||
+                 process->proof_counter_count != 2U ||
+                 process->proof_counters[0] != ELF64_FILE_BYTES ||
+                 process->proof_counters[1] != 1U ||
+                 proof.file_bytes != ELF64_FILE_BYTES ||
+                 proof.segment_count != 1U ||
+                 proof.result != UINT32_C(0x53415037) ||
+                 proof.robustness_tests !=
+                    PROCESS_CONTROLLED_ROBUSTNESS_TESTS ||
+                 !proof.ring_three || !proof.private_address_space ||
+                 !proof.image_read_execute ||
+                 !proof.stack_read_write_no_execute ||
+                 !proof.guard_unmapped || !proof.interrupt_authenticated ||
+                 !proof.normal_exit || !proof.teardown_complete ||
+                 !proof.resource_census_equal ||
+                 !process_resources_released())) ||
+            (process_absent && process->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+                BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
     if (boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE)) {
         const struct boot_stage_receipt *font = boot_ledger_receipt_for(ledger,
@@ -2195,9 +2265,92 @@ bool boot_ledger_self_test(void)
         return false;
     }
 
+    /* One outcome capability may be common to success and neutral absence. */
+    boot_ledger_reset(&first);
+    one = self_test_descriptor(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        BOOT_PHASE_SERVICES, false, self_test_skip);
+    one.provided_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE;
+    one.provided_capabilities[1] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    one.provided_capability_count = 2U;
+    one.skipped_capabilities[0] = BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
+    one.skipped_capabilities[1] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    one.skipped_capability_count = 2U;
+    one.skip_preserves_health = true;
+    two = self_test_descriptor(BOOT_STAGE_CLOSING_PROOFS,
+        BOOT_PHASE_PROOFS, true, self_test_success);
+    two.required_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    two.required_capability_count = 1U;
+    if (!self_test_add(&first, &two) || !self_test_add(&first, &one) ||
+        boot_ledger_validate(&first) != BOOT_LEDGER_STATUS_OK ||
+        first.validated_stage_ids[0] !=
+            BOOT_STAGE_PROCESS_INSTALLED_PROOF ||
+        first.validated_stage_ids[1] != BOOT_STAGE_CLOSING_PROOFS ||
+        boot_ledger_execute(&first, &context) != BOOT_LEDGER_STATUS_OK ||
+        first.degraded || first.optional_skip_count != 1U ||
+        !boot_ledger_has_capability(&first,
+            BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT) ||
+        !boot_ledger_has_capability(&first,
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED) ||
+        boot_ledger_has_capability(&first,
+            BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE)) {
+        return false;
+    }
+
+    boot_ledger_reset(&second);
+    one.execute = self_test_success;
+    if (!self_test_add(&second, &two) || !self_test_add(&second, &one) ||
+        boot_ledger_validate(&second) != BOOT_LEDGER_STATUS_OK ||
+        boot_ledger_execute(&second, &context) != BOOT_LEDGER_STATUS_OK ||
+        !boot_ledger_has_capability(&second,
+            BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE) ||
+        !boot_ledger_has_capability(&second,
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED) ||
+        boot_ledger_has_capability(&second,
+            BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT)) {
+        return false;
+    }
+
+    /* Repeating the common capability inside one outcome remains invalid. */
+    boot_ledger_reset(&first);
+    one.skipped_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    if (!self_test_add(&first, &one) ||
+        boot_ledger_validate(&first) !=
+            BOOT_LEDGER_STATUS_DUPLICATE_CAPABILITY_PROVIDER) {
+        return false;
+    }
+
+    /* Two distinct stages may not share one outcome capability. */
+    boot_ledger_reset(&first);
+    one = self_test_descriptor(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        BOOT_PHASE_SERVICES, false, self_test_success);
+    one.provided_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    one.provided_capability_count = 1U;
+    two = self_test_descriptor(BOOT_STAGE_ELF64_LOADER_FOUNDATION,
+        BOOT_PHASE_SERVICES, false, self_test_skip);
+    two.skipped_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    two.skipped_capability_count = 1U;
+    two.skip_preserves_health = true;
+    if (!self_test_add(&first, &one) || !self_test_add(&first, &two) ||
+        boot_ledger_validate(&first) !=
+            BOOT_LEDGER_STATUS_DUPLICATE_CAPABILITY_PROVIDER) {
+        return false;
+    }
+
     /* A required or capability-free stage cannot declare a neutral skip. */
     boot_ledger_reset(&first);
-    one.required = true;
+    one = self_test_descriptor(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        BOOT_PHASE_SERVICES, true, self_test_skip);
+    one.skipped_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
+    one.skipped_capability_count = 1U;
+    one.skip_preserves_health = true;
     if (!self_test_add(&first, &one) ||
         boot_ledger_validate(&first) !=
             BOOT_LEDGER_STATUS_INVALID_NEUTRAL_SKIP) {

@@ -1,6 +1,6 @@
 # Minimal root-file read contract
 
-The only v0.6.0 file operation is a private installed proof that reads
+The v0.6.0 file operation is a private installed proof that reads
 `SAPOTE.BIN` from one validated FAT16 root. C controls the controller and
 lifecycle; Rust alone interprets filesystem bytes. No symbol provides a public
 block or file API.
@@ -69,3 +69,18 @@ Ledger proof additionally requires the filesystem session to be released.
 Sapote still has no IOMMU. These bounds and ownership states prevent correct
 software from misusing memory; they do not isolate guest RAM from a faulty or
 malicious bus-mastering device.
+
+## Private v0.7.0 consumer seam
+
+The process proof factors only an open/copy/close form of the same canonical
+one-file read. It keeps one generation-checked read session active, performs the
+same four metadata-derived NVMe reads, and copies exactly 128 bytes into
+caller-owned fixed storage only after every block is CPU-owned. Unlike the
+v0.6.0 installed content proof, this seam does not require the old deterministic
+payload; safe Rust ELF parsing owns the new bytes after return.
+
+Only `process.c` may call the seam, and it must close it last during reverse
+teardown. It exposes no block access, path, descriptor, mount, cache, directory,
+multi-cluster reader or write operation. Scenario 36 and its original payload
+remain unchanged; scenario 37 attaches a separate FAT16 image documented in
+`docs/PROCESS_QEMU_PROOF.md`.

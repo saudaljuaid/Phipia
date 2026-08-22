@@ -19,6 +19,16 @@
 #define PAGING_PAGE_SIZE UINT64_C(4096)
 #define PAGING_HUGE_PAGE_SIZE UINT64_C(0x200000)
 
+/* The one user layout admitted by the v0.7.0 process proof. */
+#define PAGING_PROCESS_IMAGE_ADDRESS UINT64_C(0x0000400000000000)
+#define PAGING_PROCESS_STACK_GUARD UINT64_C(0x0000400000200000)
+#define PAGING_PROCESS_STACK_PAGES 4U
+#define PAGING_PROCESS_STACK_BASE \
+    (PAGING_PROCESS_STACK_GUARD + PAGING_PAGE_SIZE)
+#define PAGING_PROCESS_STACK_END \
+    (PAGING_PROCESS_STACK_BASE + \
+        PAGING_PROCESS_STACK_PAGES * PAGING_PAGE_SIZE)
+
 /* console.c's fallback output page, described here once for every owner. */
 #define PAGING_VGA_TEXT_BUFFER_BASE UINT64_C(0x000B8000)
 
@@ -104,6 +114,12 @@ enum paging_status {
     PAGING_STATUS_HUGE_PAGE_PRESENT,
     PAGING_STATUS_OUT_OF_FRAMES,
     PAGING_STATUS_VALIDATION_FAILURE,
+    PAGING_STATUS_PROCESS_BUSY,
+    PAGING_STATUS_PROCESS_BAD_TOKEN,
+    PAGING_STATUS_PROCESS_BAD_STATE,
+    PAGING_STATUS_PROCESS_BAD_MAPPING,
+    PAGING_STATUS_PROCESS_ALIAS_STATE,
+    PAGING_STATUS_SUPERVISOR_INTENT_FULL,
     PAGING_STATUS_COUNT
 };
 
@@ -189,6 +205,36 @@ struct paging_translation {
     uint32_t permissions;
     enum paging_memory_type memory_type;
     unsigned int level;
+    bool user;
+};
+
+enum paging_process_space_state {
+    PAGING_PROCESS_SPACE_INVALID = 0,
+    PAGING_PROCESS_SPACE_BUILDING,
+    PAGING_PROCESS_SPACE_INSTALLED,
+    PAGING_PROCESS_SPACE_ACTIVE,
+    PAGING_PROCESS_SPACE_RELEASED,
+    PAGING_PROCESS_SPACE_STATE_COUNT
+};
+
+enum paging_process_mapping_kind {
+    PAGING_PROCESS_MAPPING_IMAGE = 0,
+    PAGING_PROCESS_MAPPING_STACK,
+    PAGING_PROCESS_MAPPING_KIND_COUNT
+};
+
+/* Public tokens contain identity only; all table ownership stays in paging.c. */
+struct paging_process_space {
+    uint64_t root_physical_address;
+    uint64_t generation;
+    size_t table_frames;
+    enum paging_process_space_state state;
+};
+
+struct paging_process_image_alias {
+    uint64_t physical_address;
+    uint64_t generation;
+    bool active;
 };
 
 /*
@@ -237,6 +283,48 @@ enum paging_status paging_translate(
     struct paging_translation *translation
 );
 enum paging_status paging_audit_hierarchy(struct paging_audit *audit);
+enum paging_status paging_process_space_build(
+    struct paging_process_space *space
+);
+enum paging_status paging_process_image_alias_narrow(
+    const struct paging_process_space *space,
+    uint64_t physical_address,
+    struct paging_process_image_alias *alias
+);
+enum paging_status paging_process_map_user_page(
+    struct paging_process_space *space,
+    enum paging_process_mapping_kind kind,
+    uint64_t virtual_address,
+    uint64_t physical_address,
+    uint32_t permissions
+);
+enum paging_status paging_process_unmap_user_page(
+    struct paging_process_space *space,
+    enum paging_process_mapping_kind kind,
+    uint64_t virtual_address
+);
+enum paging_status paging_process_validate(
+    struct paging_process_space *space,
+    uint64_t image_physical_address,
+    const uintptr_t stack_frames[PAGING_PROCESS_STACK_PAGES]
+);
+enum paging_status paging_process_translate(
+    const struct paging_process_space *space,
+    uint64_t virtual_address,
+    struct paging_translation *translation
+);
+enum paging_status paging_process_activate(struct paging_process_space *space);
+enum paging_status paging_process_restore_kernel(
+    struct paging_process_space *space
+);
+enum paging_status paging_process_image_alias_restore(
+    const struct paging_process_space *space,
+    struct paging_process_image_alias *alias
+);
+enum paging_status paging_process_space_release(
+    struct paging_process_space *space
+);
+bool paging_process_resources_released(void);
 enum paging_status paging_verify_device_windows(
     const struct paging_device_windows *expected,
     size_t *failed_index

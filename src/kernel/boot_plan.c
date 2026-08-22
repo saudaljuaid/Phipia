@@ -24,6 +24,7 @@
 #include <sapote/dma.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
+#include <sapote/elf64.h>
 #include <sapote/heap.h>
 #include <sapote/interrupts.h>
 #include <sapote/interrupt_vector.h>
@@ -38,6 +39,7 @@
 #include <sapote/pci.h>
 #include <sapote/pci_resource.h>
 #include <sapote/pointer.h>
+#include <sapote/process.h>
 #include <sapote/pm_timer.h>
 #include <sapote/screen.h>
 #include <sapote/self_test.h>
@@ -1234,8 +1236,9 @@ static void execute_nvme_read_proof(
         return;
     }
 
-    /* The filesystem scenario owns a different deterministic namespace. */
-    if (context->test_scenario == KERNEL_TEST_FILESYSTEM) {
+    /* The filesystem and process scenarios own different namespaces. */
+    if (context->test_scenario == KERNEL_TEST_FILESYSTEM ||
+        context->test_scenario == KERNEL_TEST_PROCESS) {
         console_write("Sapote: NVMe fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1351,8 +1354,9 @@ static void execute_filesystem_file_proof(
         return;
     }
 
-    /* Preserve scenario 35's v0.5.0 raw namespace and controller path. */
-    if (context->test_scenario == KERNEL_TEST_NVME) {
+    /* Preserve scenario 35's raw and scenario 37's ELF namespaces. */
+    if (context->test_scenario == KERNEL_TEST_NVME ||
+        context->test_scenario == KERNEL_TEST_PROCESS) {
         console_write("Sapote: FAT16 fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1395,6 +1399,147 @@ static void execute_filesystem_file_proof(
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.file_bytes;
     result->proof_counters[1] = proof.msix_completion_count;
+    result->proof_counter_count = 2U;
+}
+
+static void execute_process_address_space_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!process_address_space_foundation_self_test(&completed) ||
+        completed != PROCESS_ADDRESS_SPACE_FOUNDATION_CONTROLS) {
+        stage_failed(context, result,
+            "private process address-space controls failed");
+        return;
+    }
+    console_write("Sapote: process address-space foundation controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(PROCESS_ADDRESS_SPACE_FOUNDATION_CONTROLS);
+    console_write(" passed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static void execute_elf64_loader_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!process_elf64_foundation_self_test(&completed) ||
+        completed != ELF64_PARSER_ROBUSTNESS_CONTROLS) {
+        stage_failed(context, result, "bounded ELF64 parser controls failed");
+        return;
+    }
+    console_write("Sapote: ELF64 parser robustness controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(ELF64_PARSER_ROBUSTNESS_CONTROLS);
+    console_write(" passed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static const enum boot_capability process_proof_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
+    BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_IDT_INSTALLED,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_THREADING_AVAILABLE,
+    BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+    BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+    BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_PRIVATE_ONE_FILE_READ_AVAILABLE,
+    BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(process_proof_requirements) /
+    sizeof(process_proof_requirements[0]) ==
+        BOOT_STAGE_CAPABILITY_CAPACITY,
+    "process proof prerequisites no longer exactly fill the bound");
+
+static bool process_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    return dependencies_complete(descriptor, process_proof_requirements,
+        sizeof(process_proof_requirements) /
+            sizeof(process_proof_requirements[0]));
+}
+
+static void execute_process_installed_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct process_proof_result proof;
+    enum process_status status;
+
+    if (!process_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "process proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (process_proof_dependencies_complete(&missing_count) ||
+        process_proof_dependencies_complete(&missing_member) ||
+        !kernel_test_process_exit_self_test()) {
+        stage_failed(context, result,
+            "process proof contract negative controls failed");
+        return;
+    }
+
+    if (context->test_scenario != KERNEL_TEST_PROCESS) {
+        console_write("Sapote: process fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
+    status = process_installed_prove(&proof);
+    if (status == PROCESS_STATUS_ABSENT) {
+        console_write("Sapote: process fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != PROCESS_STATUS_OK) {
+        console_write("Sapote: process proof violated invariant: ");
+        console_write(process_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, process_status_string(status));
+        return;
+    }
+    console_write("ST PROCESS ELF64 SAPOTE.BIN bytes ");
+    console_write_u64(proof.file_bytes);
+    console_write(" segments ");
+    console_write_u64(proof.segment_count);
+    console_write(
+        " ring 3 address-space private result valid teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.file_bytes;
+    result->proof_counters[1] = proof.segment_count;
     result->proof_counter_count = 2U;
 }
 
@@ -1478,9 +1623,12 @@ static void execute_closing_proofs(
         vector_state.allocated != 0U ||
         installed_msix_state.active_bindings != 0U ||
         installed_msix_state.failure_injection_armed ||
-        !filesystem_resources_released()) {
+        !filesystem_resources_released() ||
+        !paging_process_resources_released() ||
+        !interrupt_process_gate_resources_released() ||
+        !process_resources_released()) {
         stage_failed(context, result,
-            "device foundation ownership leaked across teardown");
+            "device or process ownership leaked across teardown");
         return;
     }
 
@@ -1702,6 +1850,12 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
         BOOT_IRREVERSIBLE_NONE, execute_threading),
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_SCHEDULER, execute_scheduler),
+    REQUIRED_STAGE(BOOT_STAGE_PROCESS_ADDRESS_SPACE_FOUNDATION,
+        "private process address-space foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_process_address_space_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_ELF64_LOADER_FOUNDATION,
+        "bounded ELF64 loader foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_elf64_loader_foundation),
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_DEVICE_SUBSTRATE_PROOF,
         "installed device-substrate proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_device_substrate_proof),
@@ -1714,6 +1868,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_FILESYSTEM_FILE_PROOF,
         "installed FAT16 file-read proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_filesystem_file_proof),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        "installed Ring 3 process proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_process_installed_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -1750,8 +1907,12 @@ static const enum boot_capability filesystem_file_requirements[] = {
 
 _Static_assert(sizeof(filesystem_file_requirements) /
     sizeof(filesystem_file_requirements[0]) ==
+        14U,
+    "filesystem proof prerequisite count changed");
+_Static_assert(sizeof(filesystem_file_requirements) /
+    sizeof(filesystem_file_requirements[0]) <=
         BOOT_STAGE_CAPABILITY_CAPACITY,
-    "filesystem proof prerequisites no longer exactly fill the bound");
+    "filesystem proof prerequisites exceed the descriptor bound");
 
 static bool declare_dependencies(
     struct boot_stage_descriptor *descriptor
@@ -2204,7 +2365,9 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 1U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_PRIVATE_ONE_FILE_READ_AVAILABLE;
+        descriptor->provided_capability_count = 2U;
         break;
     case BOOT_STAGE_FILESYSTEM_FILE_PROOF:
         for (size_t index = 0U;
@@ -2223,6 +2386,53 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_FILESYSTEM_FIXTURE_ABSENT;
         descriptor->skipped_capability_count = 1U;
         break;
+    case BOOT_STAGE_PROCESS_ADDRESS_SPACE_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_IDT_INSTALLED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capability_count = 6U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_ELF64_LOADER_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 1U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_PROCESS_INSTALLED_PROOF:
+        for (size_t index = 0U;
+             index < sizeof(process_proof_requirements) /
+                sizeof(process_proof_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                process_proof_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(process_proof_requirements) /
+                sizeof(process_proof_requirements[0]);
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->provided_capability_count = 2U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
+        descriptor->skipped_capabilities[1] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->skipped_capability_count = 2U;
+        break;
     case BOOT_STAGE_CLOSING_PROOFS:
         descriptor->required_capabilities[0] =
             BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
@@ -2234,7 +2444,13 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
         descriptor->required_capabilities[4] =
             BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
-        descriptor->required_capability_count = 5U;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->required_capability_count = 8U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->provided_capability_count = 1U;

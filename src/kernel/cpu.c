@@ -5,8 +5,10 @@
 
 #include <sapote/cpu.h>
 
-#define GDT_ENTRY_COUNT 5U
+#define GDT_ENTRY_COUNT 7U
 #define TSS_DESCRIPTOR_INDEX 3U
+#define USER_DATA_DESCRIPTOR_INDEX 5U
+#define USER_CODE_DESCRIPTOR_INDEX 6U
 #define TSS_ACCESS_AVAILABLE UINT8_C(0x89)
 #define TSS_ACCESS_BUSY UINT8_C(0x8B)
 #define STACK_CANARY_BYTES 64U
@@ -44,6 +46,10 @@ _Static_assert(offsetof(struct x86_64_tss, ist1) == 36U,
                "x86_64 TSS IST1 offset changed");
 _Static_assert(offsetof(struct x86_64_tss, iomap_base) == 102U,
                "x86_64 TSS I/O map offset changed");
+_Static_assert(CPU_GDT_USER_DATA_SELECTOR == UINT16_C(0x2B),
+               "user data selector must name GDT index 5 at RPL3");
+_Static_assert(CPU_GDT_USER_CODE_SELECTOR == UINT16_C(0x33),
+               "user code selector must name GDT index 6 at RPL3");
 
 static uint64_t gdt[GDT_ENTRY_COUNT] __attribute__((aligned(16)));
 static struct x86_64_tss tss __attribute__((aligned(16)));
@@ -133,7 +139,11 @@ static bool gdt_is_valid(uint8_t expected_tss_access)
 {
     if (gdt[0] != 0U ||
         gdt[1] != UINT64_C(0x00AF9B000000FFFF) ||
-        gdt[2] != UINT64_C(0x00CF93000000FFFF)) {
+        gdt[2] != UINT64_C(0x00CF93000000FFFF) ||
+        gdt[USER_DATA_DESCRIPTOR_INDEX] !=
+            UINT64_C(0x00CFF3000000FFFF) ||
+        gdt[USER_CODE_DESCRIPTOR_INDEX] !=
+            UINT64_C(0x00AFFB000000FFFF)) {
         return false;
     }
 
@@ -205,6 +215,8 @@ enum cpu_status cpu_tables_prepare(void)
         TSS_ACCESS_AVAILABLE
     );
     gdt[TSS_DESCRIPTOR_INDEX + 1U] = (uint64_t)tss_base >> 32U;
+    gdt[USER_DATA_DESCRIPTOR_INDEX] = UINT64_C(0x00CFF3000000FFFF);
+    gdt[USER_CODE_DESCRIPTOR_INDEX] = UINT64_C(0x00AFFB000000FFFF);
 
     gdt_pointer.limit = (uint16_t)(sizeof(gdt) - 1U);
     gdt_pointer.base = (uintptr_t)(void *)gdt;
@@ -276,6 +288,19 @@ enum cpu_status cpu_tables_validate(void)
 bool cpu_tables_active(void)
 {
     return tables_active;
+}
+
+bool cpu_user_transition_contract_valid(void)
+{
+    return tables_active &&
+        cpu_tables_validate() == CPU_STATUS_OK &&
+        stack_top_valid((uintptr_t)tss.rsp0) &&
+        tss.rsp0 == stack_top(rsp0_stack);
+}
+
+uintptr_t cpu_tss_rsp0(void)
+{
+    return cpu_user_transition_contract_valid() ? (uintptr_t)tss.rsp0 : 0U;
 }
 
 bool cpu_address_on_ist(uint8_t ist_index, uintptr_t address)

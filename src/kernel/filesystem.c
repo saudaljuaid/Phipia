@@ -23,6 +23,16 @@ struct filesystem_block_result {
 static struct filesystem_file_proof installed_proof;
 static bool filesystem_proof_active;
 
+struct filesystem_private_read_runtime {
+    struct nvme_filesystem_read_session session;
+    enum filesystem_state state;
+    uint64_t generation;
+    bool owned;
+};
+
+static struct filesystem_private_read_runtime private_read_runtime;
+static uint64_t next_private_read_generation = UINT64_C(1);
+
 _Static_assert(sizeof(struct fat16_geometry) == 88U,
     "Rust/C FAT16 geometry ABI changed");
 _Static_assert(sizeof(struct fat16_root_query) == 11U,
@@ -1108,6 +1118,201 @@ cleanup:
     return FILESYSTEM_STATUS_OK;
 }
 
+static void zero_private_file(struct filesystem_private_file *file)
+{
+    zero_bytes(file, sizeof(*file));
+}
+
+static enum filesystem_status private_read_cleanup(void)
+{
+    enum filesystem_status result = FILESYSTEM_STATUS_OK;
+
+    if (!private_read_runtime.owned) {
+        return FILESYSTEM_STATUS_OK;
+    }
+    if (private_read_runtime.state != FILESYSTEM_STOPPING &&
+        transition(&private_read_runtime.state, FILESYSTEM_STOPPING) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+    }
+    if (nvme_filesystem_session_close(&private_read_runtime.session) !=
+            NVME_STATUS_OK) {
+        /* The lower layer still owns the session; retain its retry token. */
+        return FILESYSTEM_STATUS_TEARDOWN_FAILURE;
+    } else if (transition(&private_read_runtime.state, FILESYSTEM_RELEASED) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+    }
+    zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
+    return result;
+}
+
+enum filesystem_status filesystem_private_read_open(
+    struct filesystem_private_file *file,
+    uint8_t *destination,
+    size_t destination_bytes
+)
+{
+    static const uint8_t canonical_name[FAT16_CANONICAL_NAME_BYTES] =
+        {'S', 'A', 'P', 'O', 'T', 'E', ' ', ' ', 'B', 'I', 'N'};
+    struct fat16_geometry geometry;
+    struct fat16_root_query query;
+    struct fat16_root_entry entry;
+    struct fat16_fat_state fat;
+    struct fat16_extent extent;
+    const uint8_t *block = NULL;
+    size_t block_length = 0U;
+    enum filesystem_status result;
+    enum nvme_status nvme_status;
+
+    if (file == NULL || destination == NULL) {
+        return FILESYSTEM_STATUS_NULL_ARGUMENT;
+    }
+    zero_private_file(file);
+    if (destination_bytes != FAT16_FILE_BYTES) {
+        return FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER;
+    }
+    zero_bytes(destination, destination_bytes);
+    if (private_read_runtime.owned) {
+        return FILESYSTEM_STATUS_PRIVATE_BUSY;
+    }
+    zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
+    zero_bytes(&geometry, sizeof(geometry));
+    zero_bytes(&query, sizeof(query));
+    zero_bytes(&entry, sizeof(entry));
+    zero_bytes(&fat, sizeof(fat));
+    zero_bytes(&extent, sizeof(extent));
+    if (sapote_fat16_make_query(canonical_name, sizeof(canonical_name),
+            &query) != FAT16_STATUS_OK) {
+        return FILESYSTEM_STATUS_PARSER_FAILURE;
+    }
+    nvme_status = nvme_filesystem_session_open(&private_read_runtime.session);
+    if (nvme_status == NVME_STATUS_ABSENT) {
+        return FILESYSTEM_STATUS_ABSENT;
+    }
+    if (nvme_status != NVME_STATUS_OK) {
+        return FILESYSTEM_STATUS_NVME_FAILURE;
+    }
+    private_read_runtime.owned = true;
+    private_read_runtime.state = FILESYSTEM_UNOPENED;
+    private_read_runtime.generation = next_private_read_generation++;
+    if (next_private_read_generation == 0U) {
+        next_private_read_generation = 1U;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_SESSION_READY) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, 0U, 1U, &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK ||
+        sapote_fat16_parse_bpb(block, block_length,
+            private_read_runtime.session.namespace_blocks,
+            private_read_runtime.session.logical_block_bytes,
+            &geometry) != FAT16_STATUS_OK) {
+        result = result == FILESYSTEM_STATUS_OK ?
+            FILESYSTEM_STATUS_PARSER_FAILURE : result;
+        goto fail;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_VOLUME_VALIDATED) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    block = NULL;
+    block_length = 0U;
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, geometry.first_fat_sector, 2U,
+        &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK ||
+        sapote_fat16_parse_fat(block, block_length, &geometry, &fat) !=
+            FAT16_STATUS_OK) {
+        result = result == FILESYSTEM_STATUS_OK ?
+            FILESYSTEM_STATUS_PARSER_FAILURE : result;
+        goto fail;
+    }
+    block = NULL;
+    block_length = 0U;
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, geometry.first_root_sector, 3U,
+        &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK ||
+        sapote_fat16_find_root(block, block_length, &geometry, &query,
+            (uint32_t)destination_bytes, &entry) != FAT16_STATUS_OK ||
+        sapote_fat16_validate_extent(&geometry, &entry, &fat, &extent) !=
+            FAT16_STATUS_OK ||
+        !equal_bytes(entry.canonical_name, canonical_name,
+            sizeof(canonical_name))) {
+        result = result == FILESYSTEM_STATUS_OK ?
+            FILESYSTEM_STATUS_PARSER_FAILURE : result;
+        goto fail;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_FILE_LOCATED) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    block = NULL;
+    block_length = 0U;
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, extent.lba, 4U, &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK || block_length < entry.file_size ||
+        entry.file_size != FAT16_FILE_BYTES) {
+        result = result == FILESYSTEM_STATUS_OK ?
+            FILESYSTEM_STATUS_CONTENT : result;
+        goto fail;
+    }
+    for (size_t index = 0U; index < FAT16_FILE_BYTES; ++index) {
+        destination[index] = block[index];
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_FILE_READ) !=
+            FILESYSTEM_STATUS_OK ||
+        private_read_runtime.session.read_count != 4U ||
+        private_read_runtime.session.msix_completion_count != 4U ||
+        private_read_runtime.session.ignored_completions != 0U ||
+        private_read_runtime.session.state !=
+            NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED) {
+        result = FILESYSTEM_STATUS_OWNERSHIP;
+        goto fail;
+    }
+    file->generation = private_read_runtime.generation;
+    file->msix_completion_count =
+        private_read_runtime.session.msix_completion_count;
+    file->file_bytes = entry.file_size;
+    file->read_count = private_read_runtime.session.read_count;
+    file->cpu_owned = true;
+    file->active = true;
+    return FILESYSTEM_STATUS_OK;
+
+fail:
+    zero_bytes(destination, destination_bytes);
+    if (private_read_cleanup() != FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_TEARDOWN_FAILURE;
+    }
+    return result;
+}
+
+enum filesystem_status filesystem_private_read_close(
+    struct filesystem_private_file *file
+)
+{
+    enum filesystem_status status;
+
+    if (file == NULL) {
+        return FILESYSTEM_STATUS_NULL_ARGUMENT;
+    }
+    if (!file->active || !private_read_runtime.owned ||
+        file->generation != private_read_runtime.generation) {
+        return FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN;
+    }
+    status = private_read_cleanup();
+    if (status == FILESYSTEM_STATUS_OK) {
+        zero_private_file(file);
+    }
+    return status;
+}
+
 struct filesystem_file_proof filesystem_get_file_proof(void)
 {
     return installed_proof;
@@ -1115,7 +1320,7 @@ struct filesystem_file_proof filesystem_get_file_proof(void)
 
 bool filesystem_resources_released(void)
 {
-    return !filesystem_proof_active &&
+    return !filesystem_proof_active && !private_read_runtime.owned &&
         nvme_filesystem_session_resources_released();
 }
 
@@ -1151,6 +1356,12 @@ const char *filesystem_status_string(enum filesystem_status status)
         return "filesystem transition is invalid";
     case FILESYSTEM_STATUS_TEARDOWN_FAILURE:
         return "filesystem teardown leaked or failed";
+    case FILESYSTEM_STATUS_PRIVATE_BUSY:
+        return "private filesystem read session is already active";
+    case FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN:
+        return "private filesystem read token is stale";
+    case FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER:
+        return "private filesystem destination is not exactly 128 bytes";
     case FILESYSTEM_STATUS_COUNT:
     default: return "unknown filesystem status";
     }

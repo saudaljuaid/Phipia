@@ -54,8 +54,16 @@ merge an unreviewed kernel change.
   contract. Rust parses filesystem-owned bytes; C controls the private four-read
   NVMe session and may copy file bytes only after CPU ownership returns. Do not
   add writes, partitions, other formats, paths, multiple files or clusters, a
-  VFS, cache, loader or public ABI. Never mount a fixture or attach a host
+  VFS, cache or public ABI. The only loader consumer is the separately typed
+  v0.7.0 private process seam. Never mount a fixture or attach a host
   device; use only the generator and explicit read-only QEMU `-blockdev` nodes.
+- Process work stays inside one synchronous proof object, one private CR3, one
+  fixed 128-byte ELF64 image, one guarded stack and private vector `0x81`.
+  Preserve supervisor-only kernel mappings, effective ancestor/leaf W^X walks,
+  real `iretq`/CPL3 fetch, authenticated return, kernel-CR3-first reverse
+  teardown and the equal resource census. Do not introduce a syscall ABI,
+  generalized process API, concurrent processes, wider ELF subset or public
+  filesystem seam as part of this foundation.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

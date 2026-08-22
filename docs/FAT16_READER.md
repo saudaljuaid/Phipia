@@ -106,3 +106,10 @@ invalid and all-zero.
 The twenty-two parser controls cover the accepted layout and every metadata
 refusal family. Controls 23–26 belong to the C ownership/lifecycle layer;
 Boot Ledger and host-exit controls make the installed total 28.
+
+v0.7.0 does not widen any FAT field, geometry, entry or extent. Its separate
+process fixture uses this exact volume and canonical root contract with a
+different independently verified 128-byte payload. The private process consumer
+receives copied CPU-owned bytes and hands them to the ELF parser; FAT16 never
+interprets executable metadata. The original filesystem scenario, payload and
+digest remain unchanged.

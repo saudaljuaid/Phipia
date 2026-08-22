@@ -11,6 +11,7 @@
 //! where results are written back through validated C pointers. Each one states
 //! the condition the caller has to meet.
 
+use crate::elf64;
 use crate::font;
 use crate::fat16;
 use crate::logo::{self, Format, Status};
@@ -495,5 +496,47 @@ pub unsafe extern "C" fn sapote_fat16_validate_payload(
             fat16_status_code(fat16::Status::Ok)
         }
         Err(status) => fat16_status_code(status),
+    }
+}
+
+fn elf64_status_code(status: elf64::Status) -> i32 {
+    status as i32
+}
+
+/// Run all host-independent ELF64 parser mutation families.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_elf64_self_test() -> u32 {
+    elf64::self_test()
+}
+
+/// Parse one CPU-owned ELF file into pointer-free validated facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` must
+/// address one writable `elf64::ValidatedImage`.  The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable output and null was refused.
+    unsafe { *out = elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this one readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match elf64::parse(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            elf64_status_code(elf64::Status::Ok)
+        }
+        Err(status) => elf64_status_code(status),
     }
 }

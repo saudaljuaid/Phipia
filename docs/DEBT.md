@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-six scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-seven scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -29,10 +29,11 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,908
-lines. Splitting panel rendering or scenario helpers may improve shape later,
-but userspace, a process model, a window manager, and a compositor are missing
-architectural layers rather than refactors owed by this milestone.
+roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,980
+lines. Splitting panel rendering or scenario helpers may improve shape later.
+v0.7.0 proves one synchronous CPL3 object, not a general process model;
+multi-process service, a window manager, and a compositor remain architectural
+layers rather than refactors owed by this milestone.
 
 ## Paid on the way in
 
@@ -185,10 +186,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 214 shell assertion lines
+### 4. The harness contract is 231 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    214
+    231
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -201,7 +202,9 @@ denylist assertions, leaving 177 lines. The v0.5.0 NVMe contract appends
 scenario 35 and fourteen controller, proof and exit checks, producing the
 former 191-line contract. The v0.6.0 FAT16 increment appends scenario 36 and
 twenty-three fixture, source-boundary, exit and transcript checks, producing the
-measured 214 lines shown above. The harness
+measured 214 lines shown above. The v0.7.0 process increment appends scenario
+37 and seventeen executable, source-boundary, exit and transcript checks,
+producing the measured 231 lines shown above. The harness
 was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It
@@ -260,11 +263,17 @@ kernel — but the surface is now twelve files wide, and it grows with each one.
 Nothing needs doing yet. What matters is that the day a second processor appears,
 this is not a surprise, and the number above is what it will cost.
 
+The v0.7.0 process proof deliberately adds more single-instance static owners:
+one process runtime, private page hierarchy, executable-alias token, proof gate
+and filesystem session. That is bounded proof state, not a scalable process
+table. Concurrency, per-CPU current-process state and TLB shootdown are future
+architecture and this milestone does not mark the single-core debt resolved.
+
 ## Not debt
 
 Measured, and healthy:
 
-- **Thirty-four QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty-seven QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
 - **1,556 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
   Sapote mark (1,593,184 and 21,573 bytes respectively in the measured current

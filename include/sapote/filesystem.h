@@ -42,6 +42,9 @@ enum filesystem_status {
     FILESYSTEM_STATUS_TRANSITION_REVERSED,
     FILESYSTEM_STATUS_TRANSITION_INVALID,
     FILESYSTEM_STATUS_TEARDOWN_FAILURE,
+    FILESYSTEM_STATUS_PRIVATE_BUSY,
+    FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN,
+    FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER,
     FILESYSTEM_STATUS_COUNT
 };
 
@@ -82,11 +85,28 @@ struct filesystem_file_proof {
     bool teardown_complete;
 };
 
+struct filesystem_private_file {
+    uint64_t generation;
+    uint64_t msix_completion_count;
+    uint32_t file_bytes;
+    uint32_t read_count;
+    bool cpu_owned;
+    bool active;
+};
+
 bool filesystem_foundation_self_test(size_t *completed_tests);
 enum filesystem_status filesystem_file_prove(
     struct filesystem_file_proof *proof
 );
 struct filesystem_file_proof filesystem_get_file_proof(void);
+enum filesystem_status filesystem_private_read_open(
+    struct filesystem_private_file *file,
+    uint8_t *destination,
+    size_t destination_bytes
+);
+enum filesystem_status filesystem_private_read_close(
+    struct filesystem_private_file *file
+);
 bool filesystem_resources_released(void);
 const char *filesystem_status_string(enum filesystem_status status);
 

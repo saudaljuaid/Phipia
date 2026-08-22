@@ -1,6 +1,6 @@
 # Where everything is
 
-Sapote has fifty-eight source files and forty-six focused documents. This map points
+Sapote has sixty-one source files and fifty-one focused documents. This map points
 directly from each implementation to its contract.
 
 ## Start here, in this order
@@ -27,9 +27,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 121 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
-| `boot_plan.c` | 2462 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 2208 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `kernel.c` | 129 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
+| `boot_plan.c` | 2691 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 2361 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -40,15 +40,15 @@ long you will be in there.
 | `arch/x86_64/boot.S` | 190 | Multiboot2 header, 32-bit entry, the first page tables, the jump to long mode. |
 | `multiboot2.c` | 563 | Parsing what the loader left in memory. Refuses malformed input rather than trusting it. |
 | `console.c` | 200 | Serial port and VGA text. The only way the kernel speaks until the framebuffer exists. |
-| `cpu.c`, `arch/x86_64/cpu.S` | 338 + 339 | Descriptor tables, control registers, and the instructions C cannot express. |
+| `cpu.c`, `arch/x86_64/cpu.S` | 363 + 339 | Descriptor tables, CPL0/CPL3 selectors, TSS stacks, control registers, and the instructions C cannot express. |
 
 ### Not dying
 
 | File | | |
 | --- | ---: | --- |
-| `interrupts.c` | 568 | The interrupt descriptor table and the dispatcher. Read `docs/NEVER_TRIPLE_FAULT.md` first. |
-| `arch/x86_64/interrupts.S` | 327 | The stubs that save state before C can run. The ABI is in the comments. |
-| `interrupt_self_test.c` | 162 | Deliberately causing faults to prove they are contained. |
+| `interrupts.c` | 806 | The interrupt descriptor table, same-CPL/privilege-tail dispatcher and private proof gate. Read `docs/NEVER_TRIPLE_FAULT.md` first. |
+| `arch/x86_64/interrupts.S` | 339 | The stubs that save state before C can run and the authenticated kernel-resume branch. |
+| `interrupt_self_test.c` | 165 | Deliberately causing faults to prove they are contained. |
 
 ### Knowing what machine this is
 
@@ -66,12 +66,12 @@ long you will be in there.
 | --- | ---: | --- |
 | `pci_resource.c` | 1149 | Decode-safe BAR sizing, explicit claims, and the bounded supervisor-only MMIO arena. |
 | `interrupt_vector.c` | 281 | Audited dynamic vector allocation, exhaustion, and generation-checked release. |
-| `msix.c` | 562 | Validated masked/unmasked MSI-X table/PBA binding and strict reverse rollback. |
+| `msix.c` | 550 | Validated masked/unmasked MSI-X table/PBA binding and strict reverse rollback. |
 | `dma.c` | 469 | Private-record-validated CPU/device ownership over bounded contiguous frame allocations. |
 | `virtio_rng_proof.c` | 669 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 | `xhci.c` | 2730 | Bounded xHCI register validation, rings, contexts, endpoint-zero descriptor DMA, MSI-X completion, and teardown. |
-| `nvme.c` | 2799 | One bounded NVMe controller, namespace, Admin/I/O queue pair, private four-read session, MSI-X completion, and teardown. |
-| `filesystem.c` | 597 | Typed FAT16 orchestration, CPU/controller ownership, four metadata-derived reads and stable proof installation. |
+| `nvme.c` | 2807 | One bounded NVMe controller, namespace, Admin/I/O queue pair, private four-read session, MSI-X completion, and teardown. |
+| `filesystem.c` | 1368 | Typed FAT16 orchestration, CPU/controller ownership, four metadata-derived reads, stable proof, and the private one-file process seam. |
 
 ### Interrupt hardware
 
@@ -97,7 +97,8 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `physical_memory.c` | 747 | Which physical frames exist and which are free, including aligned bounded contiguous extents and usable-range overlap queries. |
-| `paging.c` | 3006 | Four-level page tables, W^X, the bounded device-window registry, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` before it. |
+| `paging.c` | 3797 | Four-level page tables, W^X, supervisor mapping intent, one private user hierarchy, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` and `PROCESS_ADDRESS_SPACE.md`. |
+| `process.c`, `arch/x86_64/process.S` | 869 + 93 | One typed ELF image/process/stack lifecycle, 16 cleanup-injection boundaries, real CPL3 entry, authenticated proof return and complete reverse teardown. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
 ### More than one thing at a time
@@ -124,14 +125,15 @@ long you will be in there.
 | `logo.c` | 39 | The C side of the logo: three lines of glue. |
 | `rust/logo.rs` | 329 | The decoder. Rust, because it parses bytes the kernel did not produce. |
 | `rust/ui_font.rs` | 265 | Bounded `SUF1` parser and glyph reader for the build-packed Spleen face. |
-| `rust/fat16.rs` | 1099 | Safe exact FAT16 geometry, FAT/root/extent and deterministic payload parsing. |
-| `rust/abi.rs`, `rust/lib.rs` | 505 + 40 | What the two languages promise each other. |
+| `rust/fat16.rs` | 1195 | Safe exact FAT16 geometry, FAT/root/extent and deterministic payload parsing. |
+| `rust/elf64.rs` | 590 | Safe exact 128-byte ELF64 parser with checked header, segment, address and code validation. |
+| `rust/abi.rs`, `rust/lib.rs` | 542 + 41 | What the two languages promise each other. |
 
 ### Proving it
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4908 | The thirty-six QEMU scenarios and what each must print. |
+| `test.c` | 4980 | The thirty-seven QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
@@ -158,6 +160,8 @@ The canonical descriptor sequence is:
     -> xHCI foundation -> optional xHCI descriptor proof
     -> NVMe foundation -> optional NVMe block-read proof
     -> FAT16 foundation -> optional installed file-read proof
+    -> process address-space foundation -> ELF64 loader foundation
+    -> optional installed Ring 3 process proof/outcome
     -> closing proofs
     -> optional desktop construction -> activation -> installed UI proof
 

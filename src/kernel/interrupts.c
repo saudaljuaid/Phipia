@@ -16,6 +16,7 @@
 #define IDT_GATE_PRESENT UINT8_C(0x80)
 #define IDT_GATE_INTERRUPT UINT8_C(0x0E)
 #define IDT_GATE_DPL_ZERO UINT8_C(0x00)
+#define IDT_GATE_DPL_THREE UINT8_C(0x60)
 #define IDT_GATE_ATTRIBUTES \
     (IDT_GATE_PRESENT | IDT_GATE_DPL_ZERO | IDT_GATE_INTERRUPT)
 #define IDT_IST_MASK UINT8_C(0x07)
@@ -41,7 +42,7 @@ struct handler_slot {
 };
 
 _Static_assert(sizeof(struct idt_gate) == 16U, "IDT gate must be sixteen bytes");
-_Static_assert(sizeof(struct interrupt_frame) == 184U,
+_Static_assert(sizeof(struct interrupt_frame) == 168U,
                "interrupt frame ABI size changed");
 _Static_assert(offsetof(struct interrupt_frame, cr2) == 0U,
                "interrupt CR2 offset changed");
@@ -59,16 +60,25 @@ _Static_assert(offsetof(struct interrupt_frame, rip) == 144U,
                "interrupt RIP offset changed");
 _Static_assert(offsetof(struct interrupt_frame, rflags) == 160U,
                "interrupt RFLAGS offset changed");
-_Static_assert(offsetof(struct interrupt_frame, rsp) == 168U,
-               "interrupt RSP offset changed");
-_Static_assert(offsetof(struct interrupt_frame, ss) == 176U,
-               "interrupt SS offset changed");
+_Static_assert(sizeof(struct interrupt_stack_tail) == 16U,
+               "interrupt privilege tail ABI size changed");
 
 static struct idt_gate idt[INTERRUPT_VECTOR_COUNT] __attribute__((aligned(16)));
 static struct handler_slot handlers[INTERRUPT_VECTOR_COUNT];
 static struct descriptor_table_pointer idt_pointer;
 static bool initialized;
 static volatile unsigned int fatal_depth;
+
+struct process_gate_runtime {
+    uint64_t generation;
+    enum interrupt_process_gate_state state;
+    const struct interrupt_frame *dispatch_frame;
+    uintptr_t resume_stack;
+    bool owned;
+};
+
+static struct process_gate_runtime process_gate_runtime;
+static uint64_t next_process_gate_generation = UINT64_C(1);
 
 static const char *const exception_names[INTERRUPT_EXCEPTION_COUNT] = {
     "divide error",
@@ -154,6 +164,56 @@ static uint8_t expected_ist(uint8_t vector)
     return 0U;
 }
 
+bool interrupt_frame_has_stack_tail(const struct interrupt_frame *frame)
+{
+    return frame != NULL && (((frame->cs & UINT64_C(3)) != 0U) ||
+        (frame->vector < INTERRUPT_VECTOR_COUNT &&
+            expected_ist((uint8_t)frame->vector) != 0U));
+}
+
+uintptr_t interrupt_frame_stack_pointer(const struct interrupt_frame *frame)
+{
+    const struct interrupt_stack_tail *tail;
+
+    if (frame == NULL) {
+        return 0U;
+    }
+    if (!interrupt_frame_has_stack_tail(frame)) {
+        return (uintptr_t)(const void *)frame + sizeof(*frame);
+    }
+    tail = (const struct interrupt_stack_tail *)(const void *)
+        ((const uint8_t *)(const void *)frame + sizeof(*frame));
+    return (uintptr_t)tail->rsp;
+}
+
+uint16_t interrupt_frame_stack_selector(const struct interrupt_frame *frame)
+{
+    const struct interrupt_stack_tail *tail;
+
+    if (frame == NULL) {
+        return 0U;
+    }
+    if (!interrupt_frame_has_stack_tail(frame)) {
+        return CPU_GDT_DATA_SELECTOR;
+    }
+    tail = (const struct interrupt_stack_tail *)(const void *)
+        ((const uint8_t *)(const void *)frame + sizeof(*frame));
+    return (uint16_t)tail->ss;
+}
+
+static bool process_gate_descriptor_valid(void)
+{
+    const struct idt_gate *gate = &idt[INTERRUPT_PROCESS_PROOF_VECTOR];
+
+    return idt_gate_offset(gate) ==
+            interrupt_vector_table[INTERRUPT_PROCESS_PROOF_VECTOR] &&
+        gate->selector == CPU_GDT_CODE_SELECTOR && gate->ist == 0U &&
+        gate->type_attributes ==
+            (IDT_GATE_PRESENT | IDT_GATE_DPL_THREE | IDT_GATE_INTERRUPT) &&
+        gate->reserved == 0U && cpu_user_transition_contract_valid() &&
+        cpu_tss_rsp0() != 0U;
+}
+
 static enum interrupt_status validate_idt(void)
 {
     struct descriptor_table_pointer observed;
@@ -173,10 +233,15 @@ static enum interrupt_status validate_idt(void)
     for (size_t vector = 0; vector < INTERRUPT_VECTOR_COUNT; ++vector) {
         const struct idt_gate *gate = &idt[vector];
 
+        const uint8_t expected_attributes = process_gate_runtime.owned &&
+            vector == INTERRUPT_PROCESS_PROOF_VECTOR ?
+            (IDT_GATE_PRESENT | IDT_GATE_DPL_THREE | IDT_GATE_INTERRUPT) :
+            IDT_GATE_ATTRIBUTES;
+
         if (idt_gate_offset(gate) != interrupt_vector_table[vector] ||
             gate->selector != CPU_GDT_CODE_SELECTOR ||
             gate->ist != expected_ist((uint8_t)vector) ||
-            gate->type_attributes != IDT_GATE_ATTRIBUTES ||
+            gate->type_attributes != expected_attributes ||
             gate->reserved != 0U) {
             return INTERRUPT_STATUS_BAD_IDT;
         }
@@ -228,8 +293,8 @@ static _Noreturn void fatal_interrupt(struct interrupt_frame *frame)
     report_register("rip", frame->rip);
     report_register("cs", frame->cs);
     report_register("rflags", frame->rflags);
-    report_register("rsp", frame->rsp);
-    report_register("ss", frame->ss);
+    report_register("rsp", interrupt_frame_stack_pointer(frame));
+    report_register("ss", interrupt_frame_stack_selector(frame));
     report_register("cr2", frame->cr2);
     report_register("rax", frame->rax);
     report_register("rbx", frame->rbx);
@@ -360,7 +425,8 @@ enum interrupt_status interrupt_register_handler(
         return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    if (vector == 2U || vector == 8U || vector == 18U) {
+    if (vector == 2U || vector == 8U || vector == 18U ||
+        vector == INTERRUPT_PROCESS_PROOF_VECTOR) {
         return INTERRUPT_STATUS_RESERVED_VECTOR;
     }
 
@@ -384,7 +450,8 @@ enum interrupt_status interrupt_unregister_handler(uint8_t vector)
         return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
     }
 
-    if (vector == 2U || vector == 8U || vector == 18U) {
+    if (vector == 2U || vector == 8U || vector == 18U ||
+        vector == INTERRUPT_PROCESS_PROOF_VECTOR) {
         return INTERRUPT_STATUS_RESERVED_VECTOR;
     }
 
@@ -398,13 +465,144 @@ enum interrupt_status interrupt_unregister_handler(uint8_t vector)
     return INTERRUPT_STATUS_OK;
 }
 
-void interrupt_dispatch(struct interrupt_frame *frame)
+enum interrupt_status interrupt_process_gate_arm(
+    interrupt_handler_t handler,
+    void *context,
+    struct interrupt_process_gate *gate
+)
+{
+    if (gate == NULL || handler == NULL) {
+        return handler == NULL ? INTERRUPT_STATUS_NULL_HANDLER :
+            INTERRUPT_STATUS_BAD_ARGUMENT;
+    }
+    gate->generation = 0U;
+    gate->state = INTERRUPT_PROCESS_GATE_INACTIVE;
+    gate->active = false;
+    if (!initialized) {
+        return INTERRUPT_STATUS_NOT_INITIALIZED;
+    }
+    if (cpu_interrupts_enabled()) {
+        return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
+    }
+    if (process_gate_runtime.owned ||
+        handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler != NULL) {
+        return INTERRUPT_STATUS_PROOF_GATE_BUSY;
+    }
+    handlers[INTERRUPT_PROCESS_PROOF_VECTOR].context = context;
+    __asm__ volatile ("" : : : "memory");
+    handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler = handler;
+    idt[INTERRUPT_PROCESS_PROOF_VECTOR].type_attributes =
+        IDT_GATE_PRESENT | IDT_GATE_DPL_THREE | IDT_GATE_INTERRUPT;
+    process_gate_runtime.generation = next_process_gate_generation++;
+    if (next_process_gate_generation == 0U) {
+        next_process_gate_generation = 1U;
+    }
+    process_gate_runtime.state = INTERRUPT_PROCESS_GATE_ARMED;
+    process_gate_runtime.dispatch_frame = NULL;
+    process_gate_runtime.resume_stack = 0U;
+    process_gate_runtime.owned = true;
+    if (!process_gate_descriptor_valid()) {
+        idt[INTERRUPT_PROCESS_PROOF_VECTOR].type_attributes =
+            IDT_GATE_ATTRIBUTES;
+        handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler = NULL;
+        handlers[INTERRUPT_PROCESS_PROOF_VECTOR].context = NULL;
+        process_gate_runtime.owned = false;
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_DESCRIPTOR;
+    }
+    gate->generation = process_gate_runtime.generation;
+    gate->state = process_gate_runtime.state;
+    gate->active = true;
+    return INTERRUPT_STATUS_OK;
+}
+
+enum interrupt_status interrupt_process_gate_validate(
+    struct interrupt_process_gate *gate
+)
+{
+    if (gate == NULL) {
+        return INTERRUPT_STATUS_BAD_ARGUMENT;
+    }
+    if (!gate->active || !process_gate_runtime.owned ||
+        gate->generation != process_gate_runtime.generation) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_TOKEN;
+    }
+    if (!process_gate_descriptor_valid()) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_DESCRIPTOR;
+    }
+    gate->state = process_gate_runtime.state;
+    return INTERRUPT_STATUS_OK;
+}
+
+enum interrupt_status interrupt_process_gate_disarm(
+    struct interrupt_process_gate *gate
+)
+{
+    if (gate == NULL) {
+        return INTERRUPT_STATUS_BAD_ARGUMENT;
+    }
+    if (!gate->active || !process_gate_runtime.owned ||
+        gate->generation != process_gate_runtime.generation) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_TOKEN;
+    }
+    if (cpu_interrupts_enabled()) {
+        return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
+    }
+    if (process_gate_runtime.state != INTERRUPT_PROCESS_GATE_ARMED &&
+        process_gate_runtime.state != INTERRUPT_PROCESS_GATE_RETURNED) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_STATE;
+    }
+    idt[INTERRUPT_PROCESS_PROOF_VECTOR].type_attributes = IDT_GATE_ATTRIBUTES;
+    handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler = NULL;
+    __asm__ volatile ("" : : : "memory");
+    handlers[INTERRUPT_PROCESS_PROOF_VECTOR].context = NULL;
+    process_gate_runtime.state = INTERRUPT_PROCESS_GATE_DISARMED;
+    process_gate_runtime.dispatch_frame = NULL;
+    process_gate_runtime.resume_stack = 0U;
+    process_gate_runtime.owned = false;
+    gate->state = INTERRUPT_PROCESS_GATE_DISARMED;
+    gate->active = false;
+    return INTERRUPT_STATUS_OK;
+}
+
+enum interrupt_status interrupt_request_kernel_resume(
+    const struct interrupt_frame *frame,
+    uintptr_t resume_stack
+)
+{
+    const uint64_t high = (uint64_t)resume_stack >> 47U;
+
+    if (!process_gate_runtime.owned ||
+        process_gate_runtime.state != INTERRUPT_PROCESS_GATE_ENTERED) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_STATE;
+    }
+    if (frame == NULL || frame != process_gate_runtime.dispatch_frame ||
+        (frame->cs & UINT64_C(3)) != 3U ||
+        !interrupt_frame_has_stack_tail(frame)) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_FRAME;
+    }
+    if (resume_stack == 0U || (resume_stack & (uintptr_t)0xFU) != 8U ||
+        (high != 0U && high != UINT64_C(0x1FFFF)) ||
+        process_gate_runtime.resume_stack != 0U) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_RESUME;
+    }
+    process_gate_runtime.resume_stack = resume_stack;
+    return INTERRUPT_STATUS_OK;
+}
+
+bool interrupt_process_gate_resources_released(void)
+{
+    return !process_gate_runtime.owned &&
+        handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler == NULL &&
+        idt[INTERRUPT_PROCESS_PROOF_VECTOR].type_attributes ==
+            IDT_GATE_ATTRIBUTES;
+}
+
+uintptr_t interrupt_dispatch(struct interrupt_frame *frame)
 {
     uint8_t vector;
     struct handler_slot *slot;
 
-    if (frame == NULL || frame->vector >= INTERRUPT_VECTOR_COUNT ||
-        (frame->cs & UINT64_C(3)) != 0U) {
+    if (frame == NULL || frame->vector >= INTERRUPT_VECTOR_COUNT) {
         if (frame == NULL) {
             console_panic("null interrupt frame");
         }
@@ -415,11 +613,39 @@ void interrupt_dispatch(struct interrupt_frame *frame)
     vector = (uint8_t)frame->vector;
     slot = &handlers[vector];
 
+    if ((frame->cs & UINT64_C(3)) != 0U) {
+        struct handler_slot *proof_slot =
+            &handlers[INTERRUPT_PROCESS_PROOF_VECTOR];
+        uintptr_t resume_stack;
+
+        if ((frame->cs & UINT64_C(3)) != 3U ||
+            !process_gate_runtime.owned ||
+            process_gate_runtime.state != INTERRUPT_PROCESS_GATE_ARMED ||
+            proof_slot->handler == NULL || !interrupt_frame_has_stack_tail(frame)) {
+            fatal_interrupt(frame);
+        }
+        process_gate_runtime.state = INTERRUPT_PROCESS_GATE_ENTERED;
+        process_gate_runtime.dispatch_frame = frame;
+        process_gate_runtime.resume_stack = 0U;
+        proof_slot->handler(frame, proof_slot->context);
+        resume_stack = process_gate_runtime.resume_stack;
+        if (resume_stack == 0U) {
+            fatal_interrupt(frame);
+        }
+        process_gate_runtime.dispatch_frame = NULL;
+        process_gate_runtime.state = INTERRUPT_PROCESS_GATE_RETURNED;
+        return resume_stack;
+    }
+    if (vector == INTERRUPT_PROCESS_PROOF_VECTOR &&
+        process_gate_runtime.owned) {
+        fatal_interrupt(frame);
+    }
+
     if (vector >= INTERRUPT_PIC_MASTER_BASE && vector < INTERRUPT_PIC_LIMIT) {
-        const uint8_t irq = vector - INTERRUPT_PIC_MASTER_BASE;
+        const uint8_t irq = (uint8_t)(vector - INTERRUPT_PIC_MASTER_BASE);
 
         if (!pic_irq_is_real(irq)) {
-            return;
+            return 0U;
         }
 
         if (slot->handler == NULL) {
@@ -429,7 +655,7 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 
         slot->handler(frame, slot->context);
         pic_send_eoi(irq);
-        return;
+        return 0U;
     }
 
     /*
@@ -480,7 +706,7 @@ void interrupt_dispatch(struct interrupt_frame *frame)
          * quantum expired while this thread was running.
          */
         thread_on_interrupt_return();
-        return;
+        return 0U;
     }
 
     /*
@@ -498,12 +724,12 @@ void interrupt_dispatch(struct interrupt_frame *frame)
         slot->handler(frame, slot->context);
         apic_send_eoi();
         thread_on_interrupt_return();
-        return;
+        return 0U;
     }
 
     if (slot->handler != NULL) {
         slot->handler(frame, slot->context);
-        return;
+        return 0U;
     }
 
     fatal_interrupt(frame);
@@ -536,6 +762,18 @@ const char *interrupt_status_string(enum interrupt_status status)
         return "interrupt handler is null";
     case INTERRUPT_STATUS_BAD_ARGUMENT:
         return "invalid interrupt argument";
+    case INTERRUPT_STATUS_PROOF_GATE_BUSY:
+        return "the private process proof gate is already owned";
+    case INTERRUPT_STATUS_PROOF_GATE_BAD_TOKEN:
+        return "the private process proof gate token is stale";
+    case INTERRUPT_STATUS_PROOF_GATE_BAD_STATE:
+        return "the private process proof gate is in the wrong state";
+    case INTERRUPT_STATUS_PROOF_GATE_BAD_DESCRIPTOR:
+        return "the private process proof gate descriptor is invalid";
+    case INTERRUPT_STATUS_PROOF_GATE_BAD_FRAME:
+        return "the private process proof interrupt frame is invalid";
+    case INTERRUPT_STATUS_PROOF_GATE_BAD_RESUME:
+        return "the private process proof resume stack is invalid";
     default:
         return "unknown interrupt status";
     }

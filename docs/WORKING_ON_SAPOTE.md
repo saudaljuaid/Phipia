@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-six bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-seven bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -71,9 +71,20 @@ read-only reopen the ordinary 16 MiB file; QEMU receives explicit read-only
 file/raw `-blockdev` nodes and its standard NVMe device. Evidence requires
 metadata-derived BPB/FAT/root/data order, four real PRP1/MSI-X completions,
 unchanged guards, the documented 128-byte digest, CPU → controller → CPU
-ownership for every block, and clean teardown. Run all 36 scenarios, ten
+ownership for every block, and clean teardown. Run all 37 scenarios, ten
 complete serial TCG sweeps and one sweep under every safely available
 accelerator. Never probe `/dev/kvm`, mount the fixture or attach host storage.
+
+Process/ELF changes use the separate `process` scenario with host exit 105 and
+only the ordinary read-only raw-file NVMe fixture generated below `build/`.
+Retain the complete 128-byte ELF byte record and both SHA-256 checks; do not use
+a linker as sole truth. Evidence must prove the bytes returned to CPU ownership,
+safe Rust parsing, one private CR3, supervisor-only kernel intent, RX image,
+RW/NX stack plus absent guard, real `IRETQ` CPL3 fetch, private DPL3 vector
+`0x81` return, kernel CR3 restoration and equal resource census before the
+receipt. Run all 37 scenarios, ten serial TCG sweeps and every safely exposed
+accelerator. Never probe KVM, mount a fixture, attach host storage or pass
+through hardware.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build
