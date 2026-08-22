@@ -15,7 +15,7 @@ busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 busybox_config_sha256=3fbc0403c6a4865fc4397240961c367ee9b36d6d350cc6ceb2d22cbbbea28480
-busybox_binary_sha256=measure
+busybox_binary_sha256=b308f2cad5b5cd0eeb92a622dec8d71c1a08f628a22cdc5bcde2b98b53220746
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -156,8 +156,8 @@ EOF
 cmp --silent "$work_dir/expected-syscall-sequence.txt" \
     "$output_dir/syscall-sequence.txt"
 test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 7
-grep -Fq 'arch_prctl(ARCH_SET_FS, 0x4000010089b8)' "$trace_file"
-grep -Fq 'set_tid_address(0x400001008b54)' "$trace_file"
+grep -Fq 'arch_prctl(ARCH_SET_FS, 0x400001008998)' "$trace_file"
+grep -Fq 'set_tid_address(0x400001008b34)' "$trace_file"
 grep -Fq 'write(1, "SAPOTE\n", 7)' "$trace_file"
 grep -Fq 'exit_group(0)' "$trace_file"
 
