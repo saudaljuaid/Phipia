@@ -654,7 +654,7 @@ static enum ui_status draw_logo_clipped(struct ui_rect damage)
                 (source >> framebuffer.blue_position) & 0xFFU;
             const uint32_t luminance =
                 (red * 77U + green * 150U + blue * 29U) >> 8U;
-            uint32_t pixel = state.theme.white;
+            uint32_t pixel = state.theme.window_face;
 
             if (luminance <= 96U) {
                 pixel = state.theme.ink;
@@ -836,35 +836,6 @@ static enum ui_status draw_window_title(
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(title, damage, label_x, baseline, label,
-            state.theme.white);
-    }
-    return status;
-}
-
-static enum ui_status draw_workspace_bar(struct ui_rect damage)
-{
-    enum ui_status status = fill_clipped(state.layout.workspace_bar, damage,
-        state.theme.title_inactive);
-
-    if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ state.layout.workspace_bar.x,
-            state.layout.workspace_bar.y, state.layout.workspace_bar.width,
-            1U }, damage, state.theme.white);
-    }
-    if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ state.layout.workspace_bar.x,
-            state.layout.workspace_bar.y + state.layout.workspace_bar.height - 1U,
-            state.layout.workspace_bar.width, 1U }, damage, state.theme.ink);
-    }
-    if (status == UI_STATUS_OK) {
-        status = draw_text(state.layout.workspace_bar, damage, 10U,
-            state.layout.workspace_bar.y + 16U, "SAPOTE WORKBENCH 0.4",
-            state.theme.white);
-    }
-    if (status == UI_STATUS_OK) {
-        status = draw_text(state.layout.workspace_bar, damage,
-            state.layout.workspace_bar.width - 176U,
-            state.layout.workspace_bar.y + 16U, "34 PROOFS  /  READY",
             state.theme.white);
     }
     return status;
@@ -1189,8 +1160,8 @@ static enum ui_status draw_desktop_pattern(struct ui_rect damage)
 {
     enum ui_status status = fill_clipped(state.layout.surface, damage,
         state.theme.desktop_dark);
-    const uint32_t start = state.layout.workspace_bar.y +
-        state.layout.workspace_bar.height;
+    const uint32_t start = state.layout.menu_bar.y +
+        state.layout.menu_bar.height;
 
     for (uint32_t y = start; y < state.layout.surface.height &&
          status == UI_STATUS_OK; y += 8U) {
@@ -1276,9 +1247,6 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
             state.layout.menu_baseline, "SYSTEM READY", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
-        status = draw_workspace_bar(damage);
-    }
-    if (status == UI_STATUS_OK) {
         status = fill_clipped(drop_shadow_draw_rect(
             state.layout.hero_window, 7U), damage, state.theme.shadow);
     }
@@ -1306,16 +1274,6 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
             UI_HERO_TITLE_HEIGHT
         }, damage, state.layout.hero_title_baseline,
             "Sapote Workbench", false);
-    }
-    if (status == UI_STATUS_OK) {
-        const struct ui_rect logo_frame = {
-            state.layout.logo.x - 5U, state.layout.logo.y - 5U,
-            state.layout.logo.width + 10U, state.layout.logo.height + 10U
-        };
-        status = fill_clipped(logo_frame, damage, state.theme.white);
-        if (status == UI_STATUS_OK) {
-            status = bevel_clipped(logo_frame, damage, false);
-        }
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped((struct ui_rect){

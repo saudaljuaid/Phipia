@@ -40,8 +40,8 @@ scenarios cover boot, memory, interrupts, devices, and the interface.
 The canonical mark is the supplied 375×332 RGBA source at
 [`assets/sapote-logo.png`](assets/sapote-logo.png). The repository preserves its
 exact bytes; it is never redrawn, recoloured, cropped, or passed through a
-runtime PNG parser. First Light places the mark unchanged inside its own
-near-white field and uses a separate interface palette around it. The complete
+runtime PNG parser. First Light renders its shape as a two-colour bitmap
+directly on the grey workbench surface. The complete
 asset, palette, voice, and naming contract is in
 [`docs/BRAND.md`](docs/BRAND.md).
 

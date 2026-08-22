@@ -4407,13 +4407,16 @@ _Noreturn void kernel_test_complete_first_light(void)
     if (first_light_pixel(ui->layout.menu_bar.x,
             ui->layout.menu_bar.y) != ui->theme.white ||
         first_light_pixel(ui->layout.workspace_bar.x + 4U,
-            ui->layout.workspace_bar.y + 2U) != ui->theme.title_inactive ||
+            ui->layout.workspace_bar.y) != ui->theme.desktop_light ||
         first_light_pixel(ui->layout.workspace_bar.x + 4U,
-            ui->layout.workspace_bar.y + ui->layout.workspace_bar.height - 1U) !=
-                ui->theme.ink ||
+            ui->layout.workspace_bar.y + 2U) != ui->theme.desktop_dark ||
         first_light_pixel(ui->layout.hero_window.x,
             ui->layout.hero_window.y) != ui->theme.ink) {
         kernel_test_fail("First Light Workbench chrome stable pixel is incorrect");
+    }
+    if (first_light_pixel(ui->layout.logo.x,
+            ui->layout.logo.y) != ui->theme.window_face) {
+        kernel_test_fail("First Light logo field is not integrated");
     }
     if (first_light_pixel(ui->layout.logo.x + 140U,
             ui->layout.logo.y + 140U) != ui->theme.ink) {
