@@ -77,13 +77,14 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 
 # Warnings are errors on both sides of the language boundary, and Rust is held
 # to the stricter rule that an unsafe operation inside an unsafe function still
-# needs its own unsafe block naming why it is sound. Relaxable x86 relocations
-# let the final static link bind compiler-generated memcpy/memset calls directly
-# instead of retaining an uninitialised GOT in the fixed-address kernel.
+# needs its own unsafe block naming why it is sound. The measured 5,136-byte
+# FAT chain is the largest Rust aggregate; allowing 1,024 direct stores keeps
+# its bounded copies and zeroing inline instead of introducing a GOT-backed
+# compiler memory call into the fixed-address kernel.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
 	--crate-name sapote -C panic=abort -C opt-level=2 \
-	-C relocation-model=static \
-	-C llvm-args=-x86-relax-relocations=true -D warnings
+	-C relocation-model=static -C llvm-args=-max-store-memcpy=1024 \
+	-C llvm-args=-max-store-memset=1024 -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
