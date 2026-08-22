@@ -14,7 +14,7 @@ busybox_version=1.38.0
 busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
-busybox_config_sha256=2f962983cc7ac81c387848797ad2de8b7502861520bca5f85cd25e09bd6e1a8d
+busybox_config_sha256=3fbc0403c6a4865fc4397240961c367ee9b36d6d350cc6ceb2d22cbbbea28480
 busybox_binary_sha256=measure
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
@@ -43,7 +43,7 @@ tar --extract --gzip --file "$work_dir/downloads/$musl_archive" \
 
 musl_source="$work_dir/source/musl-${musl_version}"
 busybox_source="$work_dir/source/busybox-${busybox_version}"
-musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-tree-vectorize -fno-ident -Wno-return-local-addr'
+musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-tree-vectorize -fno-ident -Wno-return-local-addr'
 
 (
     cd "$work_dir/musl-build"
@@ -57,11 +57,16 @@ musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwin
 )
 # musl-gcc deliberately defaults every non-shared link to Scrt1.o.  This proof
 # is a fixed ET_EXEC, so select musl's installed non-PIE crt1.o explicitly.
-sed -i 's|/Scrt1\.o|/crt1.o|' \
+sed -i \
+    -e 's|/Scrt1\.o|/crt1.o|' \
+    -e 's| crtbeginS\.o%s||' \
+    -e 's|crtendS\.o%s ||' \
     "$work_dir/musl-install/lib/musl-gcc.specs"
 grep -Fq "$work_dir/musl-install/lib/crt1.o" \
     "$work_dir/musl-install/lib/musl-gcc.specs"
 ! grep -Fq '/Scrt1.o' "$work_dir/musl-install/lib/musl-gcc.specs"
+! grep -Fq 'crtbeginS.o' "$work_dir/musl-install/lib/musl-gcc.specs"
+! grep -Fq 'crtendS.o' "$work_dir/musl-install/lib/musl-gcc.specs"
 
 cp "$repository_root/userspace/busybox/busybox.config" \
     "$work_dir/busybox.config"

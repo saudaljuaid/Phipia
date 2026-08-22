@@ -33,7 +33,11 @@ installed `crt1.o` instead because this executable is deliberately non-PIE
 recorded and checked before BusyBox is linked.  The fixed high link also
 disables linker relaxation and gives crt1's ignored weak `_DYNAMIC` probe a
 nearby absolute definition; no dynamic header, relocation, dependency, or
-loader is created, and the structural checks refuse any such output.
+loader is created, and the structural checks refuse any such output.  Both
+musl and BusyBox use the x86-64 large code model so every fixed high-user
+address is representable.  The wrapper also omits GCC's unused constructor CRT
+bookends; musl's own `crti.o`/`crtn.o` remain, while BusyBox constructors and
+dynamic initialization stay disabled by configuration and contract.
 
 ## Frozen executable
 
