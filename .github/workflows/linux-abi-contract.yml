@@ -43,6 +43,24 @@ jobs:
                       evidence/linux-abi/build-two/busybox
                   cmp evidence/linux-abi/build-one/busybox.config \
                       evidence/linux-abi/build-two/busybox.config
+                  (
+                      cd evidence/linux-abi/build-one
+                      ld -r -b binary busybox -o busybox-blob.o
+                      gcc -std=c11 -O2 -fPIE -pie -Wall -Wextra -Werror \
+                          -Wpedantic -Wshadow -Wconversion \
+                          -Wl,-z,noexecstack \
+                          ../../../tools/linux-abi-stack-launcher.c \
+                          ../../../tools/linux-abi-stack-launcher.S \
+                          busybox-blob.o -o minimal-stack-launcher
+                      strace --quiet=all --string-limit=256 \
+                          --output=minimal-stack-syscall-trace.txt \
+                          ./minimal-stack-launcher \
+                          >minimal-stack-stdout.txt \
+                          2>minimal-stack-stderr.txt
+                      printf 'SAPOTE\n' | cmp --silent - \
+                          minimal-stack-stdout.txt
+                      test ! -s minimal-stack-stderr.txt
+                  )
                   cp evidence/linux-abi/build-one/build-record.txt \
                       evidence/linux-abi/reproducible-build-record.txt
                   printf 'clean build two binary SHA-256: %s\n' \
