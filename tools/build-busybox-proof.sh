@@ -6,6 +6,12 @@ if [ "$#" -ne 2 ]; then
     exit 2
 fi
 
+build_only=${SAPOTE_BUSYBOX_BUILD_ONLY:-0}
+if [ "$build_only" != 0 ] && [ "$build_only" != 1 ]; then
+    printf 'SAPOTE_BUSYBOX_BUILD_ONLY must be 0 or 1\n' >&2
+    exit 2
+fi
+
 output_dir=$(realpath -m "$1")
 work_dir=$(realpath -m "$2")
 repository_root=$(git rev-parse --show-toplevel)
@@ -132,6 +138,28 @@ sha256sum "$output_dir/busybox" "$output_dir/busybox.config" \
     "$output_dir/BUSYBOX-LICENSE" "$output_dir/MUSL-COPYRIGHT" \
     >"$output_dir/SHA256SUMS"
 
+{
+    printf 'BusyBox version: %s\n' "$busybox_version"
+    printf 'BusyBox source SHA-256: %s\n' "$busybox_sha256"
+    printf 'musl version: %s\n' "$musl_version"
+    printf 'musl upstream URL: %s\n' "$musl_upstream_url"
+    printf 'musl byte-identical mirror URL: %s\n' "$musl_url"
+    printf 'musl source SHA-256: %s\n' "$musl_sha256"
+    printf 'host gcc: %s\n' "$(gcc --version | head -n 1)"
+    printf 'host binutils: %s\n' "$(ld --version | head -n 1)"
+    printf 'binary bytes: %s\n' "$busybox_size"
+    printf 'FAT16 data clusters at 4096 bytes: %s\n' \
+        "$(((busybox_size + 4095) / 4096))"
+    printf 'binary SHA-256: %s\n' \
+        "$(sha256sum "$output_dir/busybox" | awk '{print toupper($1)}')"
+    printf 'configuration SHA-256: %s\n' \
+        "$(sha256sum "$output_dir/busybox.config" | awk '{print toupper($1)}')"
+} >"$output_dir/build-record.txt"
+
+if [ "$build_only" = 1 ]; then
+    exit 0
+fi
+
 stdout_file="$output_dir/stdout.txt"
 stderr_file="$output_dir/stderr.txt"
 trace_file="$output_dir/syscall-trace.txt"
@@ -178,21 +206,3 @@ test -z "$forbidden_instructions" || {
         "$forbidden_instructions" >&2
     exit 1
 }
-
-{
-    printf 'BusyBox version: %s\n' "$busybox_version"
-    printf 'BusyBox source SHA-256: %s\n' "$busybox_sha256"
-    printf 'musl version: %s\n' "$musl_version"
-    printf 'musl upstream URL: %s\n' "$musl_upstream_url"
-    printf 'musl byte-identical mirror URL: %s\n' "$musl_url"
-    printf 'musl source SHA-256: %s\n' "$musl_sha256"
-    printf 'host gcc: %s\n' "$(gcc --version | head -n 1)"
-    printf 'host binutils: %s\n' "$(ld --version | head -n 1)"
-    printf 'binary bytes: %s\n' "$busybox_size"
-    printf 'FAT16 data clusters at 4096 bytes: %s\n' \
-        "$(((busybox_size + 4095) / 4096))"
-    printf 'binary SHA-256: %s\n' \
-        "$(sha256sum "$output_dir/busybox" | awk '{print toupper($1)}')"
-    printf 'configuration SHA-256: %s\n' \
-        "$(sha256sum "$output_dir/busybox.config" | awk '{print toupper($1)}')"
-} >"$output_dir/build-record.txt"

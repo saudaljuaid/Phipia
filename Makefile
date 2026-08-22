@@ -29,6 +29,7 @@ RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
 RUST_LINUX_FAT16_TEST := $(BUILD_DIR)/linux-fat16-tests
+RUST_LINUX_ELF64_TEST := $(BUILD_DIR)/linux-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
@@ -47,6 +48,10 @@ NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
 PROCESS_ELF := $(TEST_BUILD_DIR)/process/SAPOTE.BIN
 PROCESS_FIXTURE := $(TEST_BUILD_DIR)/process/process-fixture.raw
+BUSYBOX_OUTPUT_DIR := $(BUILD_DIR)/busybox-contract
+BUSYBOX_WORK_DIR := $(BUILD_DIR)/busybox-work
+BUSYBOX_BINARY := $(BUSYBOX_OUTPUT_DIR)/busybox
+LINUX_ABI_FIXTURE := $(BUILD_DIR)/fixtures/linux-abi-fat16.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -124,11 +129,22 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD
 	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
+$(BUSYBOX_BINARY): tools/build-busybox-proof.sh \
+		userspace/busybox/busybox.config \
+		userspace/busybox/source/busybox-1.38.0.tar.bz2 \
+		userspace/busybox/source/musl-1.2.6.tar.gz
+	SAPOTE_BUSYBOX_BUILD_ONLY=1 bash tools/build-busybox-proof.sh \
+		$(BUSYBOX_OUTPUT_DIR) $(BUSYBOX_WORK_DIR)
+
+$(LINUX_ABI_FIXTURE): $(BUSYBOX_BINARY) tools/make-linux-abi-fixture.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/make-linux-abi-fixture.py $(BUSYBOX_BINARY) $@
+
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
 
 toolchain:
-	@for tool in gcc ld grub-file readelf nm objdump rustc python3 sha256sum strings; do \
+	@for tool in bash bzip2 gcc gzip ld grub-file readelf nm objdump rustc python3 sha256sum strings tar; do \
 		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
 	done
 	@version=$$($(RUSTC) --version | awk '{ print $$2 }'); \
@@ -175,6 +191,11 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings \
 		tools/linux-fat16-host-test.rs -o $(RUST_LINUX_FAT16_TEST)
 	$(RUST_LINUX_FAT16_TEST)
+	$(MAKE) $(LINUX_ABI_FIXTURE)
+	SAPOTE_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_BINARY)' \
+		$(RUSTC) --edition 2024 --test -D warnings \
+		tools/linux-elf64-host-test.rs -o $(RUST_LINUX_ELF64_TEST)
+	$(RUST_LINUX_ELF64_TEST)
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
@@ -225,6 +246,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_find_root$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_build_chain$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_validate_payload$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_elf64_parse$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_elf64_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
@@ -305,6 +328,8 @@ verify: toolchain lint
 		{ echo 'safe FAT16 parser retained or exposed a raw pointer'; exit 1; }
 	@! grep -Eq '\*const|\*mut' src/rust/linux_fat16.rs || \
 		{ echo 'safe Linux FAT16 parser retained or exposed a raw pointer'; exit 1; }
+	@! grep -Eq '\*const|\*mut' src/rust/linux_elf64.rs || \
+		{ echo 'safe Linux ELF64 parser retained or exposed a raw pointer'; exit 1; }
 	@! grep -Eq '\*const|\*mut' src/rust/elf64.rs || \
 		{ echo 'safe ELF64 parser retained or exposed a raw pointer'; exit 1; }
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c

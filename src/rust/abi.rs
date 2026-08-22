@@ -16,6 +16,7 @@ use crate::font;
 use crate::fat16;
 use crate::logo::{self, Format, Status};
 use crate::linux_fat16;
+use crate::linux_elf64;
 use crate::ui_font;
 
 /// Stop in C's console panic path if a compiler-inserted check ever fires.
@@ -632,6 +633,48 @@ pub unsafe extern "C" fn sapote_linux_fat16_validate_payload(
             linux_fat16_status_code(linux_fat16::Status::Ok)
         }
         Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+fn linux_elf64_status_code(status: linux_elf64::Status) -> i32 {
+    status as i32
+}
+
+/// Run the pointer-free measured BusyBox ELF conjunction controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_linux_elf64_self_test() -> u32 {
+    linux_elf64::self_test()
+}
+
+/// Parse one complete CPU-owned BusyBox ELF into pointer-free segment facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` one
+/// writable validated image. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut linux_elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *out = linux_elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this complete readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match linux_elf64::parse(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            linux_elf64_status_code(linux_elf64::Status::Ok)
+        }
+        Err(status) => linux_elf64_status_code(status),
     }
 }
 
