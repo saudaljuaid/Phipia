@@ -377,7 +377,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				hardware='-device qemu-xhci,id=xhci,streams=off -device usb-kbd,bus=xhci.0,port=1,usb_version=2' ;; \
 			nvme) \
 				$(PYTHON) tools/make-nvme-fixture.py '$(NVME_FIXTURE)'; \
-				hardware='-blockdev driver=file,filename=$(NVME_FIXTURE),node-name=nvme-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=nvme-file,node-name=nvme-raw,read-only=on -device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1,mqes=1' ;; \
+				hardware='-blockdev driver=file,filename=$(NVME_FIXTURE),node-name=nvme-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=nvme-file,node-name=nvme-raw,read-only=on -device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \

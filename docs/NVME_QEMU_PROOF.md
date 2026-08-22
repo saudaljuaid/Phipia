@@ -17,10 +17,13 @@ The checked QEMU 11.1.0 command surface accepts this bounded device shape:
 ```text
 -blockdev driver=file,filename=<temporary-regular-file>,node-name=nvme-file,read-only=on,auto-read-only=off
 -blockdev driver=raw,file=nvme-file,node-name=nvme-raw,read-only=on
--device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1,mqes=1
+-device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1
 ```
 
-The `file` and `raw` nodes are both read-only. QEMU's supported NVMe controller
+The queue-entry limit is intentionally omitted because QEMU 8.2 does not expose
+the later `mqes` property; Sapote still creates only its fixed depth-two queues
+after validating the controller's advertised `CAP.MQES`. The `file` and `raw`
+nodes are both read-only. QEMU's supported NVMe controller
 and namespace options are documented at
 <https://www.qemu.org/docs/master/system/devices/nvme.html>. `make verify` and
 the evidence workflow also record `qemu-system-x86_64 -device nvme,help` so a
