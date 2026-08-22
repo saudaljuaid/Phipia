@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-five scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-six scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -29,7 +29,7 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,762
+roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,908
 lines. Splitting panel rendering or scenario helpers may improve shape later,
 but userspace, a process model, a window manager, and a compositor are missing
 architectural layers rather than refactors owed by this milestone.
@@ -185,10 +185,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 191 shell assertion lines
+### 4. The harness contract is 214 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    191
+    214
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -199,7 +199,9 @@ executable-text ISA audit. The v0.4.0 xHCI contract adds scenario 34 and brings
 the measured line count to 179; the final identity cleanup removes two obsolete
 denylist assertions, leaving 177 lines. The v0.5.0 NVMe contract appends
 scenario 35 and fourteen controller, proof and exit checks, producing the
-measured 191 lines shown above. The harness
+former 191-line contract. The v0.6.0 FAT16 increment appends scenario 36 and
+twenty-three fixture, source-boundary, exit and transcript checks, producing the
+measured 214 lines shown above. The harness
 was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It

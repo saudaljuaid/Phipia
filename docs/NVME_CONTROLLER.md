@@ -80,7 +80,8 @@ reversed or skipped transition has a distinct status. The acquisition order is:
 8. prove premature bus-master enable is refused, then enable bus mastering;
 9. program `AQA`, `ASQ`, `ACQ`, `CC`, observe `RDY == 1`, then unmask MSI-X;
 10. execute Identify Controller, Identify Active Namespace ID List, Identify
-    Namespace, Create I/O CQ, Create I/O SQ and one NVM Read.
+    Namespace, Create I/O CQ and Create I/O SQ; then execute one raw-proof Read
+    or the private filesystem session's four sequential Reads.
 
 The CPU owns a submission allocation while constructing its next entry. It
 returns that allocation to controller ownership before ringing the SQ tail
@@ -126,6 +127,8 @@ There are no media-changing commands, Delete I/O Queue commands, multiple
 controllers, namespace enumeration, multiple active namespaces, multiple
 outstanding requests, metadata, protection information, scatter/gather lists,
 multi-page PRP lists, multipath, fabrics, reservations, namespace management,
-hotplug, IOMMU support, partition parsing, filesystem or public application
-ABI. Controller disable is the bounded queue-destruction mechanism in this
+hotplug, IOMMU support, partition parsing, general filesystems or public
+application ABI. The sole private FAT16 consumer is specified in
+`docs/FILESYSTEM_FILE_READ.md`; it does not widen the controller API.
+Controller disable is the bounded queue-destruction mechanism in this
 one-shot lifecycle.

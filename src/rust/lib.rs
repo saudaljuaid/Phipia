@@ -22,6 +22,7 @@
 #![deny(missing_docs)]
 
 pub mod abi;
+pub mod fat16;
 pub mod font;
 pub mod logo;
 pub mod ui_font;
@@ -35,11 +36,5 @@ pub mod ui_font;
 /// from silent corruption into a stop.
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    // Declared in src/kernel/console.c. Never returns.
-    unsafe extern "C" {
-        fn console_panic(message: *const u8) -> !;
-    }
-
-    // SAFETY: a static, NUL-terminated string, and console_panic never returns.
-    unsafe { console_panic(c"Rust panicked".as_ptr() as *const u8) }
+    abi::panic()
 }

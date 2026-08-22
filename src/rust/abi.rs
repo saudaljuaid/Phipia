@@ -12,8 +12,20 @@
 //! the condition the caller has to meet.
 
 use crate::font;
+use crate::fat16;
 use crate::logo::{self, Format, Status};
 use crate::ui_font;
+
+/// Stop in C's console panic path if a compiler-inserted check ever fires.
+pub(crate) fn panic() -> ! {
+    unsafe extern "C" {
+        fn console_panic(message: *const u8) -> !;
+    }
+
+    // SAFETY: this is a static NUL-terminated string and the C function never
+    // returns. Keeping this declaration here preserves the one unsafe module.
+    unsafe { console_panic(c"Rust panicked".as_ptr() as *const u8) }
+}
 
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
 /// The Makefile points `SAPOTE_LOGO_BLOB` at it; there is no committed copy.
@@ -253,5 +265,241 @@ pub unsafe extern "C" fn sapote_ui_font_glyph(
     match ui_font::glyph(UI_FONT, code, bytes) {
         Ok(_) => ui_font_status_code(ui_font::Status::Ok),
         Err(status) => ui_font_status_code(status),
+    }
+}
+
+fn fat16_status_code(status: fat16::Status) -> i32 {
+    status as i32
+}
+
+/// Run the synthetic FAT16 acceptance and refusal controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_fat16_self_test() -> u32 {
+    fat16::self_test()
+}
+
+/// Validate a CPU-owned BPB block and copy pointer-free checked geometry.
+///
+/// # Safety
+///
+/// `block` must address `block_len` readable, non-aliased bytes and `out` must
+/// address one writable `fat16::Geometry`. The two ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_parse_bpb(
+    block: *const u8,
+    block_len: usize,
+    namespace_blocks: u64,
+    namespace_block_bytes: u32,
+    out: *mut fat16::Geometry,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Geometry and null was refused.
+    unsafe { *out = fat16::Geometry::invalid() };
+    if block.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(block, block_len) };
+    match fat16::parse_bpb(bytes, namespace_blocks, namespace_block_bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
+    }
+}
+
+/// Validate and copy an exact canonical raw 8.3 query.
+///
+/// # Safety
+///
+/// `name` must address `name_len` readable bytes and `out` one writable query;
+/// the ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_make_query(
+    name: *const u8,
+    name_len: usize,
+    out: *mut fat16::RootQuery,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable RootQuery and null was refused.
+    unsafe { *out = fat16::RootQuery::invalid() };
+    if name.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(name, name_len) };
+    match fat16::make_query(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
+    }
+}
+
+/// Locate one validated root entry inside one CPU-owned root block.
+///
+/// # Safety
+///
+/// `block` must address `block_len` readable bytes; `geometry` and `query`
+/// must each address one readable value; `out` must address one writable root
+/// entry. No input may overlap the output.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_find_root(
+    block: *const u8,
+    block_len: usize,
+    geometry: *const fat16::Geometry,
+    query: *const fat16::RootQuery,
+    destination_bytes: u32,
+    out: *mut fat16::RootEntry,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable RootEntry and null was refused.
+    unsafe { *out = fat16::RootEntry::invalid() };
+    if block.is_null() || geometry.is_null() || query.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range and two readable values;
+    // all null cases were refused and the output is non-aliased by contract.
+    let (bytes, checked_geometry, checked_query) = unsafe {
+        (
+            core::slice::from_raw_parts(block, block_len),
+            *geometry,
+            *query,
+        )
+    };
+    match fat16::find_root(
+        bytes,
+        &checked_geometry,
+        &checked_query,
+        destination_bytes,
+    ) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
+    }
+}
+
+/// Validate FAT16 reserved entries and capture cluster two's EOC by value.
+///
+/// # Safety
+///
+/// `block` must address `block_len` readable bytes; `geometry` must address one
+/// readable value; `out` must address one writable FAT result. No input may
+/// overlap the output.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_parse_fat(
+    block: *const u8,
+    block_len: usize,
+    geometry: *const fat16::Geometry,
+    out: *mut fat16::FatState,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable FatState and null was refused.
+    unsafe { *out = fat16::FatState::invalid() };
+    if block.is_null() || geometry.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range and one readable value;
+    // all null cases were refused and the output is non-aliased by contract.
+    let (bytes, checked_geometry) = unsafe {
+        (
+            core::slice::from_raw_parts(block, block_len),
+            *geometry,
+        )
+    };
+    match fat16::parse_fat(bytes, &checked_geometry) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
+    }
+}
+
+/// Join validated geometry, root, and FAT values into one checked extent.
+///
+/// # Safety
+///
+/// Each input must address one readable value and `out` one writable extent;
+/// no input may overlap the output.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_validate_extent(
+    geometry: *const fat16::Geometry,
+    entry: *const fat16::RootEntry,
+    fat: *const fat16::FatState,
+    out: *mut fat16::Extent,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Extent and null was refused.
+    unsafe { *out = fat16::Extent::invalid() };
+    if geometry.is_null() || entry.is_null() || fat.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises three readable non-aliased values and every
+    // null case was refused above.
+    let (checked_geometry, checked_entry, checked_fat) = unsafe {
+        (*geometry, *entry, *fat)
+    };
+    match fat16::validate_extent(
+        &checked_geometry,
+        &checked_entry,
+        &checked_fat,
+    ) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
+    }
+}
+
+/// Validate deterministic file bytes and return their SHA-256 by value.
+///
+/// # Safety
+///
+/// `data` must address `data_len` readable bytes and `out` one writable
+/// `fat16::Payload`; the ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_fat16_validate_payload(
+    data: *const u8,
+    data_len: usize,
+    out: *mut fat16::Payload,
+) -> i32 {
+    if out.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Payload and null was refused.
+    unsafe { *out = fat16::Payload::invalid() };
+    if data.is_null() {
+        return fat16_status_code(fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(data, data_len) };
+    match fat16::validate_payload(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat16_status_code(fat16::Status::Ok)
+        }
+        Err(status) => fat16_status_code(status),
     }
 }

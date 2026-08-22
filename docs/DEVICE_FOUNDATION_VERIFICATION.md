@@ -87,3 +87,18 @@ ten TCG result sets, accelerator record and robustness result. A locally
 available WHPX accelerator consumes the retained per-scenario ISOs; its final
 sweep record is added to the release evidence. KVM remains an explicitly
 unmeasured evidence gap under this task's authorization boundary.
+
+## v0.6.0 filesystem evidence contract
+
+Scenario 36 adds the exact FAT16 proof without replacing any inherited fixture
+or control. `docs/FAT16_QEMU_PROOF.md` records the complete 28-control matrix.
+The live path reads BPB, first FAT, fixed root and cluster 2 from QEMU's
+read-only regular-file namespace, requires four matching MSI-X completions,
+validates `SAPOTE.BIN` and its documented 128-byte SHA-256 in Rust, and restores
+the complete resource census before publishing its proof.
+
+`.github/workflows/filesystem-milestone.yml` retains `make verify`, ten serial
+TCG sweeps of all 36 scenarios, normalized logs, fixture layout/digests and an
+explicit accelerator record. KVM remains unprobed because `/dev/kvm` is outside
+the authorization boundary; safely exposed WHPX is verified separately from
+the retained scenario ISOs.

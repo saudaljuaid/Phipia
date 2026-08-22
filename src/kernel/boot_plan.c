@@ -23,6 +23,7 @@
 #include <sapote/device_substrate.h>
 #include <sapote/dma.h>
 #include <sapote/framebuffer.h>
+#include <sapote/filesystem.h>
 #include <sapote/heap.h>
 #include <sapote/interrupts.h>
 #include <sapote/interrupt_vector.h>
@@ -1233,6 +1234,13 @@ static void execute_nvme_read_proof(
         return;
     }
 
+    /* The filesystem scenario owns a different deterministic namespace. */
+    if (context->test_scenario == KERNEL_TEST_FILESYSTEM) {
+        console_write("Sapote: NVMe fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
     status = nvme_read_prove(&proof);
     if (status == NVME_STATUS_ABSENT) {
         console_write("Sapote: NVMe fixture absent\n");
@@ -1260,6 +1268,121 @@ static void execute_nvme_read_proof(
     console_write("Sapote: NVMe teardown complete\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.block_bytes;
+    result->proof_counters[1] = proof.msix_completion_count;
+    result->proof_counter_count = 2U;
+}
+
+static void execute_fat16_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!filesystem_foundation_self_test(&completed) ||
+        completed != FILESYSTEM_INTEGRATION_CONTROLS) {
+        stage_failed(context, result,
+            "FAT16 foundation robustness controls failed");
+        return;
+    }
+    console_write("Sapote: FAT16 foundation robustness controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(FILESYSTEM_INTEGRATION_CONTROLS);
+    console_write(" passed\n");
+    console_write(
+        "Sapote: bounded read-only FAT16 foundation established\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static bool filesystem_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    static const enum boot_capability required[] = {
+        BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+        BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+        BOOT_CAPABILITY_HEAP_AVAILABLE,
+        BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+        BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+        BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+        BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+        BOOT_CAPABILITY_THREADING_AVAILABLE,
+        BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+        BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+        BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE
+    };
+
+    return dependencies_complete(descriptor, required,
+        sizeof(required) / sizeof(required[0]));
+}
+
+static void execute_filesystem_file_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct filesystem_file_proof proof;
+    enum filesystem_status status;
+
+    if (!filesystem_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "filesystem proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (filesystem_proof_dependencies_complete(&missing_count) ||
+        filesystem_proof_dependencies_complete(&missing_member) ||
+        !kernel_test_filesystem_exit_self_test()) {
+        stage_failed(context, result,
+            "filesystem proof negative controls failed");
+        return;
+    }
+
+    /* Preserve scenario 35's v0.5.0 raw namespace and controller path. */
+    if (context->test_scenario == KERNEL_TEST_NVME) {
+        console_write("Sapote: FAT16 fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
+    status = filesystem_file_prove(&proof);
+    if (status == FILESYSTEM_STATUS_ABSENT) {
+        console_write("Sapote: FAT16 fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != FILESYSTEM_STATUS_OK) {
+        console_write("Sapote: FAT16 file proof violated invariant: ");
+        console_write(filesystem_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, filesystem_status_string(status));
+        return;
+    }
+
+    console_write("Sapote: FAT16 volume ready\n");
+    console_write("Sapote: FAT16 file SAPOTE.BIN read: 128 bytes\n");
+    console_write("Sapote: FAT16 MSI-X completion count 4\n");
+    console_write(
+        "Sapote: FAT16 DMA ownership CPU-CONTROLLER-CPU complete\n");
+    console_write("Sapote: FAT16 teardown complete\n");
+    console_write(
+        "ST FAT16 file SAPOTE.BIN bytes 128 reads 4 msix 4 ownership "
+        "CPU-CONTROLLER-CPU teardown clean robustness 28\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.file_bytes;
     result->proof_counters[1] = proof.msix_completion_count;
     result->proof_counter_count = 2U;
 }
@@ -1343,7 +1466,8 @@ static void execute_closing_proofs(
         installed_dma_state.device_owned_allocations != 0U ||
         vector_state.allocated != 0U ||
         installed_msix_state.active_bindings != 0U ||
-        installed_msix_state.failure_injection_armed) {
+        installed_msix_state.failure_injection_armed ||
+        !filesystem_resources_released()) {
         stage_failed(context, result,
             "device foundation ownership leaked across teardown");
         return;
@@ -1560,6 +1684,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     REQUIRED_STAGE(BOOT_STAGE_NVME_FOUNDATION,
         "NVMe block-controller foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_nvme_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_FAT16_FOUNDATION,
+        "bounded read-only FAT16 foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_fat16_foundation),
     REQUIRED_STAGE(BOOT_STAGE_THREADING, "threading", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_threading),
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
@@ -1573,6 +1700,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_NVME_READ_PROOF,
         "installed NVMe read proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_nvme_read_proof),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_FILESYSTEM_FILE_PROOF,
+        "installed FAT16 file-read proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_filesystem_file_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -2033,6 +2163,51 @@ static bool declare_dependencies(
         descriptor->provided_capability_count = 1U;
         descriptor->skipped_capabilities[0] =
             BOOT_CAPABILITY_NVME_FIXTURE_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_FAT16_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 1U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_FILESYSTEM_FILE_PROOF:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_THREADING_AVAILABLE;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
+        descriptor->required_capabilities[9] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[10] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[11] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[12] =
+            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[13] =
+            BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 14U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_FILESYSTEM_FIXTURE_ABSENT;
         descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_CLOSING_PROOFS:

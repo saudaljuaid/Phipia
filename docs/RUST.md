@@ -37,7 +37,8 @@ So the split is not "dangerous code in Rust". It is:
 | Page tables, port I/O, MMIO, context switch | C and assembly | Inherently `unsafe`; Rust adds a toolchain, not a guarantee |
 | Fixed-shape firmware tables (ACPI) | C | Bounded, already proved, and rewriting working proved code is churn |
 | Decoders of external byte streams | **Rust** | Every length is attacker-controlled; the checks should not be optional |
-| Future: filesystem metadata, USB descriptors, network and 802.11 frames | **Rust** | Same argument, much larger surface |
+| FAT16 metadata and file-content validation | **Rust** | Checked external byte slices; only pointer-free values cross back to C |
+| Future: USB descriptors, network and 802.11 frames | **Rust** | Same argument, much larger surface |
 
 That last row is the point. The logo decoder is small; it is here to establish
 the toolchain, the build integration and the discipline **before** the layers
@@ -57,13 +58,21 @@ licensed Spleen BDF; the kernel sees only a 24-byte fixed header and 1,520
 bitmap bytes. Rust validates every metric, multiplication, offset and requested
 glyph range before C draws it.
 
+`src/rust/fat16.rs` — the v0.6.0 exact FAT16 parser. It decodes BPB, FAT and
+32-byte root entries from explicit CPU-owned slices, derives every sector with
+checked arithmetic, classifies by cluster count, validates one canonical
+one-cluster file and computes its deterministic SHA-256. It has no allocator,
+retained pointer or unsafe block and returns only fixed `repr(C)` values.
+
 `src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
 blocks appear only where an ABI function turns validated C pointers into Rust
 slices or writes through validated C pointers, with the caller's obligation
 written above each boundary. Past those lines everything is safe Rust and every
 index is checked.
 
-`src/rust/lib.rs` — the crate root and the panic handler.
+`src/rust/lib.rs` — the safe crate root and panic handler. Its one call into C
+is implemented in `abi.rs`, so executable unsafe Rust remains confined to the
+reviewed FFI module.
 
 The source PNG is committed; the derived stream is not.
 `tools/make-logo-asset.py` converts `assets/sapote-logo.png` at build time.
@@ -147,8 +156,9 @@ build would refuse the change that first made it reachable.
 
 ## Deferred work
 
-- **Three small assets are only the beginning of the policy.** USB descriptors
-  and filesystem metadata will be the tests when those subsystems exist.
+- **Three small assets were only the beginning of the policy.** FAT16 metadata
+  is now the first production-shaped test; USB and network streams remain later
+  tests.
 - **No `alloc`.** The crate has no allocator, so no `Vec` and no `String`.
   Wiring `alloc` to the kernel heap is a small change and should wait until
   something needs it rather than being added because it is possible.
