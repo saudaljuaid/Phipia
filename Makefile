@@ -13,7 +13,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	boot-ledger first-light device-substrate xhci nvme filesystem process
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 37
-EXPECTED_SHELL_ASSERTION_COUNT := 231
+EXPECTED_SHELL_ASSERTION_COUNT := 236
 
 CC := gcc
 LD := ld
@@ -28,6 +28,7 @@ QEMU_ACCEL ?= tcg
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
+RUST_LINUX_FAT16_TEST := $(BUILD_DIR)/linux-fat16-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
@@ -171,6 +172,9 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
+	$(RUSTC) --edition 2024 --test -D warnings \
+		tools/linux-fat16-host-test.rs -o $(RUST_LINUX_FAT16_TEST)
+	$(RUST_LINUX_FAT16_TEST)
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
@@ -218,6 +222,9 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_fat$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_extent$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_payload$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_find_root$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_build_chain$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_validate_payload$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
@@ -273,13 +280,18 @@ verify: toolchain lint
 		--exclude=process.c; then \
 		echo 'private one-file read seam escaped the process owner'; exit 1; \
 	fi
+	@if grep -ERn '\bfilesystem_linux_read_(open|close)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=filesystem.c \
+		--exclude=linux_abi.c; then \
+		echo 'private BusyBox read seam escaped the Linux process owner'; exit 1; \
+	fi
 	@if grep -ERn '\bnvme_filesystem_session_(open|read|view|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c --exclude=nvme.c; then \
 		echo 'private filesystem read session escaped its owner'; exit 1; \
 	fi
 	@! grep -Eq 'NVME_NVM_WRITE|NVM_WRITE|write[_ -]opcode' \
 		include/sapote/nvme.h src/kernel/nvme.c src/kernel/filesystem.c \
-		src/rust/fat16.rs
+		src/rust/fat16.rs src/rust/linux_fat16.rs
 	@test "$$(grep -Ec 'process_return_interrupt[[:space:]]*[(]' \
 		src/kernel/process.c)" -eq 1 && \
 		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
@@ -291,6 +303,8 @@ verify: toolchain lint
 	fi
 	@! grep -Eq '\*const|\*mut' src/rust/fat16.rs || \
 		{ echo 'safe FAT16 parser retained or exposed a raw pointer'; exit 1; }
+	@! grep -Eq '\*const|\*mut' src/rust/linux_fat16.rs || \
+		{ echo 'safe Linux FAT16 parser retained or exposed a raw pointer'; exit 1; }
 	@! grep -Eq '\*const|\*mut' src/rust/elf64.rs || \
 		{ echo 'safe ELF64 parser retained or exposed a raw pointer'; exit 1; }
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
