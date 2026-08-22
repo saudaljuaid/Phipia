@@ -1554,7 +1554,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
         BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED);
     const bool process_planned = descriptor_for_stage(ledger,
         BOOT_STAGE_PROCESS_INSTALLED_PROOF) != NULL;
-    if (!process_decided ||
+    if (process_decided != process_planned ||
         !optional_outcome_valid(process_planned, process_complete,
             process_absent)) {
         set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
