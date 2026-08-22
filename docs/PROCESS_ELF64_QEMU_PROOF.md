@@ -86,9 +86,12 @@ The null page remains absent.
 
 The complete expected 128 bytes are constructed as constants by the repository
 tool, reopened read-only, compared byte-for-byte, and decoded a second time by
-the host verifier.  The generator does not invoke a linker.  The payload and
-separate FAT16/NVMe fixture SHA-256 values are recorded here when generated;
-the v0.6.0 filesystem fixture and its payload are never modified.
+the host verifier.  The generator does not invoke a linker.  The payload
+SHA-256 is
+`C923A94F08DF64523D3DB701E4F9FC5FF5B51DFC21447E1DC57586D40D42B8A9`;
+the separate FAT16/NVMe fixture SHA-256 is
+`5130D78A0FEB51EC410E5CC931A1E6485D96549A726E62BCE95F7D5C18FA2290`.
+The v0.6.0 filesystem fixture and its payload are never modified.
 
 ## Address-space and transition contract
 

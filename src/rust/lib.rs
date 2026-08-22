@@ -22,6 +22,7 @@
 #![deny(missing_docs)]
 
 pub mod abi;
+pub mod elf64;
 pub mod fat16;
 pub mod font;
 pub mod logo;

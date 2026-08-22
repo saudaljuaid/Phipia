@@ -28,6 +28,7 @@ QEMU_ACCEL ?= tcg
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
+RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -43,6 +44,8 @@ FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
+PROCESS_ELF := $(TEST_BUILD_DIR)/process/SAPOTE.BIN
+PROCESS_FIXTURE := $(TEST_BUILD_DIR)/process/process-fixture.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -156,9 +159,18 @@ verify: toolchain lint
 	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
 	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'B8FE53B80AAC718B36B545CC7A741ADCA52DF3BFE0DEE580D2A179B49DEBA5AC'
+	$(PYTHON) tools/make-elf64-fixture.py $(PROCESS_ELF)
+	@test "$$(sha256sum $(PROCESS_ELF) | awk '{ print toupper($$1) }')" = \
+		'C923A94F08DF64523D3DB701E4F9FC5FF5B51DFC21447E1DC57586D40D42B8A9'
+	$(PYTHON) tools/make-process-fixture.py $(PROCESS_FIXTURE)
+	@test "$$(sha256sum $(PROCESS_FIXTURE) | awk '{ print toupper($$1) }')" = \
+		'5130D78A0FEB51EC410E5CC931A1E6485D96549A726E62BCE95F7D5C18FA2290'
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
+		-o $(RUST_ELF64_TEST)
+	$(RUST_ELF64_TEST)
 	@test "$(words $(TEST_SCENARIOS))" -eq \
 		'$(EXPECTED_TEST_SCENARIO_COUNT)'
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
@@ -259,6 +271,8 @@ verify: toolchain lint
 	fi
 	@! grep -Eq '\*const|\*mut' src/rust/fat16.rs || \
 		{ echo 'safe FAT16 parser retained or exposed a raw pointer'; exit 1; }
+	@! grep -Eq '\*const|\*mut' src/rust/elf64.rs || \
+		{ echo 'safe ELF64 parser retained or exposed a raw pointer'; exit 1; }
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
