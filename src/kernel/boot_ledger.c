@@ -6,6 +6,7 @@
 #include <sapote/boot_ledger.h>
 #include <sapote/device_substrate.h>
 #include <sapote/dma.h>
+#include <sapote/elf64.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
 #include <sapote/interrupt_vector.h>
@@ -1572,9 +1573,10 @@ enum boot_ledger_status boot_ledger_verify_installed(
             (process_complete &&
                 (process->result != BOOT_RECEIPT_RAN ||
                  process->proof_counter_count != 2U ||
-                 process->proof_counters[0] != 128U ||
+                 process->proof_counters[0] != ELF64_FILE_BYTES ||
                  process->proof_counters[1] != 1U ||
-                 proof.file_bytes != 128U || proof.segment_count != 1U ||
+                 proof.file_bytes != ELF64_FILE_BYTES ||
+                 proof.segment_count != 1U ||
                  proof.result != UINT32_C(0x53415037) ||
                  proof.robustness_tests !=
                     PROCESS_CONTROLLED_ROBUSTNESS_TESTS ||
@@ -2322,11 +2324,33 @@ bool boot_ledger_self_test(void)
         return false;
     }
 
+    /* Two distinct stages may not share one outcome capability. */
+    boot_ledger_reset(&first);
+    one = self_test_descriptor(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        BOOT_PHASE_SERVICES, false, self_test_success);
+    one.provided_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    one.provided_capability_count = 1U;
+    two = self_test_descriptor(BOOT_STAGE_ELF64_LOADER_FOUNDATION,
+        BOOT_PHASE_SERVICES, false, self_test_skip);
+    two.skipped_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+    two.skipped_capability_count = 1U;
+    two.skip_preserves_health = true;
+    if (!self_test_add(&first, &one) || !self_test_add(&first, &two) ||
+        boot_ledger_validate(&first) !=
+            BOOT_LEDGER_STATUS_DUPLICATE_CAPABILITY_PROVIDER) {
+        return false;
+    }
+
     /* A required or capability-free stage cannot declare a neutral skip. */
     boot_ledger_reset(&first);
+    one = self_test_descriptor(BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+        BOOT_PHASE_SERVICES, true, self_test_skip);
     one.skipped_capabilities[0] =
         BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
-    one.required = true;
+    one.skipped_capability_count = 1U;
+    one.skip_preserves_health = true;
     if (!self_test_add(&first, &one) ||
         boot_ledger_validate(&first) !=
             BOOT_LEDGER_STATUS_INVALID_NEUTRAL_SKIP) {

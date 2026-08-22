@@ -9,13 +9,16 @@ policy, copies all 128 bytes into a CPU-owned frame, narrows every writable
 alias, and only then installs the final user RX mapping.
 
 The format authority is the System V ABI [ELF Object File Format 4.3
-DRAFT](https://gabi.xinuos.com/elf.pdf), 4 September 2025, Chapter 4 Tables
-4.1, 4.3 and 4.4 and Chapter 7 Tables 7.1, 7.2 and 7.4. The AMD64 convention
-cross-check is the [AMD64 psABI 1.0](https://gitlab.com/x86-psABIs/x86-64-ABI)
-at master commit `e1ce098331da5dbd66e1ffc74162380bcc213236`. These define the
-64-byte ELF64 header, 56-byte program header, little-endian scalar widths,
-`ET_EXEC`, `EM_X86_64`, `PT_LOAD`, and `PF_R/PF_W/PF_X` values. Sapote never
-casts caller bytes to a packed C or Rust structure.
+DRAFT](https://gabi.xinuos.com/elf.pdf), 4 September 2025: Chapter 2 section
+2.1, Listing 2.1 and Tables 2.1 through 2.6 define the ELF header,
+identification, type, version and encoding fields; Chapter 7 sections 7.1,
+7.2 and 7.4, Listing 7.1 and Tables 7.1 through 7.3 define the program header,
+`PT_LOAD` and `PF_R/PF_W/PF_X`. The AMD64 convention cross-check is the
+[AMD64 psABI 1.0](https://gitlab.com/x86-psABIs/x86-64-ABI) at master commit
+`e1ce098331da5dbd66e1ffc74162380bcc213236`. Together they define the 64-byte
+ELF64 header, 56-byte program header, little-endian scalar widths, `ET_EXEC`,
+`EM_X86_64`, `PT_LOAD`, and flag values. Sapote never casts caller bytes to a
+packed C or Rust structure.
 
 ## Accepted byte contract
 

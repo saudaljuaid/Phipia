@@ -51,8 +51,8 @@ path, cache or multi-cluster interface.
 
 The Boot Ledger has required address-space and ELF64 foundation stages and one
 optional-neutral installed proof stage. The installed proof has exactly 18
-prerequisites: paging, W^X, physical frames, heap, IDT/TSS/interrupt
-controllers, enabled interrupt path, calibrated deadlines, threading,
+prerequisites: paging, W^X, physical frames, heap, IDT, interrupt controllers,
+enabled interrupt path, calibrated deadlines, threading,
 scheduler, PCI ownership, vectors/MSI-X, DMA, NVMe, FAT16, private one-file
 read, address-space foundation and ELF64 foundation. Direct boot-path invocation
 is a source-contract failure.
@@ -67,10 +67,10 @@ The stable evidence is deliberately free of addresses, timings, paths, PCI
 topology, volume identifiers and generations:
 
 ```text
-ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42
+ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 50
 ```
 
-The frozen 42-control matrix and normative byte details are in
+The frozen 50-control matrix and normative byte details are in
 [PROCESS_ELF64_QEMU_PROOF.md](PROCESS_ELF64_QEMU_PROOF.md). The milestone
 workflow retains normalized scenario, ten-sweep TCG, accelerator and fixture
 digest records for release staging. Its portable scenario-ISO archive contains

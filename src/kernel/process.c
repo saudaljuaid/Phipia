@@ -29,6 +29,8 @@ _Static_assert(ELF64_PROOF_VECTOR == INTERRUPT_PROCESS_PROOF_VECTOR,
     "ELF and interrupt proof vectors disagree");
 _Static_assert(PAGING_PROCESS_STACK_END % UINT64_C(16) == 0U,
     "initial user stack is not psABI aligned");
+_Static_assert(PAGING_PROCESS_STACK_PAGES == 4U,
+    "stack failure-injection points assume exactly four stack pages");
 
 struct process_resource_census {
     struct frame_allocator_stats frames;

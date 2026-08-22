@@ -19,7 +19,7 @@ pub const CODE_OFFSET: u64 = 120;
 /// The deterministic instruction stream carried by the load segment.
 pub const CODE: [u8; 8] = [0xB8, 0x37, 0x50, 0x41, 0x53, 0xCD, 0x81, 0xF4];
 /// Parser controls represented by the accepted path and mutation families.
-pub const ROBUSTNESS_CONTROLS: u32 = 26;
+pub const ROBUSTNESS_CONTROLS: u32 = 34;
 
 const EI_CLASS: usize = 4;
 const EI_DATA: usize = 5;
@@ -461,8 +461,9 @@ fn rejects(image: &[u8], expected: Status) -> bool {
     matches!(parse(image), Err(found) if found == expected)
 }
 
-/// Exercise the accepted image and parser mutation families 1 through 26.
+/// Exercise and count the accepted image and mutation families 1 through 34.
 pub fn self_test() -> u32 {
+    let mut passed = 0u32;
     let base = fixture();
     let accepted = match parse(&base) {
         Ok(value) => value,
@@ -475,6 +476,7 @@ pub fn self_test() -> u32 {
     {
         return 0;
     }
+    passed += 1;
     for length in 0..FILE_BYTES {
         let Some(truncated) = base.get(..length) else {
             return 0;
@@ -483,6 +485,7 @@ pub fn self_test() -> u32 {
             return 0;
         }
     }
+    passed += 1;
     let mut long = [0u8; FILE_BYTES + 1];
     if !write_fixture(&mut long) {
         return 0;
@@ -490,6 +493,7 @@ pub fn self_test() -> u32 {
     if !rejects(&long, Status::FileLength) {
         return 0;
     }
+    passed += 1;
 
     let mutations: &[(usize, u8, Status)] = &[
         (0, 0, Status::Magic),
@@ -541,6 +545,7 @@ pub fn self_test() -> u32 {
         if !put_byte(&mut changed, offset, original) {
             return 0;
         }
+        passed += 1;
     }
 
     if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0xFFFF_8000_0000_0000)
@@ -551,6 +556,7 @@ pub fn self_test() -> u32 {
     if !rejects(&changed, Status::VirtualAddress) {
         return 0;
     }
+    passed += 1;
     if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000)
         || !put_u64(&mut changed, ELF_ENTRY, 0x0000_4000_0000_0078)
         || !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, u64::MAX & !0xFFF)
@@ -561,7 +567,8 @@ pub fn self_test() -> u32 {
     if !rejects(&changed, Status::VirtualAddress) {
         return 0;
     }
-    ROBUSTNESS_CONTROLS
+    passed += 1;
+    passed
 }
 
 #[cfg(test)]

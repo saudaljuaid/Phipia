@@ -115,7 +115,10 @@ def verify_payload(payload: bytes) -> None:
         raise ValueError("decoded program header is outside the exact subset")
     if ENTRY_ADDRESS < LOAD_ADDRESS or ENTRY_ADDRESS >= LOAD_ADDRESS + FILE_BYTES:
         raise ValueError("entry is outside the file-backed executable extent")
-    if LOAD_ADDRESS % PAGE_BYTES != 0 or LOAD_ADDRESS % PAGE_BYTES != 0 % PAGE_BYTES:
+    offset = program[2]
+    alignment = program[7]
+    if (LOAD_ADDRESS % PAGE_BYTES != 0 or
+            LOAD_ADDRESS % alignment != offset % alignment):
         raise ValueError("load-address alignment or congruence is invalid")
     if payload[120:128] != CODE:
         raise ValueError("proof instruction bytes are invalid")
@@ -124,4 +127,3 @@ def verify_payload(payload: bytes) -> None:
     digest = hashlib.sha256(payload).hexdigest().upper()
     if digest != PAYLOAD_SHA256:
         raise ValueError("ELF SHA-256 is invalid")
-

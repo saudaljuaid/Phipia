@@ -2115,6 +2115,7 @@ static enum paging_status narrow_identity_alias(
         *split = true;
         *directory_entry = table | PAGE_PRESENT | PAGE_WRITABLE |
             (original & PAGE_USER);
+        invalidate(hierarchy, physical_address);
         flush_hierarchy(hierarchy);
     }
     status = entry_for(hierarchy, physical_address, 1U, false, &leaf);
@@ -2126,6 +2127,7 @@ static enum paging_status narrow_identity_alias(
         *saved_entry = *leaf;
     }
     *leaf = (*leaf & ~PAGE_WRITABLE) | PAGE_NO_EXECUTE;
+    invalidate(hierarchy, physical_address);
     flush_hierarchy(hierarchy);
     status = translate_address(hierarchy, physical_address, &after,
         state.pat_after);
@@ -2158,6 +2160,7 @@ static enum paging_status restore_identity_alias(
         return PAGING_STATUS_PROCESS_ALIAS_STATE;
     }
     *entry = saved_entry;
+    invalidate(hierarchy, physical_address);
     flush_hierarchy(hierarchy);
     if (split) {
         release_table(hierarchy, split_table);
@@ -2241,6 +2244,7 @@ enum paging_status paging_process_image_alias_narrow(
     uint64_t private_split_table = 0U;
     bool private_split = false;
     enum paging_status status;
+    enum paging_status rollback_status;
 
     if (alias == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
@@ -2260,19 +2264,28 @@ enum paging_status paging_process_image_alias_narrow(
     status = narrow_identity_alias(&live_hierarchy, physical_address,
         &process_alias_runtime.saved_entry,
         &process_alias_runtime.split_table, &process_alias_runtime.split);
-    state.table_frames = live_hierarchy.table_frames;
     if (status != PAGING_STATUS_OK) {
-        return status;
+        rollback_status = PAGING_STATUS_OK;
+        if (process_alias_runtime.saved_entry != 0U) {
+            rollback_status = restore_identity_alias(&live_hierarchy,
+                physical_address, process_alias_runtime.saved_entry,
+                process_alias_runtime.split_table,
+                process_alias_runtime.split);
+        }
+        state.table_frames = live_hierarchy.table_frames;
+        return rollback_status == PAGING_STATUS_OK ? status : rollback_status;
     }
+    state.table_frames = live_hierarchy.table_frames;
     status = narrow_identity_alias(&process_space_runtime.hierarchy,
         physical_address, &private_saved, &private_split_table,
         &private_split);
     if (status != PAGING_STATUS_OK) {
-        (void)restore_identity_alias(&live_hierarchy, physical_address,
+        rollback_status = restore_identity_alias(&live_hierarchy,
+            physical_address,
             process_alias_runtime.saved_entry,
             process_alias_runtime.split_table, process_alias_runtime.split);
         state.table_frames = live_hierarchy.table_frames;
-        return status;
+        return rollback_status == PAGING_STATUS_OK ? status : rollback_status;
     }
     process_alias_runtime.generation = next_alias_generation++;
     if (next_alias_generation == 0U) {

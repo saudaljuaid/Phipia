@@ -61,7 +61,7 @@ jobs:
                   done
                   proof=evidence/process/process-sweep-10.log
                   grep -Fx \
-                      'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42' \
+                      'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 50' \
                       "$proof" >evidence/process/process-proof-transcript.txt
                   grep -Fx 'ST PASS process' "$proof" \
                       >>evidence/process/process-proof-transcript.txt
@@ -192,12 +192,12 @@ jobs:
                       cat evidence/process/accelerator-results.txt
                       printf 'CPL3 proof: loaded ELF fetch, private CR3, DPL3 vector 0x81, authenticated result\n'
                       printf 'teardown: kernel CR3 restored and resource census equal before publication\n'
-                      printf 'controlled robustness results: 42 passed\n'
+                      printf 'controlled robustness results: 50 passed\n'
                   } >evidence/process/verification-summary.txt
                   {
                       printf 'Controlled Ring 3 and ELF64 robustness results\n'
                       printf 'Execution: Rust parser mutations, guest lifecycle controls, installed permission walks, source contracts, temporary descriptor and exit values.\n'
-                      printf 'Result: controls 1-42 passed.\n'
+                      printf 'Result: controls 1-50 passed.\n'
                       printf 'Matrix: docs/PROCESS_ELF64_QEMU_PROOF.md.\n'
                   } >evidence/process/controlled-robustness-results.txt
                   (

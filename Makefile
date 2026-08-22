@@ -490,7 +490,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				rm -f '$(PROCESS_FIXTURE)' '$(PROCESS_ELF)' || exit 1; \
 				$(PYTHON) tools/make-process-fixture.py '$(PROCESS_FIXTURE)' || exit 1; \
 				test -f '$(PROCESS_FIXTURE)' || exit 1; \
-				hardware='-boot order=d -blockdev driver=file,filename=$(PROCESS_FIXTURE),node-name=process-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=process-file,node-name=process-raw,read-only=on -device nvme,serial=sapote-process-fixture,drive=process-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(PROCESS_FIXTURE),node-name=process-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=process-file,node-name=process-raw,read-only=on -device nvme,serial=sapote-process,drive=process-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -579,7 +579,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: bounded read-only FAT16 foundation established' "$$log" || \
 		  ! grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" || \
 		  ! grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" || \
-		  ! grep -Fxq 'Sapote: ELF64 parser robustness controls 26/26 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: ELF64 parser robustness controls 34/34 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: process fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
@@ -709,11 +709,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: FAT16 teardown complete' "$$log" || \
 				diagnostics_ok=false ;; \
 		process) \
-			grep -Fxq 'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42' "$$log" && \
+			grep -Fxq 'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 50' "$$log" && \
 			grep -Fxq 'Sapote: NVMe fixture absent' "$$log" && \
 			grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" && \
 			grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" && \
-			grep -Fxq 'Sapote: ELF64 parser robustness controls 26/26 passed' "$$log" || \
+			grep -Fxq 'Sapote: ELF64 parser robustness controls 34/34 passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

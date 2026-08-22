@@ -90,6 +90,12 @@ interrupt_common_entry:
     addq $16, %rsp
     iretq
 .process_kernel_resume:
+    /*
+     * C supplied a nonzero canonical RSP with RSP % 16 == 8, restored the
+     * kernel CR3, and authenticated this private return. The target abandons
+     * the user frame and pops exactly the six registers process_enter_user
+     * saved on this stack.
+     */
     movq %rax, %rsp
     jmp process_user_resume_from_interrupt
 .size interrupt_common_entry, . - interrupt_common_entry

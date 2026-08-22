@@ -46,6 +46,10 @@ _Static_assert(offsetof(struct x86_64_tss, ist1) == 36U,
                "x86_64 TSS IST1 offset changed");
 _Static_assert(offsetof(struct x86_64_tss, iomap_base) == 102U,
                "x86_64 TSS I/O map offset changed");
+_Static_assert(CPU_GDT_USER_DATA_SELECTOR == UINT16_C(0x2B),
+               "user data selector must name GDT index 5 at RPL3");
+_Static_assert(CPU_GDT_USER_CODE_SELECTOR == UINT16_C(0x33),
+               "user code selector must name GDT index 6 at RPL3");
 
 static uint64_t gdt[GDT_ENTRY_COUNT] __attribute__((aligned(16)));
 static struct x86_64_tss tss __attribute__((aligned(16)));
@@ -290,8 +294,6 @@ bool cpu_user_transition_contract_valid(void)
 {
     return tables_active &&
         cpu_tables_validate() == CPU_STATUS_OK &&
-        CPU_GDT_USER_DATA_SELECTOR == UINT16_C(0x2B) &&
-        CPU_GDT_USER_CODE_SELECTOR == UINT16_C(0x33) &&
         stack_top_valid((uintptr_t)tss.rsp0) &&
         tss.rsp0 == stack_top(rsp0_stack);
 }

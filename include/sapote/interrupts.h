@@ -57,6 +57,7 @@ struct interrupt_frame {
     uint64_t rflags;
 };
 
+/* Present only after privilege change/IST; use interrupt_frame_has_stack_tail. */
 struct interrupt_stack_tail {
     uint64_t rsp;
     uint64_t ss;
@@ -131,6 +132,7 @@ bool interrupt_process_gate_resources_released(void);
 bool interrupt_frame_has_stack_tail(const struct interrupt_frame *frame);
 uintptr_t interrupt_frame_stack_pointer(const struct interrupt_frame *frame);
 uint16_t interrupt_frame_stack_selector(const struct interrupt_frame *frame);
+/* Assembly-only: zero selects IRETQ; nonzero is the authenticated resume RSP. */
 uintptr_t interrupt_dispatch(struct interrupt_frame *frame);
 const char *interrupt_status_string(enum interrupt_status status);
 const char *interrupt_exception_name(uint8_t vector);

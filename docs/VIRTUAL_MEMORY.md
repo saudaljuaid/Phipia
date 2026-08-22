@@ -490,7 +490,9 @@ DMA ownership; it never receives a physical address.
 The process proof rebuilds a second four-level hierarchy from installed
 supervisor mapping intent rather than copying raw entries. Runtime mapping,
 unmapping and protection changes maintain a bounded semantic registry used by
-that builder. Every retained kernel/device ancestor and leaf stays
+that builder. Invariant 2 above describes the installed kernel hierarchy; this
+private hierarchy is the only object that carries user leaves, and only while
+the proof is active. Every retained kernel/device ancestor and leaf stays
 supervisor-only. Only the fixed ELF image and four stack payload pages acquire
 the user bit; null and guard pages are absent. A complete software walk checks
 effective ancestor/leaf U/S, R/W and NX conjunction and rejects any user kernel

@@ -1130,13 +1130,15 @@ static enum filesystem_status private_read_cleanup(void)
     if (!private_read_runtime.owned) {
         return FILESYSTEM_STATUS_OK;
     }
-    if (transition(&private_read_runtime.state, FILESYSTEM_STOPPING) !=
+    if (private_read_runtime.state != FILESYSTEM_STOPPING &&
+        transition(&private_read_runtime.state, FILESYSTEM_STOPPING) !=
             FILESYSTEM_STATUS_OK) {
         result = FILESYSTEM_STATUS_SESSION_STATE;
     }
     if (nvme_filesystem_session_close(&private_read_runtime.session) !=
             NVME_STATUS_OK) {
-        result = FILESYSTEM_STATUS_TEARDOWN_FAILURE;
+        /* The lower layer still owns the session; retain its retry token. */
+        return FILESYSTEM_STATUS_TEARDOWN_FAILURE;
     } else if (transition(&private_read_runtime.state, FILESYSTEM_RELEASED) !=
             FILESYSTEM_STATUS_OK) {
         result = FILESYSTEM_STATUS_SESSION_STATE;

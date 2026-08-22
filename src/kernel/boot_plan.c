@@ -1236,7 +1236,7 @@ static void execute_nvme_read_proof(
         return;
     }
 
-    /* The filesystem scenario owns a different deterministic namespace. */
+    /* The filesystem and process scenarios own different namespaces. */
     if (context->test_scenario == KERNEL_TEST_FILESYSTEM ||
         context->test_scenario == KERNEL_TEST_PROCESS) {
         console_write("Sapote: NVMe fixture absent\n");
@@ -1354,7 +1354,7 @@ static void execute_filesystem_file_proof(
         return;
     }
 
-    /* Preserve scenario 35's v0.5.0 raw namespace and controller path. */
+    /* Preserve scenario 35's raw and scenario 37's ELF namespaces. */
     if (context->test_scenario == KERNEL_TEST_NVME ||
         context->test_scenario == KERNEL_TEST_PROCESS) {
         console_write("Sapote: FAT16 fixture absent\n");
@@ -1517,6 +1517,11 @@ static void execute_process_installed_proof(
     }
 
     status = process_installed_prove(&proof);
+    if (status == PROCESS_STATUS_ABSENT) {
+        console_write("Sapote: process fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
     if (status != PROCESS_STATUS_OK) {
         console_write("Sapote: process proof violated invariant: ");
         console_write(process_status_string(status));
@@ -1524,9 +1529,14 @@ static void execute_process_installed_proof(
         stage_failed(context, result, process_status_string(status));
         return;
     }
+    console_write("ST PROCESS ELF64 SAPOTE.BIN bytes ");
+    console_write_u64(proof.file_bytes);
+    console_write(" segments ");
+    console_write_u64(proof.segment_count);
     console_write(
-        "ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 "
-        "address-space private result valid teardown clean robustness 42\n");
+        " ring 3 address-space private result valid teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.file_bytes;
     result->proof_counters[1] = proof.segment_count;
@@ -1899,6 +1909,10 @@ _Static_assert(sizeof(filesystem_file_requirements) /
     sizeof(filesystem_file_requirements[0]) ==
         14U,
     "filesystem proof prerequisite count changed");
+_Static_assert(sizeof(filesystem_file_requirements) /
+    sizeof(filesystem_file_requirements[0]) <=
+        BOOT_STAGE_CAPABILITY_CAPACITY,
+    "filesystem proof prerequisites exceed the descriptor bound");
 
 static bool declare_dependencies(
     struct boot_stage_descriptor *descriptor

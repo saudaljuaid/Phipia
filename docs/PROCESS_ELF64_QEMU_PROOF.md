@@ -131,57 +131,66 @@ become visible only after a pre/post resource census is equal.
 
 ## Frozen controlled-robustness matrix
 
-The committed robustness count is **42**: 26 parser control families plus 16
+The committed robustness count is **50**: 34 parser control families plus 16
 live process cleanup injections.  The parser self-test must finish all of its
-checks before it returns 26.  Each injected process attempt must return its
+checks and increment its measured count before it returns 34.  Each injected
+process attempt must return its
 named failure with a zero result and then prove there is no live process, user
 mapping, private table, image frame, stack frame, filesystem session, DMA
-allocation, vector/gate owner, or non-kernel CR3.  Only after all 42 controls
+allocation, vector/gate owner, or non-kernel CR3.  Only after all 50 controls
 pass does a final, uninjected attempt enter CPL3 and publish the installed
 result.
 
 1. Accept exactly the independently verified 128-byte image once.
-2. Reject null input, null output, and invalid ABI lengths; leave output invalid.
-3. Reject every truncation from byte 0 through byte 63.
-4. Reject every truncation from byte 64 through byte 119.
-5. Reject every truncation from byte 120 through byte 127.
-6. Reject each wrong ELF magic byte.
-7. Reject a wrong class.
-8. Reject wrong or reserved data encoding.
-9. Reject wrong or reserved identification version.
-10. Reject non-System-V OSABI, ABI version, or nonzero identification padding.
+2. Reject every truncation before the exact 128-byte boundary.
+3. Reject an over-length file.
+4. Reject wrong ELF magic.
+5. Reject a wrong class.
+6. Reject wrong or reserved data encoding.
+7. Reject wrong or reserved identification version.
+8. Reject non-System-V OSABI.
+9. Reject a nonzero ABI version.
+10. Reject nonzero identification padding.
 11. Reject wrong, reserved, or unsupported object type.
 12. Reject wrong or reserved machine.
-13. Reject a wrong ELF header version or nonzero processor flags.
-14. Reject a wrong ELF header size.
-15. Reject a wrapped, overlapping, or non-64 program-header offset.
-16. Reject wrong program-header size/count and checked table-arithmetic failure.
-17. Reject every nonzero section offset, size, count, or string-table index.
-18. Reject bytes not accounted for by the exact header, header table, and code.
-19. Reject missing, duplicate, or unsupported program-header types.
-20. Reject missing R/X, any W bit, W+X, or unknown program flags.
-21. Reject nonzero file offset and every out-of-file or wrapped file range.
-22. Reject empty, oversized, unequal, or `p_filesz > p_memsz` extents.
-23. Reject wrong/non-power-of-two alignment and offset/address incongruence.
-24. Reject unaligned, noncanonical, supervisor-half, or wrapped virtual extents.
-25. Reject an entry outside the executable file-backed bytes.
-26. Prove parser failures retain no pointer and leave fixed output zero/invalid.
-27. Inject failure after the CPU-owned private filesystem read.
-28. Inject failure after ELF parsing and Sapote placement validation.
-29. Inject failure after image-frame allocation.
-30. Inject failure after image-frame initialization and byte comparison.
-31. Inject failure after allocating the first stack frame.
-32. Inject failure after allocating the second stack frame.
-33. Inject failure after allocating the third stack frame.
-34. Inject failure after allocating the fourth stack frame.
-35. Inject failure after private four-level hierarchy construction.
-36. Inject failure after executable identity-alias permission narrowing.
-37. Inject failure after the final RX image mapping is installed.
-38. Inject failure after the first RW/NX stack mapping is installed.
-39. Inject failure after the fourth RW/NX stack mapping is installed.
-40. Inject failure after the complete effective-permission software walk.
-41. Inject failure after the private DPL3 gate is armed and validated.
-42. Inject failure while the private CR3 is active; restore kernel CR3 first.
+13. Reject a wrong ELF header version.
+14. Reject nonzero processor flags.
+15. Reject a wrong ELF header size.
+16. Reject a non-64 program-header offset.
+17. Reject a wrong program-header size.
+18. Reject a wrong program-header count.
+19. Reject a nonzero section offset.
+20. Reject a nonzero section-entry size.
+21. Reject a nonzero section count.
+22. Reject a nonzero section-name index.
+23. Reject a missing or unsupported program-header type.
+24. Reject missing R/X, any W bit, W+X, or unknown program flags.
+25. Reject a nonzero file offset or out-of-file range.
+26. Reject a wrong file size.
+27. Reject a wrong memory size or `p_filesz > p_memsz`.
+28. Reject wrong or non-power-of-two alignment.
+29. Reject offset/address incongruence or an unaligned virtual address.
+30. Reject a nonzero physical address.
+31. Reject an entry outside executable bytes.
+32. Reject any changed proof instruction byte.
+33. Reject a supervisor-half noncanonical virtual extent.
+34. Reject a wrapped high virtual extent.
+35. Inject failure after the CPU-owned private filesystem read.
+36. Inject failure after ELF parsing and Sapote placement validation.
+37. Inject failure after image-frame allocation.
+38. Inject failure after image-frame initialization and byte comparison.
+39. Inject failure after allocating the first stack frame.
+40. Inject failure after allocating the second stack frame.
+41. Inject failure after allocating the third stack frame.
+42. Inject failure after allocating the fourth stack frame.
+43. Inject failure after private four-level hierarchy construction.
+44. Inject failure after executable identity-alias permission narrowing.
+45. Inject failure after the final RX image mapping is installed.
+46. Inject failure after the first RW/NX stack mapping is installed.
+47. Inject failure after the fourth RW/NX stack mapping is installed.
+48. Inject failure after the complete effective-permission software walk.
+49. Inject failure after the private DPL3 gate is armed and validated.
+50. Inject failure while the private CR3 is active; restore kernel CR3 first.
 
 The eight address-space foundation controls separately reject placement
 collisions, invalid transitions, selector/TSS drift, unreleased resources,
@@ -191,13 +200,13 @@ installed return path authenticate vector, CPL, CS/SS, RIP/RSP, process
 generation, CR3 and result; the Boot Ledger and Makefile source contracts reject
 direct invocation, prerequisite/cardinality drift and alternate scenario exit
 values.  These structural checks are mandatory, but are not double-counted in
-the stable 42-control parser-plus-cleanup total.
+the stable 50-control parser-plus-cleanup total.
 
 All inherited FAT16 and NVMe mutation families continue to run.  The installed
 stable line is intentionally address-free and timing-free:
 
 ```text
-ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42
+ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 50
 ```
 
 Ordinary boots publish the process capability's neutral absence instead.  The
