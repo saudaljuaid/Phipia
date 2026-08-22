@@ -1,0 +1,59 @@
+name: Linux ABI BusyBox contract
+
+on:
+    push:
+        branches:
+            - 'abi/**'
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: linux-abi-contract-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    measured-busybox-contract:
+        name: measured-busybox-contract
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install contract tools
+              run: |
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      build-essential bzip2 curl file strace
+            - name: Build and trace twice
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  bash tools/build-busybox-proof.sh \
+                      evidence/linux-abi/build-one build/linux-abi/one
+                  bash tools/build-busybox-proof.sh \
+                      evidence/linux-abi/build-two build/linux-abi/two
+                  cmp evidence/linux-abi/build-one/busybox \
+                      evidence/linux-abi/build-two/busybox
+                  cmp evidence/linux-abi/build-one/busybox.config \
+                      evidence/linux-abi/build-two/busybox.config
+                  cp evidence/linux-abi/build-one/build-record.txt \
+                      evidence/linux-abi/reproducible-build-record.txt
+                  printf 'clean build two binary SHA-256: %s\n' \
+                      "$(sha256sum evidence/linux-abi/build-two/busybox | awk '{print toupper($1)}')" \
+                      >>evidence/linux-abi/reproducible-build-record.txt
+                  printf 'two clean builds: byte-identical\n' \
+                      >>evidence/linux-abi/reproducible-build-record.txt
+            - name: Upload measured contract
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: linux-abi-busybox-contract-${{ github.sha }}
+                  path: evidence/linux-abi
+                  if-no-files-found: error
+                  retention-days: 30
