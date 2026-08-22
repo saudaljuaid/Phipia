@@ -12,15 +12,15 @@ The executable contract is fixed in
 [the reproducible-build record](BUSYBOX_REPRODUCIBLE_BUILD.md), the initial
 stack in [the stack contract](LINUX_INITIAL_STACK.md), and the syscall subset
 in [the ABI contract](LINUX_SYSCALL_ABI.md).  The filesystem consumer accepts
-one `BUSYBOX` root entry and a checked chain of exactly eight 4096-byte data
+one `BUSYBOX` root entry and a checked chain of exactly nine 4096-byte data
 clusters.  It adds no partition parser, directory traversal, VFS, cache,
 write, mount, or public block API.  CPU parsing begins only after every DMA and
 filesystem buffer has returned to CPU ownership.
 
 The complete fixture SHA-256 is
-`B8D17F12B117D1945A8C47034BDBD02E955C8F297BD975EAC5A0EC361249FD00`.
+`41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F`.
 Its file payload SHA-256 is the executable digest
-`AFC9133E22C46453A6D318ABC976361A2DA751EEFB7111B0816E8FF8497E5CC4`.
+`B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746`.
 
 Candidate/validated executable, candidate/building/installed/running/exiting/
 stopping/released process, candidate/armed/entered/returned/disarmed syscall
@@ -40,7 +40,7 @@ pre-proof resource census.
 | # | controlled refusal or proof |
 | ---: | --- |
 | 1 | every truncation through the 64-byte ELF header |
-| 2 | every truncation through each of the six 56-byte program headers |
+| 2 | every truncation through each of the five 56-byte program headers |
 | 3 | bad ELF magic, class, endianness, identification version, ABI, ABI version, or nonzero padding |
 | 4 | non-`ET_EXEC`, including `ET_DYN`/PIE |
 | 5 | wrong machine, ELF version, flags, or ELF header size |
@@ -49,7 +49,7 @@ pre-proof resource census.
 | 8 | zero or more than four `PT_LOAD` segments |
 | 9 | unsupported non-load header, including interpreter, dynamic, TLS, note, or property headers |
 | 10 | missing, duplicate, malformed, or executable `PT_GNU_STACK` |
-| 11 | missing, duplicate, wrapped, or out-of-load `PT_GNU_RELRO` |
+| 11 | nonzero, wrapped, misaligned, executable, or otherwise malformed `PT_GNU_STACK` extent |
 | 12 | `p_memsz < p_filesz` or an empty load segment |
 | 13 | wrapped or out-of-file load extent |
 | 14 | wrapped, zero, kernel, or noncanonical virtual extent |
@@ -61,12 +61,12 @@ pre-proof resource census.
 | 20 | noncanonical, unmapped, non-executable, BSS, or wrong entry point |
 | 21 | nonzero BSS after installation |
 | 22 | relocation, interpreter, dynamic dependency, GOT fixup, or section-table dependency |
-| 23 | mismatch from the exact measured six-header type/order/extent conjunction |
+| 23 | mismatch from the exact measured five-header type/order/extent conjunction |
 | 24 | partial executable output and candidate/validated transition reversal |
 | 25 | absent, duplicate, deleted, label, directory, LFN, or noncanonical `BUSYBOX` root entry |
 | 26 | zero, oversized, destination-exceeding, or more-than-512-cluster file length |
 | 27 | free, bad, reserved, below-two, or out-of-range first/next cluster |
-| 28 | premature end-of-chain before all 29,864 bytes |
+| 28 | premature end-of-chain before all 33,584 bytes |
 | 29 | late end-of-chain or an overlong chain after the file bytes |
 | 30 | direct or indirect FAT chain cycle |
 | 31 | repeated data cluster without a syntactic cycle and chain-visit overflow |

@@ -6,13 +6,13 @@
 # allowlist.
 #
 # BusyBox SHA-256:
-# AFC9133E22C46453A6D318ABC976361A2DA751EEFB7111B0816E8FF8497E5CC4
+# B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746
 # argv: busybox echo SAPOTE
 # envp: empty
 # auxv: AT_PAGESZ=4096, AT_NULL
 
-01  158  arch_prctl(ARCH_SET_FS, 0x4089b8) = 0
-02  218  set_tid_address(0x408b54) = positive-proof-tid
+01  158  arch_prctl(ARCH_SET_FS, 0x400001008998) = 0
+02  218  set_tid_address(0x400001008b34) = positive-proof-tid
 03   12  brk(NULL) = heap-base
 04   12  brk(heap-base + 8192) = heap-base + 8192
 05    9  mmap(heap-base, 4096, PROT_NONE,

@@ -23,12 +23,12 @@ FIRST_FAT_SECTOR = 1
 FIRST_ROOT_SECTOR = 3
 FIRST_DATA_SECTOR = 4
 FILE_CLUSTER = 2
-FILE_BYTES = 29_864
-FILE_CLUSTERS = 8
+FILE_BYTES = 33_584
+FILE_CLUSTERS = 9
 MEDIA = 0xF8
 SHORT_NAME = b"BUSYBOX    "
-BUSYBOX_SHA256 = "AFC9133E22C46453A6D318ABC976361A2DA751EEFB7111B0816E8FF8497E5CC4"
-IMAGE_SHA256 = "B8D17F12B117D1945A8C47034BDBD02E955C8F297BD975EAC5A0EC361249FD00"
+BUSYBOX_SHA256 = "B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746"
+IMAGE_SHA256 = "41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F"
 
 
 def put_u16(image: bytearray, offset: int, value: int) -> None:
@@ -50,7 +50,7 @@ def u32(image: bytes, offset: int) -> int:
 def verify_busybox(binary: bytes) -> None:
     """Reject a changed binary or a changed measured ELF conjunction."""
     if len(binary) != FILE_BYTES:
-        raise ValueError("BusyBox length is not exactly 29,864 bytes")
+        raise ValueError("BusyBox length is not exactly 33,584 bytes")
     if hashlib.sha256(binary).hexdigest().upper() != BUSYBOX_SHA256:
         raise ValueError("BusyBox SHA-256 differs from the committed executable")
     if binary[:16] != b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8:
@@ -76,16 +76,16 @@ def verify_busybox(binary: bytes) -> None:
         2,
         62,
         1,
-        0x401129,
+        0x40000100107A,
         64,
-        29032,
+        33072,
         0,
         64,
         56,
-        6,
+        5,
         64,
-        13,
-        12,
+        8,
+        7,
     ):
         raise ValueError("BusyBox ELF header differs from the measured contract")
     headers = [
@@ -93,12 +93,11 @@ def verify_busybox(binary: bytes) -> None:
         for index in range(phnum)
     ]
     expected = [
-        (1, 4, 0x0, 0x400000, 0x400000, 0x190, 0x190, 0x1000),
-        (1, 5, 0x1000, 0x401000, 0x401000, 0x4D50, 0x4D50, 0x1000),
-        (1, 4, 0x6000, 0x406000, 0x406000, 0xD90, 0xD90, 0x1000),
-        (1, 6, 0x6FC8, 0x407FC8, 0x407FC8, 0x13E, 0xB98, 0x1000),
+        (1, 4, 0x0, 0x400001000000, 0x400001000000, 0x158, 0x158, 0x1000),
+        (1, 5, 0x1000, 0x400001001000, 0x400001001000, 0x5563, 0x5563, 0x1000),
+        (1, 4, 0x7000, 0x400001007000, 0x400001007000, 0xED1, 0xED1, 0x1000),
+        (1, 6, 0x8000, 0x400001008000, 0x400001008000, 0xFE, 0xB38, 0x1000),
         (0x6474E551, 6, 0, 0, 0, 0, 0, 0x10),
-        (0x6474E552, 4, 0x6FC8, 0x407FC8, 0x407FC8, 0x38, 0x38, 1),
     ]
     if headers != expected:
         raise ValueError("BusyBox program headers differ from the measured contract")

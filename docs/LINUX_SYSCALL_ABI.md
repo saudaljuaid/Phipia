@@ -23,8 +23,8 @@ installs the file, the binary makes nine calls across these seven numbers:
 | 9 | `mmap` | the observed anonymous fixed guard page and one observed anonymous RW page only |
 | 11 | `munmap` | the one anonymous RW page returned by the preceding call |
 | 12 | `brk` | query the fixed heap base, then grow it by exactly 8192 bytes |
-| 158 | `arch_prctl` | `ARCH_SET_FS` to measured writable user address `0x4089b8` only |
-| 218 | `set_tid_address` | measured writable user address `0x408b54`, returning one positive proof-process id |
+| 158 | `arch_prctl` | `ARCH_SET_FS` to measured writable user address `0x400001008998` only |
+| 218 | `set_tid_address` | measured writable user address `0x400001008b34`, returning one positive proof-process id |
 | 231 | `exit_group` | status zero only; enters the no-return exiting transition |
 
 Every pointer and extent is checked against the active private address space

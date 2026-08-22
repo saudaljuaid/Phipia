@@ -14,7 +14,7 @@ unmodified BusyBox source tree with the committed configuration.
 | BusyBox 1.38.0 source | `https://busybox.net/downloads/busybox-1.38.0.tar.bz2` | `34F9EA6FF8636F2C9241153B9114EEFA9E65674A45318AE1EF95BB5F31C53BB2` |
 | musl 1.2.6 source | `https://musl.libc.org/releases/musl-1.2.6.tar.gz` | `D585FD3B613C66151FC3249E8ED44F77020CB5E6C1E635A616D3F9F82460512A` |
 | byte-identical musl mirror used by CI | `https://sources.buildroot.net/musl/musl-1.2.6.tar.gz` | `D585FD3B613C66151FC3249E8ED44F77020CB5E6C1E635A616D3F9F82460512A` |
-| committed BusyBox configuration | `userspace/busybox/busybox.config` | `FDCA3F3C4690B30CEE0B9689775DC1A8B2F7A55D442ABB4505E86F99C34542FD` |
+| committed BusyBox configuration | `userspace/busybox/busybox.config` | `3FBC0403C6A4865FC4397240961C367EE9B36D6D350CC6CEB2D22CBBBEA28480` |
 | BusyBox `LICENSE` | source archive | `BBFC9843646D483C334664F651C208B9839626891D8F17604DB2146962F43548` |
 | musl `COPYRIGHT` | source archive | `B870108EC5E7790E9F9919064F1B9421D62D5F9B0E6C230C6ADF7EA2DA62E97B` |
 
@@ -45,19 +45,19 @@ The result is a stripped, static, position-fixed x86-64 `ET_EXEC` file:
 
 | property | measured value |
 | --- | --- |
-| byte length | 29,864 |
-| SHA-256 | `AFC9133E22C46453A6D318ABC976361A2DA751EEFB7111B0816E8FF8497E5CC4` |
-| entry | `0x401129` |
-| FAT16 data clusters at 4096 bytes | 8 |
-| program headers / `PT_LOAD` | 6 / 4 |
+| byte length | 33,584 |
+| SHA-256 | `B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746` |
+| entry | `0x40000100107a` |
+| FAT16 data clusters at 4096 bytes | 9 |
+| program headers / `PT_LOAD` | 5 / 4 |
 | interpreter, dynamic section, runtime relocations | none |
 
-The four load segments are `R` at `0x400000`, `RX` at `0x401000`, `R` at
-`0x406000`, and `RW/NX` at `0x407fc8`.  Their file/memory extents are
-`0x190/0x190`, `0x4d50/0x4d50`, `0xd90/0xd90`, and `0x13e/0xb98`.
-The only non-load headers are non-executable `PT_GNU_STACK` and the measured
-`PT_GNU_RELRO` range `0x407fc8..0x408000`.  There is no `PT_TLS`; musl's small
-builtin thread area resides in the final data/BSS load segment.
+The four load segments are `R` at `0x400001000000`, `RX` at
+`0x400001001000`, `R` at `0x400001007000`, and `RW/NX` at
+`0x400001008000`.  Their file/memory extents are `0x158/0x158`,
+`0x5563/0x5563`, `0xed1/0xed1`, and `0xfe/0xb38`.  The only non-load header is
+non-executable `PT_GNU_STACK`.  There is no `PT_GNU_RELRO` or `PT_TLS`;
+musl's small builtin thread area resides in the final data/BSS load segment.
 
 The configuration enables only the BusyBox multicall core, static build
 support, stack buffers, `echo`, and the `SH_IS_NONE`/`BASH_IS_NONE` selectors.

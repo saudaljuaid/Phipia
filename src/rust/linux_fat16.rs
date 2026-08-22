@@ -3,16 +3,16 @@
 
 use crate::fat16::{self, Geometry, RootEntry, RootQuery};
 
-pub const FILE_BYTES: u32 = 29_864;
-pub const FILE_CLUSTERS: u32 = 8;
+pub const FILE_BYTES: u32 = 33_584;
+pub const FILE_CLUSTERS: u32 = 9;
 pub const MAX_CLUSTERS: usize = 512;
 pub const ROBUSTNESS_CONTROLS: u32 = 12;
 pub const BUSYBOX_NAME: [u8; 11] = *b"BUSYBOX    ";
 pub const BUSYBOX_SHA256: [u8; 32] = [
-    0xAF, 0xC9, 0x13, 0x3E, 0x22, 0xC4, 0x64, 0x53,
-    0xA6, 0xD3, 0x18, 0xAB, 0xC9, 0x76, 0x36, 0x1A,
-    0x2D, 0xA7, 0x51, 0xEE, 0xFB, 0x71, 0x11, 0xB0,
-    0x81, 0x6E, 0x8F, 0xF8, 0x49, 0x7E, 0x5C, 0xC4,
+    0xB3, 0x08, 0xF2, 0xCA, 0xD5, 0xB5, 0xCD, 0x0E,
+    0xEB, 0x92, 0xA6, 0x22, 0xDE, 0xC8, 0xD7, 0x1C,
+    0x1A, 0x08, 0xF6, 0x28, 0xA2, 0x2C, 0xDC, 0x5B,
+    0xCD, 0xE2, 0xB9, 0x8B, 0x53, 0x22, 0x07, 0x46,
 ];
 
 const ATTR_ARCHIVE: u8 = 0x20;
@@ -412,7 +412,7 @@ pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
 }
 
 pub fn self_test() -> u32 {
-    if MAX_CLUSTERS != 512 || FILE_CLUSTERS != 8 ||
+    if MAX_CLUSTERS != 512 || FILE_CLUSTERS != 9 ||
         FILE_BYTES.div_ceil(fat16::BLOCK_BYTES as u32) != FILE_CLUSTERS ||
         !canonical_name(&BUSYBOX_NAME)
     {
@@ -456,8 +456,8 @@ mod tests {
         let mut block = [0u8; fat16::BLOCK_BYTES];
         put_u16(&mut block, 0, 0xFFF8);
         put_u16(&mut block, 2, 0xFFFF);
-        for cluster in 2..9 { put_u16(&mut block, cluster * 2, cluster as u16 + 1); }
-        put_u16(&mut block, 18, 0xFFFF);
+        for cluster in 2..10 { put_u16(&mut block, cluster * 2, cluster as u16 + 1); }
+        put_u16(&mut block, 20, 0xFFFF);
         block
     }
 
@@ -469,15 +469,15 @@ mod tests {
         let entry = find_root(&root, &geometry, &query, FILE_BYTES).unwrap();
         let mut fat = make_fat();
         let chain = build_chain(&fat, &geometry, &entry).unwrap();
-        assert_eq!(chain.cluster_count, 8);
-        assert_eq!(chain.final_cluster_bytes, 1192);
+        assert_eq!(chain.cluster_count, 9);
+        assert_eq!(chain.final_cluster_bytes, 816);
         put_u16(&mut fat, 8, 3);
         assert!(matches!(build_chain(&fat, &geometry, &entry), Err(Status::ChainCycle)));
         fat = make_fat();
         put_u16(&mut fat, 8, 0xFFFF);
         assert!(matches!(build_chain(&fat, &geometry, &entry), Err(Status::PrematureEoc)));
         fat = make_fat();
-        put_u16(&mut fat, 18, 10);
+        put_u16(&mut fat, 20, 11);
         assert!(matches!(build_chain(&fat, &geometry, &entry), Err(Status::OverlongChain)));
         root[32] = b'X';
         assert!(find_root(&root, &geometry, &query, FILE_BYTES).is_err());
