@@ -110,7 +110,8 @@ jobs:
                           "$scenario_count" "$assertion_count" >&2
                       exit 1
                   fi
-                  make build/tests/nvme/nvme-fixture.raw
+                  python3 tools/make-nvme-fixture.py \
+                      build/tests/nvme/nvme-fixture.raw
                   fixture_sha=$(
                       sha256sum build/tests/nvme/nvme-fixture.raw \
                           | awk '{print $1}'
