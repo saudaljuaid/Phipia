@@ -73,6 +73,553 @@ static bool equal_bytes(
     return true;
 }
 
+enum fat16_test_offset {
+    FAT16_TEST_BPS = 11,
+    FAT16_TEST_SPC = 13,
+    FAT16_TEST_RESERVED = 14,
+    FAT16_TEST_FAT_COUNT = 16,
+    FAT16_TEST_ROOT_ENTRIES = 17,
+    FAT16_TEST_TOTAL_16 = 19,
+    FAT16_TEST_MEDIA = 21,
+    FAT16_TEST_FAT_16 = 22,
+    FAT16_TEST_HIDDEN = 28,
+    FAT16_TEST_TOTAL_32 = 32,
+    FAT16_TEST_EBPB_RESERVED = 37,
+    FAT16_TEST_EBPB_SIGNATURE = 38,
+    FAT16_TEST_BOOT_SIGNATURE = 510
+};
+
+static const uint8_t fat16_test_name[FAT16_CANONICAL_NAME_BYTES] = {
+    'S', 'A', 'P', 'O', 'T', 'E', ' ', ' ', 'B', 'I', 'N'
+};
+
+static const uint8_t fat16_test_sha256[FAT16_SHA256_BYTES] = {
+    UINT8_C(0xD3), UINT8_C(0x99), UINT8_C(0xF0), UINT8_C(0x65),
+    UINT8_C(0xC9), UINT8_C(0xF2), UINT8_C(0x1E), UINT8_C(0x2F),
+    UINT8_C(0xD5), UINT8_C(0x1E), UINT8_C(0x2A), UINT8_C(0xEA),
+    UINT8_C(0xDB), UINT8_C(0x77), UINT8_C(0x68), UINT8_C(0xEA),
+    UINT8_C(0xB7), UINT8_C(0xE6), UINT8_C(0xE4), UINT8_C(0x5E),
+    UINT8_C(0x51), UINT8_C(0x50), UINT8_C(0xF3), UINT8_C(0x12),
+    UINT8_C(0x27), UINT8_C(0xC9), UINT8_C(0x71), UINT8_C(0x19),
+    UINT8_C(0x34), UINT8_C(0xA4), UINT8_C(0xD1), UINT8_C(0xD3)
+};
+
+static void fat16_test_put_u16(uint8_t *block, size_t offset, uint16_t value)
+{
+    block[offset] = (uint8_t)value;
+    block[offset + 1U] = (uint8_t)(value >> 8U);
+}
+
+static void fat16_test_put_u32(uint8_t *block, size_t offset, uint32_t value)
+{
+    block[offset] = (uint8_t)value;
+    block[offset + 1U] = (uint8_t)(value >> 8U);
+    block[offset + 2U] = (uint8_t)(value >> 16U);
+    block[offset + 3U] = (uint8_t)(value >> 24U);
+}
+
+static void fat16_test_make_bpb(uint8_t *block)
+{
+    zero_bytes(block, FAT16_BLOCK_BYTES);
+    block[0] = UINT8_C(0xEB);
+    block[1] = UINT8_C(0x3C);
+    block[2] = UINT8_C(0x90);
+    block[3] = 'S';
+    block[4] = 'A';
+    block[5] = 'P';
+    block[6] = 'O';
+    block[7] = 'T';
+    block[8] = 'E';
+    block[9] = ' ';
+    block[10] = ' ';
+    fat16_test_put_u16(block, FAT16_TEST_BPS, FAT16_BLOCK_BYTES);
+    block[FAT16_TEST_SPC] = 1U;
+    fat16_test_put_u16(block, FAT16_TEST_RESERVED, 1U);
+    block[FAT16_TEST_FAT_COUNT] = 1U;
+    fat16_test_put_u16(block, FAT16_TEST_ROOT_ENTRIES,
+        FAT16_ROOT_ENTRIES);
+    fat16_test_put_u16(block, FAT16_TEST_TOTAL_16,
+        (uint16_t)FAT16_TOTAL_SECTORS);
+    block[FAT16_TEST_MEDIA] = UINT8_C(0xF8);
+    fat16_test_put_u16(block, FAT16_TEST_FAT_16, 2U);
+    block[FAT16_TEST_EBPB_RESERVED] = 0U;
+    block[FAT16_TEST_EBPB_SIGNATURE] = UINT8_C(0x29);
+    block[FAT16_TEST_BOOT_SIGNATURE] = UINT8_C(0x55);
+    block[FAT16_TEST_BOOT_SIGNATURE + 1U] = UINT8_C(0xAA);
+}
+
+static void fat16_test_make_root(uint8_t *block)
+{
+    zero_bytes(block, FAT16_BLOCK_BYTES);
+    for (size_t index = 0U; index < sizeof(fat16_test_name); ++index) {
+        block[index] = fat16_test_name[index];
+    }
+    block[11] = UINT8_C(0x20);
+    fat16_test_put_u16(block, 26U, FAT16_FILE_CLUSTER);
+    fat16_test_put_u32(block, 28U, FAT16_FILE_BYTES);
+}
+
+static void fat16_test_make_fat(uint8_t *block)
+{
+    zero_bytes(block, FAT16_BLOCK_BYTES);
+    fat16_test_put_u16(block, 0U, UINT16_C(0xFFF8));
+    fat16_test_put_u16(block, 2U, UINT16_C(0xFFFF));
+    fat16_test_put_u16(block, FAT16_FILE_CLUSTER * 2U,
+        UINT16_C(0xFFFF));
+}
+
+static bool fat16_parse_bpb_status(
+    const uint8_t *block,
+    size_t length,
+    uint64_t namespace_blocks,
+    uint32_t namespace_block_bytes,
+    enum fat16_status expected
+)
+{
+    struct fat16_geometry output;
+
+    return sapote_fat16_parse_bpb(block, length, namespace_blocks,
+        namespace_block_bytes, &output) == expected;
+}
+
+static bool fat16_find_root_status(
+    const uint8_t *block,
+    const struct fat16_geometry *geometry,
+    const struct fat16_root_query *query,
+    uint32_t destination_bytes,
+    enum fat16_status expected
+)
+{
+    struct fat16_root_entry output;
+
+    return sapote_fat16_find_root(block, FAT16_BLOCK_BYTES, geometry,
+        query, destination_bytes, &output) == expected;
+}
+
+static bool fat16_parse_fat_status(
+    const uint8_t *block,
+    const struct fat16_geometry *geometry,
+    enum fat16_status expected
+)
+{
+    struct fat16_fat_state output;
+
+    return sapote_fat16_parse_fat(block, FAT16_BLOCK_BYTES, geometry,
+        &output) == expected;
+}
+
+static bool control_rust_parser(void)
+{
+    uint8_t block[FAT16_BLOCK_BYTES];
+    uint8_t query_bytes[FAT16_CANONICAL_NAME_BYTES];
+    uint8_t payload_bytes[FAT16_FILE_BYTES];
+    struct fat16_geometry geometry;
+    struct fat16_geometry corrupt_geometry;
+    struct fat16_root_query query;
+    struct fat16_root_entry entry;
+    struct fat16_fat_state fat;
+    struct fat16_extent extent;
+    struct fat16_payload payload;
+    const uint16_t invalid_fat_values[] = {
+        0U, 1U, UINT16_C(0xFFF7), UINT16_C(0xFFF0),
+        UINT16_C(0xFFF6), UINT16_C(5000)
+    };
+
+    fat16_test_make_bpb(block);
+    if (sapote_fat16_parse_bpb(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, &geometry) != FAT16_STATUS_OK ||
+        geometry.cluster_count != UINT64_C(4092) ||
+        geometry.first_data_sector != UINT64_C(4)) {
+        return false;
+    }
+
+    /* 1: both signatures and the bounded EBPB reserved byte. */
+    block[FAT16_TEST_BOOT_SIGNATURE] = 0U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_BOOT_SIGNATURE)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_EBPB_SIGNATURE] = 0U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_BOOT_SIGNATURE)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_EBPB_RESERVED] = 1U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_BOOT_SIGNATURE)) {
+        return false;
+    }
+
+    /* 2: truncation, namespace mismatch and unsupported sector size. */
+    fat16_test_make_bpb(block);
+    if (!fat16_parse_bpb_status(block, 511U, FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_TRUNCATED) ||
+        !fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            512U, FAT16_STATUS_BYTES_PER_SECTOR)) {
+        return false;
+    }
+    fat16_test_put_u16(block, FAT16_TEST_BPS, 512U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_BYTES_PER_SECTOR)) {
+        return false;
+    }
+
+    /* 3: the subset has exactly one sector per cluster. */
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_SPC] = 2U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_SECTORS_PER_CLUSTER)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_SPC] = 0U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_SECTORS_PER_CLUSTER)) {
+        return false;
+    }
+
+    /* 4: one reserved sector and one FAT are mandatory. */
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_RESERVED, 0U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_RESERVED_COUNT)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_RESERVED, 2U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_RESERVED_COUNT)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_FAT_COUNT] = 0U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_FAT_COUNT)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    block[FAT16_TEST_FAT_COUNT] = 2U;
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_FAT_COUNT)) {
+        return false;
+    }
+
+    /* 5: exactly one populated and exact total-sector field. */
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_TOTAL_16, 0U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_TOTAL_SECTORS)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u32(block, FAT16_TEST_TOTAL_32,
+        (uint32_t)FAT16_TOTAL_SECTORS);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_TOTAL_SECTORS)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_TOTAL_16,
+        (uint16_t)(FAT16_TOTAL_SECTORS - 1U));
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_TOTAL_SECTORS)) {
+        return false;
+    }
+
+    /* 6: the FAT16 size is nonzero, exact and arithmetically bounded. */
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_FAT_16, 0U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_FAT_SIZE)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_FAT_16, UINT16_MAX);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_SPAN_RANGE)) {
+        return false;
+    }
+
+    /* 7: the fixed root must be 128 aligned 32-byte entries. */
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_ROOT_ENTRIES, 0U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_ROOT_GEOMETRY)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_ROOT_ENTRIES, 127U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_ROOT_GEOMETRY)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_ROOT_ENTRIES, UINT16_MAX);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_ROOT_GEOMETRY)) {
+        return false;
+    }
+
+    /* 8: derived spans cannot escape the superfloppy namespace. */
+    fat16_test_make_bpb(block);
+    if (!fat16_parse_bpb_status(block, sizeof(block),
+            FAT16_TOTAL_SECTORS - 1U, FAT16_BLOCK_BYTES,
+            FAT16_STATUS_SPAN_RANGE)) {
+        return false;
+    }
+    fat16_test_put_u32(block, FAT16_TEST_HIDDEN, 1U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_SPAN_RANGE)) {
+        return false;
+    }
+
+    /* 9: cluster count, never a label, classifies FAT12/16/32. */
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_TOTAL_16, 4088U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, FAT16_STATUS_FAT_CLASS)) {
+        return false;
+    }
+    fat16_test_make_bpb(block);
+    fat16_test_put_u16(block, FAT16_TEST_TOTAL_16, 0U);
+    fat16_test_put_u32(block, FAT16_TEST_TOTAL_32, 70000U);
+    if (!fat16_parse_bpb_status(block, sizeof(block), UINT64_C(70000),
+            FAT16_BLOCK_BYTES, FAT16_STATUS_FAT_CLASS)) {
+        return false;
+    }
+
+    for (size_t index = 0U; index < sizeof(query_bytes); ++index) {
+        query_bytes[index] = fat16_test_name[index];
+    }
+    if (sapote_fat16_make_query(query_bytes, sizeof(query_bytes), &query) !=
+            FAT16_STATUS_OK) {
+        return false;
+    }
+    query_bytes[0] = 'X';
+    if (!equal_bytes(query.canonical_name, fat16_test_name,
+            sizeof(fat16_test_name))) {
+        return false;
+    }
+    fat16_test_make_root(block);
+    if (sapote_fat16_find_root(block, sizeof(block), &geometry, &query,
+            FAT16_FILE_BYTES, &entry) != FAT16_STATUS_OK) {
+        return false;
+    }
+    fat16_test_make_fat(block);
+    if (sapote_fat16_parse_fat(block, sizeof(block), &geometry, &fat) !=
+            FAT16_STATUS_OK) {
+        return false;
+    }
+    fat16_test_put_u16(block, FAT16_FILE_CLUSTER * 2U,
+        UINT16_C(0xFFF8));
+    if (!fat16_parse_fat_status(block, &geometry, FAT16_STATUS_OK)) {
+        return false;
+    }
+    fat16_test_make_fat(block);
+    if (sapote_fat16_validate_extent(&geometry, &entry, &fat, &extent) !=
+            FAT16_STATUS_OK || extent.lba != UINT64_C(4) ||
+        extent.fat_value < UINT16_C(0xFFF8)) {
+        return false;
+    }
+
+    /* 10: FAT media and reserved entries must agree with the BPB. */
+    block[0] = UINT8_C(0xF0);
+    if (!fat16_parse_fat_status(block, &geometry, FAT16_STATUS_MEDIA)) {
+        return false;
+    }
+    fat16_test_make_fat(block);
+    fat16_test_put_u16(block, 2U, 0U);
+    if (!fat16_parse_fat_status(block, &geometry,
+            FAT16_STATUS_FAT_RESERVED)) {
+        return false;
+    }
+
+    /* 11: a root scan cannot run beyond its one-sector end marker. */
+    fat16_test_make_root(block);
+    for (size_t index = 0U; index < FAT16_ROOT_ENTRIES; ++index) {
+        block[index * 32U] = 'A';
+        block[index * 32U + 11U] = UINT8_C(0x20);
+    }
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_ROOT_END_MISSING)) {
+        return false;
+    }
+
+    /* 12: an empty root does not contain the target. */
+    zero_bytes(block, sizeof(block));
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_TARGET_ABSENT)) {
+        return false;
+    }
+
+    /* 13: exactly one matching active target is required. */
+    fat16_test_make_root(block);
+    for (size_t index = 0U; index < sizeof(fat16_test_name); ++index) {
+        block[32U + index] = fat16_test_name[index];
+    }
+    block[43] = UINT8_C(0x20);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_TARGET_DUPLICATE)) {
+        return false;
+    }
+
+    /* 14: long-file-name entries are outside this reader. */
+    fat16_test_make_root(block);
+    block[11] = UINT8_C(0x0F);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_LONG_NAME)) {
+        return false;
+    }
+
+    /* 15: deleted and non-regular attributes are unsupported. */
+    fat16_test_make_root(block);
+    block[0] = UINT8_C(0xE5);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_DELETED)) {
+        return false;
+    }
+    const uint8_t unsupported_attributes[] = {
+        UINT8_C(0x10), UINT8_C(0x08), UINT8_C(0x40)
+    };
+    for (size_t index = 0U; index < sizeof(unsupported_attributes); ++index) {
+        fat16_test_make_root(block);
+        block[11] = unsupported_attributes[index];
+        if (!fat16_find_root_status(block, &geometry, &query,
+                FAT16_FILE_BYTES, FAT16_STATUS_UNSUPPORTED_ENTRY)) {
+            return false;
+        }
+    }
+
+    /* 16: queries and active names must be canonical uppercase 8.3. */
+    query_bytes[0] = 's';
+    for (size_t index = 1U; index < sizeof(query_bytes); ++index) {
+        query_bytes[index] = fat16_test_name[index];
+    }
+    if (sapote_fat16_make_query(query_bytes, sizeof(query_bytes), &query) !=
+            FAT16_STATUS_NAME_MALFORMED) {
+        return false;
+    }
+    if (sapote_fat16_make_query(fat16_test_name, sizeof(fat16_test_name),
+            &query) != FAT16_STATUS_OK) {
+        return false;
+    }
+    fat16_test_make_root(block);
+    block[0] = 's';
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_NAME_MALFORMED)) {
+        return false;
+    }
+
+    /* 17: data clusters begin at two and remain within the data region. */
+    fat16_test_make_root(block);
+    fat16_test_put_u16(block, 26U, 1U);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_CLUSTER_RANGE)) {
+        return false;
+    }
+    fat16_test_make_root(block);
+    fat16_test_put_u16(block, 26U, 5000U);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_CLUSTER_RANGE)) {
+        return false;
+    }
+
+    /* 18: free, bad, reserved and out-of-range FAT entries fail. */
+    for (size_t index = 0U;
+         index < sizeof(invalid_fat_values) / sizeof(invalid_fat_values[0]);
+         ++index) {
+        fat16_test_make_fat(block);
+        fat16_test_put_u16(block, FAT16_FILE_CLUSTER * 2U,
+            invalid_fat_values[index]);
+        if (!fat16_parse_fat_status(block, &geometry,
+                FAT16_STATUS_FAT_ENTRY)) {
+            return false;
+        }
+    }
+
+    /* 19: even a valid next data cluster is a refused multi-cluster chain. */
+    fat16_test_make_fat(block);
+    fat16_test_put_u16(block, FAT16_FILE_CLUSTER * 2U,
+        FAT16_FILE_CLUSTER);
+    if (!fat16_parse_fat_status(block, &geometry,
+            FAT16_STATUS_MULTI_CLUSTER)) {
+        return false;
+    }
+
+    /* 20: lengths are nonzero, exact, contained and destination-bounded. */
+    fat16_test_make_root(block);
+    fat16_test_put_u32(block, 28U, 0U);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_FILE_SIZE)) {
+        return false;
+    }
+    fat16_test_make_root(block);
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES - 1U, FAT16_STATUS_FILE_SIZE)) {
+        return false;
+    }
+    fat16_test_make_root(block);
+    fat16_test_put_u32(block, 28U, FAT16_BLOCK_BYTES + 1U);
+    if (!fat16_find_root_status(block, &geometry, &query, UINT32_MAX,
+            FAT16_STATUS_FILE_SIZE)) {
+        return false;
+    }
+
+    /* 21: crafted geometry cannot overflow cluster-to-LBA translation. */
+    fat16_test_make_root(block);
+    if (sapote_fat16_find_root(block, sizeof(block), &geometry, &query,
+            FAT16_FILE_BYTES, &entry) != FAT16_STATUS_OK) {
+        return false;
+    }
+    fat16_test_make_fat(block);
+    if (sapote_fat16_parse_fat(block, sizeof(block), &geometry, &fat) !=
+            FAT16_STATUS_OK) {
+        return false;
+    }
+    corrupt_geometry = geometry;
+    corrupt_geometry.first_data_sector = UINT64_MAX;
+    enum fat16_status status = sapote_fat16_validate_extent(
+        &corrupt_geometry, &entry, &fat, &extent);
+    if (status != FAT16_STATUS_SPAN_OVERFLOW &&
+        status != FAT16_STATUS_SPAN_RANGE) {
+        return false;
+    }
+
+    /* 22: no concealed state, retained pointer, or partial FFI result. */
+    fat16_test_make_root(block);
+    block[64] = 'X';
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_TRAILING_STATE)) {
+        return false;
+    }
+    for (size_t index = 0U; index < sizeof(geometry); ++index) {
+        ((uint8_t *)&geometry)[index] = UINT8_C(0xA5);
+    }
+    if (sapote_fat16_parse_bpb(block, 1U, FAT16_TOTAL_SECTORS,
+            FAT16_BLOCK_BYTES, &geometry) != FAT16_STATUS_TRUNCATED ||
+        !all_zero(&geometry, sizeof(geometry))) {
+        return false;
+    }
+    for (size_t index = 0U; index < sizeof(payload_bytes); ++index) {
+        payload_bytes[index] = (uint8_t)((index * 73U + 19U) & 0xFFU);
+    }
+    if (sapote_fat16_validate_payload(payload_bytes, sizeof(payload_bytes),
+            &payload) != FAT16_STATUS_OK ||
+        payload.byte_count != FAT16_FILE_BYTES || payload.deterministic != 1U ||
+        !equal_bytes(payload.sha256, fat16_test_sha256,
+            sizeof(fat16_test_sha256)) ||
+        sapote_fat16_validate_payload(payload_bytes,
+            sizeof(payload_bytes) - 1U, &payload) !=
+            FAT16_STATUS_PAYLOAD_LENGTH) {
+        return false;
+    }
+    payload_bytes[64] ^= 1U;
+    return sapote_fat16_validate_payload(payload_bytes,
+        sizeof(payload_bytes), &payload) == FAT16_STATUS_PAYLOAD_CONTENT;
+}
+
 static enum filesystem_status transition(
     enum filesystem_state *state,
     enum filesystem_state next
@@ -278,26 +825,16 @@ static bool control_teardown_race(void)
 
 bool filesystem_foundation_self_test(size_t *completed_tests)
 {
-    uint8_t short_block[1] = {0U};
-    struct fat16_geometry partial;
     size_t completed = 0U;
 
     if (completed_tests == NULL) {
         return false;
     }
     *completed_tests = 0U;
-    if (sapote_fat16_self_test() != FAT16_PARSER_ROBUSTNESS_CONTROLS) {
+    if (!control_rust_parser()) {
         return false;
     }
     completed = FAT16_PARSER_ROBUSTNESS_CONTROLS;
-    for (size_t index = 0U; index < sizeof(partial); ++index) {
-        ((uint8_t *)&partial)[index] = UINT8_C(0xA5);
-    }
-    if (sapote_fat16_parse_bpb(short_block, sizeof(short_block),
-            FAT16_TOTAL_SECTORS, FAT16_BLOCK_BYTES, &partial) !=
-            FAT16_STATUS_TRUNCATED || !all_zero(&partial, sizeof(partial))) {
-        return false;
-    }
     if (!control_block_results()) {
         return false;
     }

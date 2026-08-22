@@ -82,7 +82,10 @@ never substitutes compiled fixture bytes for PRP1 DMA data.
 | 27 | omitted or duplicated filesystem Boot Ledger prerequisite |
 | 28 | temporary alternate filesystem scenario exit value |
 
-Controls 1–22 use synthetic Rust byte arrays. Controls 23–26 are guest-local
-typed lifecycle controls. Controls 27–28 use temporary descriptor/exit values.
-None mutates the live fixture. Every path ends with the same zero-resource
-census, and all inherited NVMe controls still run.
+Controls 1–22 use synthetic guest C byte arrays passed through the production
+Rust ABI; C only constructs and mutates bytes and never parses them. The same
+families also run as a host Rust unit test during `make verify`, without being
+linked into the kernel. Controls 23–26 are guest-local typed lifecycle
+controls. Controls 27–28 use temporary descriptor/exit values. None mutates the
+live fixture. Every path ends with the same zero-resource census, and all
+inherited NVMe controls still run.

@@ -54,7 +54,7 @@ const BOOT_SIGNATURE: usize = 510;
 
 /// A named parser conclusion. The C mirror has the same discriminants.
 #[repr(i32)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Every field and derived value matches the bounded contract.
     Ok = 0,
@@ -139,7 +139,7 @@ pub struct CandidateVolume {
 
 /// Fully checked FAT16 geometry returned across the C ABI by value.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Geometry {
     /// Sectors declared by the selected BPB total-sector field.
     pub total_sectors: u64,
@@ -192,7 +192,7 @@ impl Geometry {
 
 /// A canonical raw 8.3 query with no pointer or retained caller storage.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RootQuery {
     /// Eight space-padded base bytes followed by three extension bytes.
     pub canonical_name: [u8; 11],
@@ -207,7 +207,7 @@ impl RootQuery {
 
 /// One validated regular root-directory entry.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RootEntry {
     /// Canonical raw 8.3 bytes copied by value.
     pub canonical_name: [u8; 11],
@@ -221,7 +221,7 @@ pub struct RootEntry {
 
 /// Pointer-free facts captured from the first FAT sector before root parsing.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct FatState {
     /// FAT entry zero, including the BPB media descriptor in its low byte.
     pub media_entry: u16,
@@ -259,7 +259,7 @@ impl RootEntry {
 
 /// A validated one-cluster file extent.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Extent {
     /// The validated data cluster.
     pub cluster: u16,
@@ -288,7 +288,7 @@ impl Extent {
 
 /// Checked facts about the deterministic file contents.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Payload {
     /// SHA-256 computed from the DMA-originated 128 bytes.
     pub sha256: [u8; 32],
@@ -517,8 +517,10 @@ pub fn make_query(name: &[u8]) -> Result<RootQuery, Status> {
     if !canonical_name(name) || name != SAPOTE_NAME {
         return Err(Status::NameMalformed);
     }
-    let mut canonical = [0u8; 11];
-    canonical.copy_from_slice(name);
+    let canonical = [
+        name[0], name[1], name[2], name[3], name[4], name[5],
+        name[6], name[7], name[8], name[9], name[10],
+    ];
     Ok(RootQuery { canonical_name: canonical })
 }
 
@@ -592,8 +594,10 @@ pub fn find_root(
         {
             return Err(Status::FileSize);
         }
-        let mut canonical = [0u8; 11];
-        canonical.copy_from_slice(name);
+        let canonical = [
+            name[0], name[1], name[2], name[3], name[4], name[5],
+            name[6], name[7], name[8], name[9], name[10],
+        ];
         found = Some(RootEntry {
             canonical_name: canonical,
             attribute,
@@ -741,32 +745,47 @@ const SHA256_K: [u32; 64] = [
     0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
 ];
 
+#[inline(always)]
+fn sha256_input_word(data: &[u8], block_index: usize, word_index: usize) -> u32 {
+    if block_index < 2 {
+        let offset = block_index * 64 + word_index * 4;
+        u32::from_be_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+        ])
+    } else if word_index == 0 {
+        0x8000_0000
+    } else if word_index == 15 {
+        FILE_BYTES * 8
+    } else {
+        0
+    }
+}
+
 fn sha256(data: &[u8]) -> Result<[u8; 32], Status> {
     if data.len() != FILE_BYTES as usize {
         return Err(Status::PayloadLength);
     }
-    let mut padded = [0u8; 192];
-    padded[..data.len()].copy_from_slice(data);
-    padded[data.len()] = 0x80;
-    padded[184..192].copy_from_slice(&(u64::from(FILE_BYTES) * 8).to_be_bytes());
     let mut state = SHA256_INITIAL;
-    for chunk in padded.chunks_exact(64) {
-        let mut words = [0u32; 64];
-        for (index, bytes) in chunk.chunks_exact(4).enumerate() {
-            words[index] = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        }
-        for index in 16..64 {
-            let s0 = words[index - 15].rotate_right(7)
-                ^ words[index - 15].rotate_right(18)
-                ^ (words[index - 15] >> 3);
-            let s1 = words[index - 2].rotate_right(17)
-                ^ words[index - 2].rotate_right(19)
-                ^ (words[index - 2] >> 10);
-            words[index] = words[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(words[index - 7])
-                .wrapping_add(s1);
-        }
+    for block_index in 0..3 {
+        /* A 16-word rolling schedule avoids any hosted bulk-memory operation. */
+        let mut words = [
+            sha256_input_word(data, block_index, 0),
+            sha256_input_word(data, block_index, 1),
+            sha256_input_word(data, block_index, 2),
+            sha256_input_word(data, block_index, 3),
+            sha256_input_word(data, block_index, 4),
+            sha256_input_word(data, block_index, 5),
+            sha256_input_word(data, block_index, 6),
+            sha256_input_word(data, block_index, 7),
+            sha256_input_word(data, block_index, 8),
+            sha256_input_word(data, block_index, 9),
+            sha256_input_word(data, block_index, 10),
+            sha256_input_word(data, block_index, 11),
+            sha256_input_word(data, block_index, 12),
+            sha256_input_word(data, block_index, 13),
+            sha256_input_word(data, block_index, 14),
+            sha256_input_word(data, block_index, 15),
+        ];
         let mut a = state[0];
         let mut b = state[1];
         let mut c = state[2];
@@ -776,10 +795,29 @@ fn sha256(data: &[u8]) -> Result<[u8; 32], Status> {
         let mut g = state[6];
         let mut h = state[7];
         for index in 0..64 {
+            let schedule_index = index & 15;
+            let scheduled = if index < 16 {
+                words[schedule_index]
+            } else {
+                let word_minus_15 = words[(index + 1) & 15];
+                let word_minus_2 = words[(index + 14) & 15];
+                let s0 = word_minus_15.rotate_right(7)
+                    ^ word_minus_15.rotate_right(18)
+                    ^ (word_minus_15 >> 3);
+                let s1 = word_minus_2.rotate_right(17)
+                    ^ word_minus_2.rotate_right(19)
+                    ^ (word_minus_2 >> 10);
+                let next = words[schedule_index]
+                    .wrapping_add(s0)
+                    .wrapping_add(words[(index + 9) & 15])
+                    .wrapping_add(s1);
+                words[schedule_index] = next;
+                next
+            };
             let upper = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let choose = (e & f) ^ ((!e) & g);
             let first = h.wrapping_add(upper).wrapping_add(choose)
-                .wrapping_add(SHA256_K[index]).wrapping_add(words[index]);
+                .wrapping_add(SHA256_K[index]).wrapping_add(scheduled);
             let lower = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let majority = (a & b) ^ (a & c) ^ (b & c);
             let second = lower.wrapping_add(majority);
@@ -802,8 +840,13 @@ fn sha256(data: &[u8]) -> Result<[u8; 32], Status> {
         state[7] = state[7].wrapping_add(h);
     }
     let mut digest = [0u8; 32];
-    for (destination, word) in digest.chunks_exact_mut(4).zip(state) {
-        destination.copy_from_slice(&word.to_be_bytes());
+    for (index, word) in state.iter().copied().enumerate() {
+        let bytes = word.to_be_bytes();
+        let offset = index * 4;
+        digest[offset] = bytes[0];
+        digest[offset + 1] = bytes[1];
+        digest[offset + 2] = bytes[2];
+        digest[offset + 3] = bytes[3];
     }
     Ok(digest)
 }
@@ -820,20 +863,56 @@ pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
         }
     }
     let digest = sha256(data)?;
-    if digest != PAYLOAD_SHA256 {
+    let difference =
+        (digest[0] ^ PAYLOAD_SHA256[0]) |
+        (digest[1] ^ PAYLOAD_SHA256[1]) |
+        (digest[2] ^ PAYLOAD_SHA256[2]) |
+        (digest[3] ^ PAYLOAD_SHA256[3]) |
+        (digest[4] ^ PAYLOAD_SHA256[4]) |
+        (digest[5] ^ PAYLOAD_SHA256[5]) |
+        (digest[6] ^ PAYLOAD_SHA256[6]) |
+        (digest[7] ^ PAYLOAD_SHA256[7]) |
+        (digest[8] ^ PAYLOAD_SHA256[8]) |
+        (digest[9] ^ PAYLOAD_SHA256[9]) |
+        (digest[10] ^ PAYLOAD_SHA256[10]) |
+        (digest[11] ^ PAYLOAD_SHA256[11]) |
+        (digest[12] ^ PAYLOAD_SHA256[12]) |
+        (digest[13] ^ PAYLOAD_SHA256[13]) |
+        (digest[14] ^ PAYLOAD_SHA256[14]) |
+        (digest[15] ^ PAYLOAD_SHA256[15]) |
+        (digest[16] ^ PAYLOAD_SHA256[16]) |
+        (digest[17] ^ PAYLOAD_SHA256[17]) |
+        (digest[18] ^ PAYLOAD_SHA256[18]) |
+        (digest[19] ^ PAYLOAD_SHA256[19]) |
+        (digest[20] ^ PAYLOAD_SHA256[20]) |
+        (digest[21] ^ PAYLOAD_SHA256[21]) |
+        (digest[22] ^ PAYLOAD_SHA256[22]) |
+        (digest[23] ^ PAYLOAD_SHA256[23]) |
+        (digest[24] ^ PAYLOAD_SHA256[24]) |
+        (digest[25] ^ PAYLOAD_SHA256[25]) |
+        (digest[26] ^ PAYLOAD_SHA256[26]) |
+        (digest[27] ^ PAYLOAD_SHA256[27]) |
+        (digest[28] ^ PAYLOAD_SHA256[28]) |
+        (digest[29] ^ PAYLOAD_SHA256[29]) |
+        (digest[30] ^ PAYLOAD_SHA256[30]) |
+        (digest[31] ^ PAYLOAD_SHA256[31]);
+    if difference != 0 {
         return Err(Status::PayloadDigest);
     }
     Ok(Payload { sha256: digest, byte_count: FILE_BYTES, deterministic: 1 })
 }
 
+#[cfg(test)]
 fn put_u16(block: &mut [u8], offset: usize, value: u16) {
     block[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(test)]
 fn put_u32(block: &mut [u8], offset: usize, value: u32) {
     block[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(test)]
 fn make_bpb(block: &mut [u8; BLOCK_BYTES]) {
     block.fill(0);
     block[0..3].copy_from_slice(&[0xEB, 0x3C, 0x90]);
@@ -851,6 +930,7 @@ fn make_bpb(block: &mut [u8; BLOCK_BYTES]) {
     block[510..512].copy_from_slice(&[0x55, 0xAA]);
 }
 
+#[cfg(test)]
 fn make_root(block: &mut [u8; BLOCK_BYTES]) {
     block.fill(0);
     block[..11].copy_from_slice(&SAPOTE_NAME);
@@ -859,6 +939,7 @@ fn make_root(block: &mut [u8; BLOCK_BYTES]) {
     put_u32(block, 28, FILE_BYTES);
 }
 
+#[cfg(test)]
 fn make_fat(block: &mut [u8; BLOCK_BYTES]) {
     block.fill(0);
     put_u16(block, 0, 0xFFF8);
@@ -866,11 +947,13 @@ fn make_fat(block: &mut [u8; BLOCK_BYTES]) {
     put_u16(block, usize::from(FILE_CLUSTER) * 2, 0xFFFF);
 }
 
+#[cfg(test)]
 fn status_is<T>(result: Result<T, Status>, status: Status) -> bool {
     matches!(result, Err(found) if found == status)
 }
 
 /// Exercise all accepted forms and controls 1 through 22 with synthetic bytes.
+#[cfg(test)]
 pub fn self_test() -> u32 {
     let mut block = [0u8; BLOCK_BYTES];
     make_bpb(&mut block);

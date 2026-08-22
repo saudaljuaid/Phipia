@@ -63,6 +63,9 @@ glyph range before C draws it.
 checked arithmetic, classifies by cluster count, validates one canonical
 one-cluster file and computes its deterministic SHA-256. It has no allocator,
 retained pointer or unsafe block and returns only fixed `repr(C)` values.
+Its twenty-two mutation families run both through the guest C ABI and as a
+host Rust unit test; the large fixture builders are test-only and are not part
+of the freestanding image.
 
 `src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
 blocks appear only where an ABI function turns validated C pointers into Rust
@@ -144,15 +147,13 @@ relocations, and the relocations need a global offset table this kernel asserts
 it does not have.
 
 The corollary is visible in the finished image: `nm` on `sapote.elf` finds no
-Rust panic path at all. Not a dormant one — none. Every fallible operation in
-the decoder returns a status, the compiler proved no panic is reachable, and
-optimised the handler away.
-
-So the panic handler in `lib.rs` is, today, unreachable by construction. It is
-kept because that is a property of the current code rather than a guarantee of
-the build, and a future decoder that needs a genuine panic path should have
-somewhere to land — but the honest statement is that it has never run, and the
-build would refuse the change that first made it reachable.
+`panic_bounds_check` machinery. Every fallible parser operation returns a
+status, the compiler proves no bounds panic is reachable, and `make verify`
+asserts that the symbol stays absent. The crate-level panic handler required by
+the `no_std` crate may still have a symbol, but no parser operation reaches it.
+It is kept because that is a property of the current code rather than a
+language guarantee, and a future decoder that introduces a genuine panic path
+will pull in the forbidden GOT before it can boot.
 
 ## Deferred work
 

@@ -98,7 +98,6 @@ struct fat16_payload {
     uint32_t deterministic;
 };
 
-uint32_t sapote_fat16_self_test(void);
 enum fat16_status sapote_fat16_parse_bpb(
     const uint8_t *block,
     size_t block_len,

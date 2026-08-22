@@ -25,6 +25,7 @@ QEMU_ACCEL ?= tcg
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
+RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -111,12 +112,7 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
-		grep -n -B3 -A3 -E '(^|[[:space:]])\.got([[:space:]]|$$)' \
-			$(BUILD_DIR)/sapote.map || true; \
-		readelf -W -r $(RUST_LIB) | grep -E 'GOT|PLT' || true; \
-		exit 1; \
-	}
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
 
 toolchain:
 	@for tool in gcc ld grub-file readelf nm objdump rustc python3 sha256sum strings; do \
@@ -154,6 +150,9 @@ verify: toolchain lint
 	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
 	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'B8FE53B80AAC718B36B545CC7A741ADCA52DF3BFE0DEE580D2A179B49DEBA5AC'
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
+		-o $(RUST_FAT16_TEST)
+	$(RUST_FAT16_TEST)
 	@test "$(words $(TEST_SCENARIOS))" -eq 36
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
@@ -192,12 +191,14 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_font_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_glyph$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_self_test$$'
-	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_bpb$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_find_root$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_fat$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_extent$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_payload$$'
+	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
+		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
+	fi
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
 	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \

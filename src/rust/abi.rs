@@ -272,12 +272,6 @@ fn fat16_status_code(status: fat16::Status) -> i32 {
     status as i32
 }
 
-/// Run the synthetic FAT16 acceptance and refusal controls.
-#[unsafe(no_mangle)]
-pub extern "C" fn sapote_fat16_self_test() -> u32 {
-    fat16::self_test()
-}
-
 /// Validate a CPU-owned BPB block and copy pointer-free checked geometry.
 ///
 /// # Safety
