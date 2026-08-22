@@ -50,7 +50,8 @@ around the unchanged asset:
 
 Status accents identify compact indicators and launcher icons; they are not
 applied to the logo. The First Light workbench displays the exact decoded shape
-as a two-color, two-pixel bitmap with ordered edge dithering. This display-only
+as a two-color, two-pixel bitmap with ordered edge dithering directly on the
+grey window face, without a separate field or frame. This display-only
 treatment leaves the canonical PNG unchanged. The framebuffer console uses
 black on white; early VGA
 text uses bright white on black. The kernel has no alpha compositor, gradients,
