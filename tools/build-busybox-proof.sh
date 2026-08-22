@@ -103,6 +103,17 @@ cp "$work_dir/downloads/$busybox_archive" "$output_dir/$busybox_archive"
 cp "$work_dir/downloads/$musl_archive" "$output_dir/$musl_archive"
 
 busybox_size=$(stat --format=%s "$output_dir/busybox")
+readelf -W -h "$output_dir/busybox" >"$output_dir/elf-header.txt"
+readelf -W -l "$output_dir/busybox" >"$output_dir/elf-program-headers.txt"
+readelf -W -r "$output_dir/busybox" >"$output_dir/elf-relocations.txt"
+readelf -W -d "$output_dir/busybox" >"$output_dir/elf-dynamic.txt" || true
+printf 'measured binary bytes: %s\n' "$busybox_size"
+printf 'measured binary SHA-256: %s\n' \
+    "$(sha256sum "$output_dir/busybox" | awk '{print toupper($1)}')"
+printf 'measured program headers: %s\n' \
+    "$(readelf -W -h "$output_dir/busybox" | awk '/Number of program headers:/{print $5}')"
+printf 'measured PT_LOAD headers: %s\n' \
+    "$(readelf -W -l "$output_dir/busybox" | grep -Ec '^[[:space:]]+LOAD')"
 test "$busybox_size" -le $((2 * 1024 * 1024))
 test $(((busybox_size + 4095) / 4096)) -le 512
 test "$(readelf -W -h "$output_dir/busybox" | awk '/Type:/{print $2}')" = EXEC
@@ -113,10 +124,6 @@ test "$(readelf -W -l "$output_dir/busybox" | grep -Ec '^[[:space:]]+LOAD')" -le
 ! readelf -W -r "$output_dir/busybox" | grep -Eq 'R_X86_64_'
 ! readelf -W -d "$output_dir/busybox" | grep -Eq '\(NEEDED\)|\(TEXTREL\)'
 
-readelf -W -h "$output_dir/busybox" >"$output_dir/elf-header.txt"
-readelf -W -l "$output_dir/busybox" >"$output_dir/elf-program-headers.txt"
-readelf -W -r "$output_dir/busybox" >"$output_dir/elf-relocations.txt"
-readelf -W -d "$output_dir/busybox" >"$output_dir/elf-dynamic.txt" || true
 objdump -d --no-show-raw-insn "$output_dir/busybox" \
     >"$output_dir/busybox-disassembly.txt"
 file "$output_dir/busybox" >"$output_dir/file.txt"
