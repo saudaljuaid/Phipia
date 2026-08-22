@@ -344,9 +344,11 @@ verify: toolchain lint
 		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
 		src/kernel/process.c || \
 		{ echo 'process proof return handler has an unexpected call site'; exit 1; }
-	@test "$$(grep -Ec '^[[:space:]]*syscall[[:space:]]*$$' \
-		src/arch/x86_64/linux_syscall.S)" -eq 1 || \
+	@test "$$($(NM) $(KERNEL) | grep -Ec ' T linux_syscall_entry$$')" -eq 1 || \
 		{ echo 'Linux proof has no unique architectural syscall entry'; exit 1; }
+	@$(OBJDUMP) -d $(BUSYBOX_BINARY) \
+		| grep -Eq '[[:space:]]0f 05[[:space:]]+syscall[[:space:]]*$$' || \
+		{ echo 'pinned BusyBox has no x86-64 syscall instruction'; exit 1; }
 	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \
 		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
