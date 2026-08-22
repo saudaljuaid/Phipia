@@ -262,6 +262,7 @@ struct nvme_filesystem_read_session {
     uint32_t last_ordinal;
     enum nvme_filesystem_session_state state;
     bool guard_pages_clean;
+    bool last_read_changed_while_controller_owned;
     bool changed_while_controller_owned;
     bool teardown_complete;
 };

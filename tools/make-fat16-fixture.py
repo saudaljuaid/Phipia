@@ -210,6 +210,7 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {Path(sys.argv[0]).name} OUTPUT", file=sys.stderr)
         return 2
+    output = None
     try:
         output = checked_output(sys.argv[1])
         image = build_image()
@@ -221,6 +222,11 @@ def main() -> int:
             reopened = stream.read()
         verify_image(reopened)
     except (OSError, ValueError) as error:
+        if output is not None:
+            try:
+                output.unlink(missing_ok=True)
+            except OSError:
+                pass
         print(f"FAT16 fixture refused: {error}", file=sys.stderr)
         return 1
     print(

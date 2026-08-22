@@ -1373,14 +1373,25 @@ static void execute_filesystem_file_proof(
     }
 
     console_write("Sapote: FAT16 volume ready\n");
-    console_write("Sapote: FAT16 file SAPOTE.BIN read: 128 bytes\n");
-    console_write("Sapote: FAT16 MSI-X completion count 4\n");
+    console_write("Sapote: FAT16 file SAPOTE.BIN read: ");
+    console_write_u64(proof.file_bytes);
+    console_write(" bytes\n");
+    console_write("Sapote: FAT16 MSI-X completion count ");
+    console_write_u64(proof.msix_completion_count);
+    console_putc('\n');
     console_write(
         "Sapote: FAT16 DMA ownership CPU-CONTROLLER-CPU complete\n");
     console_write("Sapote: FAT16 teardown complete\n");
+    console_write("ST FAT16 file SAPOTE.BIN bytes ");
+    console_write_u64(proof.file_bytes);
+    console_write(" reads ");
+    console_write_u64(proof.read_count);
+    console_write(" msix ");
+    console_write_u64(proof.msix_completion_count);
     console_write(
-        "ST FAT16 file SAPOTE.BIN bytes 128 reads 4 msix 4 ownership "
-        "CPU-CONTROLLER-CPU teardown clean robustness 28\n");
+        " ownership CPU-CONTROLLER-CPU teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.file_bytes;
     result->proof_counters[1] = proof.msix_completion_count;
@@ -1719,6 +1730,28 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
 _Static_assert(sizeof(installed_descriptors) /
     sizeof(installed_descriptors[0]) <= BOOT_LEDGER_STAGE_CAPACITY,
     "installed boot plan exceeds the ledger capacity");
+
+static const enum boot_capability filesystem_file_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_THREADING_AVAILABLE,
+    BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+    BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+    BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(filesystem_file_requirements) /
+    sizeof(filesystem_file_requirements[0]) ==
+        BOOT_STAGE_CAPABILITY_CAPACITY,
+    "filesystem proof prerequisites no longer exactly fill the bound");
 
 static bool declare_dependencies(
     struct boot_stage_descriptor *descriptor
@@ -2174,35 +2207,15 @@ static bool declare_dependencies(
         descriptor->provided_capability_count = 1U;
         break;
     case BOOT_STAGE_FILESYSTEM_FILE_PROOF:
-        descriptor->required_capabilities[0] =
-            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
-        descriptor->required_capabilities[1] =
-            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
-        descriptor->required_capabilities[2] =
-            BOOT_CAPABILITY_HEAP_AVAILABLE;
-        descriptor->required_capabilities[3] =
-            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
-        descriptor->required_capabilities[4] =
-            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
-        descriptor->required_capabilities[5] =
-            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
-        descriptor->required_capabilities[6] =
-            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
-        descriptor->required_capabilities[7] =
-            BOOT_CAPABILITY_THREADING_AVAILABLE;
-        descriptor->required_capabilities[8] =
-            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
-        descriptor->required_capabilities[9] =
-            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
-        descriptor->required_capabilities[10] =
-            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
-        descriptor->required_capabilities[11] =
-            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
-        descriptor->required_capabilities[12] =
-            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE;
-        descriptor->required_capabilities[13] =
-            BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE;
-        descriptor->required_capability_count = 14U;
+        for (size_t index = 0U;
+             index < sizeof(filesystem_file_requirements) /
+                sizeof(filesystem_file_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                filesystem_file_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(filesystem_file_requirements) /
+            sizeof(filesystem_file_requirements[0]);
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE;
         descriptor->provided_capability_count = 1U;

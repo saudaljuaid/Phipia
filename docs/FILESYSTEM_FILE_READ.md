@@ -45,10 +45,12 @@ reuse or release the payload in controller ownership.
 
 After the matching MSI-X completion, the completion path returns the allocation
 to CPU ownership. C verifies both complete guard pages and proves that the
-payload changed before Rust sees a slice. Rust parses BPB, FAT and root blocks
-immediately. For the data block Rust validates every deterministic byte and
-SHA-256; only then does C copy exactly 128 bytes into the bounded CPU-owned
-result.
+payload changed during that read before Rust sees a slice. The session carries
+a separate current-read change bit so a prior successful read cannot satisfy a
+later read; its cumulative bit is used only for the final aggregate evidence.
+Rust parses BPB, FAT and root blocks immediately. For the data block Rust
+validates every deterministic byte and SHA-256; only then does C copy exactly
+128 bytes into the bounded CPU-owned result.
 
 The deterministic payload is `byte[i] = (i * 73 + 19) mod 256`. Its SHA-256 is
 `D399F065C9F21E2FD51E2AEADB7768EAB7E6E45E5150F31227C9711934A4D1D3`.

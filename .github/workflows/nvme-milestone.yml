@@ -104,8 +104,11 @@ jobs:
                           | wc -w
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  if test "$scenario_count" -ne 36 || \
-                      test "$assertion_count" -ne 214; then
+                  read -r expected_scenario_count expected_assertion_count < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  if test "$scenario_count" -ne "$expected_scenario_count" || \
+                      test "$assertion_count" -ne "$expected_assertion_count"; then
                       printf 'Measured contract drifted: %s scenarios, %s assertion lines.\n' \
                           "$scenario_count" "$assertion_count" >&2
                       exit 1

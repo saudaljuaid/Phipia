@@ -42,7 +42,7 @@ byte ranges; no packed C or Rust structure overlays the disk block.
 
 FAT 1.03's checked derivations are applied in this order:
 
-```
+```text
 RootDirSectors = (RootEntCnt * 32 + BytsPerSec - 1) / BytsPerSec
 FATSz           = BPB_FATSz16
 FirstFATSector  = BPB_RsvdSecCnt

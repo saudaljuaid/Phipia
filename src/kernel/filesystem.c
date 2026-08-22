@@ -567,7 +567,7 @@ static bool control_rust_parser(void)
         return false;
     }
 
-    /* 21: crafted geometry cannot overflow cluster-to-LBA translation. */
+    /* 21: malformed geometry is refused before translation can overflow. */
     fat16_test_make_root(block);
     if (sapote_fat16_find_root(block, sizeof(block), &geometry, &query,
             FAT16_FILE_BYTES, &entry) != FAT16_STATUS_OK) {
@@ -588,6 +588,12 @@ static bool control_rust_parser(void)
     }
 
     /* 22: no concealed state, retained pointer, or partial FFI result. */
+    fat16_test_make_root(block);
+    block[33] = 'X';
+    if (!fat16_find_root_status(block, &geometry, &query,
+            FAT16_FILE_BYTES, FAT16_STATUS_TRAILING_STATE)) {
+        return false;
+    }
     fat16_test_make_root(block);
     block[64] = 'X';
     if (!fat16_find_root_status(block, &geometry, &query,
@@ -893,7 +899,7 @@ static enum filesystem_status read_block(
     result.completion_identity = session->ignored_completions == 0U;
     result.guard_clean = session->guard_pages_clean;
     result.changed_while_controller_owned =
-        session->changed_while_controller_owned;
+        session->last_read_changed_while_controller_owned;
     result.cpu_owned = session->state ==
         NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED;
     return block_result_valid(&result, ordinal) ? FILESYSTEM_STATUS_OK :

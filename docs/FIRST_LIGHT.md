@@ -256,7 +256,7 @@ No correctness control passed unexpectedly.
 
 ## Verification contract
 
-The current repository has 35 named QEMU scenarios. Pull requests run
+The current repository has 36 named QEMU scenarios. Pull requests run
 `make verify`, capture all three First Light frames from QEMU, compare every
 stable pixel, and execute all 36 scenarios. The milestone evidence workflow
 then runs ten complete serial TCG sweeps and records the authorized accelerator

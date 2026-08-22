@@ -1624,15 +1624,19 @@ static enum nvme_status prepare_guarded_read(
     return NVME_STATUS_OK;
 }
 
-static enum nvme_status validate_guarded_read(
-    struct nvme_runtime *controller
+static enum nvme_status inspect_guarded_read(
+    struct nvme_runtime *controller,
+    bool *changed
 )
 {
     const uint8_t *allocation;
     const uint8_t *data;
-    bool changed = false;
 
-    if (controller == NULL || controller->read.dma.owner != DMA_OWNER_CPU) {
+    if (changed != NULL) {
+        *changed = false;
+    }
+    if (controller == NULL || changed == NULL ||
+        controller->read.dma.owner != DMA_OWNER_CPU) {
         return NVME_STATUS_DMA_OWNERSHIP;
     }
     allocation = controller->read.dma.cpu_address;
@@ -1640,7 +1644,7 @@ static enum nvme_status validate_guarded_read(
     controller->read.state = NVME_DMA_CPU_OWNED;
     for (size_t index = 0U; index < NVME_BLOCK_BYTES; ++index) {
         if (data[index] != NVME_SENTINEL) {
-            changed = true;
+            *changed = true;
         }
     }
     for (uint64_t index = 0U; index < controller->read.data_offset;
@@ -1655,6 +1659,19 @@ static enum nvme_status validate_guarded_read(
         if (allocation[index] != NVME_SENTINEL) {
             return NVME_STATUS_SENTINEL_MISMATCH;
         }
+    }
+    return NVME_STATUS_OK;
+}
+
+static enum nvme_status validate_guarded_read(
+    struct nvme_runtime *controller
+)
+{
+    bool changed;
+    enum nvme_status result = inspect_guarded_read(controller, &changed);
+
+    if (result != NVME_STATUS_OK) {
+        return result;
     }
     if (!changed) {
         return NVME_STATUS_CONTENT_MISMATCH;
@@ -1670,33 +1687,19 @@ static uint8_t fixture_byte(size_t index)
 
 static enum nvme_status validate_read_data(struct nvme_runtime *controller)
 {
-    const uint8_t *allocation = controller->read.dma.cpu_address;
-    const uint8_t *data = allocation + controller->read.data_offset;
-    bool changed = false;
+    const uint8_t *data;
+    bool changed;
+    enum nvme_status result;
 
-    if (controller->read.dma.owner != DMA_OWNER_CPU) {
-        return NVME_STATUS_DMA_OWNERSHIP;
+    result = inspect_guarded_read(controller, &changed);
+    if (result != NVME_STATUS_OK) {
+        return result;
     }
-    controller->read.state = NVME_DMA_CPU_OWNED;
+    data = (const uint8_t *)controller->read.dma.cpu_address +
+        controller->read.data_offset;
     for (size_t index = 0U; index < NVME_BLOCK_BYTES; ++index) {
-        if (data[index] != NVME_SENTINEL) {
-            changed = true;
-        }
         if (data[index] != fixture_byte(index)) {
             return NVME_STATUS_CONTENT_MISMATCH;
-        }
-    }
-    for (uint64_t index = 0U; index < controller->read.data_offset;
-         ++index) {
-        if (allocation[index] != NVME_SENTINEL) {
-            return NVME_STATUS_SENTINEL_MISMATCH;
-        }
-    }
-    for (uint64_t index = controller->read.data_offset +
-            controller->read.data_length;
-         index < controller->read.dma.byte_length; ++index) {
-        if (allocation[index] != NVME_SENTINEL) {
-            return NVME_STATUS_SENTINEL_MISMATCH;
         }
     }
     if (!changed) {
@@ -2568,6 +2571,7 @@ enum nvme_status nvme_filesystem_session_read(
         ordinal != session->read_count + 1U) {
         return NVME_STATUS_READ_ORDINAL;
     }
+    session->last_read_changed_while_controller_owned = false;
     controller = &filesystem_runtime.controller;
     result = prepare_guarded_read(controller);
     if (result != NVME_STATUS_OK) {
@@ -2585,7 +2589,9 @@ enum nvme_status nvme_filesystem_session_read(
     }
     result = validate_guarded_read(controller);
     if (result != NVME_STATUS_OK) {
-        session->guard_pages_clean = false;
+        if (result == NVME_STATUS_SENTINEL_MISMATCH) {
+            session->guard_pages_clean = false;
+        }
         return result;
     }
     session->state = NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED;
@@ -2594,9 +2600,11 @@ enum nvme_status nvme_filesystem_session_read(
     session->msix_completion_count +=
         interrupts_after - interrupts_before;
     session->ignored_completions = controller->ignored_completions;
+    session->last_read_changed_while_controller_owned =
+        controller->read.changed_while_controller_owned;
     session->changed_while_controller_owned =
         session->changed_while_controller_owned ||
-        controller->read.changed_while_controller_owned;
+        session->last_read_changed_while_controller_owned;
     return NVME_STATUS_OK;
 }
 

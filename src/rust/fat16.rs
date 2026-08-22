@@ -31,7 +31,9 @@ pub const PAYLOAD_SHA256: [u8; 32] = [
 const FAT12_MAX_CLUSTERS: u64 = 4084;
 const FAT16_MAX_CLUSTERS: u64 = 65_524;
 const FAT16_EOC_MIN: u16 = 0xFFF8;
+#[cfg(test)]
 const FAT16_BAD: u16 = 0xFFF7;
+#[cfg(test)]
 const FAT16_RESERVED_MIN: u16 = 0xFFF0;
 const MEDIA_FIXED: u8 = 0xF8;
 const DIRECTORY_ENTRY_BYTES: u64 = 32;
@@ -605,9 +607,14 @@ pub fn find_root(
             file_size,
         });
     }
-    for index in end + 1..entries {
+    for index in end..entries {
         let offset = index.checked_mul(32).ok_or(Status::SpanOverflow)?;
-        if field(block, offset, 32)?.iter().any(|byte| *byte != 0) {
+        let skip = usize::from(index == end);
+        let trailing_offset = offset.checked_add(skip).ok_or(Status::SpanOverflow)?;
+        let trailing_length = 32usize.checked_sub(skip).ok_or(Status::SpanOverflow)?;
+        if field(block, trailing_offset, trailing_length)?
+            .iter().any(|byte| *byte != 0)
+        {
             return Err(Status::TrailingState);
         }
     }
@@ -641,11 +648,6 @@ pub fn parse_fat(
         // Exact one-cluster termination.
     } else if fat_value >= 2 && u64::from(fat_value) <= maximum_cluster {
         return Err(Status::MultiCluster);
-    } else if fat_value == 0 || fat_value == 1 || fat_value == FAT16_BAD
-        || (FAT16_RESERVED_MIN..FAT16_EOC_MIN).contains(&fat_value)
-        || u64::from(fat_value) > maximum_cluster
-    {
-        return Err(Status::FatEntry);
     } else {
         return Err(Status::FatEntry);
     }
@@ -655,6 +657,32 @@ pub fn parse_fat(
         file_cluster: FILE_CLUSTER,
         file_entry: fat_value,
     })
+}
+
+fn translate_cluster(geometry: &Geometry, cluster: u16) -> Result<u64, Status> {
+    let cluster_index = u64::from(cluster)
+        .checked_sub(2)
+        .ok_or(Status::ClusterTranslation)?;
+    let sector_delta = cluster_index
+        .checked_mul(u64::from(geometry.sectors_per_cluster))
+        .ok_or(Status::ClusterTranslation)?;
+    let lba = geometry.first_data_sector
+        .checked_add(sector_delta)
+        .ok_or(Status::ClusterTranslation)?;
+    let extent_end = lba
+        .checked_add(u64::from(geometry.sectors_per_cluster))
+        .ok_or(Status::ClusterTranslation)?;
+    let data_end = geometry.first_data_sector
+        .checked_add(geometry.data_sectors)
+        .ok_or(Status::ClusterTranslation)?;
+    if lba < geometry.first_data_sector || extent_end > data_end
+        || extent_end > geometry.total_sectors
+        || extent_end > geometry.namespace_blocks
+        || lba != 4
+    {
+        return Err(Status::ClusterTranslation);
+    }
+    Ok(lba)
 }
 
 /// Join validated root and FAT values into one checked one-cluster extent.
@@ -683,28 +711,7 @@ pub fn validate_extent(
     if fat.file_entry < FAT16_EOC_MIN {
         return Err(Status::FatEntry);
     }
-    let cluster_index = u64::from(entry.first_cluster)
-        .checked_sub(2)
-        .ok_or(Status::ClusterTranslation)?;
-    let sector_delta = cluster_index
-        .checked_mul(u64::from(geometry.sectors_per_cluster))
-        .ok_or(Status::ClusterTranslation)?;
-    let lba = geometry.first_data_sector
-        .checked_add(sector_delta)
-        .ok_or(Status::ClusterTranslation)?;
-    let extent_end = lba
-        .checked_add(u64::from(geometry.sectors_per_cluster))
-        .ok_or(Status::ClusterTranslation)?;
-    let data_end = geometry.first_data_sector
-        .checked_add(geometry.data_sectors)
-        .ok_or(Status::ClusterTranslation)?;
-    if lba < geometry.first_data_sector || extent_end > data_end
-        || extent_end > geometry.total_sectors
-        || extent_end > geometry.namespace_blocks
-        || lba != 4
-    {
-        return Err(Status::ClusterTranslation);
-    }
+    let lba = translate_cluster(geometry, entry.first_cluster)?;
     let cluster_bytes = geometry.bytes_per_sector
         .checked_mul(geometry.sectors_per_cluster)
         .ok_or(Status::SpanOverflow)?;
@@ -1140,17 +1147,23 @@ pub fn self_test() -> u32 {
     put_u32(&mut block, 28, BLOCK_BYTES as u32 + 1);
     if !status_is(find_root(&block, &geometry, &query, u32::MAX), Status::FileSize) { return 0; }
 
-    // 21: checked cluster translation refuses crafted overflow.
+    // 21: the translation helper refuses overflow before any LBA is returned.
     let mut corrupt_geometry = geometry;
     corrupt_geometry.first_data_sector = u64::MAX;
     make_fat(&mut block);
-    if !status_is(validate_extent(&corrupt_geometry, &entry, &fat), Status::SpanOverflow)
+    if !status_is(
+        translate_cluster(&corrupt_geometry, entry.first_cluster),
+        Status::ClusterTranslation,
+    ) || (!status_is(validate_extent(&corrupt_geometry, &entry, &fat), Status::SpanOverflow)
         && !status_is(validate_extent(&corrupt_geometry, &entry, &fat), Status::SpanRange)
-    {
+    ) {
         return 0;
     }
 
     // 22: declared directory end cannot conceal trailing allocated state.
+    make_root(&mut block);
+    block[33] = b'X';
+    if !status_is(find_root(&block, &geometry, &query, FILE_BYTES), Status::TrailingState) { return 0; }
     make_root(&mut block);
     block[64] = b'X';
     if !status_is(find_root(&block, &geometry, &query, FILE_BYTES), Status::TrailingState) { return 0; }

@@ -20,6 +20,8 @@ jobs:
         steps:
             - name: Check out source
               uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
             - name: Install build tools
               run: |
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
@@ -96,12 +98,15 @@ jobs:
                           | wc -w
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  read -r expected_scenario_count expected_assertion_count < <(
+                      make --no-print-directory -s contract-counts
+                  )
                   source_lines=$(
                       find src include -type f -print0 \
-                          | sort -z | xargs -0 wc -l | tail -n 1 | awk '{print $1}'
+                          | sort -z | xargs -0 -r cat | wc -l
                   )
-                  test "$scenario_count" -eq 36
-                  test "$assertion_count" -eq 214
+                  test "$scenario_count" -eq "$expected_scenario_count"
+                  test "$assertion_count" -eq "$expected_assertion_count"
                   ordinary_record=$(
                       grep -E '^ST LEDGER stages 40 receipts 40 capabilities [0-9]+ skips [0-9]+ fingerprint 0x[0-9A-F]{16}$' \
                           evidence/filesystem/tcg-sweep-10-logs/boot-ledger.log

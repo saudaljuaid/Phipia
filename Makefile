@@ -12,6 +12,8 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	screen keyboard shell surface write-combining device-windows \
 	boot-ledger first-light device-substrate xhci nvme filesystem
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
+EXPECTED_TEST_SCENARIO_COUNT := 36
+EXPECTED_SHELL_ASSERTION_COUNT := 214
 
 CC := gcc
 LD := ld
@@ -75,10 +77,14 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-first-light clean hooks iso kernel lint qemu-tests run \
-	screenshot-proof smoke toolchain verify
+.PHONY: all capture-first-light clean contract-counts hooks iso kernel lint \
+	qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
+
+contract-counts:
+	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
+		'$(EXPECTED_SHELL_ASSERTION_COUNT)'
 
 kernel: $(KERNEL)
 
@@ -153,7 +159,8 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
-	@test "$(words $(TEST_SCENARIOS))" -eq 36
+	@test "$(words $(TEST_SCENARIOS))" -eq \
+		'$(EXPECTED_TEST_SCENARIO_COUNT)'
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
@@ -246,7 +253,7 @@ verify: toolchain lint
 	@! grep -Eq 'NVME_NVM_WRITE|NVM_WRITE|write[_ -]opcode' \
 		include/sapote/nvme.h src/kernel/nvme.c src/kernel/filesystem.c \
 		src/rust/fat16.rs
-	@if grep -ERn '^[[:space:]]*(unsafe[[:space:]]|#\[unsafe)' \
+	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \
 		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
 	fi

@@ -21,7 +21,7 @@ The complete image SHA-256 is
 
 The Makefile uses QEMU's documented block graph, not `-drive`:
 
-```
+```text
 -blockdev driver=file,filename=build/tests/filesystem/fat16-fixture.raw,node-name=filesystem-file,read-only=on,auto-read-only=off
 -blockdev driver=raw,file=filesystem-file,node-name=filesystem-raw,read-only=on
 -device nvme,drive=filesystem-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1,...
@@ -41,7 +41,7 @@ its declared neutral absence receipt rather than interpreting FAT metadata.
 
 Only stable format and lifecycle facts appear in the public proof:
 
-```
+```text
 ST FAT16 file SAPOTE.BIN bytes 128 reads 4 msix 4 ownership CPU-CONTROLLER-CPU teardown clean robustness 28
 ```
 
