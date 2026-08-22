@@ -26,10 +26,10 @@ rm -rf "$output_dir" "$work_dir"
 mkdir -p "$output_dir" "$work_dir/downloads" "$work_dir/source" \
     "$work_dir/musl-build" "$work_dir/musl-install"
 
-curl --fail --location --proto '=https' --tlsv1.2 \
-    "$busybox_url" -o "$work_dir/downloads/$busybox_archive"
-curl --fail --location --proto '=https' --tlsv1.2 \
-    "$musl_url" -o "$work_dir/downloads/$musl_archive"
+cp "$repository_root/userspace/busybox/source/$busybox_archive" \
+    "$work_dir/downloads/$busybox_archive"
+cp "$repository_root/userspace/busybox/source/$musl_archive" \
+    "$work_dir/downloads/$musl_archive"
 
 printf '%s  %s\n' "$busybox_sha256" \
     "$work_dir/downloads/$busybox_archive" | sha256sum --check --strict

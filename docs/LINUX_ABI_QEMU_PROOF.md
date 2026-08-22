@@ -17,6 +17,11 @@ clusters.  It adds no partition parser, directory traversal, VFS, cache,
 write, mount, or public block API.  CPU parsing begins only after every DMA and
 filesystem buffer has returned to CPU ownership.
 
+The complete fixture SHA-256 is
+`B8D17F12B117D1945A8C47034BDBD02E955C8F297BD975EAC5A0EC361249FD00`.
+Its file payload SHA-256 is the executable digest
+`AFC9133E22C46453A6D318ABC976361A2DA751EEFB7111B0816E8FF8497E5CC4`.
+
 Candidate/validated executable, candidate/building/installed/running/exiting/
 stopping/released process, candidate/armed/entered/returned/disarmed syscall
 CPU, initial stack, bounded heap, stdout sink, request/result provenance, and
