@@ -129,7 +129,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4833 | The thirty-five QEMU scenarios and what each must print. |
+| `test.c` | 4836 | The thirty-five QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order

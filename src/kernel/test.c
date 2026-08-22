@@ -3990,6 +3990,9 @@ void kernel_test_run(
     case KERNEL_TEST_XHCI:
         /* Deferred until the proof receipt is installed and published. */
         return;
+    case KERNEL_TEST_NVME:
+        /* Deferred until the proof receipt is installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
