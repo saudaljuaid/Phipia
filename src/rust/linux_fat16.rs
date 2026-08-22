@@ -104,21 +104,33 @@ fn canonical_component(component: &[u8], required: bool) -> bool {
 }
 
 fn canonical_name(name: &[u8]) -> bool {
+    let Some(base) = name.get(..8) else {
+        return false;
+    };
+    let Some(extension) = name.get(8..11) else {
+        return false;
+    };
     name.len() == 11
-        && canonical_component(&name[..8], true)
-        && canonical_component(&name[8..], false)
+        && canonical_component(base, true)
+        && canonical_component(extension, false)
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, Status> {
     let end = offset.checked_add(2).ok_or(Status::Truncated)?;
     let field = bytes.get(offset..end).ok_or(Status::Truncated)?;
-    Ok(u16::from_le_bytes([field[0], field[1]]))
+    let first = field.first().copied().ok_or(Status::Truncated)?;
+    let second = field.get(1).copied().ok_or(Status::Truncated)?;
+    Ok(u16::from_le_bytes([first, second]))
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Status> {
     let end = offset.checked_add(4).ok_or(Status::Truncated)?;
     let field = bytes.get(offset..end).ok_or(Status::Truncated)?;
-    Ok(u32::from_le_bytes([field[0], field[1], field[2], field[3]]))
+    let first = field.first().copied().ok_or(Status::Truncated)?;
+    let second = field.get(1).copied().ok_or(Status::Truncated)?;
+    let third = field.get(2).copied().ok_or(Status::Truncated)?;
+    let fourth = field.get(3).copied().ok_or(Status::Truncated)?;
+    Ok(u32::from_le_bytes([first, second, third, fourth]))
 }
 
 fn geometry_valid(geometry: &Geometry) -> bool {
@@ -155,21 +167,26 @@ pub fn find_root(
     for index in 0..geometry.root_entries as usize {
         let offset = index.checked_mul(DIRECTORY_ENTRY_BYTES)
             .ok_or(Status::Truncated)?;
-        let first = block[offset];
+        let entry_end = offset.checked_add(DIRECTORY_ENTRY_BYTES)
+            .ok_or(Status::Truncated)?;
+        let entry = block.get(offset..entry_end).ok_or(Status::Truncated)?;
+        let first = entry.first().copied().ok_or(Status::Truncated)?;
         if first == 0 {
             saw_end = true;
-            for trailing in &block[offset + DIRECTORY_ENTRY_BYTES..] {
+            let trailing = block.get(entry_end..).ok_or(Status::Truncated)?;
+            for trailing in trailing {
                 if *trailing != 0 {
                     return Err(Status::UnsupportedEntry);
                 }
             }
             break;
         }
-        if first == 0xE5 || block[offset + 11] == ATTR_LONG_NAME {
+        let attribute = entry.get(11).copied().ok_or(Status::Truncated)?;
+        if first == 0xE5 || attribute == ATTR_LONG_NAME {
             return Err(Status::UnsupportedEntry);
         }
-        let name = &block[offset..offset + 11];
-        if !canonical_name(name) || block[offset + 11] != ATTR_ARCHIVE {
+        let name = entry.get(..11).ok_or(Status::Truncated)?;
+        if !canonical_name(name) || attribute != ATTR_ARCHIVE {
             return Err(Status::UnsupportedEntry);
         }
         if name != query.canonical_name {
@@ -254,13 +271,14 @@ pub fn build_chain(
     let mut chain = Chain::invalid();
     let mut cluster = entry.first_cluster;
     for index in 0..needed as usize {
-        for previous in 0..index {
-            if chain.clusters[previous] == cluster {
-                return Err(Status::ChainCycle);
-            }
+        let prior = chain.clusters.get(..index).ok_or(Status::ChainCapacity)?;
+        if prior.contains(&cluster) {
+            return Err(Status::ChainCycle);
         }
-        chain.clusters[index] = cluster;
-        chain.lbas[index] = cluster_lba(geometry, cluster)?;
+        let cluster_slot = chain.clusters.get_mut(index).ok_or(Status::ChainCapacity)?;
+        *cluster_slot = cluster;
+        let lba_slot = chain.lbas.get_mut(index).ok_or(Status::ChainCapacity)?;
+        *lba_slot = cluster_lba(geometry, cluster)?;
         let fat_offset = usize::from(cluster).checked_mul(2)
             .ok_or(Status::ClusterTranslation)?;
         let next = read_u16(fat, fat_offset)?;
@@ -325,85 +343,99 @@ const SHA256_K: [u32; 64] = [
     0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
 ];
 
-fn padded_byte(data: &[u8], offset: usize, padded_bytes: usize) -> u8 {
+fn padded_byte(data: &[u8], offset: usize, padded_bytes: usize) -> Result<u8, Status> {
     if offset < data.len() {
-        data[offset]
+        data.get(offset).copied().ok_or(Status::PayloadLength)
     } else if offset == data.len() {
-        0x80
-    } else if offset >= padded_bytes - 8 {
-        let length = (data.len() as u64).wrapping_mul(8).to_be_bytes();
-        length[offset - (padded_bytes - 8)]
+        Ok(0x80)
     } else {
-        0
+        let length_start = padded_bytes.checked_sub(8).ok_or(Status::PayloadLength)?;
+        if offset < length_start {
+            return Ok(0);
+        }
+        let length_index = offset.checked_sub(length_start).ok_or(Status::PayloadLength)?;
+        let bit_length = u64::try_from(data.len()).map_err(|_| Status::PayloadLength)?
+            .checked_mul(8).ok_or(Status::PayloadLength)?;
+        bit_length.to_be_bytes().get(length_index).copied()
+            .ok_or(Status::PayloadLength)
     }
 }
 
-fn sha256(data: &[u8]) -> [u8; 32] {
-    let padded_bytes = (data.len() + 9).div_ceil(64) * 64;
+fn sha256(data: &[u8]) -> Result<[u8; 32], Status> {
+    let unrounded = data.len().checked_add(9).ok_or(Status::PayloadLength)?;
+    let blocks = unrounded.checked_add(63).ok_or(Status::PayloadLength)? / 64;
+    let padded_bytes = blocks.checked_mul(64).ok_or(Status::PayloadLength)?;
     let mut state = SHA256_INITIAL;
-    for block in 0..padded_bytes / 64 {
+    for block in 0..blocks {
         let mut words = [0u32; 64];
-        for word in 0..16 {
-            let offset = block * 64 + word * 4;
-            words[word] = u32::from_be_bytes([
-                padded_byte(data, offset, padded_bytes),
-                padded_byte(data, offset + 1, padded_bytes),
-                padded_byte(data, offset + 2, padded_bytes),
-                padded_byte(data, offset + 3, padded_bytes),
+        for word in 0usize..16 {
+            let block_offset = block.checked_mul(64).ok_or(Status::PayloadLength)?;
+            let word_offset = word.checked_mul(4).ok_or(Status::PayloadLength)?;
+            let offset = block_offset.checked_add(word_offset).ok_or(Status::PayloadLength)?;
+            let second = offset.checked_add(1).ok_or(Status::PayloadLength)?;
+            let third = offset.checked_add(2).ok_or(Status::PayloadLength)?;
+            let fourth = offset.checked_add(3).ok_or(Status::PayloadLength)?;
+            let value = u32::from_be_bytes([
+                padded_byte(data, offset, padded_bytes)?,
+                padded_byte(data, second, padded_bytes)?,
+                padded_byte(data, third, padded_bytes)?,
+                padded_byte(data, fourth, padded_bytes)?,
             ]);
+            let destination = words.get_mut(word).ok_or(Status::PayloadLength)?;
+            *destination = value;
         }
-        for word in 16..64 {
-            let a = words[word - 15];
-            let b = words[word - 2];
+        for word in 16usize..64 {
+            let previous_fifteen = word.checked_sub(15).ok_or(Status::PayloadLength)?;
+            let previous_two = word.checked_sub(2).ok_or(Status::PayloadLength)?;
+            let previous_sixteen = word.checked_sub(16).ok_or(Status::PayloadLength)?;
+            let previous_seven = word.checked_sub(7).ok_or(Status::PayloadLength)?;
+            let a = words.get(previous_fifteen).copied().ok_or(Status::PayloadLength)?;
+            let b = words.get(previous_two).copied().ok_or(Status::PayloadLength)?;
             let s0 = a.rotate_right(7) ^ a.rotate_right(18) ^ (a >> 3);
             let s1 = b.rotate_right(17) ^ b.rotate_right(19) ^ (b >> 10);
-            words[word] = words[word - 16].wrapping_add(s0)
-                .wrapping_add(words[word - 7]).wrapping_add(s1);
+            let value = words.get(previous_sixteen).copied().ok_or(Status::PayloadLength)?
+                .wrapping_add(s0)
+                .wrapping_add(words.get(previous_seven).copied()
+                    .ok_or(Status::PayloadLength)?)
+                .wrapping_add(s1);
+            let destination = words.get_mut(word).ok_or(Status::PayloadLength)?;
+            *destination = value;
         }
-        let mut a = state[0];
-        let mut b = state[1];
-        let mut c = state[2];
-        let mut d = state[3];
-        let mut e = state[4];
-        let mut f = state[5];
-        let mut g = state[6];
-        let mut h = state[7];
-        for round in 0..64 {
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
+        for (constant, word) in SHA256_K.iter().copied().zip(words.iter().copied()) {
             let upper = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let choose = (e & f) ^ ((!e) & g);
             let first = h.wrapping_add(upper).wrapping_add(choose)
-                .wrapping_add(SHA256_K[round]).wrapping_add(words[round]);
+                .wrapping_add(constant).wrapping_add(word);
             let lower = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let majority = (a & b) ^ (a & c) ^ (b & c);
             let second = lower.wrapping_add(majority);
             h = g; g = f; f = e; e = d.wrapping_add(first);
             d = c; c = b; b = a; a = first.wrapping_add(second);
         }
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-        state[5] = state[5].wrapping_add(f);
-        state[6] = state[6].wrapping_add(g);
-        state[7] = state[7].wrapping_add(h);
+        let [s0, s1, s2, s3, s4, s5, s6, s7] = state;
+        state = [
+            s0.wrapping_add(a), s1.wrapping_add(b), s2.wrapping_add(c),
+            s3.wrapping_add(d), s4.wrapping_add(e), s5.wrapping_add(f),
+            s6.wrapping_add(g), s7.wrapping_add(h),
+        ];
     }
     let mut digest = [0u8; 32];
-    for (index, word) in state.iter().enumerate() {
-        let bytes = word.to_be_bytes();
-        digest[index * 4..index * 4 + 4].copy_from_slice(&bytes);
+    let bytes = state.iter().flat_map(|word| word.to_be_bytes());
+    for (destination, source) in digest.iter_mut().zip(bytes) {
+        *destination = source;
     }
-    digest
+    Ok(digest)
 }
 
 pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
     if data.len() != FILE_BYTES as usize {
         return Err(Status::PayloadLength);
     }
-    let digest = sha256(data);
+    let digest = sha256(data)?;
     let mut difference = 0u8;
-    for index in 0..digest.len() {
-        difference |= digest[index] ^ BUSYBOX_SHA256[index];
+    for (actual, expected) in digest.iter().zip(BUSYBOX_SHA256.iter()) {
+        difference |= actual ^ expected;
     }
     if difference != 0 {
         return Err(Status::PayloadDigest);
@@ -488,10 +520,10 @@ mod tests {
     fn generic_sha256_matches_known_vector() {
         assert_eq!(
             sha256(b"abc"),
-            [0xBA, 0x78, 0x16, 0xBF, 0x8F, 0x01, 0xCF, 0xEA,
+            Ok([0xBA, 0x78, 0x16, 0xBF, 0x8F, 0x01, 0xCF, 0xEA,
              0x41, 0x41, 0x40, 0xDE, 0x5D, 0xAE, 0x22, 0x23,
              0xB0, 0x03, 0x61, 0xA3, 0x96, 0x17, 0x7A, 0x9C,
-             0xB4, 0x10, 0xFF, 0x61, 0xF2, 0x00, 0x15, 0xAD]
+             0xB4, 0x10, 0xFF, 0x61, 0xF2, 0x00, 0x15, 0xAD])
         );
     }
 }

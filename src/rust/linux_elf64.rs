@@ -190,6 +190,21 @@ struct ProgramHeader {
     alignment: u64,
 }
 
+impl ProgramHeader {
+    const fn invalid() -> Self {
+        Self {
+            kind: 0,
+            flags: 0,
+            offset: 0,
+            virtual_address: 0,
+            physical_address: 0,
+            file_size: 0,
+            memory_size: 0,
+            alignment: 0,
+        }
+    }
+}
+
 const MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
     ProgramHeader { kind: PT_LOAD, flags: PF_R, offset: 0, virtual_address: 0x4000_0100_0000, physical_address: 0x4000_0100_0000, file_size: 0x158, memory_size: 0x158, alignment: 0x1000 },
     ProgramHeader { kind: PT_LOAD, flags: PF_R | PF_X, offset: 0x1000, virtual_address: 0x4000_0100_1000, physical_address: 0x4000_0100_1000, file_size: 0x5563, memory_size: 0x5563, alignment: 0x1000 },
@@ -384,7 +399,7 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
         .ok_or(Status::ProgramTable)?;
     let table_end = table_offset.checked_add(table_bytes).ok_or(Status::ProgramTable)?;
     if table_end > input.len() { return Err(Status::ProgramTable); }
-    let mut programs = [MEASURED[0]; PROGRAM_HEADERS];
+    let mut programs = [ProgramHeader::invalid(); PROGRAM_HEADERS];
     for (index, program) in programs.iter_mut().enumerate() {
         let offset = table_offset.checked_add(index.checked_mul(usize::from(program_size))
             .ok_or(Status::ProgramTable)?).ok_or(Status::ProgramTable)?;
@@ -412,12 +427,21 @@ pub fn self_test() -> u32 {
         return 0;
     }
     let mut changed = MEASURED;
-    changed[1].flags |= PF_W;
+    let Some(executable) = changed.get_mut(1) else {
+        return 0;
+    };
+    executable.flags |= PF_W;
     if validate_programs(&changed).is_ok() {
         return 0;
     }
     changed = MEASURED;
-    changed[3].memory_size = changed[3].file_size - 1;
+    let Some(writable) = changed.get_mut(3) else {
+        return 0;
+    };
+    let Some(invalid_size) = writable.file_size.checked_sub(1) else {
+        return 0;
+    };
+    writable.memory_size = invalid_size;
     if validate_programs(&changed).is_ok() {
         return 0;
     }
