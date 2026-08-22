@@ -114,6 +114,7 @@ $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
 		grep -n -B3 -A3 -E '(^|[[:space:]])\.got([[:space:]]|$$)' \
 			$(BUILD_DIR)/sapote.map || true; \
+		readelf -W -r $(RUST_LIB) | grep -E 'GOT|PLT' || true; \
 		exit 1; \
 	}
 
