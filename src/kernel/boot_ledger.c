@@ -2324,6 +2324,8 @@ bool boot_ledger_self_test(void)
 
     /* A required or capability-free stage cannot declare a neutral skip. */
     boot_ledger_reset(&first);
+    one.skipped_capabilities[0] =
+        BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
     one.required = true;
     if (!self_test_add(&first, &one) ||
         boot_ledger_validate(&first) !=

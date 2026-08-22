@@ -29,7 +29,7 @@ long you will be in there.
 | --- | ---: | --- |
 | `kernel.c` | 129 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
 | `boot_plan.c` | 2677 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 2335 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `boot_ledger.c` | 2337 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
