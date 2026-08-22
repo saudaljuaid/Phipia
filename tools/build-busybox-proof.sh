@@ -14,6 +14,8 @@ busybox_version=1.38.0
 busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
+busybox_config_sha256=fdca3f3c4690b30cee0b9689775dc1a8b2f7a55d442abb4505e86f99c34542fd
+busybox_binary_sha256=afc9133e22c46453a6d318abc976361a2da751eefb7111b0816e8ff8497e5cc4
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -54,37 +56,16 @@ musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwin
     make install
 )
 
-cp "$repository_root/userspace/busybox/busybox-miniconfig" \
-    "$work_dir/busybox-miniconfig"
+cp "$repository_root/userspace/busybox/busybox.config" \
+    "$work_dir/busybox.config"
+printf '%s  %s\n' "$busybox_config_sha256" \
+    "$work_dir/busybox.config" | sha256sum --check --strict
 (
     cd "$busybox_source"
     export KCONFIG_NOTIMESTAMP=1
-    make allnoconfig
-    while IFS= read -r setting; do
-        case "$setting" in
-            CONFIG_*=n)
-                symbol=${setting%%=*}
-                replacement="# $symbol is not set"
-                ;;
-            CONFIG_*=*)
-                symbol=${setting%%=*}
-                replacement=$setting
-                ;;
-            *)
-                printf 'invalid BusyBox miniconfig line: %s\n' "$setting" >&2
-                exit 1
-                ;;
-        esac
-        if grep -Eq "^${symbol}=|^# ${symbol} is not set$" .config; then
-            sed -i \
-                -e "s|^${symbol}=.*$|${replacement}|" \
-                -e "s|^# ${symbol} is not set$|${replacement}|" \
-                .config
-        else
-            printf '%s\n' "$replacement" >>.config
-        fi
-    done <"$work_dir/busybox-miniconfig"
+    cp "$work_dir/busybox.config" .config
     make silentoldconfig
+    cmp --silent .config "$work_dir/busybox.config"
     test "$(grep -Ec '^CONFIG_[A-Z0-9_]+=y$' .config)" -ge 1
     grep -Fxq 'CONFIG_BUSYBOX=y' .config
     grep -Fxq 'CONFIG_STATIC=y' .config
@@ -98,6 +79,10 @@ cp "$repository_root/userspace/busybox/busybox-miniconfig" \
 busybox_binary="$busybox_source/busybox"
 cp "$busybox_binary" "$output_dir/busybox"
 cp "$busybox_source/.config" "$output_dir/busybox.config"
+printf '%s  %s\n' "$busybox_binary_sha256" \
+    "$output_dir/busybox" | sha256sum --check --strict
+printf '%s  %s\n' "$busybox_config_sha256" \
+    "$output_dir/busybox.config" | sha256sum --check --strict
 cp "$busybox_source/LICENSE" "$output_dir/BUSYBOX-LICENSE"
 cp "$musl_source/COPYRIGHT" "$output_dir/MUSL-COPYRIGHT"
 cp "$work_dir/downloads/$busybox_archive" "$output_dir/$busybox_archive"
@@ -134,6 +119,26 @@ env -i strace --argv0=busybox --quiet=all --string-limit=256 \
     >"$stdout_file" 2>"$stderr_file"
 printf 'SAPOTE\n' | cmp --silent - "$stdout_file"
 test ! -s "$stderr_file"
+sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' "$trace_file" \
+    | grep -v '^execve$' >"$output_dir/syscall-sequence.txt"
+cat >"$work_dir/expected-syscall-sequence.txt" <<'EOF'
+arch_prctl
+set_tid_address
+brk
+brk
+mmap
+mmap
+write
+munmap
+exit_group
+EOF
+cmp --silent "$work_dir/expected-syscall-sequence.txt" \
+    "$output_dir/syscall-sequence.txt"
+test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 7
+grep -Fq 'arch_prctl(ARCH_SET_FS, 0x4089b8)' "$trace_file"
+grep -Fq 'set_tid_address(0x408b54)' "$trace_file"
+grep -Fq 'write(1, "SAPOTE\n", 7)' "$trace_file"
+grep -Fq 'exit_group(0)' "$trace_file"
 
 qemu_stdout="$output_dir/qemu-stdout.txt"
 qemu_stderr="$output_dir/qemu-stderr.txt"

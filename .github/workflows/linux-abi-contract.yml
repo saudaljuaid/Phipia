@@ -60,6 +60,12 @@ jobs:
                       printf 'SAPOTE\n' | cmp --silent - \
                           minimal-stack-stdout.txt
                       test ! -s minimal-stack-stderr.txt
+                      sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' \
+                          minimal-stack-syscall-trace.txt \
+                          | tail --lines=9 \
+                          >minimal-stack-target-syscall-sequence.txt
+                      cmp syscall-sequence.txt \
+                          minimal-stack-target-syscall-sequence.txt
                   )
                   cp evidence/linux-abi/build-one/build-record.txt \
                       evidence/linux-abi/reproducible-build-record.txt
