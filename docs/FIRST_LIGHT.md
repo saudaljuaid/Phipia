@@ -187,8 +187,8 @@ validation is rejected by the named capability.
 
 The bounded capacities are 38 stages, 38 receipts, thirteen capabilities per
 stage, and two proof counters per receipt. A normal QEMU boot records all 38
-receipts; absent device-substrate and xHCI fixtures each contribute one neutral
-skip.
+receipts; absent device-substrate, xHCI, and NVMe fixtures each contribute one
+neutral skip.
 Fingerprints remain build-plan dependent. Pointer absence contributes its own
 neutral skip without degrading the installed ledger.
 
