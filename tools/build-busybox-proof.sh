@@ -89,7 +89,9 @@ cp "$repository_root/userspace/busybox/busybox-miniconfig" \
     grep -Fxq 'CONFIG_STATIC=y' .config
     grep -Fxq 'CONFIG_ECHO=y' .config
     grep -Fxq '# CONFIG_FEATURE_FANCY_ECHO is not set' .config
-    make --jobs=2 CC="$work_dir/musl-install/bin/musl-gcc"
+    make --jobs=2 \
+        CC="$work_dir/musl-install/bin/musl-gcc" \
+        HOSTCFLAGS='-Wno-unused-result'
 )
 
 busybox_binary="$busybox_source/busybox"
@@ -117,6 +119,15 @@ readelf -W -r "$output_dir/busybox" >"$output_dir/elf-relocations.txt"
 readelf -W -d "$output_dir/busybox" >"$output_dir/elf-dynamic.txt" || true
 objdump -d --no-show-raw-insn "$output_dir/busybox" \
     >"$output_dir/busybox-disassembly.txt"
+forbidden_instructions=$(grep -Ei \
+    '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$)' \
+    "$output_dir/busybox-disassembly.txt" \
+    | grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true)
+test -z "$forbidden_instructions" || {
+    printf 'BusyBox loaded text contains floating-point or vector instructions:\n%s\n' \
+        "$forbidden_instructions" >&2
+    exit 1
+}
 file "$output_dir/busybox" >"$output_dir/file.txt"
 sha256sum "$output_dir/busybox" "$output_dir/busybox.config" \
     "$output_dir/$busybox_archive" "$output_dir/$musl_archive" \
