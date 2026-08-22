@@ -65,3 +65,12 @@ optional multi-page scratchpad allocation. It adds no allocator path or hidden
 physical mapping. All requests are bounded below 4 GiB, and reverse teardown
 returns the frame/contiguous-allocation census to its entry snapshot. See
 `docs/XHCI_HOST.md`.
+
+## v0.5.0 NVMe consumer
+
+The NVMe proof obtains nine contiguous pages through seven existing DMA
+records: six one-page queues/Identify buffers and one three-page guarded Read
+allocation. It adds no allocator path or hidden physical mapping. The middle
+Read page is PRP1; its neighbours remain sentinels. Full reverse teardown must
+restore both the frame and contiguous-allocation census to the entry snapshot.
+See `docs/NVME_CONTROLLER.md` and `docs/BLOCK_READ.md`.

@@ -87,3 +87,15 @@ initialized and device-owned. Halt is confirmed and bus mastering is disabled
 before any allocation returns to the CPU. Every partial failure releases the
 same claim and mapping in reverse order; the final resource snapshot must equal
 the entry snapshot.
+
+## NVMe claim consumer
+
+v0.5.0 discovers exactly one standard PCI class `01/08/02` function and keeps
+one typed claim across BAR-0 register/doorbell validation, controller disable,
+queue allocation, masked MSI-X binding, Identify, I/O-queue creation, one Read
+and teardown. Its bus-master request names all seven DMA allocations. The first
+enable attempt is deliberately made while those allocations are CPU-owned and
+must return `PCI_RESOURCE_STATUS_DMA_NOT_PREPARED`; only the fully initialized,
+device-owned set may enable the command bit. Controller disable, MSI-X mask and
+bus-master disable precede DMA reclaim and claim release. Entry and exit resource
+snapshots must match on success and every failure path.

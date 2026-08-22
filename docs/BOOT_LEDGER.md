@@ -26,8 +26,8 @@ installed-state proof whose assertions run in the same kernel they check.
 
 | Object | Capacity |
 | --- | ---: |
-| descriptors and canonical plan | 36 stages |
-| receipts | 36 receipts |
+| descriptors and canonical plan | 38 stages |
+| receipts | 38 receipts |
 | required, success or fallback capabilities per descriptor | 13 each |
 | stable proof counters per receipt | 2 |
 
@@ -85,6 +85,8 @@ no new public capability; it still receives one ordered receipt.
 | 34 | installed device-substrate proof | paging, PCI, heap, frames, local APIC, interrupts, threading, scheduler, PCI resources, vectors, DMA | installed device-substrate proof; declared fixture absence on neutral skip | optional neutral | services |
 | 35 | xHCI host-controller foundation | PCI resources, vectors/MSI-X, DMA, monotonic deadlines | xHCI foundation available | required | services |
 | 36 | installed xHCI descriptor proof | paging, PCI, heap, frames, local APIC, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, xHCI foundation | xHCI descriptor proof; declared fixture absence on neutral skip | optional neutral | services |
+| 37 | NVMe block-controller foundation | PCI resources, vectors/MSI-X, DMA, monotonic deadlines | NVMe foundation available | required | services |
+| 38 | installed NVMe read proof | paging, PCI, heap, frames, local APIC, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe foundation | NVMe read proof; declared fixture absence on neutral skip | optional neutral | services |
 | 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler | boot proofs complete | required | proofs |
 | 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
 | 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
@@ -142,8 +144,11 @@ The complete capability enumeration is:
 40. device-substrate installed proof complete;
 41. device-substrate fixture absent;
 42. xHCI foundation available;
-43. xHCI descriptor proof complete; and
-44. xHCI fixture absent.
+43. xHCI descriptor proof complete;
+44. xHCI fixture absent;
+45. NVMe foundation available;
+46. NVMe read proof complete; and
+47. NVMe fixture absent.
 
 The appended identifiers preserve every inherited stable stage and capability
 number. Declared phases and requirements place the device foundations and both
@@ -318,7 +323,7 @@ permanent boot output is a host-test failure.
 At `sap>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
-    plan 36  run 34  skip 2  caps 40  receipts 36
+    plan 38  run 35  skip 3  caps 42  receipts 38
     fingerprint 0xHHHHHHHHHHHHHHHH
 
 The exact fingerprint is build-plan dependent. Fixture and pointer absence use
@@ -352,6 +357,8 @@ build; the narrowest scenario was used and the snapshot was restored without
 | change device-substrate guest exit `0x30` | exit-contract negative control | PASS — temporary `0x32` is rejected; host contract remains 97 |
 | remove one of the xHCI proof's thirteen prerequisites | semantic prerequisite refusal before PCI discovery | PASS — temporary local descriptor is rejected |
 | change xHCI guest exit `0x31` | exit-contract negative control | PASS — temporary `0x32` is rejected; host contract remains 99 |
+| remove one of the NVMe proof's thirteen prerequisites | semantic prerequisite refusal before PCI discovery | PASS — temporary local descriptor is rejected |
+| change NVMe guest exit `0x32` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 101 |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
 | allow framebuffer output before WC | framebuffer/WC refusal | PASS — `irreversible stage ordered too early`; framebuffer output; independent WC capability |

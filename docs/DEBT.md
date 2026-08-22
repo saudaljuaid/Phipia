@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-four scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-five scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -185,10 +185,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 177 shell assertion lines
+### 4. The harness contract is 191 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    177
+    191
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -197,7 +197,9 @@ thirty-third scenario and reached 166 assertion lines after replacing one
 self-referential grep with a derived guest/host exit comparison, including the
 executable-text ISA audit. The v0.4.0 xHCI contract adds scenario 34 and brings
 the measured line count to 179; the final identity cleanup removes two obsolete
-denylist assertions, leaving the measured 177 lines shown above. The harness
+denylist assertions, leaving 177 lines. The v0.5.0 NVMe contract appends
+scenario 35 and fourteen controller, proof and exit checks, producing the
+measured 191 lines shown above. The harness
 was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It

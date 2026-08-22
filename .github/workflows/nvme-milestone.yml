@@ -1,20 +1,22 @@
-name: xHCI milestone evidence
+name: NVMe milestone evidence
 
 on:
+    pull_request:
+        branches: [main]
     workflow_dispatch:
 
 permissions:
     contents: read
 
 concurrency:
-    group: xhci-milestone-${{ github.ref }}
+    group: nvme-milestone-${{ github.ref }}
     cancel-in-progress: true
 
 jobs:
     bounded-evidence:
-        name: bounded-xhci-evidence
+        name: bounded-nvme-evidence
         runs-on: ubuntu-24.04
-        timeout-minutes: 60
+        timeout-minutes: 90
         steps:
             - name: Check out source
               uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -28,14 +30,12 @@ jobs:
               run: rustup target add x86_64-unknown-none
             - name: Record the fixture and accelerator surface
               run: |
-                  mkdir -p evidence/xhci
-                  qemu-system-x86_64 -version | tee evidence/xhci/qemu-version.txt
-                  qemu-system-x86_64 -device qemu-xhci,help \
-                      | tee evidence/xhci/qemu-xhci-help.txt
-                  qemu-system-x86_64 -device usb-kbd,help \
-                      | tee evidence/xhci/usb-kbd-help.txt
+                  mkdir -p evidence/nvme
+                  qemu-system-x86_64 -version | tee evidence/nvme/qemu-version.txt
+                  qemu-system-x86_64 -device nvme,help \
+                      | tee evidence/nvme/qemu-nvme-help.txt
                   qemu-system-x86_64 -accel help \
-                      | tee evidence/xhci/accelerator-help.txt
+                      | tee evidence/nvme/accelerator-help.txt
             - name: Verify the kernel artifact
               run: make verify
             - name: Run ten complete serial TCG sweeps
@@ -44,16 +44,21 @@ jobs:
                   set -o pipefail
                   for sweep in $(seq -w 1 10); do
                       make qemu-tests QEMU_ACCEL=tcg \
-                          | tee "evidence/xhci/tcg-sweep-${sweep}.txt"
-                      mkdir -p "evidence/xhci/tcg-sweep-${sweep}-logs"
+                          | tee "evidence/nvme/tcg-sweep-${sweep}.txt"
+                      mkdir -p "evidence/nvme/tcg-sweep-${sweep}-logs"
                       for log in build/tests/*/serial.log; do
                           scenario=$(basename "$(dirname "$log")")
                           cp "$log" \
-                              "evidence/xhci/tcg-sweep-${sweep}-logs/${scenario}.log"
+                              "evidence/nvme/tcg-sweep-${sweep}-logs/${scenario}.log"
                       done
                   done
-                  cp evidence/xhci/tcg-sweep-10-logs/xhci.log \
-                      evidence/xhci/xhci-proof-transcript.txt
+                  cp evidence/nvme/tcg-sweep-10-logs/nvme.log \
+                      evidence/nvme/nvme-proof-transcript.txt
+                  mkdir -p evidence/nvme/scenario-isos
+                  for iso in build/tests/*/sapote.iso; do
+                      scenario=$(basename "$(dirname "$iso")")
+                      cp "$iso" "evidence/nvme/scenario-isos/${scenario}.iso"
+                  done
             - name: Check and exercise available hardware accelerators
               shell: bash
               run: |
@@ -61,43 +66,44 @@ jobs:
                   if test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm; then
                       printf '%s\n' \
                           'KVM available: /dev/kvm is a readable and writable character device.' \
-                          | tee evidence/xhci/accelerator-results.txt
+                          | tee evidence/nvme/accelerator-results.txt
                       make qemu-tests QEMU_ACCEL=kvm \
-                          | tee evidence/xhci/kvm-sweep.txt
-                      printf '%s\n' 'KVM complete 34-scenario sweep: passed.' \
-                          | tee -a evidence/xhci/accelerator-results.txt
+                          | tee evidence/nvme/kvm-sweep.txt
+                      printf '%s\n' 'KVM complete 35-scenario sweep: passed.' \
+                          | tee -a evidence/nvme/accelerator-results.txt
                   else
                       printf '%s\n' \
                           'KVM unavailable: /dev/kvm is not a readable and writable character device.' \
-                          | tee evidence/xhci/accelerator-results.txt
+                          | tee evidence/nvme/accelerator-results.txt
                       printf '%s\n' \
-                          'No hardware accelerator is available on this Linux runner; no hardware-accelerated sweep can run.' \
-                          | tee -a evidence/xhci/accelerator-results.txt
+                          'No hardware accelerator is available on this Linux runner; no hardware-accelerated sweep can run there.' \
+                          | tee -a evidence/nvme/accelerator-results.txt
                   fi
             - name: Assemble release evidence
               shell: bash
               run: |
                   set -o pipefail
                   make iso
-                  cp build/sapote.iso evidence/xhci/Sapote-v0.4.0.iso
-                  proof=evidence/xhci/xhci-proof-transcript.txt
+                  cp build/sapote.iso evidence/nvme/Sapote-v0.5.0.iso
+                  proof=evidence/nvme/nvme-proof-transcript.txt
                   expected_lines=(
-                      'Sapote: xHCI foundation robustness controls 17/17 passed'
-                      'Sapote: xHCI controller ready'
-                      'Sapote: USB device descriptor DMA completed: 18 bytes'
-                      'Sapote: xHCI MSI-X descriptor completion count 1'
-                      'Sapote: xHCI DMA ownership CPU-CONTROLLER-CPU complete'
-                      'Sapote: xHCI teardown complete'
-                      'ST XHCI descriptor 18 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 19'
+                      'Sapote: NVMe foundation robustness controls 20/20 passed'
+                      'Sapote: NVMe controller ready'
+                      'Sapote: NVMe namespace ready'
+                      'Sapote: NVMe block read completed: 4096 bytes'
+                      'Sapote: NVMe MSI-X read completion count 1'
+                      'Sapote: NVMe DMA ownership CPU-CONTROLLER-CPU complete'
+                      'Sapote: NVMe teardown complete'
+                      'ST NVME read 4096 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 22'
                   )
                   for expected_line in "${expected_lines[@]}"; do
                       if ! grep -Fxq "$expected_line" "$proof"; then
-                          printf 'Missing xHCI evidence: %s\n' "$expected_line" >&2
+                          printf 'Missing NVMe evidence: %s\n' "$expected_line" >&2
                           exit 1
                       fi
                   done
                   proof_record=$(grep -Fx \
-                      'ST XHCI descriptor 18 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 19' \
+                      'ST NVME read 4096 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 22' \
                       "$proof")
                   scenario_count=$(
                       sed -n '/^TEST_SCENARIOS :=/,/^TEST_TARGETS :=/p' Makefile \
@@ -105,43 +111,49 @@ jobs:
                           | wc -w
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  if test "$scenario_count" -ne 34 || \
-                      test "$assertion_count" -ne 177; then
+                  if test "$scenario_count" -ne 35 || \
+                      test "$assertion_count" -ne 191; then
                       printf 'Measured contract drifted: %s scenarios, %s assertion lines.\n' \
                           "$scenario_count" "$assertion_count" >&2
                       exit 1
                   fi
+                  fixture_sha=$(
+                      sha256sum build/tests/nvme/nvme-fixture.raw \
+                          | awk '{print $1}'
+                  )
                   {
-                      printf 'Sapote xHCI Host Foundation verification\n'
+                      printf 'Sapote NVMe Block Storage Foundation verification\n'
                       printf 'commit: %s\n' "$GITHUB_SHA"
                       printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
                       printf 'scenarios per sweep: %s\n' "$scenario_count"
                       printf 'shell assertion lines: %s\n' "$assertion_count"
+                      printf 'fixture SHA-256: %s\n' "$fixture_sha"
+                      printf 'fixture backend: temporary regular file, raw, guest read-only\n'
                       printf 'make verify: passed\n'
                       printf 'serial TCG complete sweeps: 10 passed\n'
-                      cat evidence/xhci/accelerator-results.txt
+                      cat evidence/nvme/accelerator-results.txt
                       printf '%s\n' \
-                          'xHCI descriptor proof: 18 bytes, MSI-X delta 1, ownership CPU-CONTROLLER-CPU, teardown clean'
+                          'NVMe read proof: 4096 bytes, MSI-X delta 1, ownership CPU-CONTROLLER-CPU, teardown clean'
                       printf '%s\n' \
-                          'controlled robustness results: 19 passed'
-                  } >evidence/xhci/verification-summary.txt
+                          'controlled robustness results: 22 passed'
+                  } >evidence/nvme/verification-summary.txt
                   {
-                      printf 'Controlled xHCI robustness results\n'
+                      printf 'Controlled NVMe robustness results\n'
                       printf 'Execution: deterministic guest-local values and explicit test hooks only.\n'
                       printf 'Result: %s\n' "$proof_record"
-                      printf 'Matrix: docs/USB_ENUMERATION.md, controlled robustness matrix 1-19.\n'
-                  } >evidence/xhci/controlled-robustness-results.txt
-                  (cd evidence/xhci && sha256sum \
-                      Sapote-v0.4.0.iso \
-                      xhci-proof-transcript.txt \
+                      printf 'Matrix: docs/NVME_QEMU_PROOF.md, controlled robustness matrix 1-22.\n'
+                  } >evidence/nvme/controlled-robustness-results.txt
+                  (cd evidence/nvme && sha256sum \
+                      Sapote-v0.5.0.iso \
+                      nvme-proof-transcript.txt \
                       verification-summary.txt \
                       controlled-robustness-results.txt >SHA256SUMS)
-                  cat evidence/xhci/verification-summary.txt
-                  cat evidence/xhci/SHA256SUMS
+                  cat evidence/nvme/verification-summary.txt
+                  cat evidence/nvme/SHA256SUMS
             - name: Upload the bounded milestone evidence
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
-                  name: sapote-xhci-milestone-${{ github.sha }}
-                  path: evidence/xhci
+                  name: sapote-nvme-milestone-${{ github.sha }}
+                  path: evidence/nvme
                   if-no-files-found: error
                   retention-days: 30

@@ -466,3 +466,12 @@ are bounded inside that typed mapping; the driver does not identity-map a loose
 physical BAR or add an xHCI-specific paging parameter. Ring and receive pages
 are identity-mapped guest RAM obtained from the bounded DMA owner. No IOMMU
 mapping is implied.
+
+## NVMe MMIO in v0.5.0
+
+The NVMe controller uses the same supervisor, writable, NX and UC PCI MMIO
+arena. BAR 0 is mapped only through its typed PCI claim; checked subregions
+bound the fixed register block and the Admin/I/O doorbells computed from
+`CAP.DSTRD`. Queue, Identify and PRP pages are allocator-owned guest RAM, not
+loose mappings. No physical address is added to paging policy and no IOMMU
+mapping is implied.

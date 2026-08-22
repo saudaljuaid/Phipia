@@ -293,26 +293,30 @@ executable failure test, and a boot that proves it or refuses.
    general USB stack: hubs, hotplug, HID service, storage, streams, class
    drivers, and physical host hardware remain future work. See
    `docs/XHCI_HOST.md` and `docs/USB_ENUMERATION.md`.
-7. **General USB and class drivers, or NVMe/AHCI**, then a filesystem — which is
-   also how firmware images get
-   onto the machine. Before that exists, a Multiboot2 module is the honest
-   interim answer, and GRUB already supplies it.
+7. **A bounded NVMe block-read foundation — complete in v0.5.0.** One QEMU
+   controller, namespace, MSI-X vector, Admin pair and I/O pair identify and
+   read one deterministic 4096-byte logical block through PRP1. It performs no
+   guest write and tears every resource down. See `docs/NVME_CONTROLLER.md`,
+   `docs/BLOCK_READ.md` and `docs/NVME_QEMU_PROOF.md`.
+8. **A bounded read-only filesystem foundation, next.** It consumes the block
+   read contract without widening the controller proof into a general storage
+   framework. General USB/class drivers and AHCI remain later work.
 
 **Programs.**
 
-8. **Ring 3, per-process address spaces, ELF loading.** `docs/VIRTUAL_MEMORY.md`
+9. **Ring 3, per-process address spaces, ELF loading.** `docs/VIRTUAL_MEMORY.md`
    deliberately refuses the user bit today; this is where that changes.
-9. **The Linux system-call ABI, incrementally.** Target a statically-linked
+10. **The Linux system-call ABI, incrementally.** Target a statically-linked
    busybox first and add syscalls until it runs. `ENOSYS` for everything else.
 
 **Wireless, last, because it needs all of it.**
 
-10. **A FullMAC adapter**, firmware from a file, vendor command interface,
+11. **A FullMAC adapter**, firmware from a file, vendor command interface,
     WPA2-PSK offloaded to firmware.
-11. **A network stack** — or, more cheaply at first, a userspace one over a raw
+12. **A network stack** — or, more cheaply at first, a userspace one over a raw
     device interface.
-12. **`nl80211` shape and `wpa_supplicant`** for WPA3 and enterprise, running as
-    an ordinary application because of step 9.
+13. **`nl80211` shape and `wpa_supplicant`** for WPA3 and enterprise, running as
+    an ordinary application because of step 10.
 
 ## 7. What not to do
 

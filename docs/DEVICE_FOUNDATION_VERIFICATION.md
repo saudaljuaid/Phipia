@@ -66,3 +66,23 @@ inherited clock-agreement proof: PM-timer elapsed time was 279,441,381 ns while
 the local-APIC interval was 200,000,000 ns. It occurred before PCI-resource,
 vector, DMA, or fixture execution. The affected complete sweep was discarded
 and rerun serially; the rerun passed all 33 scenarios. No other flake occurred.
+
+## v0.5.0 NVMe evidence contract
+
+The storage increment retains the inherited device-substrate evidence above
+and adds scenario 35. `docs/NVME_QEMU_PROOF.md` is the complete twenty-two-item
+control matrix. The live proof uses only QEMU's standard emulated NVMe PCI
+function and a freshly created regular-file namespace that is read-only to the
+guest. It must observe 4096 deterministic bytes written into the middle of a
+guarded guest DMA allocation, one matching completion through MSI-X entry zero,
+unchanged sentinel pages, CPU → controller → CPU ownership and an entry/exit
+resource snapshot with no retained claim, mapping, frame, DMA object, vector,
+handler, binding or bus master.
+
+`.github/workflows/nvme-milestone.yml` retains `make verify`, every individual
+scenario inside ten complete serial TCG sweeps, a complete sweep under every
+available runner hardware accelerator and an explicit record for unavailable
+accelerators. It packages the ISO, SHA-256 checksums, proof transcript, ten TCG
+result sets, accelerator record and robustness result. A locally available WHPX
+accelerator consumes the retained per-scenario ISOs; its final sweep record is
+added to the release evidence rather than claiming Linux runner availability.

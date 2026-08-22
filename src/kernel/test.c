@@ -19,6 +19,7 @@
 #include <sapote/interrupts.h>
 #include <sapote/ioapic.h>
 #include <sapote/memory.h>
+#include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
 #include <sapote/pic.h>
@@ -293,6 +294,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_XHCI;
     }
 
+    if (token_equals(value, length, "nvme")) {
+        return KERNEL_TEST_NVME;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -376,6 +381,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x30);
     case KERNEL_TEST_XHCI:
         return UINT8_C(0x31);
+    case KERNEL_TEST_NVME:
+        return UINT8_C(0x32);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -402,6 +409,17 @@ bool kernel_test_xhci_exit_self_test(void)
 {
     return xhci_exit_contract(scenario_exit_value(KERNEL_TEST_XHCI)) &&
         !xhci_exit_contract(UINT8_C(0x32));
+}
+
+static bool nvme_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x32);
+}
+
+bool kernel_test_nvme_exit_self_test(void)
+{
+    return nvme_exit_contract(scenario_exit_value(KERNEL_TEST_NVME)) &&
+        !nvme_exit_contract(UINT8_C(0x33));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -4615,6 +4633,55 @@ _Noreturn void kernel_test_complete_xhci(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_nvme(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct nvme_read_proof proof = nvme_get_read_proof();
+
+    if (active_scenario != KERNEL_TEST_NVME) {
+        kernel_test_fail("NVMe completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_NVME_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_NVME_READ_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != NVME_BLOCK_BYTES ||
+        receipt->proof_counters[1] != 1U ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVME_FIXTURE_ABSENT)) {
+        kernel_test_fail("NVMe installed receipt is invalid");
+    }
+    if (proof.block_bytes != NVME_BLOCK_BYTES ||
+        proof.msix_completion_count != 1U ||
+        proof.ignored_completions != 0U ||
+        proof.robustness_tests != NVME_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.controller_ready || !proof.namespace_ready ||
+        !proof.contents_valid || !proof.sentinel_valid ||
+        !proof.changed_while_controller_owned ||
+        !proof.ownership_complete || !proof.teardown_complete) {
+        kernel_test_fail("NVMe installed proof is inconsistent");
+    }
+
+    console_write("ST NVME read ");
+    console_write_u64(proof.block_bytes);
+    console_write(" msix ");
+    console_write_u64(proof.msix_completion_count);
+    console_write(" ownership CPU-CONTROLLER-CPU teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -4745,6 +4812,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "device-substrate";
     case KERNEL_TEST_XHCI:
         return "xhci";
+    case KERNEL_TEST_NVME:
+        return "nvme";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
