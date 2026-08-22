@@ -30,7 +30,10 @@ The generated musl wrapper normally selects position-independent `Scrt1.o` for
 all non-shared links.  The build script deterministically selects musl's own
 installed `crt1.o` instead because this executable is deliberately non-PIE
 `ET_EXEC`.  The musl source tree is unchanged; the installed wrapper choice is
-recorded and checked before BusyBox is linked.
+recorded and checked before BusyBox is linked.  The fixed high link also
+disables linker relaxation and gives crt1's ignored weak `_DYNAMIC` probe a
+nearby absolute definition; no dynamic header, relocation, dependency, or
+loader is created, and the structural checks refuse any such output.
 
 ## Frozen executable
 
