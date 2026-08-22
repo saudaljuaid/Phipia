@@ -153,6 +153,8 @@ $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 			$(OBJECTS) $(RUST_LIB) || true; \
 		readelf -W -r $(BUILD_DIR)/sapote-got-diagnostic.elf \
 			| grep 'GOT' || true; \
+		$(OBJDUMP) -dr $(RUST_LIB) \
+			| grep -B 8 -A 2 'R_X86_64_GOTPCREL' || true; \
 		exit 1; \
 	}
 
