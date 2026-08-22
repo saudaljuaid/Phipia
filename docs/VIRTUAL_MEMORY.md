@@ -475,3 +475,8 @@ bound the fixed register block and the Admin/I/O doorbells computed from
 `CAP.DSTRD`. Queue, Identify and PRP pages are allocator-owned guest RAM, not
 loose mappings. No physical address is added to paging policy and no IOMMU
 mapping is implied.
+
+The v0.6.0 FAT16 session adds no mapping kind or address. Its four reads reuse
+the same allocator-owned PRP1 page and the existing typed BAR0 mapping. The
+filesystem parser sees only CPU-owned virtual byte slices after MSI-X returns
+DMA ownership; it never receives a physical address.

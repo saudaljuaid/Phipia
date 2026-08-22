@@ -46,10 +46,16 @@ merge an unreviewed kernel change.
   Ledger descriptor.
 - NVMe work stays inside the one-controller, one-namespace, one-block read
   contract in `nvme.c`. Do not add media-changing commands, host-device
-  passthrough, partition/filesystem policy, multiple queues or a generic driver
+  passthrough, partition policy, multiple queues or a generic driver
   framework. Every fixture is a temporary regular file attached read-only to
   QEMU; all waits use monotonic deadlines and the proof remains reachable only
   through its Boot Ledger descriptor.
+- FAT16 work stays inside the exact v0.6.0 superfloppy and `SAPOTE.BIN`
+  contract. Rust parses filesystem-owned bytes; C controls the private four-read
+  NVMe session and may copy file bytes only after CPU ownership returns. Do not
+  add writes, partitions, other formats, paths, multiple files or clusters, a
+  VFS, cache, loader or public ABI. Never mount a fixture or attach a host
+  device; use only the generator and explicit read-only QEMU `-blockdev` nodes.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

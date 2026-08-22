@@ -298,9 +298,14 @@ executable failure test, and a boot that proves it or refuses.
    read one deterministic 4096-byte logical block through PRP1. It performs no
    guest write and tears every resource down. See `docs/NVME_CONTROLLER.md`,
    `docs/BLOCK_READ.md` and `docs/NVME_QEMU_PROOF.md`.
-8. **A bounded read-only filesystem foundation, next.** It consumes the block
-   read contract without widening the controller proof into a general storage
-   framework. General USB/class drivers and AHCI remain later work.
+8. **A bounded read-only filesystem foundation — complete in v0.6.0.** One
+   unpartitioned FAT16 volume, exact derived geometry, one canonical root file
+   and one data cluster prove four real NVMe reads through Rust parsing and
+   complete teardown. It is not a VFS, partition manager, cache, loader or
+   write path. See `docs/FAT16_READER.md`, `docs/FILESYSTEM_FILE_READ.md` and
+   `docs/FAT16_QEMU_PROOF.md`. The next milestone must be selected from the live
+   roadmap rather than inferred by widening this fixture; general USB/class
+   drivers and AHCI remain later work.
 
 **Programs.**
 

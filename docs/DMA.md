@@ -87,3 +87,14 @@ reclaim. The two sentinel pages around the one-page PRP1 payload prove the
 controller did not escape the supported transfer span. This strengthens
 correctness but, without an IOMMU, does not isolate other guest memory from a
 faulty device.
+
+## FAT16 read-session reuse
+
+v0.6.0 reuses that one guarded PRP1 allocation for exactly four synchronous
+reads. Before every submission all three pages return to CPU ownership and are
+filled with `A5h`; a store fence publishes them before device ownership and the
+doorbell. Only the exact MSI-X completion returns ownership. Guard verification
+precedes every Rust parse or C copy. Session close proves controller disable,
+masks MSI-X and disables bus mastering before releasing the allocation, and
+the closing Boot Ledger census requires the private session released. No
+filesystem byte is inspected in controller ownership.

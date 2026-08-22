@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-five bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-six bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -64,6 +64,16 @@ known 4096-byte LBA written into the designated guest DMA page, an exact one
 MSI-X count transition around Read, unchanged surrounding sentinels,
 CPU → controller → CPU ownership and zero retained resources. Keep the twenty
 foundation controls and complete twenty-two-control contract guest-local.
+
+Filesystem changes retain that boundary and use the separate `filesystem`
+scenario with host exit 103. `tools/make-fat16-fixture.py` must create and
+read-only reopen the ordinary 16 MiB file; QEMU receives explicit read-only
+file/raw `-blockdev` nodes and its standard NVMe device. Evidence requires
+metadata-derived BPB/FAT/root/data order, four real PRP1/MSI-X completions,
+unchanged guards, the documented 128-byte digest, CPU → controller → CPU
+ownership for every block, and clean teardown. Run all 36 scenarios, ten
+complete serial TCG sweeps and one sweep under every safely available
+accelerator. Never probe `/dev/kvm`, mount the fixture or attach host storage.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build

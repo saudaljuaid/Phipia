@@ -32,7 +32,7 @@ paths, and manages its own memory.
 
 First Light is a fixed kernel workbench with a patterned blue-gray desktop,
 beveled utility windows, bitmap type, direct launchers, and status indicators.
-The Boot Ledger checks installed state. Thirty-five deterministic QEMU
+The Boot Ledger checks installed state. Thirty-six deterministic QEMU
 scenarios cover boot, memory, interrupts, devices, and the interface.
 
 ## Identity
@@ -53,10 +53,11 @@ asset, palette, voice, and naming contract is in
 | Memory | Firmware memory map, bounded contiguous DMA, four-level paging, W^X, a validated device-window registry and MMIO arena, explicit PAT memory types, guarded heap and stacks |
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, dynamic vectors and MSI-X, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, checked PCI configuration reads/writes, bridge-aware enumeration, sized BAR claims, explicit resource ownership, and bounded xHCI and NVMe controller lifecycles |
+| Storage format | One read-only FAT16 superfloppy, one canonical `SAPOTE.BIN` root entry, and one checked 128-byte cluster parsed in Rust |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
 | Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console and shell, PS/2 keyboard/pointer, software cursor, and bounded First Light desktop shell |
-| Language boundary | C11 and x86_64 assembly kernel; Rust only parses kernel-external logo and font bytes |
-| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, real VirtIO RNG, xHCI USB descriptor and NVMe block-read DMA/MSI-X, actual framebuffer screenshots, and 35 deterministic QEMU scenarios |
+| Language boundary | C11 and x86_64 assembly kernel; Rust parses kernel-external logo, font, and FAT16 bytes |
+| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, real VirtIO RNG, xHCI USB descriptor, NVMe block-read and FAT16 file-read DMA/MSI-X, actual framebuffer screenshots, and 36 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -79,7 +80,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 35 deterministic fault, memory, device, and UI scenarios
+make qemu-tests   # all 36 deterministic fault, memory, device, and UI scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -101,6 +102,7 @@ The build produces `build/sapote.elf` and `build/sapote.iso`.
 - [`docs/PCI_RESOURCES.md`](docs/PCI_RESOURCES.md), [`docs/MSI_X.md`](docs/MSI_X.md), and [`docs/DMA.md`](docs/DMA.md) — claimed BARs, dynamic MSI-X delivery, and bounded DMA ownership.
 - [`docs/XHCI_HOST.md`](docs/XHCI_HOST.md) and [`docs/USB_ENUMERATION.md`](docs/USB_ENUMERATION.md) — the bounded xHCI lifecycle and one QEMU endpoint-zero descriptor proof.
 - [`docs/NVME_CONTROLLER.md`](docs/NVME_CONTROLLER.md), [`docs/BLOCK_READ.md`](docs/BLOCK_READ.md), and [`docs/NVME_QEMU_PROOF.md`](docs/NVME_QEMU_PROOF.md) — the bounded NVMe lifecycle, one-block read contract, and read-only QEMU proof.
+- [`docs/FAT16_READER.md`](docs/FAT16_READER.md), [`docs/FILESYSTEM_FILE_READ.md`](docs/FILESYSTEM_FILE_READ.md), and [`docs/FAT16_QEMU_PROOF.md`](docs/FAT16_QEMU_PROOF.md) — the exact FAT16 parser, one-root-file contract, and four-read installed proof.
 - [`docs/DEVICE_FOUNDATION_VERIFICATION.md`](docs/DEVICE_FOUNDATION_VERIFICATION.md) — executed controls, proof evidence, accelerator sweeps, and the recorded flake.
 - [`docs/THREADS.md`](docs/THREADS.md) — guarded threads, switching, and preemption.
 - [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.
@@ -117,8 +119,9 @@ controls.
 
 Sapote is still a foundation-stage kernel. First Light is a fixed kernel
 desktop shell, not a window manager or userspace. The current `main` branch is
-single-core and kernel-only; it has no userspace, filesystem, storage or network
-driver, process isolation, IOMMU isolation, or general application ABI.
+single-core and kernel-only; it has no userspace, general filesystem/storage or
+network service, process isolation, IOMMU isolation, or application ABI. Its
+one FAT16 reader is private, read-only and fixture-bounded.
 Hardware evidence is strongest in QEMU, with bare-metal coverage still an
 explicit goal.
 

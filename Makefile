@@ -10,8 +10,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate xhci nvme
+	boot-ledger first-light device-substrate xhci nvme filesystem
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
+EXPECTED_TEST_SCENARIO_COUNT := 36
+EXPECTED_SHELL_ASSERTION_COUNT := 214
 
 CC := gcc
 LD := ld
@@ -25,6 +27,7 @@ QEMU_ACCEL ?= tcg
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
+RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -39,6 +42,7 @@ FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-first-light-focus.png
 FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
+FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -73,10 +77,14 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-first-light clean hooks iso kernel lint qemu-tests run \
-	screenshot-proof smoke toolchain verify
+.PHONY: all capture-first-light clean contract-counts hooks iso kernel lint \
+	qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
+
+contract-counts:
+	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
+		'$(EXPECTED_SHELL_ASSERTION_COUNT)'
 
 kernel: $(KERNEL)
 
@@ -145,7 +153,14 @@ verify: toolchain lint
 		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
 		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
-	@test "$(words $(TEST_SCENARIOS))" -eq 35
+	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
+	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
+		'B8FE53B80AAC718B36B545CC7A741ADCA52DF3BFE0DEE580D2A179B49DEBA5AC'
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
+		-o $(RUST_FAT16_TEST)
+	$(RUST_FAT16_TEST)
+	@test "$(words $(TEST_SCENARIOS))" -eq \
+		'$(EXPECTED_TEST_SCENARIO_COUNT)'
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
@@ -183,6 +198,14 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_font_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_glyph$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_ui_font_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_bpb$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_find_root$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_fat$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_extent$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_payload$$'
+	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
+		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
+	fi
 	# Paging and the scenario runner must stay coupled to one typed aggregate,
 	# never grow hardware-specific parameters or hidden firmware reads again.
 	@grep -Fq 'paging_initialize(const struct paging_device_windows *windows);' \
@@ -218,6 +241,24 @@ verify: toolchain lint
 		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=nvme.c; then \
 		echo 'NVMe read proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bfilesystem_file_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=filesystem.c; then \
+		echo 'filesystem file proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -ERn '\bnvme_filesystem_session_(open|read|view|close)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=filesystem.c --exclude=nvme.c; then \
+		echo 'private filesystem read session escaped its owner'; exit 1; \
+	fi
+	@! grep -Eq 'NVME_NVM_WRITE|NVM_WRITE|write[_ -]opcode' \
+		include/sapote/nvme.h src/kernel/nvme.c src/kernel/filesystem.c \
+		src/rust/fat16.rs
+	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
+		src/rust --include='*.rs' --exclude=abi.rs; then \
+		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
+	fi
+	@! grep -Eq '\*const|\*mut' src/rust/fat16.rs || \
+		{ echo 'safe FAT16 parser retained or exposed a raw pointer'; exit 1; }
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
@@ -261,6 +302,18 @@ verify: toolchain lint
 	@test "$$(grep -Ec 'nvme_interrupt_handler[[:space:]]*[(]' \
 		src/kernel/nvme.c)" -eq 1 || \
 		{ echo 'NVMe proof directly injects its MSI-X handler'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_FILESYSTEM:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x33);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_FILESYSTEM:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*filesystem) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
+		test "$$((0x34 * 2 + 1))" -ne "$$host_exit" || \
+		{ echo 'filesystem guest and host exit contracts disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -357,6 +410,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		device-substrate) expected=97 ;; \
 		xhci) expected=99 ;; \
 		nvme) expected=101 ;; \
+		filesystem) expected=103 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -380,6 +434,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(PYTHON) tools/make-nvme-fixture.py '$(NVME_FIXTURE)' || exit 1; \
 				test -f '$(NVME_FIXTURE)' || exit 1; \
 				hardware='-blockdev driver=file,filename=$(NVME_FIXTURE),node-name=nvme-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=nvme-file,node-name=nvme-raw,read-only=on -device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			filesystem) \
+				rm -f '$(FILESYSTEM_FIXTURE)' || exit 1; \
+				$(PYTHON) tools/make-fat16-fixture.py '$(FILESYSTEM_FIXTURE)' || exit 1; \
+				test -f '$(FILESYSTEM_FIXTURE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FILESYSTEM_FIXTURE),node-name=filesystem-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=filesystem-file,node-name=filesystem-raw,read-only=on -device nvme,serial=sapote-fat16-fixture,drive=filesystem-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -464,6 +523,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: NVMe foundation robustness controls 20/20 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: bounded NVMe block-controller foundation established' "$$log" || \
 		  ! grep -Fxq 'Sapote: NVMe fixture absent' "$$log" || \
+		  ! grep -Fxq 'Sapote: FAT16 foundation robustness controls 26/26 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: bounded read-only FAT16 foundation established' "$$log" || \
+		  ! grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -580,7 +642,16 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: NVMe block read completed: 4096 bytes' "$$log" && \
 			grep -Fxq 'Sapote: NVMe MSI-X read completion count 1' "$$log" && \
 			grep -Fxq 'Sapote: NVMe DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
-			grep -Fxq 'Sapote: NVMe teardown complete' "$$log" || \
+				grep -Fxq 'Sapote: NVMe teardown complete' "$$log" || \
+				diagnostics_ok=false ;; \
+		filesystem) \
+			grep -Fxq 'ST FAT16 file SAPOTE.BIN bytes 128 reads 4 msix 4 ownership CPU-CONTROLLER-CPU teardown clean robustness 28' "$$log" && \
+			grep -Fxq 'Sapote: NVMe fixture absent' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 volume ready' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 file SAPOTE.BIN read: 128 bytes' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 MSI-X completion count 4' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 teardown complete' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

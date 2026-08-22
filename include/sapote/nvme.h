@@ -49,6 +49,16 @@ enum nvme_queue_kind {
     NVME_QUEUE_KIND_COUNT
 };
 
+enum nvme_filesystem_session_state {
+    NVME_FILESYSTEM_SESSION_UNOPENED = 0,
+    NVME_FILESYSTEM_SESSION_READY,
+    NVME_FILESYSTEM_SESSION_BLOCK_CONTROLLER_OWNED,
+    NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED,
+    NVME_FILESYSTEM_SESSION_STOPPING,
+    NVME_FILESYSTEM_SESSION_RELEASED,
+    NVME_FILESYSTEM_SESSION_STATE_COUNT
+};
+
 enum nvme_status {
     NVME_STATUS_OK = 0,
     NVME_STATUS_ABSENT,
@@ -106,6 +116,9 @@ enum nvme_status {
     NVME_STATUS_CONTENT_MISMATCH,
     NVME_STATUS_SENTINEL_MISMATCH,
     NVME_STATUS_INTERRUPT_COUNT,
+    NVME_STATUS_SESSION_INVALID,
+    NVME_STATUS_READ_ORDINAL,
+    NVME_STATUS_BLOCK_NOT_CPU_OWNED,
     NVME_STATUS_TRANSITION_REPEATED,
     NVME_STATUS_TRANSITION_REVERSED,
     NVME_STATUS_TRANSITION_INVALID,
@@ -234,9 +247,47 @@ struct nvme_read_proof {
     bool teardown_complete;
 };
 
+/*
+ * Private to src/kernel/filesystem.c. This token owns no exposed DMA pointer;
+ * nvme_filesystem_session_view returns a CPU-owned view only for the current
+ * synchronous block and Makefile rejects callers outside that one consumer.
+ */
+struct nvme_filesystem_read_session {
+    uint64_t generation;
+    uint64_t namespace_blocks;
+    uint64_t msix_completion_count;
+    size_t ignored_completions;
+    uint32_t logical_block_bytes;
+    uint32_t read_count;
+    uint32_t last_ordinal;
+    enum nvme_filesystem_session_state state;
+    bool guard_pages_clean;
+    bool last_read_changed_while_controller_owned;
+    bool changed_while_controller_owned;
+    bool teardown_complete;
+};
+
 bool nvme_foundation_self_test(size_t *completed_tests);
 enum nvme_status nvme_read_prove(struct nvme_read_proof *proof);
 struct nvme_read_proof nvme_get_read_proof(void);
+enum nvme_status nvme_filesystem_session_open(
+    struct nvme_filesystem_read_session *session
+);
+enum nvme_status nvme_filesystem_session_read(
+    struct nvme_filesystem_read_session *session,
+    uint64_t lba,
+    uint32_t ordinal
+);
+enum nvme_status nvme_filesystem_session_view(
+    const struct nvme_filesystem_read_session *session,
+    uint32_t ordinal,
+    const uint8_t **data,
+    size_t *data_length
+);
+enum nvme_status nvme_filesystem_session_close(
+    struct nvme_filesystem_read_session *session
+);
+bool nvme_filesystem_session_resources_released(void);
 const char *nvme_status_string(enum nvme_status status);
 
 #endif

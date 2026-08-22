@@ -70,3 +70,12 @@ returns the expected CQ to the CPU, validates and republishes the CQ, rings its
 head doorbell, then unmasks before the common dispatcher performs the normal
 local-APIC acknowledgement. The Read interval requires an exact one-interrupt
 count transition. No I/O APIC route or directed EOI exists for it.
+
+## FAT16 four-read interval
+
+v0.6.0 keeps that one masked binding and I/O queue alive for BPB, FAT, root and
+data reads. Each synchronous command has ordinal CID 1–4 and must cause exactly
+one matching handler completion and one interrupt-count transition; the total
+delta is exactly four and the ignored-completion count remains zero. No handler
+is called directly, no software interrupt is injected, and teardown masks
+delivery before the vector and DMA are released.

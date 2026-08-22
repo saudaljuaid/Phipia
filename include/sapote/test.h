@@ -47,6 +47,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_DEVICE_SUBSTRATE,
     KERNEL_TEST_XHCI,
     KERNEL_TEST_NVME,
+    KERNEL_TEST_FILESYSTEM,
     KERNEL_TEST_INVALID
 };
 
@@ -81,6 +82,8 @@ _Noreturn void kernel_test_complete_xhci(void);
 bool kernel_test_xhci_exit_self_test(void);
 _Noreturn void kernel_test_complete_nvme(void);
 bool kernel_test_nvme_exit_self_test(void);
+_Noreturn void kernel_test_complete_filesystem(void);
+bool kernel_test_filesystem_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

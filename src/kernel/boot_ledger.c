@@ -7,6 +7,7 @@
 #include <sapote/device_substrate.h>
 #include <sapote/dma.h>
 #include <sapote/framebuffer.h>
+#include <sapote/filesystem.h>
 #include <sapote/interrupt_vector.h>
 #include <sapote/msix.h>
 #include <sapote/nvme.h>
@@ -68,7 +69,9 @@ static const char *const stage_names[] = {
     "xHCI host-controller foundation",
     "installed xHCI descriptor proof",
     "NVMe block-controller foundation",
-    "installed NVMe read proof"
+    "installed NVMe read proof",
+    "bounded read-only FAT16 foundation",
+    "installed FAT16 file-read proof"
 };
 
 static const char *const capability_names[] = {
@@ -119,7 +122,10 @@ static const char *const capability_names[] = {
     "xHCI fixture absent",
     "NVMe foundation available",
     "NVMe read proof complete",
-    "NVMe fixture absent"
+    "NVMe fixture absent",
+    "FAT16 foundation available",
+    "filesystem file proof complete",
+    "filesystem fixture absent"
 };
 
 static const char *const status_names[] = {
@@ -1470,6 +1476,51 @@ enum boot_ledger_status boot_ledger_verify_installed(
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_NVME_READ_PROOF,
                 BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
+    const bool filesystem_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE);
+    const bool filesystem_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_FILESYSTEM_FIXTURE_ABSENT);
+    const bool filesystem_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_FILESYSTEM_FILE_PROOF) != NULL;
+    if (!optional_outcome_valid(filesystem_planned, filesystem_complete,
+            filesystem_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_FILESYSTEM_FILE_PROOF,
+            BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (filesystem_complete || filesystem_absent) {
+        const struct boot_stage_receipt *filesystem =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_FILESYSTEM_FILE_PROOF);
+        const struct filesystem_file_proof proof =
+            filesystem_get_file_proof();
+
+        if (filesystem == NULL ||
+            (filesystem_complete &&
+                (filesystem->result != BOOT_RECEIPT_RAN ||
+                 filesystem->proof_counter_count != 2U ||
+                 filesystem->proof_counters[0] != FAT16_FILE_BYTES ||
+                 filesystem->proof_counters[1] != 4U ||
+                 proof.file_bytes != FAT16_FILE_BYTES ||
+                 proof.read_count != 4U ||
+                 proof.msix_completion_count != 4U ||
+                 proof.ignored_completions != 0U ||
+                 proof.robustness_tests !=
+                    FILESYSTEM_CONTROLLED_ROBUSTNESS_TESTS ||
+                 !proof.fat16_ready || !proof.file_located ||
+                 !proof.contents_valid || !proof.sentinel_valid ||
+                 !proof.changed_while_controller_owned ||
+                 !proof.ownership_complete || !proof.teardown_complete)) ||
+            (filesystem_absent &&
+                filesystem->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_FILESYSTEM_FILE_PROOF,
+                BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE);
             return ledger->status;
         }
     }

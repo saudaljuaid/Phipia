@@ -185,10 +185,10 @@ and inherited closing boot proofs. Installed verification also asserts the WC
 and scheduler edges semantically, so deleting either requirement after plan
 validation is rejected by the named capability.
 
-The bounded capacities are 38 stages, 38 receipts, thirteen capabilities per
-stage, and two proof counters per receipt. A normal QEMU boot records all 38
-receipts; absent device-substrate, xHCI, and NVMe fixtures each contribute one
-neutral skip.
+The bounded capacities are 40 stages, 40 receipts, fourteen capabilities per
+stage, and two proof counters per receipt. A normal QEMU boot records all 40
+receipts; absent device-substrate, xHCI, NVMe and filesystem fixtures each
+contribute one neutral skip.
 Fingerprints remain build-plan dependent. Pointer absence contributes its own
 neutral skip without degrading the installed ledger.
 
@@ -256,9 +256,9 @@ No correctness control passed unexpectedly.
 
 ## Verification contract
 
-The current repository has 35 named QEMU scenarios. Pull requests run
+The current repository has 36 named QEMU scenarios. Pull requests run
 `make verify`, capture all three First Light frames from QEMU, compare every
-stable pixel, and execute all 35 scenarios. The milestone evidence workflow
+stable pixel, and execute all 36 scenarios. The milestone evidence workflow
 then runs ten complete serial TCG sweeps and records the authorized accelerator
 surface. It does not probe KVM through the excluded `/dev/kvm` host device.
 Execution results and flakes belong in the workflow artifacts and release

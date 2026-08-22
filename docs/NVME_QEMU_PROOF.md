@@ -1,9 +1,11 @@
 # QEMU NVMe fixture and proof
 
-Scenario 35 is the only boot that installs an NVMe namespace. The Makefile
-creates a new temporary regular file under `build/tests/nvme`, attaches it only
+Scenario 35 is the only boot that installs the v0.5.0 raw-block namespace. The
+Makefile creates a new temporary regular file under `build/tests/nvme`, attaches it only
 to QEMU's standard emulated NVMe controller and presents the namespace read-only
 to the guest. It never names a host block device and never uses passthrough.
+Scenario 36 uses a separate FAT16 namespace and neutrally skips this raw proof;
+see `docs/FAT16_QEMU_PROOF.md`.
 
 ## Fixture
 
@@ -92,7 +94,7 @@ master.
 
 ## Evidence workflow
 
-`.github/workflows/nvme-milestone.yml` runs `make verify`, all 35 scenarios in
+`.github/workflows/nvme-milestone.yml` runs `make verify`, all 36 scenarios in
 each of ten complete serial TCG sweeps, and records the Linux accelerator
 boundary without probing or opening `/dev/kvm`: this authorized task forbids
 access to host device files. Its artifact retains the verified ISO, checksums,

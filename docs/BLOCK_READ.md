@@ -1,9 +1,11 @@
 # Minimal block-read contract
 
 The v0.5.0 storage contract is deliberately one operation: receive one logical
-block from namespace 1 into a caller-designated DMA page through PRP1. The only
-installed consumer is the Boot Ledger's QEMU proof. No public userspace or
-filesystem ABI exists.
+block from namespace 1 into a caller-designated DMA page through PRP1. v0.6.0
+adds one private synchronous filesystem session that repeats the same operation
+four times with one outstanding request. The original Boot Ledger raw-block
+proof and transcript are unchanged. No public userspace, block or filesystem
+ABI exists.
 
 ## Validated inputs
 
@@ -87,9 +89,15 @@ It intentionally records no address, PCI topology, host path, timing, serial
 number or other environment-specific identity. Ordinary boots without an NVMe
 fixture produce a neutral `NVMe fixture absent` Boot Ledger receipt.
 
-## Deferred work
+## v0.6.0 private consumer
 
-The next storage milestone may place a bounded read-only filesystem on this
-contract. It must not widen this milestone retroactively. Partition discovery,
-read aggregation, caching, asynchronous public I/O, write paths and all other
-controllers require separately designed contracts and tests.
+The FAT16 proof brings the same controller up once and reads one BPB, one FAT
+sector, one fixed-root sector and one file-data cluster. Every later LBA comes
+from Rust-validated metadata, and each ordinal has its own CID and one MSI-X
+delta. The same three-page PRP1 allocation is re-sentinelized and transferred
+CPU → controller → CPU before every read. See
+`docs/FILESYSTEM_FILE_READ.md`.
+
+Partition discovery, read aggregation, caching, asynchronous public I/O, write
+paths and all other controllers remain deferred and require separately
+designed contracts and tests.

@@ -74,3 +74,12 @@ allocation. It adds no allocator path or hidden physical mapping. The middle
 Read page is PRP1; its neighbours remain sentinels. Full reverse teardown must
 restore both the frame and contiguous-allocation census to the entry snapshot.
 See `docs/NVME_CONTROLLER.md` and `docs/BLOCK_READ.md`.
+
+## v0.6.0 FAT16 consumer
+
+The filesystem proof allocates no new memory shape. It reuses the same
+three-page guarded NVMe Read allocation serially for BPB, FAT, root and data
+blocks, and copies only the validated 128 file bytes to a bounded stack-owned
+CPU result. Controller shutdown and reverse teardown must restore the same
+frame and contiguous-allocation snapshots before the stable proof is installed.
+See `docs/FILESYSTEM_FILE_READ.md`.

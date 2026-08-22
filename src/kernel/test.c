@@ -14,6 +14,7 @@
 #include <sapote/cpu.h>
 #include <sapote/device_substrate.h>
 #include <sapote/framebuffer.h>
+#include <sapote/filesystem.h>
 #include <sapote/font.h>
 #include <sapote/heap.h>
 #include <sapote/interrupts.h>
@@ -298,6 +299,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_NVME;
     }
 
+    if (token_equals(value, length, "filesystem")) {
+        return KERNEL_TEST_FILESYSTEM;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -383,6 +388,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x31);
     case KERNEL_TEST_NVME:
         return UINT8_C(0x32);
+    case KERNEL_TEST_FILESYSTEM:
+        return UINT8_C(0x33);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -420,6 +427,18 @@ bool kernel_test_nvme_exit_self_test(void)
 {
     return nvme_exit_contract(scenario_exit_value(KERNEL_TEST_NVME)) &&
         !nvme_exit_contract(UINT8_C(0x33));
+}
+
+static bool filesystem_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x33);
+}
+
+bool kernel_test_filesystem_exit_self_test(void)
+{
+    return filesystem_exit_contract(
+            scenario_exit_value(KERNEL_TEST_FILESYSTEM)) &&
+        !filesystem_exit_contract(UINT8_C(0x34));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -3993,6 +4012,9 @@ void kernel_test_run(
     case KERNEL_TEST_NVME:
         /* Deferred until the proof receipt is installed and published. */
         return;
+    case KERNEL_TEST_FILESYSTEM:
+        /* Deferred until the proof receipt is installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4685,6 +4707,54 @@ _Noreturn void kernel_test_complete_nvme(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_filesystem(void)
+{
+    static const uint8_t expected_name[FAT16_CANONICAL_NAME_BYTES] =
+        {'S', 'A', 'P', 'O', 'T', 'E', ' ', ' ', 'B', 'I', 'N'};
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct filesystem_file_proof proof = filesystem_get_file_proof();
+
+    if (active_scenario != KERNEL_TEST_FILESYSTEM) {
+        kernel_test_fail("filesystem completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FAT16_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_FILESYSTEM_FILE_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != FAT16_FILE_BYTES ||
+        receipt->proof_counters[1] != 4U ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FAT16_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FILESYSTEM_FIXTURE_ABSENT)) {
+        kernel_test_fail("filesystem installed receipt is invalid");
+    }
+    for (size_t index = 0U; index < sizeof(expected_name); ++index) {
+        if (proof.canonical_name[index] != expected_name[index]) {
+            kernel_test_fail("filesystem canonical name is invalid");
+        }
+    }
+    if (proof.file_bytes != FAT16_FILE_BYTES || proof.read_count != 4U ||
+        proof.msix_completion_count != 4U ||
+        proof.ignored_completions != 0U ||
+        proof.robustness_tests != FILESYSTEM_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.fat16_ready || !proof.file_located || !proof.contents_valid ||
+        !proof.sentinel_valid || !proof.changed_while_controller_owned ||
+        !proof.ownership_complete || !proof.teardown_complete) {
+        kernel_test_fail("filesystem installed proof is inconsistent");
+    }
+
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -4817,6 +4887,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "xhci";
     case KERNEL_TEST_NVME:
         return "nvme";
+    case KERNEL_TEST_FILESYSTEM:
+        return "filesystem";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

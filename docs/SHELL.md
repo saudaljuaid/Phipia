@@ -146,7 +146,7 @@ confirms an unknown command is reported and counted without stopping anything.
   follows it. Nothing tokenises, so nothing takes flags.
 - **No pipes, no redirection, no programs.** Every command is a C function
   compiled into the kernel, because there is no user mode to run anything else
-  in and no filesystem to load it from.
+  in and no public filesystem or loader path from which to load it.
 - **The line is a fixed 128 bytes** in `.bss`, not on the heap. It is one shell
   on one console; the day there are two, this is per-session state.
 - **The shell/UI control loop cannot wait on a specific queue.** It halts until
