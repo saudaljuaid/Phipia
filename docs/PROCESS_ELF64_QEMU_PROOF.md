@@ -131,10 +131,14 @@ become visible only after a pre/post resource census is equal.
 
 ## Frozen controlled-robustness matrix
 
-The committed robustness count is **42**.  Each control checks the named
-failure and then proves there is no live process, user mapping, private table,
-image frame, stack frame, filesystem session, DMA allocation, vector/gate
-owner, or non-kernel CR3.
+The committed robustness count is **42**: 26 parser control families plus 16
+live process cleanup injections.  The parser self-test must finish all of its
+checks before it returns 26.  Each injected process attempt must return its
+named failure with a zero result and then prove there is no live process, user
+mapping, private table, image frame, stack frame, filesystem session, DMA
+allocation, vector/gate owner, or non-kernel CR3.  Only after all 42 controls
+pass does a final, uninjected attempt enter CPL3 and publish the installed
+result.
 
 1. Accept exactly the independently verified 128-byte image once.
 2. Reject null input, null output, and invalid ABI lengths; leave output invalid.
@@ -162,23 +166,32 @@ owner, or non-kernel CR3.
 24. Reject unaligned, noncanonical, supervisor-half, or wrapped virtual extents.
 25. Reject an entry outside the executable file-backed bytes.
 26. Prove parser failures retain no pointer and leave fixed output zero/invalid.
-27. Reject placement colliding with kernel intent, stack, guard, or reservation.
-28. Prove a private hierarchy reconstructs exact supervisor mapping intent.
-29. Reject a missing user ancestor and any user kernel ancestor or leaf.
-30. Reject writable image, stale writable alias, and stale TLB permission.
-31. Reject executable/wrong-size stack, present guard, and stack/image overlap.
-32. Inject frame/table allocation failure at every construction boundary.
-33. Reject wrong selector, DPL, gate type/presence, TSS RSP0, or entry frame.
-34. Deny user read/write/execute of kernel, MMIO, DMA, tables, and guard.
-35. Reject wrong vector, CPL, generation, CR3, result, duplicate, or late return.
-36. Reject CPU parsing or inspection before filesystem/DMA ownership is returned.
-37. Inject failure immediately after the private filesystem read.
-38. Inject failure after parse and after each image-frame transition.
-39. Inject failure through hierarchy construction, mapping, and permission narrowing.
-40. Inject failure at gate arm, CPL3 return, and kernel-CR3 restoration boundaries.
-41. Race the controlled release observer against process, mapping, frame, and gate state.
-42. Reject missing/duplicate Ledger prerequisites, direct invocation, bad receipt
-    cardinality, and alternate scenario/guest/host exit values.
+27. Inject failure after the CPU-owned private filesystem read.
+28. Inject failure after ELF parsing and Sapote placement validation.
+29. Inject failure after image-frame allocation.
+30. Inject failure after image-frame initialization and byte comparison.
+31. Inject failure after allocating the first stack frame.
+32. Inject failure after allocating the second stack frame.
+33. Inject failure after allocating the third stack frame.
+34. Inject failure after allocating the fourth stack frame.
+35. Inject failure after private four-level hierarchy construction.
+36. Inject failure after executable identity-alias permission narrowing.
+37. Inject failure after the final RX image mapping is installed.
+38. Inject failure after the first RW/NX stack mapping is installed.
+39. Inject failure after the fourth RW/NX stack mapping is installed.
+40. Inject failure after the complete effective-permission software walk.
+41. Inject failure after the private DPL3 gate is armed and validated.
+42. Inject failure while the private CR3 is active; restore kernel CR3 first.
+
+The eight address-space foundation controls separately reject placement
+collisions, invalid transitions, selector/TSS drift, unreleased resources,
+missing user ancestors, user kernel ancestors/leaves, writable image aliases,
+executable stack pages, present guards, and overlap.  The interrupt gate and
+installed return path authenticate vector, CPL, CS/SS, RIP/RSP, process
+generation, CR3 and result; the Boot Ledger and Makefile source contracts reject
+direct invocation, prerequisite/cardinality drift and alternate scenario exit
+values.  These structural checks are mandatory, but are not double-counted in
+the stable 42-control parser-plus-cleanup total.
 
 All inherited FAT16 and NVMe mutation families continue to run.  The installed
 stable line is intentionally address-free and timing-free:

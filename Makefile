@@ -80,14 +80,17 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-first-light clean contract-counts hooks iso kernel lint \
-	qemu-tests run screenshot-proof smoke toolchain verify
+.PHONY: all capture-first-light clean contract-counts contract-scenarios hooks \
+	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
 		'$(EXPECTED_SHELL_ASSERTION_COUNT)'
+
+contract-scenarios:
+	@printf '%s\n' $(TEST_SCENARIOS)
 
 kernel: $(KERNEL)
 

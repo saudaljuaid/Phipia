@@ -73,4 +73,6 @@ ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private re
 The frozen 42-control matrix and normative byte details are in
 [PROCESS_ELF64_QEMU_PROOF.md](PROCESS_ELF64_QEMU_PROOF.md). The milestone
 workflow retains normalized scenario, ten-sweep TCG, accelerator and fixture
-digest records for release staging.
+digest records for release staging. Its portable scenario-ISO archive contains
+all 37 exact boot images so the same committed head can be swept with a safely
+available host accelerator without rebuilding or touching a host device.

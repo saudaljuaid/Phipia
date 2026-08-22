@@ -98,7 +98,7 @@ long you will be in there.
 | --- | ---: | --- |
 | `physical_memory.c` | 747 | Which physical frames exist and which are free, including aligned bounded contiguous extents and usable-range overlap queries. |
 | `paging.c` | 3784 | Four-level page tables, W^X, supervisor mapping intent, one private user hierarchy, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` and `PROCESS_ADDRESS_SPACE.md`. |
-| `process.c`, `arch/x86_64/process.S` | 691 + 92 | One typed ELF image/process/stack lifecycle, real CPL3 entry, authenticated proof return and complete reverse teardown. |
+| `process.c`, `arch/x86_64/process.S` | 867 + 92 | One typed ELF image/process/stack lifecycle, 16 cleanup-injection boundaries, real CPL3 entry, authenticated proof return and complete reverse teardown. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
 ### More than one thing at a time

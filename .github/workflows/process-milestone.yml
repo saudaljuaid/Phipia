@@ -52,7 +52,7 @@ jobs:
                       raw="evidence/process/tcg-sweep-${sweep}-raw.txt"
                       normalized="evidence/process/tcg-sweep-${sweep}.txt"
                       make qemu-tests QEMU_ACCEL=tcg | tee "$raw"
-                      grep -E '^QEMU scenario [a-z0-9-]+ passed with status [0-9]+$' \
+                      grep -E '^QEMU scenario [a-z0-9-]+ passed$' \
                           "$raw" >"$normalized"
                       test "$(wc -l <"$normalized")" -eq 37
                       cp build/tests/process/serial.log \
@@ -71,6 +71,16 @@ jobs:
                   make build/tests/process/sapote.iso
                   cp build/tests/process/sapote.iso \
                       evidence/process/process-scenario.iso
+                  mkdir -p build/process-scenario-isos
+                  for scenario in $(
+                      make --no-print-directory -s contract-scenarios
+                  ); do
+                      make "build/tests/${scenario}/sapote.iso"
+                      cp "build/tests/${scenario}/sapote.iso" \
+                          "build/process-scenario-isos/${scenario}.iso"
+                  done
+                  tar -czf evidence/process/scenario-isos.tar.gz \
+                      -C build/process-scenario-isos .
             - name: Record the accelerator safety boundary
               shell: bash
               run: |
@@ -109,9 +119,15 @@ jobs:
                       C923A94F08DF64523D3DB701E4F9FC5FF5B51DFC21447E1DC57586D40D42B8A9
                   test "$fixture_sha" = \
                       5130D78A0FEB51EC410E5CC931A1E6485D96549A726E62BCE95F7D5C18FA2290
-                  read -r scenario_count assertion_count < <(
+                  read -r expected_scenarios expected_assertions < <(
                       make --no-print-directory -s contract-counts
                   )
+                  scenario_count=$(
+                      make --no-print-directory -s contract-scenarios | wc -l
+                  )
+                  assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  test "$scenario_count" -eq "$expected_scenarios"
+                  test "$assertion_count" -eq "$expected_assertions"
                   source_lines=$(
                       find src include -type f -print0 \
                           | sort -z | xargs -0 -r cat | wc -l
@@ -191,6 +207,7 @@ jobs:
                           SAPOTE.BIN \
                           process-fixture.raw \
                           process-scenario.iso \
+                          scenario-isos.tar.gz \
                           process-proof-transcript.txt \
                           verification-summary.txt \
                           controlled-robustness-results.txt \

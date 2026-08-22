@@ -67,6 +67,33 @@ struct process_runtime {
     bool interrupts_were_enabled;
 };
 
+enum process_failure_point {
+    PROCESS_FAILURE_NONE = 0,
+    PROCESS_FAILURE_AFTER_FILESYSTEM,
+    PROCESS_FAILURE_AFTER_PARSE,
+    PROCESS_FAILURE_AFTER_IMAGE_ALLOCATION,
+    PROCESS_FAILURE_AFTER_IMAGE_INITIALIZATION,
+    PROCESS_FAILURE_AFTER_STACK_ALLOCATION_ONE,
+    PROCESS_FAILURE_AFTER_STACK_ALLOCATION_TWO,
+    PROCESS_FAILURE_AFTER_STACK_ALLOCATION_THREE,
+    PROCESS_FAILURE_AFTER_STACK_ALLOCATION_FOUR,
+    PROCESS_FAILURE_AFTER_ADDRESS_SPACE,
+    PROCESS_FAILURE_AFTER_ALIAS_NARROW,
+    PROCESS_FAILURE_AFTER_IMAGE_MAPPING,
+    PROCESS_FAILURE_AFTER_STACK_MAPPING_ONE,
+    PROCESS_FAILURE_AFTER_STACK_MAPPING_FOUR,
+    PROCESS_FAILURE_AFTER_PERMISSION_WALK,
+    PROCESS_FAILURE_AFTER_GATE_ARM,
+    PROCESS_FAILURE_AFTER_CR3_ACTIVATION,
+    PROCESS_FAILURE_POINT_COUNT
+};
+
+_Static_assert(PROCESS_FAILURE_POINT_COUNT - 1U == 16U,
+    "process cleanup control count changed");
+_Static_assert(ELF64_PARSER_ROBUSTNESS_CONTROLS +
+    PROCESS_FAILURE_POINT_COUNT - 1U == PROCESS_CONTROLLED_ROBUSTNESS_TESTS,
+    "installed process robustness total changed");
+
 static struct process_runtime runtime;
 static struct process_proof_result installed_result;
 static uint64_t next_process_generation = UINT64_C(1);
@@ -104,6 +131,56 @@ static bool bytes_equal(
 static bool canonical_user(uint64_t address)
 {
     return address <= UINT64_C(0x00007FFFFFFFFFFF);
+}
+
+static enum process_status failure_status(
+    enum process_failure_point point
+)
+{
+    switch (point) {
+    case PROCESS_FAILURE_AFTER_FILESYSTEM:
+        return PROCESS_STATUS_FILESYSTEM;
+    case PROCESS_FAILURE_AFTER_PARSE:
+        return PROCESS_STATUS_ELF_PARSER;
+    case PROCESS_FAILURE_AFTER_IMAGE_ALLOCATION:
+    case PROCESS_FAILURE_AFTER_STACK_ALLOCATION_ONE:
+    case PROCESS_FAILURE_AFTER_STACK_ALLOCATION_TWO:
+    case PROCESS_FAILURE_AFTER_STACK_ALLOCATION_THREE:
+    case PROCESS_FAILURE_AFTER_STACK_ALLOCATION_FOUR:
+        return PROCESS_STATUS_FRAME_ALLOCATION;
+    case PROCESS_FAILURE_AFTER_IMAGE_INITIALIZATION:
+        return PROCESS_STATUS_FRAME_INITIALIZATION;
+    case PROCESS_FAILURE_AFTER_ADDRESS_SPACE:
+        return PROCESS_STATUS_ADDRESS_SPACE;
+    case PROCESS_FAILURE_AFTER_ALIAS_NARROW:
+        return PROCESS_STATUS_IMAGE_ALIAS;
+    case PROCESS_FAILURE_AFTER_IMAGE_MAPPING:
+    case PROCESS_FAILURE_AFTER_STACK_MAPPING_ONE:
+    case PROCESS_FAILURE_AFTER_STACK_MAPPING_FOUR:
+        return PROCESS_STATUS_USER_MAPPING;
+    case PROCESS_FAILURE_AFTER_PERMISSION_WALK:
+        return PROCESS_STATUS_USER_WALK;
+    case PROCESS_FAILURE_AFTER_GATE_ARM:
+        return PROCESS_STATUS_GATE;
+    case PROCESS_FAILURE_AFTER_CR3_ACTIVATION:
+        return PROCESS_STATUS_ENTRY;
+    case PROCESS_FAILURE_NONE:
+    case PROCESS_FAILURE_POINT_COUNT:
+        return PROCESS_STATUS_OK;
+    }
+    return PROCESS_STATUS_ROBUSTNESS;
+}
+
+static bool proof_result_zero(const struct process_proof_result *result)
+{
+    const uint8_t *bytes = (const uint8_t *)(const void *)result;
+
+    for (size_t index = 0U; index < sizeof(*result); ++index) {
+        if (bytes[index] != 0U) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static enum process_status process_transition(
@@ -275,6 +352,11 @@ static enum process_status release_runtime(enum process_status result)
     bool cleanup_failed = false;
 
     cpu_interrupt_disable();
+    if (runtime.address_space.state == PAGING_PROCESS_SPACE_ACTIVE &&
+        paging_process_restore_kernel(&runtime.address_space) !=
+            PAGING_STATUS_OK) {
+        cleanup_failed = true;
+    }
     if (runtime.state != PROCESS_STOPPING &&
         runtime.state != PROCESS_RELEASED &&
         process_transition(&runtime.state, PROCESS_STOPPING) !=
@@ -424,8 +506,9 @@ bool process_elf64_foundation_self_test(size_t *completed_tests)
     return completed == ELF64_PARSER_ROBUSTNESS_CONTROLS;
 }
 
-enum process_status process_installed_prove(
-    struct process_proof_result *result
+static enum process_status process_attempt(
+    struct process_proof_result *result,
+    enum process_failure_point failure_point
 )
 {
     struct process_resource_census before;
@@ -436,11 +519,10 @@ enum process_status process_installed_prove(
     enum filesystem_status file_status;
     enum process_status status = PROCESS_STATUS_OK;
 
-    if (result == NULL) {
+    if (result == NULL || failure_point >= PROCESS_FAILURE_POINT_COUNT) {
         return PROCESS_STATUS_NULL_ARGUMENT;
     }
     zero_bytes(result, sizeof(*result));
-    zero_bytes(&installed_result, sizeof(installed_result));
     if (process_proof_active || !process_resources_released()) {
         return PROCESS_STATUS_BUSY;
     }
@@ -480,6 +562,10 @@ enum process_status process_installed_prove(
         status = PROCESS_STATUS_FILESYSTEM;
         goto cleanup;
     }
+    if (failure_point == PROCESS_FAILURE_AFTER_FILESYSTEM) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     if (sapote_elf64_parse(runtime.elf_bytes, sizeof(runtime.elf_bytes),
             &runtime.image) != ELF64_STATUS_OK) {
         status = PROCESS_STATUS_ELF_PARSER;
@@ -490,12 +576,20 @@ enum process_status process_installed_prove(
         status = PROCESS_STATUS_ELF_PLACEMENT;
         goto cleanup;
     }
+    if (failure_point == PROCESS_FAILURE_AFTER_PARSE) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     runtime.image_state = PROCESS_IMAGE_EXTENT_CHECKED;
     if (frame_allocate(&runtime.image_frame) != FRAME_STATUS_OK) {
         status = PROCESS_STATUS_FRAME_ALLOCATION;
         goto cleanup;
     }
     runtime.image_state = PROCESS_IMAGE_FRAME_ALLOCATED;
+    if (failure_point == PROCESS_FAILURE_AFTER_IMAGE_ALLOCATION) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     if (!initialize_frame(runtime.image_frame)) {
         status = PROCESS_STATUS_FRAME_INITIALIZATION;
         goto cleanup;
@@ -510,12 +604,21 @@ enum process_status process_installed_prove(
         goto cleanup;
     }
     runtime.image_state = PROCESS_IMAGE_INITIALIZED;
+    if (failure_point == PROCESS_FAILURE_AFTER_IMAGE_INITIALIZATION) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     for (size_t index = 0U; index < PAGING_PROCESS_STACK_PAGES; ++index) {
         if (frame_allocate(&runtime.stack_frames[index]) != FRAME_STATUS_OK) {
             status = PROCESS_STATUS_FRAME_ALLOCATION;
             goto cleanup;
         }
         ++runtime.stack_frame_count;
+        if (failure_point ==
+                PROCESS_FAILURE_AFTER_STACK_ALLOCATION_ONE + index) {
+            status = failure_status(failure_point);
+            goto cleanup;
+        }
         if (!initialize_frame(runtime.stack_frames[index])) {
             status = PROCESS_STATUS_FRAME_INITIALIZATION;
             goto cleanup;
@@ -526,10 +629,18 @@ enum process_status process_installed_prove(
         status = PROCESS_STATUS_ADDRESS_SPACE;
         goto cleanup;
     }
+    if (failure_point == PROCESS_FAILURE_AFTER_ADDRESS_SPACE) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     cpu_interrupt_disable();
     if (paging_process_image_alias_narrow(&runtime.address_space,
             runtime.image_frame, &runtime.alias) != PAGING_STATUS_OK) {
         status = PROCESS_STATUS_IMAGE_ALIAS;
+        goto cleanup;
+    }
+    if (failure_point == PROCESS_FAILURE_AFTER_ALIAS_NARROW) {
+        status = failure_status(failure_point);
         goto cleanup;
     }
     if (paging_process_map_user_page(&runtime.address_space,
@@ -540,6 +651,10 @@ enum process_status process_installed_prove(
     }
     runtime.image_mapped = true;
     runtime.image_state = PROCESS_IMAGE_MAPPED;
+    if (failure_point == PROCESS_FAILURE_AFTER_IMAGE_MAPPING) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     runtime.stack_state = PROCESS_STACK_GUARDED;
     for (size_t index = 0U; index < PAGING_PROCESS_STACK_PAGES; ++index) {
         if (paging_process_map_user_page(&runtime.address_space,
@@ -550,6 +665,13 @@ enum process_status process_installed_prove(
             goto cleanup;
         }
         ++runtime.stack_mapped_count;
+        if ((index == 0U && failure_point ==
+                PROCESS_FAILURE_AFTER_STACK_MAPPING_ONE) ||
+            (index + 1U == PAGING_PROCESS_STACK_PAGES && failure_point ==
+                PROCESS_FAILURE_AFTER_STACK_MAPPING_FOUR)) {
+            status = failure_status(failure_point);
+            goto cleanup;
+        }
     }
     runtime.stack_state = PROCESS_STACK_MAPPED;
     if (paging_process_validate(&runtime.address_space, runtime.image_frame,
@@ -559,6 +681,10 @@ enum process_status process_installed_prove(
     }
     runtime.image_state = PROCESS_IMAGE_EXECUTABLE;
     runtime.stack_state = PROCESS_STACK_ACTIVE;
+    if (failure_point == PROCESS_FAILURE_AFTER_PERMISSION_WALK) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     if (!cpu_user_transition_contract_valid() ||
         cpu_tss_rsp0() == 0U ||
         !canonical_user(runtime.image.entry) ||
@@ -574,6 +700,10 @@ enum process_status process_installed_prove(
         status = PROCESS_STATUS_GATE;
         goto cleanup;
     }
+    if (failure_point == PROCESS_FAILURE_AFTER_GATE_ARM) {
+        status = failure_status(failure_point);
+        goto cleanup;
+    }
     if (process_transition(&runtime.state, PROCESS_INSTALLED) !=
             PROCESS_STATUS_OK) {
         status = PROCESS_STATUS_TRANSITION_INVALID;
@@ -584,6 +714,10 @@ enum process_status process_installed_prove(
             PROCESS_STATUS_OK ||
         paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK) {
         status = PROCESS_STATUS_ENTRY;
+        goto cleanup;
+    }
+    if (failure_point == PROCESS_FAILURE_AFTER_CR3_ACTIVATION) {
+        status = failure_status(failure_point);
         goto cleanup;
     }
     process_enter_user(runtime.image.entry, PAGING_PROCESS_STACK_END);
@@ -602,7 +736,7 @@ enum process_status process_installed_prove(
 
 cleanup:
     status = release_runtime(status);
-    if (status != PROCESS_STATUS_OK) {
+    if (status == PROCESS_STATUS_TEARDOWN) {
         zero_bytes(result, sizeof(*result));
         return status;
     }
@@ -617,6 +751,13 @@ cleanup:
     if (!bytes_equal(process_sentinel, sentinel_before,
             sizeof(sentinel_before))) {
         return PROCESS_STATUS_SENTINEL;
+    }
+    if (status != PROCESS_STATUS_OK) {
+        zero_bytes(result, sizeof(*result));
+        return status;
+    }
+    if (failure_point != PROCESS_FAILURE_NONE) {
+        return PROCESS_STATUS_ROBUSTNESS;
     }
     result->file_bytes = file_bytes;
     result->segment_count = ELF64_SEGMENT_COUNT;
@@ -633,6 +774,40 @@ cleanup:
     result->resource_census_equal = true;
     installed_result = *result;
     return PROCESS_STATUS_OK;
+}
+
+enum process_status process_installed_prove(
+    struct process_proof_result *result
+)
+{
+    struct process_proof_result controlled_result;
+
+    if (result == NULL) {
+        return PROCESS_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(result, sizeof(*result));
+    zero_bytes(&installed_result, sizeof(installed_result));
+    for (enum process_failure_point point =
+            PROCESS_FAILURE_AFTER_FILESYSTEM;
+        point < PROCESS_FAILURE_POINT_COUNT;
+        point = (enum process_failure_point)(point + 1)) {
+        enum process_status status;
+
+        zero_bytes(&controlled_result, sizeof(controlled_result));
+        status = process_attempt(&controlled_result, point);
+        if (point == PROCESS_FAILURE_AFTER_FILESYSTEM &&
+            status == PROCESS_STATUS_ABSENT) {
+            return status;
+        }
+        if (status != failure_status(point) ||
+            !proof_result_zero(&controlled_result) ||
+            !process_resources_released() ||
+            !proof_result_zero(&installed_result)) {
+            zero_bytes(result, sizeof(*result));
+            return PROCESS_STATUS_ROBUSTNESS;
+        }
+    }
+    return process_attempt(result, PROCESS_FAILURE_NONE);
 }
 
 struct process_proof_result process_get_proof_result(void)
@@ -679,7 +854,8 @@ const char *process_status_string(enum process_status status)
         "process transition is invalid",
         "process teardown leaked or failed",
         "process pre/post resource census differs",
-        "process proof changed the kernel sentinel"
+        "process proof changed the kernel sentinel",
+        "controlled process robustness cleanup failed"
     };
 
     _Static_assert(sizeof(messages) / sizeof(messages[0]) ==
