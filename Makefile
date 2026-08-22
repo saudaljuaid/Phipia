@@ -144,6 +144,15 @@ $(LINUX_ABI_FIXTURE): $(BUSYBOX_BINARY) tools/make-linux-abi-fixture.py
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
 		sed -n '/__got_start/,/__got_end/p' $(BUILD_DIR)/sapote.map; \
+		sed 's/ASSERT(__got_end == __got_start,/ASSERT(1,/' \
+			linker.ld >$(BUILD_DIR)/linker-got-diagnostic.ld; \
+		$(LD) -nostdlib -z max-page-size=0x1000 -z noexecstack \
+			--orphan-handling=error --build-id=none --emit-relocs \
+			-T $(BUILD_DIR)/linker-got-diagnostic.ld \
+			-o $(BUILD_DIR)/sapote-got-diagnostic.elf \
+			$(OBJECTS) $(RUST_LIB) || true; \
+		readelf -W -r $(BUILD_DIR)/sapote-got-diagnostic.elf \
+			| grep 'GOT' || true; \
 		exit 1; \
 	}
 
