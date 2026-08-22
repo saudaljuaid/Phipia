@@ -173,22 +173,31 @@ impl ValidatedImage {
     }
 }
 
-fn bytes<const N: usize>(input: &[u8], offset: usize) -> Result<[u8; N], Status> {
-    let end = offset.checked_add(N).ok_or(Status::Truncated)?;
-    let source = input.get(offset..end).ok_or(Status::Truncated)?;
-    source.try_into().map_err(|_| Status::Truncated)
+fn byte(input: &[u8], offset: usize) -> Result<u8, Status> {
+    input.get(offset).copied().ok_or(Status::Truncated)
 }
 
 fn u16_le(input: &[u8], offset: usize) -> Result<u16, Status> {
-    Ok(u16::from_le_bytes(bytes::<2>(input, offset)?))
+    let offset_1 = offset.checked_add(1).ok_or(Status::Truncated)?;
+    Ok(u16::from(byte(input, offset)?) | (u16::from(byte(input, offset_1)?) << 8))
 }
 
 fn u32_le(input: &[u8], offset: usize) -> Result<u32, Status> {
-    Ok(u32::from_le_bytes(bytes::<4>(input, offset)?))
+    let mut value = 0u32;
+    for shift in 0..4usize {
+        let position = offset.checked_add(shift).ok_or(Status::Truncated)?;
+        value |= u32::from(byte(input, position)?) << (shift * 8);
+    }
+    Ok(value)
 }
 
 fn u64_le(input: &[u8], offset: usize) -> Result<u64, Status> {
-    Ok(u64::from_le_bytes(bytes::<8>(input, offset)?))
+    let mut value = 0u64;
+    for shift in 0..8usize {
+        let position = offset.checked_add(shift).ok_or(Status::Truncated)?;
+        value |= u64::from(byte(input, position)?) << (shift * 8);
+    }
+    Ok(value)
 }
 
 fn canonical_user(address: u64) -> bool {
@@ -203,7 +212,11 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     if input.len() != FILE_BYTES {
         return Err(Status::FileLength);
     }
-    if bytes::<4>(input, 0)? != [0x7F, b'E', b'L', b'F'] {
+    if byte(input, 0)? != 0x7F
+        || byte(input, 1)? != b'E'
+        || byte(input, 2)? != b'L'
+        || byte(input, 3)? != b'F'
+    {
         return Err(Status::Magic);
     }
     if input.get(EI_CLASS).copied().ok_or(Status::Truncated)? != 2 {
@@ -220,8 +233,10 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     {
         return Err(Status::Abi);
     }
-    if input.get(EI_PAD..IDENT_BYTES).ok_or(Status::Truncated)? != [0; 7] {
-        return Err(Status::IdentPadding);
+    for offset in EI_PAD..IDENT_BYTES {
+        if byte(input, offset)? != 0 {
+            return Err(Status::IdentPadding);
+        }
     }
 
     let elf_type = u16_le(input, ELF_TYPE)?;
@@ -333,9 +348,11 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
         return Err(Status::Entry);
     }
     let code_offset = usize::try_from(CODE_OFFSET).map_err(|_| Status::FileRange)?;
-    let code = bytes::<8>(input, code_offset)?;
-    if code != CODE {
-        return Err(Status::Code);
+    for (index, expected) in CODE.iter().copied().enumerate() {
+        let position = code_offset.checked_add(index).ok_or(Status::FileRange)?;
+        if byte(input, position)? != expected {
+            return Err(Status::Code);
+        }
     }
 
     Ok(ValidatedImage {
@@ -352,42 +369,91 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
         alignment,
         mapping_start: virtual_address,
         mapping_end,
-        code,
+        code: CODE,
     })
 }
 
-fn put_u16(image: &mut [u8; FILE_BYTES], offset: usize, value: u16) {
-    image[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+fn put_byte(image: &mut [u8], offset: usize, value: u8) -> bool {
+    match image.get_mut(offset) {
+        Some(destination) => {
+            *destination = value;
+            true
+        }
+        None => false,
+    }
 }
 
-fn put_u32(image: &mut [u8; FILE_BYTES], offset: usize, value: u32) {
-    image[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+fn put_u16(image: &mut [u8], offset: usize, value: u16) -> bool {
+    put_integer(image, offset, u64::from(value), 2)
 }
 
-fn put_u64(image: &mut [u8; FILE_BYTES], offset: usize, value: u64) {
-    image[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+fn put_u32(image: &mut [u8], offset: usize, value: u32) -> bool {
+    put_integer(image, offset, u64::from(value), 4)
+}
+
+fn put_u64(image: &mut [u8], offset: usize, value: u64) -> bool {
+    put_integer(image, offset, value, 8)
+}
+
+fn put_integer(
+    image: &mut [u8],
+    offset: usize,
+    value: u64,
+    width: usize,
+) -> bool {
+    for index in 0..width {
+        let Some(position) = offset.checked_add(index) else {
+            return false;
+        };
+        if !put_byte(image, position, (value >> (index * 8)) as u8) {
+            return false;
+        }
+    }
+    true
+}
+
+fn write_fixture(image: &mut [u8]) -> bool {
+    let ident = [
+        0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    for (offset, value) in ident.iter().copied().enumerate() {
+        if !put_byte(image, offset, value) {
+            return false;
+        }
+    }
+    if !put_u16(image, ELF_TYPE, 2)
+        || !put_u16(image, ELF_MACHINE, 62)
+        || !put_u32(image, ELF_VERSION, 1)
+        || !put_u64(image, ELF_ENTRY, 0x0000_4000_0000_0078)
+        || !put_u64(image, ELF_PROGRAM_OFFSET, 64)
+        || !put_u16(image, ELF_HEADER_SIZE, 64)
+        || !put_u16(image, ELF_PROGRAM_SIZE, 56)
+        || !put_u16(image, ELF_PROGRAM_COUNT, 1)
+        || !put_u32(image, 64 + PROGRAM_TYPE, 1)
+        || !put_u32(image, 64 + PROGRAM_FLAGS, 5)
+        || !put_u64(image, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000)
+        || !put_u64(image, 64 + PROGRAM_FILE_SIZE, 128)
+        || !put_u64(image, 64 + PROGRAM_MEMORY_SIZE, 128)
+        || !put_u64(image, 64 + PROGRAM_ALIGNMENT, 4096)
+    {
+        return false;
+    }
+    for (index, value) in CODE.iter().copied().enumerate() {
+        let Some(offset) = 120usize.checked_add(index) else {
+            return false;
+        };
+        if !put_byte(image, offset, value) {
+            return false;
+        }
+    }
+    true
 }
 
 fn fixture() -> [u8; FILE_BYTES] {
     let mut image = [0u8; FILE_BYTES];
-    image[..16].copy_from_slice(&[
-        0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]);
-    put_u16(&mut image, ELF_TYPE, 2);
-    put_u16(&mut image, ELF_MACHINE, 62);
-    put_u32(&mut image, ELF_VERSION, 1);
-    put_u64(&mut image, ELF_ENTRY, 0x0000_4000_0000_0078);
-    put_u64(&mut image, ELF_PROGRAM_OFFSET, 64);
-    put_u16(&mut image, ELF_HEADER_SIZE, 64);
-    put_u16(&mut image, ELF_PROGRAM_SIZE, 56);
-    put_u16(&mut image, ELF_PROGRAM_COUNT, 1);
-    put_u32(&mut image, 64 + PROGRAM_TYPE, 1);
-    put_u32(&mut image, 64 + PROGRAM_FLAGS, 5);
-    put_u64(&mut image, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000);
-    put_u64(&mut image, 64 + PROGRAM_FILE_SIZE, 128);
-    put_u64(&mut image, 64 + PROGRAM_MEMORY_SIZE, 128);
-    put_u64(&mut image, 64 + PROGRAM_ALIGNMENT, 4096);
-    image[120..128].copy_from_slice(&CODE);
+    if !write_fixture(&mut image) {
+        return [0; FILE_BYTES];
+    }
     image
 }
 
@@ -410,12 +476,17 @@ pub fn self_test() -> u32 {
         return 0;
     }
     for length in 0..FILE_BYTES {
-        if !rejects(&base[..length], Status::Truncated) {
+        let Some(truncated) = base.get(..length) else {
+            return 0;
+        };
+        if !rejects(truncated, Status::Truncated) {
             return 0;
         }
     }
     let mut long = [0u8; FILE_BYTES + 1];
-    long[..FILE_BYTES].copy_from_slice(&base);
+    if !write_fixture(&mut long) {
+        return 0;
+    }
     if !rejects(&long, Status::FileLength) {
         return 0;
     }
@@ -451,23 +522,42 @@ pub fn self_test() -> u32 {
         (ELF_ENTRY, 0, Status::Entry),
         (120, 0x90, Status::Code),
     ];
+    let mut changed = [0u8; FILE_BYTES];
+    if !write_fixture(&mut changed) {
+        return 0;
+    }
     for &(offset, value, expected) in mutations {
-        let mut changed = base;
-        changed[offset] = value;
+        let original = match changed.get(offset).copied() {
+            Some(found) => found,
+            None => return 0,
+        };
+        let Some(destination) = changed.get_mut(offset) else {
+            return 0;
+        };
+        *destination = value;
         if !rejects(&changed, expected) {
+            return 0;
+        }
+        if !put_byte(&mut changed, offset, original) {
             return 0;
         }
     }
 
-    let mut changed = base;
-    put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0xFFFF_8000_0000_0000);
-    put_u64(&mut changed, ELF_ENTRY, 0xFFFF_8000_0000_0078);
+    if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0xFFFF_8000_0000_0000)
+        || !put_u64(&mut changed, ELF_ENTRY, 0xFFFF_8000_0000_0078)
+    {
+        return 0;
+    }
     if !rejects(&changed, Status::VirtualAddress) {
         return 0;
     }
-    changed = base;
-    put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, u64::MAX & !0xFFF);
-    put_u64(&mut changed, ELF_ENTRY, u64::MAX - 0xF87);
+    if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000)
+        || !put_u64(&mut changed, ELF_ENTRY, 0x0000_4000_0000_0078)
+        || !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, u64::MAX & !0xFFF)
+        || !put_u64(&mut changed, ELF_ENTRY, u64::MAX - 0xF87)
+    {
+        return 0;
+    }
     if !rejects(&changed, Status::VirtualAddress) {
         return 0;
     }

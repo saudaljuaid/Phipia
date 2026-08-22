@@ -438,9 +438,11 @@ on rollback. The chosen range is disjoint from the 4 GiB
 identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
 `docs/PCI_RESOURCES.md`.
 
-- **Splitting a huge leaf.** A 4 KiB change inside a 2 MiB mapping is refused,
-  not performed. Splitting means allocating a page table, populating 512 entries
-  from the huge entry, and swapping it in under a live translation.
+- **General huge-leaf splitting.** The public runtime mapper still refuses a
+  4 KiB change inside a 2 MiB mapping. The v0.7.0 process owner has one private
+  exact operation that expands the allocator-owned image frame's identity leaf
+  into 512 semantic 4 KiB leaves, narrows that alias RO/NX, reloads CR3, and
+  collapses it during teardown. It is not a general mapper feature.
 - **Higher-half relocation.** Doing it in the same change as taking ownership of
   the tables would have made the CR3 switch far harder to review.
 - **Narrowing the identity window**, and re-pointing the frame allocator, the
@@ -448,8 +450,10 @@ identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
 - **A general device cache policy.** The registry covers boot windows and the
   claim arena maps BARs UC. No typed write-combining or write-protected BAR
   policy exists yet; MTRR inspection and a physical-alias audit remain missing.
-- **Userspace, ring 3, per-process address spaces.** The user bit is refused, not
-  supported.
+- **General userspace and process management.** v0.7.0 admits one fixed RX image
+  and one guarded RW/NX stack through private typed functions. The public mapper
+  still cannot request `U/S`; arbitrary user mappings, concurrent processes and
+  user-controlled layout remain unsupported. See `docs/PROCESS_ADDRESS_SPACE.md`.
 - **Demand paging, swap, or any fault-driven mapping.** The page-fault handler
   stays fatal.
 - **Anything per-processor.** The hierarchy is a single static and there is no
@@ -480,3 +484,20 @@ The v0.6.0 FAT16 session adds no mapping kind or address. Its four reads reuse
 the same allocator-owned PRP1 page and the existing typed BAR0 mapping. The
 filesystem parser sees only CPU-owned virtual byte slices after MSI-X returns
 DMA ownership; it never receives a physical address.
+
+## Private v0.7.0 process hierarchy
+
+The process proof rebuilds a second four-level hierarchy from installed
+supervisor mapping intent rather than copying raw entries. Runtime mapping,
+unmapping and protection changes maintain a bounded semantic registry used by
+that builder. Every retained kernel/device ancestor and leaf stays
+supervisor-only. Only the fixed ELF image and four stack payload pages acquire
+the user bit; null and guard pages are absent. A complete software walk checks
+effective ancestor/leaf U/S, R/W and NX conjunction and rejects any user kernel
+mapping or W+X leaf before CR3 activation.
+
+CR3 changes and executable-alias narrowing require interrupts disabled. The
+proof interrupt restores the installed root before C removes mappings or frees
+frames. The closing proof additionally requires no private root, image alias,
+user mapping or non-kernel CR3. The exact layout and teardown order are in
+`docs/PROCESS_ADDRESS_SPACE.md`.

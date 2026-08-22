@@ -309,8 +309,15 @@ executable failure test, and a boot that proves it or refuses.
 
 **Programs.**
 
-9. **Ring 3, per-process address spaces, ELF loading.** `docs/VIRTUAL_MEMORY.md`
-   deliberately refuses the user bit today; this is where that changes.
+9. **A bounded Ring 3, private address-space and ELF64 foundation — complete in
+   v0.7.0.** One fixed 128-byte `ET_EXEC` image is read from the separate
+   FAT16/NVMe fixture, parsed in safe Rust, installed RX beside a guarded RW/NX
+   user stack, entered through real `IRETQ`, and returned through one private
+   authenticated DPL3 interrupt gate. Kernel mappings remain supervisor-only
+   and all private resources are gone before the receipt is published. This is
+   deliberately not general process management or a syscall ABI. See
+   `docs/ELF64_LOADER.md`, `docs/PROCESS_ADDRESS_SPACE.md`,
+   `docs/CPL3_INTERRUPT_BOUNDARY.md` and `docs/PROCESS_QEMU_PROOF.md`.
 10. **The Linux system-call ABI, incrementally.** Target a statically-linked
    busybox first and add syscalls until it runs. `ENOSYS` for everything else.
 

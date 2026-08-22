@@ -2410,10 +2410,14 @@ static bool declare_dependencies(
                 sizeof(process_proof_requirements[0]);
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->provided_capability_count = 2U;
         descriptor->skipped_capabilities[0] =
             BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT;
-        descriptor->skipped_capability_count = 1U;
+        descriptor->skipped_capabilities[1] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->skipped_capability_count = 2U;
         break;
     case BOOT_STAGE_CLOSING_PROOFS:
         descriptor->required_capabilities[0] =
@@ -2430,7 +2434,9 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[6] =
             BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE;
-        descriptor->required_capability_count = 7U;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED;
+        descriptor->required_capability_count = 8U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->provided_capability_count = 1U;

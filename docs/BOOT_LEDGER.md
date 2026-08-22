@@ -26,9 +26,9 @@ installed-state proof whose assertions run in the same kernel they check.
 
 | Object | Capacity |
 | --- | ---: |
-| descriptors and canonical plan | 40 stages |
-| receipts | 40 receipts |
-| required, success or fallback capabilities per descriptor | 14 each |
+| descriptors and canonical plan | 43 stages |
+| receipts | 43 receipts |
+| required, success or fallback capabilities per descriptor | 18 each |
 | stable proof counters per receipt | 2 |
 
 Plan construction, validation, execution bookkeeping and the pure planner test
@@ -87,9 +87,12 @@ no new public capability; it still receives one ordered receipt.
 | 36 | installed xHCI descriptor proof | paging, PCI, heap, frames, local APIC, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, xHCI foundation | xHCI descriptor proof; declared fixture absence on neutral skip | optional neutral | services |
 | 37 | NVMe block-controller foundation | PCI resources, vectors/MSI-X, DMA, monotonic deadlines | NVMe foundation available | required | services |
 | 38 | installed NVMe read proof | paging, PCI, heap, frames, local APIC, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe foundation | NVMe read proof; declared fixture absence on neutral skip | optional neutral | services |
-| 39 | bounded read-only FAT16 foundation | NVMe foundation | FAT16 foundation available | required | services |
+| 39 | bounded read-only FAT16 foundation | NVMe foundation | FAT16 foundation, private one-file read available | required | services |
 | 40 | installed FAT16 file-read proof | paging, PCI, heap, frames, local APIC, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe foundation, FAT16 foundation | filesystem file proof; declared fixture absence on neutral skip | optional neutral | services |
-| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler | boot proofs complete | required | proofs |
+| 41 | private process address-space foundation | page tables, W^X, frames, heap, IDT/TSS, controllers | process address-space foundation available | required | services |
+| 42 | bounded ELF64 loader foundation | process address-space foundation | ELF64 loader foundation available | required | services |
+| 43 | installed Ring 3 process proof | page tables, W^X, frames, heap, IDT/TSS/controllers, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe, FAT16, private one-file read, address-space and ELF64 foundations | installed process proof plus outcome decided; declared fixture absence plus outcome decided on neutral skip | optional neutral | services |
+| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler, process foundations, process outcome decided | boot proofs complete | required | proofs |
 | 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
 | 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
 | 30 | First Light installed proof | activated desktop, WC, closing proofs | First Light installed proof complete | optional | proofs |
@@ -152,13 +155,24 @@ The complete capability enumeration is:
 46. NVMe read proof complete;
 47. NVMe fixture absent;
 48. FAT16 foundation available;
-49. filesystem file proof complete; and
-50. filesystem fixture absent.
+49. filesystem file proof complete;
+50. filesystem fixture absent;
+51. private one-file read available;
+52. process address-space foundation available;
+53. ELF64 loader foundation available;
+54. process installed proof complete;
+55. process fixture absent; and
+56. process outcome decided.
 
 The appended identifiers preserve every inherited stable stage and capability
-number. Declared phases and requirements place the device foundations and all
-installed device proofs before closing proofs; raw enum position and descriptor
-declaration order do not define execution order.
+number. Declared phases and requirements place the device and process
+foundations and all installed proofs before closing proofs; raw enum position
+and descriptor declaration order do not define execution order. The process
+stage declares `process outcome decided` in both its success and neutral lists.
+The planner permits that one same-stage common outcome while still refusing a
+duplicate within either list or across different providers. Closing proofs
+therefore cannot win the stable-ID tie before process success/absence and
+teardown have a receipt.
 
 The framebuffer decision and framebuffer WC proof are intentionally distinct.
 The device-window registry says what paging installed. The independent WC stage
@@ -239,6 +253,18 @@ copies must both fail before controller discovery. Installed verification
 requires exactly one of a ran receipt (`128` file bytes and MSI-X delta `4`) or
 the neutral filesystem-fixture-absent capability. Closing proofs additionally
 require that the private filesystem session is released.
+
+The process proof exactly fills the new eighteen-capability bound: page tables,
+installed W^X, physical frames, heap, IDT/TSS and interrupt controllers,
+interrupt enable, calibrated deadlines, threading, scheduler, PCI resources,
+vectors/MSI-X, DMA, NVMe, FAT16, the private one-file read seam, process
+address-space foundation and ELF64 loader foundation. Its missing-count and
+duplicate-member copies are rejected before it can open the fixture. Installed
+verification requires exactly one of the ran receipt (`128` bytes, one segment,
+authenticated result and clean census) or process-fixture absence, plus the
+common outcome-decision capability. Closing proofs depend on that decision and
+independently require kernel CR3 plus zero process, mapping, image, stack, gate
+and filesystem ownership.
 
 The framebuffer and cached-surface store fences remain in their existing
 implementation paths. The ledger changes who may call those paths, not their
@@ -374,6 +400,9 @@ build; the narrowest scenario was used and the snapshot was restored without
 | remove one of the NVMe proof's thirteen prerequisites | semantic prerequisite refusal before PCI discovery | PASS — temporary local descriptor is rejected |
 | change NVMe guest exit `0x32` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 101 |
 | omit or duplicate one filesystem proof prerequisite | exact fourteen-member semantic refusal before PCI discovery | PASS — temporary local descriptors are rejected |
+| omit or duplicate one process proof prerequisite | exact eighteen-member semantic refusal before the private read | PASS — temporary local descriptors are rejected |
+| remove the common process-outcome edge from closing proofs | canonical graph orders closing stage 23 before process stage 43 | PASS — source and installed receipt assertions reject the mutation |
+| change process guest exit `0x34` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 105 |
 | change filesystem guest exit `0x33` | exit-contract negative control | PASS — temporary `0x34` is rejected; host contract remains 103 |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |

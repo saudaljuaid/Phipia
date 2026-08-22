@@ -4806,6 +4806,8 @@ _Noreturn void kernel_test_complete_process(void)
             BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE) ||
         !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_PROCESS_OUTCOME_DECIDED) ||
         boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT)) {
         kernel_test_fail("process installed receipt is invalid");

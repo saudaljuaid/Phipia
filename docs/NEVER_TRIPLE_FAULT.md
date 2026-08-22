@@ -7,10 +7,11 @@ diagnostic and halts. A dedicated double-fault path does not call ordinary C.
 
 ## Interrupt-entry ABI
 
-AMD64 long mode pushes `SS`, `RSP`, `RFLAGS`, `CS`, and `RIP` as eight-byte
-values for every interrupt. Vectors 8, 10-14, 17, 21, 29, and 30 also receive a
-hardware error code. Their stubs push only the vector; every other stub pushes a
-zero error code followed by the vector.
+AMD64 long mode always pushes `RFLAGS`, `CS`, and `RIP` as eight-byte values.
+It additionally pushes the old `SS` and `RSP` for a privilege change or IST
+switch. Vectors 8, 10-14, 17, 21, 29, and 30 also receive a hardware error
+code. Their stubs push only the vector; every other stub pushes a zero error
+code followed by the vector.
 
 The common entry clears the direction flag, saves all fifteen non-RSP general
 registers, snapshots CR2, aligns the live stack to the System V call boundary,
@@ -18,17 +19,22 @@ and calls ordinary freestanding C. The original frame pointer is held in a
 callee-saved register. Return restores the exact saved stack, registers, vector
 and error slots before executing `iretq`.
 
-The C structure is statically asserted to 184 bytes. Changing its field order,
-the Assembly push order, or the list of error-code vectors is one ABI change and
-must be reviewed as such.
+The common C structure is statically asserted to 168 bytes. A separate 16-byte
+stack tail describes saved RSP/SS only when saved CS or the IST route proves it
+exists; same-CPL code never reads beyond the common frame. Changing either
+structure, the Assembly push order, the list of error-code vectors or tail
+classification is one ABI change and must be reviewed as such.
 
 ## Descriptor-table invariants
 
-The permanent GDT contains a null descriptor, ring-zero code and data, and one
-64-bit TSS descriptor. The TSS owns independent 16 KiB stacks for RSP0, double
+The permanent GDT contains a null descriptor, ring-zero code and data, DPL3
+data and 64-bit code, and one 64-bit TSS descriptor. The TSS owns independent
+16 KiB stacks for RSP0, double
 fault, NMI, and machine check. IST1, IST2, and IST3 select the latter three.
 Vector `0xF0` temporarily shares IST1 solely for a recoverable stack-routing
-proof.
+proof. Vector `0x81` is normally DPL0 and becomes one private DPL3 interrupt
+gate only while the v0.7.0 CPL3 proof token is armed; see
+`docs/CPL3_INTERRUPT_BOUNDARY.md`.
 
 The IDT is the first subsystem initialized by C. It is first loaded without IST
 selectors while the bootstrap GDT is still active. Sapote then loads the
@@ -81,7 +87,7 @@ cannot be mistaken for success.
 
 ## Deferred work
 
-This remains a single-core, ring-zero foundation. It intentionally has no
-`swapgs`, userspace frame, nested interrupts, local APIC, I/O APIC, SMP state,
-preemption, guard pages, or interrupt-safe console lock. Those mechanisms must
-arrive with their own changed ABI and executable proofs.
+This remains single-core and has no `swapgs`, nested interrupts, SMP state or
+interrupt-safe console lock. The sole userspace frame is the bounded v0.7.0
+proof; it is not a general fault-containment or syscall model. General
+per-process interrupt policy must arrive with its own executable proofs.

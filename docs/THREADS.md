@@ -302,6 +302,12 @@ several layers later.
 
 ## Deferred work
 
+The v0.7.0 process proof executes synchronously on the boot thread with
+maskable interrupts disabled across its three user instructions. It uses the
+existing permanent TSS RSP0 stack but does not create a schedulable process,
+attach an address space to a thread, or change the run queue. Process/thread
+association and preemptible userspace remain deferred.
+
 - **`timer_sleep_ns` still halts.** It is the reason this layer exists, and
   turning a sleep into a block that yields is the increment that finally makes
   `docs/MONOTONIC_TIME.md`'s "nothing sleeps concurrently" false.
