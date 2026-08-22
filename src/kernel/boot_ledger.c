@@ -14,6 +14,7 @@
 #include <sapote/paging.h>
 #include <sapote/pci_resource.h>
 #include <sapote/pointer.h>
+#include <sapote/process.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
@@ -71,7 +72,10 @@ static const char *const stage_names[] = {
     "NVMe block-controller foundation",
     "installed NVMe read proof",
     "bounded read-only FAT16 foundation",
-    "installed FAT16 file-read proof"
+    "installed FAT16 file-read proof",
+    "private process address-space foundation",
+    "bounded ELF64 loader foundation",
+    "installed Ring 3 process proof"
 };
 
 static const char *const capability_names[] = {
@@ -125,7 +129,12 @@ static const char *const capability_names[] = {
     "NVMe fixture absent",
     "FAT16 foundation available",
     "filesystem file proof complete",
-    "filesystem fixture absent"
+    "filesystem fixture absent",
+    "private one-file read available",
+    "process address-space foundation available",
+    "ELF64 loader foundation available",
+    "process installed proof complete",
+    "process fixture absent"
 };
 
 static const char *const status_names[] = {
@@ -1521,6 +1530,50 @@ enum boot_ledger_status boot_ledger_verify_installed(
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_FILESYSTEM_FILE_PROOF,
                 BOOT_CAPABILITY_FILESYSTEM_FILE_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
+    const bool process_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+    const bool process_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_PROCESS_FIXTURE_ABSENT);
+    const bool process_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_PROCESS_INSTALLED_PROOF) != NULL;
+    if (!optional_outcome_valid(process_planned, process_complete,
+            process_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+            BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (process_complete || process_absent) {
+        const struct boot_stage_receipt *process =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_PROCESS_INSTALLED_PROOF);
+        const struct process_proof_result proof = process_get_proof_result();
+
+        if (process == NULL ||
+            (process_complete &&
+                (process->result != BOOT_RECEIPT_RAN ||
+                 process->proof_counter_count != 2U ||
+                 process->proof_counters[0] != 128U ||
+                 process->proof_counters[1] != 1U ||
+                 proof.file_bytes != 128U || proof.segment_count != 1U ||
+                 proof.result != UINT32_C(0x53415037) ||
+                 proof.robustness_tests !=
+                    PROCESS_CONTROLLED_ROBUSTNESS_TESTS ||
+                 !proof.ring_three || !proof.private_address_space ||
+                 !proof.image_read_execute ||
+                 !proof.stack_read_write_no_execute ||
+                 !proof.guard_unmapped || !proof.interrupt_authenticated ||
+                 !proof.normal_exit || !proof.teardown_complete ||
+                 !proof.resource_census_equal ||
+                 !process_resources_released())) ||
+            (process_absent && process->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_PROCESS_INSTALLED_PROOF,
+                BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
             return ledger->status;
         }
     }

@@ -12,6 +12,7 @@
 .code64
 .extern interrupt_dispatch
 .extern kernel_test_double_fault_armed
+.extern process_user_resume_from_interrupt
 
 .macro DEFINE_INTERRUPT_VECTOR number
     .global interrupt_vector_\number
@@ -66,6 +67,8 @@ interrupt_common_entry:
     andq $-16, %rsp
     movq %rbx, %rdi
     call interrupt_dispatch
+    testq %rax, %rax
+    jnz .process_kernel_resume
     movq %rbx, %rsp
 
     addq $8, %rsp
@@ -86,6 +89,9 @@ interrupt_common_entry:
     popq %rax
     addq $16, %rsp
     iretq
+.process_kernel_resume:
+    movq %rax, %rsp
+    jmp process_user_resume_from_interrupt
 .size interrupt_common_entry, . - interrupt_common_entry
 
 /*

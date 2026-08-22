@@ -34,7 +34,9 @@ static void breakpoint_handler(struct interrupt_frame *frame, void *context)
         frame->error_code == 0U &&
         frame->rip == (uintptr_t)(const void *)interrupt_breakpoint_after &&
         (frame->rflags & UINT64_C(0x400)) != 0U &&
-        (frame->cs & UINT64_C(3)) == 0U;
+        (frame->cs & UINT64_C(3)) == 0U &&
+        !interrupt_frame_has_stack_tail(frame) &&
+        interrupt_frame_stack_selector(frame) == CPU_GDT_DATA_SELECTOR;
 }
 
 static void ist_handler(struct interrupt_frame *frame, void *context)
@@ -50,19 +52,20 @@ static void ist_handler(struct interrupt_frame *frame, void *context)
     observation->interrupted_stack_outside_ist = frame != NULL &&
         frame->vector == INTERRUPT_IST_TEST_VECTOR &&
         frame->error_code == 0U &&
-        !cpu_address_on_ist(CPU_IST_DOUBLE_FAULT, (uintptr_t)frame->rsp);
+        interrupt_frame_has_stack_tail(frame) &&
+        !cpu_address_on_ist(CPU_IST_DOUBLE_FAULT,
+            interrupt_frame_stack_pointer(frame));
 }
 
 bool interrupt_frame_layout_self_test(void)
 {
-    return sizeof(struct interrupt_frame) == 184U &&
+    return sizeof(struct interrupt_frame) == 168U &&
         offsetof(struct interrupt_frame, cr2) == 0U &&
         offsetof(struct interrupt_frame, rax) == 120U &&
         offsetof(struct interrupt_frame, vector) == 128U &&
         offsetof(struct interrupt_frame, error_code) == 136U &&
         offsetof(struct interrupt_frame, rip) == 144U &&
-        offsetof(struct interrupt_frame, rsp) == 168U &&
-        offsetof(struct interrupt_frame, ss) == 176U &&
+        sizeof(struct interrupt_stack_tail) == 16U &&
         cpu_read_cs() == CPU_GDT_CODE_SELECTOR &&
         cpu_read_task_register() == CPU_GDT_TSS_SELECTOR &&
         interrupts_validate() == INTERRUPT_STATUS_OK;

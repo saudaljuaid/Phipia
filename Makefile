@@ -10,10 +10,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate xhci nvme filesystem
+	boot-ledger first-light device-substrate xhci nvme filesystem process
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 36
-EXPECTED_SHELL_ASSERTION_COUNT := 214
+EXPECTED_TEST_SCENARIO_COUNT := 37
+EXPECTED_SHELL_ASSERTION_COUNT := 231
 
 CC := gcc
 LD := ld
@@ -215,6 +215,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_fat$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_extent$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_payload$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
 		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
 	fi
@@ -258,6 +260,16 @@ verify: toolchain lint
 		--exclude=filesystem.c; then \
 		echo 'filesystem file proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bprocess_installed_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=process.c; then \
+		echo 'process proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -ERn '\bfilesystem_private_read_(open|close)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=filesystem.c \
+		--exclude=process.c; then \
+		echo 'private one-file read seam escaped the process owner'; exit 1; \
+	fi
 	@if grep -ERn '\bnvme_filesystem_session_(open|read|view|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c --exclude=nvme.c; then \
 		echo 'private filesystem read session escaped its owner'; exit 1; \
@@ -265,6 +277,11 @@ verify: toolchain lint
 	@! grep -Eq 'NVME_NVM_WRITE|NVM_WRITE|write[_ -]opcode' \
 		include/sapote/nvme.h src/kernel/nvme.c src/kernel/filesystem.c \
 		src/rust/fat16.rs
+	@test "$$(grep -Ec 'process_return_interrupt[[:space:]]*[(]' \
+		src/kernel/process.c)" -eq 1 && \
+		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
+		src/kernel/process.c || \
+		{ echo 'process proof return handler has an unexpected call site'; exit 1; }
 	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \
 		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
@@ -328,6 +345,18 @@ verify: toolchain lint
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
 		test "$$((0x34 * 2 + 1))" -ne "$$host_exit" || \
 		{ echo 'filesystem guest and host exit contracts disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_PROCESS:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x34);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_PROCESS:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*process) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
+		test "$$((0x33 * 2 + 1))" -ne "$$host_exit" || \
+		{ echo 'process guest and host exit contracts disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -425,6 +454,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		xhci) expected=99 ;; \
 		nvme) expected=101 ;; \
 		filesystem) expected=103 ;; \
+		process) expected=105 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -453,6 +483,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(PYTHON) tools/make-fat16-fixture.py '$(FILESYSTEM_FIXTURE)' || exit 1; \
 				test -f '$(FILESYSTEM_FIXTURE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(FILESYSTEM_FIXTURE),node-name=filesystem-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=filesystem-file,node-name=filesystem-raw,read-only=on -device nvme,serial=sapote-fat16-fixture,drive=filesystem-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			process) \
+				rm -f '$(PROCESS_FIXTURE)' '$(PROCESS_ELF)' || exit 1; \
+				$(PYTHON) tools/make-process-fixture.py '$(PROCESS_FIXTURE)' || exit 1; \
+				test -f '$(PROCESS_FIXTURE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(PROCESS_FIXTURE),node-name=process-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=process-file,node-name=process-raw,read-only=on -device nvme,serial=sapote-process-fixture,drive=process-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -540,6 +575,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: FAT16 foundation robustness controls 26/26 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: bounded read-only FAT16 foundation established' "$$log" || \
 		  ! grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" || \
+		  ! grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: ELF64 parser robustness controls 26/26 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: process fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -666,6 +704,13 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: FAT16 MSI-X completion count 4' "$$log" && \
 			grep -Fxq 'Sapote: FAT16 DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
 			grep -Fxq 'Sapote: FAT16 teardown complete' "$$log" || \
+				diagnostics_ok=false ;; \
+		process) \
+			grep -Fxq 'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42' "$$log" && \
+			grep -Fxq 'Sapote: NVMe fixture absent' "$$log" && \
+			grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" && \
+			grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" && \
+			grep -Fxq 'Sapote: ELF64 parser robustness controls 26/26 passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

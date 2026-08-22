@@ -9,6 +9,8 @@
 #define CPU_GDT_CODE_SELECTOR UINT16_C(0x08)
 #define CPU_GDT_DATA_SELECTOR UINT16_C(0x10)
 #define CPU_GDT_TSS_SELECTOR UINT16_C(0x18)
+#define CPU_GDT_USER_DATA_SELECTOR UINT16_C(0x2B)
+#define CPU_GDT_USER_CODE_SELECTOR UINT16_C(0x33)
 #define CPU_IST_DOUBLE_FAULT UINT8_C(1)
 #define CPU_IST_NMI UINT8_C(2)
 #define CPU_IST_MACHINE_CHECK UINT8_C(3)
@@ -42,6 +44,8 @@ enum cpu_status cpu_tables_prepare(void);
 enum cpu_status cpu_tables_activate(void);
 enum cpu_status cpu_tables_validate(void);
 bool cpu_tables_active(void);
+bool cpu_user_transition_contract_valid(void);
+uintptr_t cpu_tss_rsp0(void);
 bool cpu_address_on_ist(uint8_t ist_index, uintptr_t address);
 bool cpu_stack_canaries_valid(void);
 const char *cpu_status_string(enum cpu_status status);

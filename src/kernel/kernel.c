@@ -121,5 +121,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_filesystem();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_PROCESS) {
+        kernel_test_complete_process();
+    }
+
     shell_run();
 }
