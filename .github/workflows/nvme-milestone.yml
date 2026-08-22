@@ -77,7 +77,7 @@ jobs:
               run: |
                   set -o pipefail
                   make iso
-                  cp build/sapote.iso evidence/nvme/Sapote-v0.5.0.iso
+                  cp build/sapote.iso evidence/nvme/Sapote-nvme-regression.iso
                   proof=evidence/nvme/nvme-proof-transcript.txt
                   expected_lines=(
                       'Sapote: NVMe foundation robustness controls 20/20 passed'
@@ -142,7 +142,7 @@ jobs:
                       printf 'Matrix: docs/NVME_QEMU_PROOF.md, controlled robustness matrix 1-22.\n'
                   } >evidence/nvme/controlled-robustness-results.txt
                   (cd evidence/nvme && sha256sum \
-                      Sapote-v0.5.0.iso \
+                      Sapote-nvme-regression.iso \
                       nvme-proof-transcript.txt \
                       verification-summary.txt \
                       controlled-robustness-results.txt >SHA256SUMS)

@@ -83,7 +83,8 @@ jobs:
               run: |
                   set -o pipefail
                   make iso
-                  cp build/sapote.iso evidence/filesystem/Sapote-v0.6.0.iso
+                  cp build/sapote.iso \
+                      evidence/filesystem/Sapote-filesystem-regression.iso
                   python3 tools/make-fat16-fixture.py \
                       build/tests/filesystem/fat16-fixture.raw
                   fixture_sha=$(
@@ -108,7 +109,7 @@ jobs:
                   test "$scenario_count" -eq "$expected_scenario_count"
                   test "$assertion_count" -eq "$expected_assertion_count"
                   ordinary_record=$(
-                      grep -E '^ST LEDGER stages 40 receipts 40 capabilities [0-9]+ skips [0-9]+ fingerprint 0x[0-9A-F]{16}$' \
+                      grep -E '^ST LEDGER stages 43 receipts 43 capabilities 49 skips 5 fingerprint 0x[0-9A-F]{16}$' \
                           evidence/filesystem/tcg-sweep-10-logs/boot-ledger.log
                   )
                   test -n "$ordinary_record"
@@ -129,7 +130,7 @@ jobs:
                       printf 'commit: %s\n' "$GITHUB_SHA"
                       printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
                       printf 'scenarios per sweep: %s\n' "$scenario_count"
-                      printf 'Boot Ledger capacity: 40 stages, 40 receipts, 14 capabilities per stage\n'
+                      printf 'Boot Ledger capacity: 43 stages, 43 receipts, 18 capabilities per stage\n'
                       printf 'ordinary ledger: %s\n' "$ordinary_record"
                       printf 'source lines (src and include): %s\n' "$source_lines"
                       printf 'shell assertion lines: %s\n' "$assertion_count"
@@ -150,7 +151,7 @@ jobs:
                   (
                       cd evidence/filesystem
                       sha256sum \
-                          Sapote-v0.6.0.iso \
+                          Sapote-filesystem-regression.iso \
                           filesystem-proof-transcript.txt \
                           verification-summary.txt \
                           controlled-robustness-results.txt \
