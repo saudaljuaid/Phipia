@@ -40,7 +40,7 @@ tar --extract --gzip --file "$work_dir/downloads/$musl_archive" \
 
 musl_source="$work_dir/source/musl-${musl_version}"
 busybox_source="$work_dir/source/busybox-${busybox_version}"
-musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-tree-vectorize -fno-ident'
+musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-tree-vectorize -fno-ident -Wno-return-local-addr'
 
 (
     cd "$work_dir/musl-build"
@@ -57,7 +57,32 @@ cp "$repository_root/userspace/busybox/busybox-miniconfig" \
     "$work_dir/busybox-miniconfig"
 (
     cd "$busybox_source"
-    KCONFIG_ALLCONFIG="$work_dir/busybox-miniconfig" make allnoconfig
+    make allnoconfig
+    while IFS= read -r setting; do
+        case "$setting" in
+            CONFIG_*=n)
+                symbol=${setting%%=*}
+                replacement="# $symbol is not set"
+                ;;
+            CONFIG_*=*)
+                symbol=${setting%%=*}
+                replacement=$setting
+                ;;
+            *)
+                printf 'invalid BusyBox miniconfig line: %s\n' "$setting" >&2
+                exit 1
+                ;;
+        esac
+        if grep -Eq "^${symbol}=|^# ${symbol} is not set$" .config; then
+            sed -i \
+                -e "s|^${symbol}=.*$|${replacement}|" \
+                -e "s|^# ${symbol} is not set$|${replacement}|" \
+                .config
+        else
+            printf '%s\n' "$replacement" >>.config
+        fi
+    done <"$work_dir/busybox-miniconfig"
+    make silentoldconfig
     test "$(grep -Ec '^CONFIG_[A-Z0-9_]+=y$' .config)" -ge 1
     grep -Fxq 'CONFIG_BUSYBOX=y' .config
     grep -Fxq 'CONFIG_STATIC=y' .config
