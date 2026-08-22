@@ -1,0 +1,212 @@
+name: Ring 3 and ELF64 milestone evidence
+
+on:
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: process-milestone-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    bounded-evidence:
+        name: bounded-process-evidence
+        runs-on: ubuntu-24.04
+        timeout-minutes: 180
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install build tools
+              run: |
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils gcc grub-common grub-pc-bin make mtools \
+                      qemu-system-x86 xorriso
+            - name: Install the Rust bare-metal target
+              run: rustup target add x86_64-unknown-none
+            - name: Record the emulated surface
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p evidence/process
+                  qemu-system-x86_64 -version \
+                      | tee evidence/process/qemu-version.txt
+                  qemu-system-x86_64 -device nvme,help \
+                      | tee evidence/process/qemu-nvme-help.txt
+                  qemu-system-x86_64 -accel help \
+                      | tee evidence/process/accelerator-help.txt
+            - name: Verify the kernel and deterministic fixtures
+              run: make verify
+            - name: Run ten complete serial TCG sweeps
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  for sweep in $(seq -w 1 10); do
+                      raw="evidence/process/tcg-sweep-${sweep}-raw.txt"
+                      normalized="evidence/process/tcg-sweep-${sweep}.txt"
+                      make qemu-tests QEMU_ACCEL=tcg | tee "$raw"
+                      grep -E '^QEMU scenario [a-z0-9-]+ passed with status [0-9]+$' \
+                          "$raw" >"$normalized"
+                      test "$(wc -l <"$normalized")" -eq 37
+                      cp build/tests/process/serial.log \
+                          "evidence/process/process-sweep-${sweep}.log"
+                      rm "$raw"
+                  done
+                  proof=evidence/process/process-sweep-10.log
+                  grep -Fx \
+                      'ST PROCESS ELF64 SAPOTE.BIN bytes 128 segments 1 ring 3 address-space private result valid teardown clean robustness 42' \
+                      "$proof" >evidence/process/process-proof-transcript.txt
+                  grep -Fx 'ST PASS process' "$proof" \
+                      >>evidence/process/process-proof-transcript.txt
+                  cp build/tests/boot-ledger/serial.log \
+                      evidence/process/ordinary-ledger.log
+                  rm evidence/process/process-sweep-*.log
+                  make build/tests/process/sapote.iso
+                  cp build/tests/process/sapote.iso \
+                      evidence/process/process-scenario.iso
+            - name: Record the accelerator safety boundary
+              shell: bash
+              run: |
+                  printf '%s\n' \
+                      'KVM was not probed or used: the authorization excludes host device files.' \
+                      >evidence/process/accelerator-results.txt
+                  printf '%s\n' \
+                      'This Linux runner therefore has no safely usable hardware accelerator; ten complete TCG sweeps passed.' \
+                      >>evidence/process/accelerator-results.txt
+                  printf '%s\n' \
+                      'WHPX is unavailable on the Linux runner and is recorded separately when a safe Windows host exposes it.' \
+                      >>evidence/process/accelerator-results.txt
+            - name: Assemble release evidence
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make iso
+                  cp build/sapote.iso evidence/process/Sapote-v0.7.0.iso
+                  python3 tools/make-elf64-fixture.py \
+                      build/tests/process/SAPOTE.BIN
+                  python3 tools/make-process-fixture.py \
+                      build/tests/process/process-fixture.raw
+                  cp build/tests/process/SAPOTE.BIN \
+                      evidence/process/SAPOTE.BIN
+                  cp build/tests/process/process-fixture.raw \
+                      evidence/process/process-fixture.raw
+                  payload_sha=$(
+                      sha256sum build/tests/process/SAPOTE.BIN \
+                          | awk '{print toupper($1)}'
+                  )
+                  fixture_sha=$(
+                      sha256sum build/tests/process/process-fixture.raw \
+                          | awk '{print toupper($1)}'
+                  )
+                  test "$payload_sha" = \
+                      C923A94F08DF64523D3DB701E4F9FC5FF5B51DFC21447E1DC57586D40D42B8A9
+                  test "$fixture_sha" = \
+                      5130D78A0FEB51EC410E5CC931A1E6485D96549A726E62BCE95F7D5C18FA2290
+                  read -r scenario_count assertion_count < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  source_lines=$(
+                      find src include -type f -print0 \
+                          | sort -z | xargs -0 -r cat | wc -l
+                  )
+                  ordinary_record=$(
+                      grep -E '^ST LEDGER stages 43 receipts 43 capabilities 49 skips 5 fingerprint 0x[0-9A-F]{16}$' \
+                          evidence/process/ordinary-ledger.log
+                  )
+                  test -n "$ordinary_record"
+                  rm evidence/process/ordinary-ledger.log
+                  readelf -W -h build/tests/process/SAPOTE.BIN \
+                      >evidence/process/elf64-header.txt
+                  readelf -W -l build/tests/process/SAPOTE.BIN \
+                      >evidence/process/elf64-program-header.txt
+                  test "$(readelf -W -l build/tests/process/SAPOTE.BIN \
+                      | grep -Ec '^[[:space:]]+LOAD')" -eq 1
+                  if readelf -W -l build/tests/process/SAPOTE.BIN \
+                      | grep -Eq 'LOAD[[:space:]].*RWE'; then
+                      echo 'user fixture contains an RWX load segment'
+                      exit 1
+                  fi
+                  objdump -D -b binary -m i386:x86-64 \
+                      --no-show-raw-insn \
+                      --start-address=120 --stop-address=128 \
+                      build/tests/process/SAPOTE.BIN \
+                      >evidence/process/elf64-text-disassembly.txt
+                  if grep -Ei \
+                      '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|v[a-z0-9]+)([[:space:]]|$)' \
+                      evidence/process/elf64-text-disassembly.txt; then
+                      echo 'user fixture contains floating-point or vector instructions'
+                      exit 1
+                  fi
+                  {
+                      printf 'Sapote v0.7.0 deterministic process fixture\n'
+                      printf 'logical sectors: 4096\n'
+                      printf 'bytes per sector: 4096\n'
+                      printf 'BPB LBA: 0\n'
+                      printf 'FAT span: LBA 1, 2 sectors\n'
+                      printf 'root directory: LBA 3, 128 entries\n'
+                      printf 'SAPOTE.BIN data: cluster 2, LBA 4, 128 bytes\n'
+                      printf 'ELF: ET_EXEC, EM_X86_64, one PT_LOAD, PF_R|PF_X\n'
+                      printf 'entry instruction offset: 120\n'
+                      printf 'proof instruction bytes: B8 37 50 41 53 CD 81 F4\n'
+                      printf 'payload SHA-256: %s\n' "$payload_sha"
+                      printf 'image SHA-256: %s\n' "$fixture_sha"
+                      printf 'backend: temporary regular file, raw, guest read-only\n'
+                  } >evidence/process/fixture-layout-digest.txt
+                  {
+                      printf 'Sapote Ring 3 and ELF64 Foundation verification\n'
+                      printf 'commit: %s\n' "$GITHUB_SHA"
+                      printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
+                      printf 'scenarios per sweep: %s\n' "$scenario_count"
+                      printf 'Boot Ledger capacity: 43 stages, 43 receipts, 18 capabilities per stage\n'
+                      printf 'ordinary ledger: %s\n' "$ordinary_record"
+                      printf 'source lines (src and include): %s\n' "$source_lines"
+                      printf 'shell assertion lines: %s\n' "$assertion_count"
+                      printf 'kernel bytes: %s\n' "$(stat -c %s build/sapote.elf)"
+                      printf 'ISO bytes: %s\n' "$(stat -c %s build/sapote.iso)"
+                      printf 'make verify: passed\n'
+                      printf 'all 37 scenarios: passed individually\n'
+                      printf 'serial TCG complete sweeps: 10 passed\n'
+                      cat evidence/process/accelerator-results.txt
+                      printf 'CPL3 proof: loaded ELF fetch, private CR3, DPL3 vector 0x81, authenticated result\n'
+                      printf 'teardown: kernel CR3 restored and resource census equal before publication\n'
+                      printf 'controlled robustness results: 42 passed\n'
+                  } >evidence/process/verification-summary.txt
+                  {
+                      printf 'Controlled Ring 3 and ELF64 robustness results\n'
+                      printf 'Execution: Rust parser mutations, guest lifecycle controls, installed permission walks, source contracts, temporary descriptor and exit values.\n'
+                      printf 'Result: controls 1-42 passed.\n'
+                      printf 'Matrix: docs/PROCESS_ELF64_QEMU_PROOF.md.\n'
+                  } >evidence/process/controlled-robustness-results.txt
+                  (
+                      cd evidence/process
+                      sha256sum \
+                          Sapote-v0.7.0.iso \
+                          SAPOTE.BIN \
+                          process-fixture.raw \
+                          process-scenario.iso \
+                          process-proof-transcript.txt \
+                          verification-summary.txt \
+                          controlled-robustness-results.txt \
+                          fixture-layout-digest.txt \
+                          accelerator-results.txt \
+                          elf64-header.txt \
+                          elf64-program-header.txt \
+                          elf64-text-disassembly.txt \
+                          tcg-sweep-{01..10}.txt >SHA256SUMS
+                  )
+                  cat evidence/process/verification-summary.txt
+                  cat evidence/process/SHA256SUMS
+            - name: Upload the bounded milestone evidence
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: sapote-process-milestone-${{ github.sha }}
+                  path: evidence/process
+                  if-no-files-found: error
+                  retention-days: 30
