@@ -16,7 +16,8 @@ busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
-musl_url="https://musl.libc.org/releases/${musl_archive}"
+musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
+musl_url="https://sources.buildroot.net/musl/${musl_archive}"
 musl_sha256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
 
 rm -rf "$output_dir" "$work_dir"
@@ -135,6 +136,8 @@ test ! -s "$stderr_file"
     printf 'BusyBox version: %s\n' "$busybox_version"
     printf 'BusyBox source SHA-256: %s\n' "$busybox_sha256"
     printf 'musl version: %s\n' "$musl_version"
+    printf 'musl upstream URL: %s\n' "$musl_upstream_url"
+    printf 'musl byte-identical mirror URL: %s\n' "$musl_url"
     printf 'musl source SHA-256: %s\n' "$musl_sha256"
     printf 'host gcc: %s\n' "$(gcc --version | head -n 1)"
     printf 'host binutils: %s\n' "$(ld --version | head -n 1)"
