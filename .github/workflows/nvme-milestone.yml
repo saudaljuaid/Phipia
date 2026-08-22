@@ -55,9 +55,13 @@ jobs:
                   cp evidence/nvme/tcg-sweep-10-logs/nvme.log \
                       evidence/nvme/nvme-proof-transcript.txt
                   mkdir -p evidence/nvme/scenario-isos
-                  for iso in build/tests/*/sapote.iso; do
-                      scenario=$(basename "$(dirname "$iso")")
-                      cp "$iso" "evidence/nvme/scenario-isos/${scenario}.iso"
+                  # GNU Make treats the per-scenario ISO as an intermediate of
+                  # qemu-test-%, so request each one explicitly before copying.
+                  for log in build/tests/*/serial.log; do
+                      scenario=$(basename "$(dirname "$log")")
+                      make "build/tests/${scenario}/sapote.iso"
+                      cp "build/tests/${scenario}/sapote.iso" \
+                          "evidence/nvme/scenario-isos/${scenario}.iso"
                   done
             - name: Check and exercise available hardware accelerators
               shell: bash
