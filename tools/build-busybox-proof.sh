@@ -58,6 +58,7 @@ cp "$repository_root/userspace/busybox/busybox-miniconfig" \
     "$work_dir/busybox-miniconfig"
 (
     cd "$busybox_source"
+    export KCONFIG_NOTIMESTAMP=1
     make allnoconfig
     while IFS= read -r setting; do
         case "$setting" in
