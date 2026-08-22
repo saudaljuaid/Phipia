@@ -14,7 +14,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	linux-abi
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 38
-EXPECTED_SHELL_ASSERTION_COUNT := 250
+EXPECTED_SHELL_ASSERTION_COUNT := 251
 
 CC := gcc
 LD := ld
