@@ -142,7 +142,10 @@ $(LINUX_ABI_FIXTURE): $(BUSYBOX_BINARY) tools/make-linux-abi-fixture.py
 	$(PYTHON) tools/make-linux-abi-fixture.py $(BUSYBOX_BINARY) $@
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
+		sed -n '/__got_start/,/__got_end/p' $(BUILD_DIR)/sapote.map; \
+		exit 1; \
+	}
 
 toolchain:
 	@for tool in bash bzip2 gcc gzip ld grub-file readelf nm objdump rustc python3 sha256sum strings tar; do \
