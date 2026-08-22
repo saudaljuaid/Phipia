@@ -32,6 +32,7 @@
 #include <sapote/keyboard.h>
 #include <sapote/memory.h>
 #include <sapote/msix.h>
+#include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
 #include <sapote/pci_resource.h>
@@ -1154,6 +1155,115 @@ static void execute_xhci_descriptor_proof(
     result->proof_counter_count = 2U;
 }
 
+static void execute_nvme_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!nvme_foundation_self_test(&completed) ||
+        completed != NVME_FOUNDATION_ROBUSTNESS_TESTS) {
+        stage_failed(context, result,
+            "NVMe foundation robustness controls failed");
+        return;
+    }
+    console_write("Sapote: NVMe foundation robustness controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(NVME_FOUNDATION_ROBUSTNESS_TESTS);
+    console_write(" passed\n");
+    console_write(
+        "Sapote: bounded NVMe block-controller foundation established\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static bool nvme_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    static const enum boot_capability required[] = {
+        BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+        BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+        BOOT_CAPABILITY_HEAP_AVAILABLE,
+        BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+        BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+        BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+        BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+        BOOT_CAPABILITY_THREADING_AVAILABLE,
+        BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+        BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+        BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+        BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE
+    };
+
+    return dependencies_complete(descriptor, required,
+        sizeof(required) / sizeof(required[0]));
+}
+
+static void execute_nvme_read_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct nvme_read_proof proof;
+    enum nvme_status status;
+
+    if (!nvme_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "NVMe read proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (nvme_proof_dependencies_complete(&missing_count) ||
+        nvme_proof_dependencies_complete(&missing_member) ||
+        !kernel_test_nvme_exit_self_test()) {
+        stage_failed(context, result,
+            "NVMe read contract negative controls failed");
+        return;
+    }
+
+    status = nvme_read_prove(&proof);
+    if (status == NVME_STATUS_ABSENT) {
+        console_write("Sapote: NVMe fixture absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != NVME_STATUS_OK) {
+        console_write("Sapote: NVMe read proof violated invariant: ");
+        console_write(nvme_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, nvme_status_string(status));
+        return;
+    }
+
+    console_write("Sapote: NVMe controller ready\n");
+    console_write("Sapote: NVMe namespace ready\n");
+    console_write("Sapote: NVMe block read completed: ");
+    console_write_u64(proof.block_bytes);
+    console_write(" bytes\n");
+    console_write("Sapote: NVMe MSI-X read completion count ");
+    console_write_u64(proof.msix_completion_count);
+    console_putc('\n');
+    console_write(
+        "Sapote: NVMe DMA ownership CPU-CONTROLLER-CPU complete\n");
+    console_write("Sapote: NVMe teardown complete\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.block_bytes;
+    result->proof_counters[1] = proof.msix_completion_count;
+    result->proof_counter_count = 2U;
+}
+
 static void execute_threading(
     struct boot_context *context,
     const struct boot_stage_descriptor *descriptor,
@@ -1447,6 +1557,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     REQUIRED_STAGE(BOOT_STAGE_XHCI_FOUNDATION,
         "xHCI host-controller foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_xhci_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_NVME_FOUNDATION,
+        "NVMe block-controller foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_nvme_foundation),
     REQUIRED_STAGE(BOOT_STAGE_THREADING, "threading", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_threading),
     REQUIRED_STAGE(BOOT_STAGE_SCHEDULER, "scheduler", BOOT_PHASE_SERVICES,
@@ -1457,6 +1570,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_XHCI_DESCRIPTOR_PROOF,
         "installed xHCI descriptor proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_xhci_descriptor_proof),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_NVME_READ_PROOF,
+        "installed NVMe read proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_nvme_read_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -1868,6 +1984,55 @@ static bool declare_dependencies(
         descriptor->provided_capability_count = 1U;
         descriptor->skipped_capabilities[0] =
             BOOT_CAPABILITY_XHCI_FIXTURE_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_NVME_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capability_count = 4U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_NVME_READ_PROOF:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PAGE_TABLES_INSTALLED;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_THREADING_AVAILABLE;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_SCHEDULER_AVAILABLE;
+        descriptor->required_capabilities[9] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[10] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[11] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[12] =
+            BOOT_CAPABILITY_NVME_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 13U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_NVME_FIXTURE_ABSENT;
         descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_CLOSING_PROOFS:

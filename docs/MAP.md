@@ -1,6 +1,6 @@
 # Where everything is
 
-Sapote has fifty-five source files and forty focused documents. This map points
+Sapote has fifty-six source files and forty-three focused documents. This map points
 directly from each implementation to its contract.
 
 ## Start here, in this order
@@ -27,9 +27,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 117 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
-| `boot_plan.c` | 2122 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 2116 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `kernel.c` | 121 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
+| `boot_plan.c` | 2287 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 2157 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -66,10 +66,11 @@ long you will be in there.
 | --- | ---: | --- |
 | `pci_resource.c` | 1149 | Decode-safe BAR sizing, explicit claims, and the bounded supervisor-only MMIO arena. |
 | `interrupt_vector.c` | 281 | Audited dynamic vector allocation, exhaustion, and generation-checked release. |
-| `msix.c` | 476 | Validated MSI-X table/PBA binding and strict reverse rollback. |
+| `msix.c` | 562 | Validated masked/unmasked MSI-X table/PBA binding and strict reverse rollback. |
 | `dma.c` | 469 | Private-record-validated CPU/device ownership over bounded contiguous frame allocations. |
 | `virtio_rng_proof.c` | 669 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 | `xhci.c` | 2730 | Bounded xHCI register validation, rings, contexts, endpoint-zero descriptor DMA, MSI-X completion, and teardown. |
+| `nvme.c` | 2485 | One bounded NVMe controller, namespace, Admin/I/O queue pair, PRP1 block read, MSI-X completion, and teardown. |
 
 ### Interrupt hardware
 
@@ -128,7 +129,7 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 4762 | The thirty-four QEMU scenarios and what each must print. |
+| `test.c` | 4836 | The thirty-five QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
@@ -153,6 +154,7 @@ The canonical descriptor sequence is:
     -> PCI -> threading -> scheduler
     -> PCI resources -> dynamic vectors -> DMA -> device-substrate proof
     -> xHCI foundation -> optional xHCI descriptor proof
+    -> NVMe foundation -> optional NVMe block-read proof
     -> closing proofs
     -> optional desktop construction -> activation -> installed UI proof
 

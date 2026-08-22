@@ -1,8 +1,6 @@
 name: xHCI milestone evidence
 
 on:
-    pull_request:
-        branches: [main]
     workflow_dispatch:
 
 permissions:

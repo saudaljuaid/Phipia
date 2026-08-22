@@ -10,7 +10,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate xhci
+	boot-ledger first-light device-substrate xhci nvme
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 
 CC := gcc
@@ -38,6 +38,7 @@ FIRST_LIGHT_IMAGE := assets/sapote-first-light.png
 FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-first-light-focus.png
 FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
+NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -144,7 +145,7 @@ verify: toolchain lint
 		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
 	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
 		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
-	@test "$(words $(TEST_SCENARIOS))" -eq 34
+	@test "$(words $(TEST_SCENARIOS))" -eq 35
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
 	grub-file --is-x86-multiboot2 $(KERNEL)
 	readelf -h $(KERNEL) | grep -Eq 'Class:[[:space:]]+ELF64'
@@ -213,6 +214,10 @@ verify: toolchain lint
 		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=xhci.c; then \
 		echo 'xHCI descriptor proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bnvme_read_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c --exclude=nvme.c; then \
+		echo 'NVMe read proof bypasses the Boot Ledger'; exit 1; \
+	fi
 	@grep -Fq 'case KERNEL_TEST_DEVICE_SUBSTRATE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x30);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
@@ -241,6 +246,21 @@ verify: toolchain lint
 	@test "$$(grep -Ec 'xhci_interrupt_handler[[:space:]]*[(]' \
 		src/kernel/xhci.c)" -eq 1 || \
 		{ echo 'xHCI proof directly injects its MSI-X handler'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_NVME:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x32);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_NVME:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*nvme) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
+		test "$$((0x33 * 2 + 1))" -ne "$$host_exit" || \
+		{ echo 'NVMe guest and host exit contracts disagree'; exit 1; }
+	@test "$$(grep -Ec 'nvme_interrupt_handler[[:space:]]*[(]' \
+		src/kernel/nvme.c)" -eq 1 || \
+		{ echo 'NVMe proof directly injects its MSI-X handler'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -336,6 +356,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		first-light) expected=95 ;; \
 		device-substrate) expected=97 ;; \
 		xhci) expected=99 ;; \
+		nvme) expected=101 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -354,6 +375,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
 				hardware='-device qemu-xhci,id=xhci,streams=off -device usb-kbd,bus=xhci.0,port=1,usb_version=2' ;; \
+			nvme) \
+				rm -f '$(NVME_FIXTURE)' || exit 1; \
+				$(PYTHON) tools/make-nvme-fixture.py '$(NVME_FIXTURE)' || exit 1; \
+				test -f '$(NVME_FIXTURE)' || exit 1; \
+				hardware='-blockdev driver=file,filename=$(NVME_FIXTURE),node-name=nvme-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=nvme-file,node-name=nvme-raw,read-only=on -device nvme,serial=sapote-fixture,drive=nvme-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -435,6 +461,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: xHCI foundation robustness controls 17/17 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: bounded xHCI host-controller foundation established' "$$log" || \
 		  ! grep -Fxq 'Sapote: xHCI fixture absent' "$$log" || \
+		  ! grep -Fxq 'Sapote: NVMe foundation robustness controls 20/20 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: bounded NVMe block-controller foundation established' "$$log" || \
+		  ! grep -Fxq 'Sapote: NVMe fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -543,6 +572,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: xHCI MSI-X descriptor completion count 1' "$$log" && \
 			grep -Fxq 'Sapote: xHCI DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
 			grep -Fxq 'Sapote: xHCI teardown complete' "$$log" || \
+				diagnostics_ok=false ;; \
+		nvme) \
+			grep -Fxq 'ST NVME read 4096 msix 1 ownership CPU-CONTROLLER-CPU teardown clean robustness 22' "$$log" && \
+			grep -Fxq 'Sapote: NVMe controller ready' "$$log" && \
+			grep -Fxq 'Sapote: NVMe namespace ready' "$$log" && \
+			grep -Fxq 'Sapote: NVMe block read completed: 4096 bytes' "$$log" && \
+			grep -Fxq 'Sapote: NVMe MSI-X read completion count 1' "$$log" && \
+			grep -Fxq 'Sapote: NVMe DMA ownership CPU-CONTROLLER-CPU complete' "$$log" && \
+			grep -Fxq 'Sapote: NVMe teardown complete' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

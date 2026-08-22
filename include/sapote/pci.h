@@ -84,12 +84,14 @@
 #define PCI_CAPABILITY_EXPRESS UINT8_C(0x10)
 #define PCI_CAPABILITY_MSI_X UINT8_C(0x11)
 
-/* PCI Code and ID Assignment Specification 1.15 section 1, the base classes. */
+/* PCI Code and ID Assignment Specification 1.19 section 1. */
 #define PCI_CLASS_MASS_STORAGE UINT8_C(0x01)
 #define PCI_CLASS_NETWORK UINT8_C(0x02)
 #define PCI_CLASS_DISPLAY UINT8_C(0x03)
 #define PCI_CLASS_BRIDGE UINT8_C(0x06)
 #define PCI_SUBCLASS_HOST_BRIDGE UINT8_C(0x00)
+#define PCI_SUBCLASS_NON_VOLATILE_MEMORY UINT8_C(0x08)
+#define PCI_PROG_IF_NVME UINT8_C(0x02)
 
 /*
  * A Sapote early-boot policy bound on how many functions one enumeration may

@@ -29,11 +29,12 @@ jobs:
                       binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
-            - name: Record QEMU xHCI fixture capabilities
+            - name: Record QEMU fixture capabilities
               run: |
                   qemu-system-x86_64 -version
                   qemu-system-x86_64 -device qemu-xhci,help
                   qemu-system-x86_64 -device usb-kbd,help
+                  qemu-system-x86_64 -device nvme,help
             - name: Capture Sapote First Light from QEMU
               run: |
                   make iso

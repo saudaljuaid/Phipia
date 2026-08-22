@@ -113,5 +113,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_xhci();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_NVME) {
+        kernel_test_complete_nvme();
+    }
+
     shell_run();
 }

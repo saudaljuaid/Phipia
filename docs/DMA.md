@@ -72,3 +72,18 @@ doorbell, and returns to CPU ownership only on its exact matching transfer
 event. Teardown first proves the controller halted and disables PCI bus
 mastering; only then may it reclaim or release DMA. This does not change the
 no-IOMMU security boundary.
+
+## NVMe queue, Identify and PRP ownership
+
+v0.5.0 allocates seven bounded records: Admin SQ/CQ, two Identify pages, I/O
+SQ/CQ and one three-page guarded Read allocation. All are initialized and
+transferred to the controller before bus mastering. A submission allocation
+returns briefly to the CPU to construct its one next entry and returns to the
+controller before its doorbell. Completion and data allocations return to the
+CPU only in the programmed MSI-X handler after a matching completion. CPU
+inspection and release while controller-owned remain ordinary DMA API refusals.
+Teardown disables the controller, masks MSI-X and disables bus mastering before
+reclaim. The two sentinel pages around the one-page PRP1 payload prove the
+controller did not escape the supported transfer span. This strengthens
+correctness but, without an IOMMU, does not isolate other guest memory from a
+faulty device.

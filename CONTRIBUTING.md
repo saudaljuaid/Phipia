@@ -44,6 +44,12 @@ merge an unreviewed kernel change.
   framework. Preserve typed controller and TRB ownership, use monotonic
   deadlines for every wait, and keep the proof reachable only through its Boot
   Ledger descriptor.
+- NVMe work stays inside the one-controller, one-namespace, one-block read
+  contract in `nvme.c`. Do not add media-changing commands, host-device
+  passthrough, partition/filesystem policy, multiple queues or a generic driver
+  framework. Every fixture is a temporary regular file attached read-only to
+  QEMU; all waits use monotonic deadlines and the proof remains reachable only
+  through its Boot Ledger descriptor.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

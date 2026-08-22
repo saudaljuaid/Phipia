@@ -58,3 +58,15 @@ event identity matches the outstanding TRB. The shared dynamic dispatcher then
 uses the normal local-APIC EOI. The descriptor scenario snapshots the bound
 count immediately before its endpoint-zero doorbell and requires an exact `+1`
 transition. It never programs an I/O APIC route or requests directed EOI.
+
+## NVMe masked binding
+
+v0.5.0 adds `msix_bind_masked` and `msix_set_masked` without changing the
+existing `msix_bind` behavior. NVMe entry zero is programmed only after its
+handler and Admin CQ exist, but both the entry mask and function mask remain set
+through DMA preparation, bus-master enable and `CC.EN/RDY`. The proof unmasks
+only after the controller and queues are ready. Its handler masks delivery,
+returns the expected CQ to the CPU, validates and republishes the CQ, rings its
+head doorbell, then unmasks before the common dispatcher performs the normal
+local-APIC acknowledgement. The Read interval requires an exact one-interrupt
+count transition. No I/O APIC route or directed EOI exists for it.

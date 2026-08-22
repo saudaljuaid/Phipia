@@ -115,6 +115,29 @@ static enum msix_status enable_delivery(
         cpu_store_fence();
         return MSIX_STATUS_PROGRAMMING_FAILURE;
     }
+    binding->delivery_masked = false;
+    return MSIX_STATUS_OK;
+}
+
+static enum msix_status enable_masked(
+    struct msix_binding *binding
+)
+{
+    uint16_t control;
+
+    if (!binding->handler_installed) {
+        return MSIX_STATUS_HANDLER_NOT_INSTALLED;
+    }
+    control = (uint16_t)(binding->original_control |
+        MSIX_CONTROL_ENABLE | MSIX_CONTROL_FUNCTION_MASK);
+    if (write_control(binding->claim->device, binding->capability_offset,
+            control) != MSIX_STATUS_OK) {
+        return MSIX_STATUS_PROGRAMMING_FAILURE;
+    }
+    binding->entry[3] |= MSIX_VECTOR_MASK;
+    cpu_store_fence();
+    __asm__ volatile ("" : : : "memory");
+    binding->delivery_masked = true;
     return MSIX_STATUS_OK;
 }
 
@@ -198,17 +221,19 @@ static enum msix_status rollback_binding(struct msix_binding *binding)
     }
 
     binding->active = false;
+    binding->delivery_masked = true;
     binding->entry = NULL;
     ++state.rollback_count;
     return failed ? MSIX_STATUS_ROLLBACK_FAILURE : MSIX_STATUS_OK;
 }
 
-enum msix_status msix_bind(
+static enum msix_status bind_internal(
     struct pci_device_claim *claim,
     uint16_t entry_index,
     interrupt_handler_t handler,
     void *context,
-    struct msix_binding *binding
+    struct msix_binding *binding,
+    bool initially_masked
 )
 {
     const struct pci_function *function;
@@ -224,6 +249,10 @@ enum msix_status msix_bind(
     uint64_t pba_length;
     uint64_t entry_offset;
     enum msix_status status = MSIX_STATUS_OK;
+    const bool inject_failure = state.failure_injection_armed;
+
+    /* The hook belongs to exactly the next bind attempt, including refusal. */
+    state.failure_injection_armed = false;
 
     if (claim == NULL || handler == NULL || binding == NULL) {
         return MSIX_STATUS_NULL_ARGUMENT;
@@ -368,13 +397,13 @@ enum msix_status msix_bind(
     }
     binding->handler_installed = true;
 
-    if (state.failure_injection_armed) {
-        state.failure_injection_armed = false;
+    if (inject_failure) {
         status = MSIX_STATUS_INJECTED_FAILURE;
         goto fail;
     }
 
-    status = enable_delivery(binding);
+    status = initially_masked ? enable_masked(binding) :
+        enable_delivery(binding);
     if (status != MSIX_STATUS_OK) {
         goto fail;
     }
@@ -388,6 +417,51 @@ fail:
         return MSIX_STATUS_ROLLBACK_FAILURE;
     }
     return status;
+}
+
+enum msix_status msix_bind(
+    struct pci_device_claim *claim,
+    uint16_t entry_index,
+    interrupt_handler_t handler,
+    void *context,
+    struct msix_binding *binding
+)
+{
+    return bind_internal(claim, entry_index, handler, context, binding, false);
+}
+
+enum msix_status msix_bind_masked(
+    struct pci_device_claim *claim,
+    uint16_t entry_index,
+    interrupt_handler_t handler,
+    void *context,
+    struct msix_binding *binding
+)
+{
+    return bind_internal(claim, entry_index, handler, context, binding, true);
+}
+
+enum msix_status msix_set_masked(
+    struct msix_binding *binding,
+    bool masked
+)
+{
+    if (binding == NULL) {
+        return MSIX_STATUS_NULL_ARGUMENT;
+    }
+    if (cpu_interrupts_enabled()) {
+        return MSIX_STATUS_INTERRUPTS_ENABLED;
+    }
+    if (!binding->active) {
+        return MSIX_STATUS_NOT_BOUND;
+    }
+    if (masked == binding->delivery_masked) {
+        return MSIX_STATUS_OK;
+    }
+    if (masked) {
+        return enable_masked(binding);
+    }
+    return enable_delivery(binding);
 }
 
 enum msix_status msix_unbind(struct msix_binding *binding)

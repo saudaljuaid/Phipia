@@ -271,6 +271,9 @@ I/O-APIC version bits alone are not presented as proof that directed EOI ran.
   The v0.4.0 xHCI proof reinforces that separation: the programmed MSI-X vector
   enters the dynamic dispatcher directly, and no redirection entry, remote-IRR
   state, or directed EOI is allocated for the controller.
+  The v0.5.0 NVMe proof uses the same separation: entry zero reaches its dynamic
+  handler directly, completion state is consumed before the ordinary local-APIC
+  acknowledgement, and no I/O-APIC or directed-EOI state is allocated.
 - **The older scenarios still wait unbounded.** `apic`, `ioapic`, `retired`,
   `pit` and the clock scenarios halt for their interrupts, so a regression in
   their delivery is a harness timeout rather than a diagnosis. Normal boot's

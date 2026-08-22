@@ -49,6 +49,7 @@ struct msix_binding {
     bool handler_installed;
     bool table_mapped_here;
     bool pba_mapped_here;
+    bool delivery_masked;
     bool active;
 };
 
@@ -64,6 +65,17 @@ enum msix_status msix_bind(
     interrupt_handler_t handler,
     void *context,
     struct msix_binding *binding
+);
+enum msix_status msix_bind_masked(
+    struct pci_device_claim *claim,
+    uint16_t entry_index,
+    interrupt_handler_t handler,
+    void *context,
+    struct msix_binding *binding
+);
+enum msix_status msix_set_masked(
+    struct msix_binding *binding,
+    bool masked
 );
 enum msix_status msix_unbind(struct msix_binding *binding);
 void msix_test_inject_failure_once(void);

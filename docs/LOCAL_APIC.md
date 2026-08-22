@@ -112,3 +112,9 @@ The v0.4.0 xHCI interrupter uses the same dynamic MSI-X dispatch and bootstrap
 local-APIC acknowledgement. Its handler processes IMAN/ERDP and USBSTS first;
 the common dispatcher sends the local EOI afterward. No I/O APIC or directed
 EOI participates.
+
+The v0.5.0 NVMe interrupter follows the same contract. Entry zero targets one
+dynamic vector on the bootstrap local APIC. Its handler masks the binding,
+validates and republishes the completion queue, rings the CQ head doorbell and
+unmasks before returning to the common dispatcher for the single local EOI.
+The I/O APIC and directed-EOI path are not involved.

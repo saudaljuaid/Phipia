@@ -9,6 +9,7 @@
 #include <sapote/framebuffer.h>
 #include <sapote/interrupt_vector.h>
 #include <sapote/msix.h>
+#include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci_resource.h>
 #include <sapote/pointer.h>
@@ -65,7 +66,9 @@ static const char *const stage_names[] = {
     "DMA foundation",
     "installed device-substrate proof",
     "xHCI host-controller foundation",
-    "installed xHCI descriptor proof"
+    "installed xHCI descriptor proof",
+    "NVMe block-controller foundation",
+    "installed NVMe read proof"
 };
 
 static const char *const capability_names[] = {
@@ -113,7 +116,10 @@ static const char *const capability_names[] = {
     "device-substrate fixture absent",
     "xHCI foundation available",
     "xHCI descriptor proof complete",
-    "xHCI fixture absent"
+    "xHCI fixture absent",
+    "NVMe foundation available",
+    "NVMe read proof complete",
+    "NVMe fixture absent"
 };
 
 static const char *const status_names[] = {
@@ -1429,6 +1435,41 @@ enum boot_ledger_status boot_ledger_verify_installed(
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_XHCI_DESCRIPTOR_PROOF,
                 BOOT_CAPABILITY_XHCI_DESCRIPTOR_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
+    const bool nvme_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE);
+    const bool nvme_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_NVME_FIXTURE_ABSENT);
+    const bool nvme_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_NVME_READ_PROOF) != NULL;
+    if (!optional_outcome_valid(nvme_planned, nvme_complete, nvme_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_NVME_READ_PROOF,
+            BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (nvme_complete || nvme_absent) {
+        const struct boot_stage_receipt *nvme = boot_ledger_receipt_for(ledger,
+            BOOT_STAGE_NVME_READ_PROOF);
+        const struct nvme_read_proof proof = nvme_get_read_proof();
+
+        if (nvme == NULL ||
+            (nvme_complete &&
+                (nvme->result != BOOT_RECEIPT_RAN ||
+                 nvme->proof_counter_count != 2U ||
+                 nvme->proof_counters[0] != NVME_BLOCK_BYTES ||
+                 nvme->proof_counters[1] != 1U ||
+                 !proof.controller_ready || !proof.namespace_ready ||
+                 !proof.contents_valid || !proof.sentinel_valid ||
+                 !proof.changed_while_controller_owned ||
+                 !proof.ownership_complete || !proof.teardown_complete)) ||
+            (nvme_absent && nvme->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_NVME_READ_PROOF,
+                BOOT_CAPABILITY_NVME_READ_PROOF_COMPLETE);
             return ledger->status;
         }
     }

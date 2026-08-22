@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-four bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-five bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -38,7 +38,9 @@ first is speed: finding out in eight seconds is better than finding out ninety
 seconds into a push you thought was finished.
 
 Device-substrate changes also run at least ten complete TCG suite sweeps and one
-complete sweep under every accelerator the host exposes. Record flakes and
+complete sweep under every accelerator the task permits the host to expose.
+Never probe an accelerator through a host device file when the task boundary
+excludes such access; record that evidence gap explicitly. Record flakes and
 rerun an affected complete sweep serially. The `device-substrate` scenario must
 use the standard `virtio-rng-pci` fixture and must retain host exit 97; a green
 run is not evidence if its transcript lacks real MSI-X delivery, a `0 -> 1`
@@ -53,6 +55,15 @@ controller-owned, CPU → controller → CPU ownership, and complete teardown. T
 17 `XHCI_FOUNDATION_ROBUSTNESS_TESTS` controls and the complete 19-control
 `XHCI_CONTROLLED_ROBUSTNESS_TESTS` path remain synthetic; never substitute
 `usb-host` or physical hardware.
+
+NVMe changes apply the same sweep rule. The `nvme` scenario must use only
+QEMU's standard emulated NVMe controller backed by a temporary regular file
+that is read-only to the guest, and must retain host exit 101. Never attach a
+host device, block device or passthrough controller. Evidence requires one
+known 4096-byte LBA written into the designated guest DMA page, an exact one
+MSI-X count transition around Read, unchanged surrounding sentinels,
+CPU → controller → CPU ownership and zero retained resources. Keep the twenty
+foundation controls and complete twenty-two-control contract guest-local.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build
