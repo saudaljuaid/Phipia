@@ -62,6 +62,7 @@
 #define NVME_NVM_READ UINT8_C(0x02)
 #define NVME_IDENTIFY_NAMESPACE UINT32_C(0)
 #define NVME_IDENTIFY_CONTROLLER UINT32_C(1)
+#define NVME_IDENTIFY_ACTIVE_NAMESPACE_LIST UINT32_C(2)
 #define NVME_QUEUE_PHYSICALLY_CONTIGUOUS UINT32_C(1)
 #define NVME_QUEUE_INTERRUPT_ENABLED UINT32_C(1U << 1)
 
@@ -1234,7 +1235,7 @@ static enum nvme_status validate_identify_controller(
     const uint8_t *data = controller->identify.controller.cpu_address;
     uint8_t sqes;
     uint8_t cqes;
-    uint32_t namespaces;
+    uint32_t namespace_limit;
     uint8_t mdts;
     uint64_t maximum_transfer;
     uint64_t minimum_page;
@@ -1245,7 +1246,8 @@ static enum nvme_status validate_identify_controller(
     controller->identify.controller_state = NVME_DMA_CPU_OWNED;
     sqes = data[NVME_IDENTIFY_CONTROLLER_SQES_OFFSET];
     cqes = data[NVME_IDENTIFY_CONTROLLER_CQES_OFFSET];
-    namespaces = read_le32(data + NVME_IDENTIFY_CONTROLLER_NN_OFFSET);
+    namespace_limit = read_le32(data +
+        NVME_IDENTIFY_CONTROLLER_NN_OFFSET);
     if ((sqes & 0xFU) > 6U || (sqes >> 4U) < 6U ||
         (cqes & 0xFU) > 4U || (cqes >> 4U) < 4U ||
         read_le32(data + NVME_IDENTIFY_CONTROLLER_VERSION_OFFSET) !=
@@ -1253,11 +1255,8 @@ static enum nvme_status validate_identify_controller(
         data[NVME_IDENTIFY_CONTROLLER_TYPE_OFFSET] != 1U) {
         return NVME_STATUS_IDENTIFY_CONTROLLER;
     }
-    if (namespaces == 0U) {
+    if (namespace_limit == 0U) {
         return NVME_STATUS_NAMESPACE_ABSENT;
-    }
-    if (namespaces != 1U) {
-        return NVME_STATUS_MULTIPLE_NAMESPACES;
     }
     mdts = data[NVME_IDENTIFY_CONTROLLER_MDTS_OFFSET];
     if (mdts != 0U) {
@@ -1307,6 +1306,71 @@ static bool all_zero(const uint8_t *data, size_t length)
         }
     }
     return true;
+}
+
+static enum nvme_status identify_active_namespaces(
+    struct nvme_runtime *controller
+)
+{
+    struct nvme_submission_entry *entry;
+    uint16_t command_identifier =
+        controller->next_admin_command_identifier++;
+    enum nvme_status status = prepare_submission_entry(
+        &controller->admin, &entry);
+
+    if (status != NVME_STATUS_OK) {
+        return status;
+    }
+    zero_bytes(entry, sizeof(*entry));
+    entry->dword[0] = NVME_ADMIN_IDENTIFY |
+        (uint32_t)command_identifier << 16U;
+    set_prp1(entry, physical_of(&controller->identify.namespace_data));
+    entry->dword[10] = NVME_IDENTIFY_ACTIVE_NAMESPACE_LIST;
+    return submit_entry(controller, &controller->admin,
+        command_identifier, &controller->identify.namespace_data, 0U,
+        NVME_IDENTIFY_BYTES);
+}
+
+static enum nvme_status validate_active_namespace_list(
+    struct nvme_runtime *controller
+)
+{
+    const uint8_t *data =
+        controller->identify.namespace_data.cpu_address;
+    uint32_t first;
+
+    if (controller->identify.namespace_data.owner != DMA_OWNER_CPU) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    controller->identify.namespace_state = NVME_DMA_CPU_OWNED;
+    first = read_le32(data);
+    if (first == 0U) {
+        return NVME_STATUS_NAMESPACE_ABSENT;
+    }
+    if (first != NVME_NAMESPACE_IDENTIFIER ||
+        !all_zero(data + sizeof(uint32_t),
+            NVME_IDENTIFY_BYTES - sizeof(uint32_t))) {
+        return NVME_STATUS_MULTIPLE_NAMESPACES;
+    }
+    return NVME_STATUS_OK;
+}
+
+static enum nvme_status prepare_namespace_identify_buffer(
+    struct nvme_runtime *controller
+)
+{
+    if (controller->identify.namespace_state != NVME_DMA_CPU_OWNED ||
+        controller->identify.namespace_data.owner != DMA_OWNER_CPU) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    zero_bytes(controller->identify.namespace_data.cpu_address,
+        controller->identify.namespace_data.byte_length);
+    if (dma_transfer_to_device(&controller->identify.namespace_data) !=
+            DMA_STATUS_OK) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    controller->identify.namespace_state = NVME_DMA_CONTROLLER_OWNED;
+    return NVME_STATUS_OK;
 }
 
 static enum nvme_status parse_namespace(
@@ -1943,10 +2007,21 @@ bool nvme_foundation_self_test(size_t *completed_tests)
             NVME_STATUS_IDENTIFY_NAMESPACE, &completed)) {
         return false;
     }
-    /* 10: absent controller namespace count and zero active data differ. */
+    /* 10: absent, multiple and inactive namespace results stay distinct. */
     zero_bytes(identify_namespace_data, sizeof(identify_namespace_data));
+    malformed_identify.identify.namespace_data.cpu_address =
+        identify_namespace_data;
+    malformed_identify.identify.namespace_data.owner = DMA_OWNER_CPU;
     if (!test_record(read_le32(identify_controller_data +
             NVME_IDENTIFY_CONTROLLER_NN_OFFSET) == 0U &&
+        validate_active_namespace_list(&malformed_identify) ==
+            NVME_STATUS_NAMESPACE_ABSENT &&
+        (identify_namespace_data[0] = 1U,
+            identify_namespace_data[4] = 2U,
+            validate_active_namespace_list(&malformed_identify)) ==
+                NVME_STATUS_MULTIPLE_NAMESPACES &&
+        (zero_bytes(identify_namespace_data,
+            sizeof(identify_namespace_data)), true) &&
         parse_namespace(identify_namespace_data, &selection) ==
             NVME_STATUS_NAMESPACE_INACTIVE, &completed)) {
         return false;
@@ -2216,6 +2291,18 @@ enum nvme_status nvme_read_prove(struct nvme_read_proof *proof)
         goto cleanup;
     }
     result = validate_identify_controller(&controller);
+    if (result != NVME_STATUS_OK) {
+        goto cleanup;
+    }
+    result = identify_active_namespaces(&controller);
+    if (result != NVME_STATUS_OK) {
+        goto cleanup;
+    }
+    result = validate_active_namespace_list(&controller);
+    if (result != NVME_STATUS_OK) {
+        goto cleanup;
+    }
+    result = prepare_namespace_identify_buffer(&controller);
     if (result != NVME_STATUS_OK) {
         goto cleanup;
     }

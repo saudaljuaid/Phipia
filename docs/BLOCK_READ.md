@@ -20,10 +20,16 @@ Identify Controller must report:
   controller's supported size ranges;
 - the same NVMe version as `VS`;
 - one I/O controller;
-- exactly one namespace; and
+- a namespace limit that admits identifier 1; and
 - an `MDTS` value that either declares no limit or admits 4096 bytes.
 
-Identify Namespace must be nonzero and active. `NSZE`, `NCAP` and `NUSE` must
+Because Identify Controller `NN` is an implementation namespace limit rather
+than an attached-namespace census on supported QEMU versions, Sapote next uses
+Identify Active Namespace ID List (`CNS=02h`) in the existing namespace buffer.
+The list must be exactly identifier 1 followed only by zero entries. This is
+the guest-side proof that no second namespace is active.
+
+Identify Namespace 1 must then be nonzero and active. `NSZE`, `NCAP` and `NUSE` must
 be ordered and nonzero as applicable; the selected `FLBAS` index must lie
 within `NLBAF`; metadata must be zero; metadata may not be transferred as a
 separate buffer; `DPS` may not select protection information; and the selected

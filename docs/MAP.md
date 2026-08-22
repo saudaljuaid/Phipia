@@ -70,7 +70,7 @@ long you will be in there.
 | `dma.c` | 469 | Private-record-validated CPU/device ownership over bounded contiguous frame allocations. |
 | `virtio_rng_proof.c` | 669 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 | `xhci.c` | 2730 | Bounded xHCI register validation, rings, contexts, endpoint-zero descriptor DMA, MSI-X completion, and teardown. |
-| `nvme.c` | 2398 | One bounded NVMe controller, namespace, Admin/I/O queue pair, PRP1 block read, MSI-X completion, and teardown. |
+| `nvme.c` | 2485 | One bounded NVMe controller, namespace, Admin/I/O queue pair, PRP1 block read, MSI-X completion, and teardown. |
 
 ### Interrupt hardware
 

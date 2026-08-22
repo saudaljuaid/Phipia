@@ -34,8 +34,9 @@ runner-side syntax change fails visibly.
 The normal Boot Ledger stage first runs the twenty controller-local synthetic
 controls. With the fixture present, the following optional stage discovers the
 controller by PCI class, claims and maps it, prepares its queues and buffers,
-binds masked MSI-X, enables it in specification order, identifies the controller
-and namespace, creates the I/O queues, submits Read at LBA 8 and waits on a
+binds masked MSI-X, enables it in specification order, identifies the controller,
+requires the Active Namespace ID List to contain only namespace 1, identifies
+that namespace, creates the I/O queues, submits Read at LBA 8 and waits on a
 bounded monotonic deadline. The test accepts only one matching CQ completion
 and an exact `+1` MSI-X count between Read submission and completion. It never
 calls the handler and never injects a software interrupt.

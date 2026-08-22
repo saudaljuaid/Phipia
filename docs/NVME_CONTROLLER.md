@@ -79,8 +79,8 @@ reversed or skipped transition has a distinct status. The acquisition order is:
 7. transfer all seven prepared allocations to controller ownership;
 8. prove premature bus-master enable is refused, then enable bus mastering;
 9. program `AQA`, `ASQ`, `ACQ`, `CC`, observe `RDY == 1`, then unmask MSI-X;
-10. execute Identify Controller, Identify Namespace, Create I/O CQ, Create I/O
-    SQ and one NVM Read.
+10. execute Identify Controller, Identify Active Namespace ID List, Identify
+    Namespace, Create I/O CQ, Create I/O SQ and one NVM Read.
 
 The CPU owns a submission allocation while constructing its next entry. It
 returns that allocation to controller ownership before ringing the SQ tail
