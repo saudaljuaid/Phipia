@@ -27,11 +27,11 @@ struct measured_segment {
 };
 
 static const struct measured_segment measured_segments[] = {
-    {UINT64_C(0x400000), 0x0000U, 0x0190U, 0x0190U, PROT_READ},
-    {UINT64_C(0x401000), 0x1000U, 0x4d50U, 0x4d50U,
+    {UINT64_C(0x400001000000), 0x0000U, 0x0190U, 0x0190U, PROT_READ},
+    {UINT64_C(0x400001001000), 0x1000U, 0x4d50U, 0x4d50U,
      PROT_READ | PROT_EXEC},
-    {UINT64_C(0x406000), 0x6000U, 0x0d90U, 0x0d90U, PROT_READ},
-    {UINT64_C(0x407fc8), 0x6fc8U, 0x013eU, 0x0b98U,
+    {UINT64_C(0x400001006000), 0x6000U, 0x0d90U, 0x0d90U, PROT_READ},
+    {UINT64_C(0x400001007fc8), 0x6fc8U, 0x013eU, 0x0b98U,
      PROT_READ | PROT_WRITE},
 };
 
@@ -131,5 +131,6 @@ int main(void)
     initial_stack[8] = AT_NULL_VALUE;
     initial_stack[9] = 0U;
 
-    linux_abi_enter(UINT64_C(0x401129), (uintptr_t)initial_stack);
+    linux_abi_enter(UINT64_C(0x400001001129),
+        (uintptr_t)initial_stack);
 }
