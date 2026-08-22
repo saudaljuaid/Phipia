@@ -254,8 +254,8 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
     let mut segments = [Segment::invalid(); MAX_LOAD_SEGMENTS];
     let mut loads = 0usize;
     let mut stacks = 0usize;
-    for (index, program) in programs.iter().copied().enumerate() {
-        if !same_header(program, MEASURED[index]) {
+    for (program, measured) in programs.iter().copied().zip(MEASURED) {
+        if !same_header(program, measured) {
             return Err(Status::MeasuredConjunction);
         }
         if program.kind == PT_GNU_STACK {
@@ -309,7 +309,9 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
         if mapping_end <= mapping_start || !canonical_user(mapping_end - 1) {
             return Err(Status::VirtualAddress);
         }
-        for prior in &segments[..loads] {
+        let prior_segments = segments.get(..loads)
+            .ok_or(Status::ProgramCount)?;
+        for prior in prior_segments {
             if program.virtual_address < prior.virtual_address + prior.memory_size
                 && prior.virtual_address < virtual_end
                 || mapping_start < prior.mapping_end && prior.mapping_start < mapping_end
@@ -317,7 +319,9 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
                 return Err(Status::Overlap);
             }
         }
-        segments[loads] = Segment {
+        let destination = segments.get_mut(loads)
+            .ok_or(Status::ProgramCount)?;
+        *destination = Segment {
             file_offset: program.offset,
             virtual_address: program.virtual_address,
             file_size: program.file_size,

@@ -10,10 +10,11 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate xhci nvme filesystem process
+	boot-ledger first-light device-substrate xhci nvme filesystem process \
+	linux-abi
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 37
-EXPECTED_SHELL_ASSERTION_COUNT := 236
+EXPECTED_TEST_SCENARIO_COUNT := 38
+EXPECTED_SHELL_ASSERTION_COUNT := 250
 
 CC := gcc
 LD := ld
@@ -298,6 +299,11 @@ verify: toolchain lint
 		--exclude=process.c; then \
 		echo 'process proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\blinux_abi_installed_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=linux_abi.c; then \
+		echo 'Linux ABI proof bypasses the Boot Ledger'; exit 1; \
+	fi
 	@if grep -ERn '\bfilesystem_private_read_(open|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c \
 		--exclude=process.c; then \
@@ -320,6 +326,9 @@ verify: toolchain lint
 		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
 		src/kernel/process.c || \
 		{ echo 'process proof return handler has an unexpected call site'; exit 1; }
+	@test "$$(grep -Ec '^[[:space:]]*syscall[[:space:]]*$$' \
+		src/arch/x86_64/linux_syscall.S)" -eq 1 || \
+		{ echo 'Linux proof has no unique architectural syscall entry'; exit 1; }
 	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \
 		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
@@ -399,6 +408,18 @@ verify: toolchain lint
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
 		test "$$((0x33 * 2 + 1))" -ne "$$host_exit" || \
 		{ echo 'process guest and host exit contracts disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_LINUX_ABI:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x36);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_LINUX_ABI:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*linux-abi) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
+		test "$$((0x35 * 2 + 1))" -ne "$$host_exit" || \
+		{ echo 'Linux ABI guest and host exit contracts disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -497,6 +518,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		nvme) expected=101 ;; \
 		filesystem) expected=103 ;; \
 		process) expected=105 ;; \
+		linux-abi) expected=109 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -530,6 +552,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(PYTHON) tools/make-process-fixture.py '$(PROCESS_FIXTURE)' || exit 1; \
 				test -f '$(PROCESS_FIXTURE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(PROCESS_FIXTURE),node-name=process-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=process-file,node-name=process-raw,read-only=on -device nvme,serial=sapote-process,drive=process-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			linux-abi) \
+				$(MAKE) '$(LINUX_ABI_FIXTURE)' || exit 1; \
+				test -f '$(LINUX_ABI_FIXTURE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(LINUX_ABI_FIXTURE),node-name=linux-abi-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=linux-abi-file,node-name=linux-abi-raw,read-only=on -device nvme,serial=sapote-linux-abi,drive=linux-abi-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -620,6 +646,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: ELF64 parser robustness controls 34/34 passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: process fixture absent' "$$log" || \
+		  ! grep -Fxq 'Sapote: Linux SYSCALL CPU foundation controls 10/10 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: BusyBox image and Linux stack controls 32/32 passed' "$$log" || \
+		  ! grep -Fxq 'Sapote: Linux ABI fixture absent' "$$log" || \
 		  ! grep -Eq '^Sapote: threads online, 3 ready of [0-9]+ on 12 stack frames$$' "$$log" || \
 		  ! grep -Fxq 'Sapote: thread rotation 123123123123' "$$log" || \
 		  ! grep -Eq '^Sapote: threads switched [1-9][0-9]* times, 3 exited$$' "$$log" || \
@@ -753,6 +782,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: FAT16 fixture absent' "$$log" && \
 			grep -Fxq 'Sapote: process address-space foundation controls 8/8 passed' "$$log" && \
 			grep -Fxq 'Sapote: ELF64 parser robustness controls 34/34 passed' "$$log" || \
+				diagnostics_ok=false ;; \
+		linux-abi) \
+			grep -Fxq 'ST LINUX ABI busybox echo bytes 7 syscalls 9 stdout valid exit 0 ring 3 address-space private teardown clean robustness 72' "$$log" && \
+			grep -Fxq 'Sapote: Linux SYSCALL CPU foundation controls 10/10 passed' "$$log" && \
+			grep -Fxq 'Sapote: BusyBox image and Linux stack controls 32/32 passed' "$$log" && \
+			grep -Fqx 'SAPOTE' "$$log" || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
