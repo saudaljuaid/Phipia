@@ -32,6 +32,8 @@ Both file and raw nodes are read-only, following the current
 and [QEMU NVMe device documentation](https://www.qemu.org/docs/master/system/devices/nvme.html).
 No passthrough device, host disk, host block node or host physical memory is
 attached. QEMU's guest-visible PCI/NVMe emulation is the only device surface.
+The scenario selects the test CD-ROM explicitly as its boot source, preventing
+firmware from treating the signed superfloppy fixture as executable boot media.
 
 The original `nvme` scenario retains `tools/make-nvme-fixture.py` and its
 v0.5.0 LBA-8 pattern. While the FAT fixture is active, the raw NVMe proof emits
