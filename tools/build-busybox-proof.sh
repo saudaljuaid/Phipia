@@ -55,6 +55,13 @@ musl_cflags='-Os -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwin
     make --jobs=2
     make install
 )
+# musl-gcc deliberately defaults every non-shared link to Scrt1.o.  This proof
+# is a fixed ET_EXEC, so select musl's installed non-PIE crt1.o explicitly.
+sed -i 's|/Scrt1\.o|/crt1.o|' \
+    "$work_dir/musl-install/lib/musl-gcc.specs"
+grep -Fq "$work_dir/musl-install/lib/crt1.o" \
+    "$work_dir/musl-install/lib/musl-gcc.specs"
+! grep -Fq '/Scrt1.o' "$work_dir/musl-install/lib/musl-gcc.specs"
 
 cp "$repository_root/userspace/busybox/busybox.config" \
     "$work_dir/busybox.config"

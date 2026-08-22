@@ -26,6 +26,12 @@ relocations, and W+X load segments.  `KCONFIG_NOTIMESTAMP=1` removes the
 configuration timestamp.  Two independent clean source and toolchain builds
 must compare byte-for-byte.
 
+The generated musl wrapper normally selects position-independent `Scrt1.o` for
+all non-shared links.  The build script deterministically selects musl's own
+installed `crt1.o` instead because this executable is deliberately non-PIE
+`ET_EXEC`.  The musl source tree is unchanged; the installed wrapper choice is
+recorded and checked before BusyBox is linked.
+
 ## Frozen executable
 
 The result is a stripped, static, position-fixed x86-64 `ET_EXEC` file:
