@@ -446,8 +446,6 @@ enum msix_status msix_set_masked(
     bool masked
 )
 {
-    uint16_t control;
-
     if (binding == NULL) {
         return MSIX_STATUS_NULL_ARGUMENT;
     }
@@ -461,17 +459,7 @@ enum msix_status msix_set_masked(
         return MSIX_STATUS_OK;
     }
     if (masked) {
-        control = (uint16_t)(binding->original_control |
-            MSIX_CONTROL_ENABLE | MSIX_CONTROL_FUNCTION_MASK);
-        if (write_control(binding->claim->device,
-                binding->capability_offset, control) != MSIX_STATUS_OK) {
-            return MSIX_STATUS_PROGRAMMING_FAILURE;
-        }
-        binding->entry[3] |= MSIX_VECTOR_MASK;
-        cpu_store_fence();
-        __asm__ volatile ("" : : : "memory");
-        binding->delivery_masked = true;
-        return MSIX_STATUS_OK;
+        return enable_masked(binding);
     }
     return enable_delivery(binding);
 }

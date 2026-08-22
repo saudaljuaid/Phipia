@@ -2310,6 +2310,10 @@ enum nvme_status nvme_read_prove(struct nvme_read_proof *proof)
     if (result != NVME_STATUS_OK) {
         goto cleanup;
     }
+    if (controller.identify.namespace_data.owner != DMA_OWNER_CPU) {
+        result = NVME_STATUS_DMA_OWNERSHIP;
+        goto cleanup;
+    }
     controller.identify.namespace_state = NVME_DMA_CPU_OWNED;
     result = parse_namespace(controller.identify.namespace_data.cpu_address,
         &controller.namespace_data);
