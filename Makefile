@@ -111,7 +111,11 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
+		grep -n -B3 -A3 -E '(^|[[:space:]])\.got([[:space:]]|$$)' \
+			$(BUILD_DIR)/sapote.map || true; \
+		exit 1; \
+	}
 
 toolchain:
 	@for tool in gcc ld grub-file readelf nm objdump rustc python3 sha256sum strings; do \
