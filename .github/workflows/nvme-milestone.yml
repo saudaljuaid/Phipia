@@ -63,26 +63,15 @@ jobs:
                       cp "build/tests/${scenario}/sapote.iso" \
                           "evidence/nvme/scenario-isos/${scenario}.iso"
                   done
-            - name: Check and exercise available hardware accelerators
+            - name: Record the CI hardware-accelerator safety boundary
               shell: bash
               run: |
-                  set -o pipefail
-                  if test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm; then
-                      printf '%s\n' \
-                          'KVM available: /dev/kvm is a readable and writable character device.' \
-                          | tee evidence/nvme/accelerator-results.txt
-                      make qemu-tests QEMU_ACCEL=kvm \
-                          | tee evidence/nvme/kvm-sweep.txt
-                      printf '%s\n' 'KVM complete 35-scenario sweep: passed.' \
-                          | tee -a evidence/nvme/accelerator-results.txt
-                  else
-                      printf '%s\n' \
-                          'KVM unavailable: /dev/kvm is not a readable and writable character device.' \
-                          | tee evidence/nvme/accelerator-results.txt
-                      printf '%s\n' \
-                          'No hardware accelerator is available on this Linux runner; no hardware-accelerated sweep can run there.' \
-                          | tee -a evidence/nvme/accelerator-results.txt
-                  fi
+                  printf '%s\n' \
+                      'KVM not probed or used: the authorized task forbids access to host device files, including /dev/kvm.' \
+                      | tee evidence/nvme/accelerator-results.txt
+                  printf '%s\n' \
+                      'Linux runner hardware-accelerator availability therefore remains unmeasured by design.' \
+                      | tee -a evidence/nvme/accelerator-results.txt
             - name: Assemble release evidence
               shell: bash
               run: |
@@ -121,6 +110,7 @@ jobs:
                           "$scenario_count" "$assertion_count" >&2
                       exit 1
                   fi
+                  make build/tests/nvme/nvme-fixture.raw
                   fixture_sha=$(
                       sha256sum build/tests/nvme/nvme-fixture.raw \
                           | awk '{print $1}'

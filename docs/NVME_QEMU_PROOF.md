@@ -93,9 +93,9 @@ master.
 ## Evidence workflow
 
 `.github/workflows/nvme-milestone.yml` runs `make verify`, all 35 scenarios in
-each of ten complete serial TCG sweeps, and one complete sweep for each hardware
-accelerator present on its runner. It writes an explicit availability record
-when KVM is unavailable. Its artifact retains the verified ISO, checksums,
+each of ten complete serial TCG sweeps, and records the Linux accelerator
+boundary without probing or opening `/dev/kvm`: this authorized task forbids
+access to host device files. Its artifact retains the verified ISO, checksums,
 proof transcript, all ten sweep logs, accelerator record, robustness result and
 all scenario ISOs needed for a separately recorded WHPX sweep on an available
-Windows host.
+Windows host. KVM availability and execution remain deliberately unmeasured.

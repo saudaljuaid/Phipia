@@ -80,9 +80,10 @@ resource snapshot with no retained claim, mapping, frame, DMA object, vector,
 handler, binding or bus master.
 
 `.github/workflows/nvme-milestone.yml` retains `make verify`, every individual
-scenario inside ten complete serial TCG sweeps, a complete sweep under every
-available runner hardware accelerator and an explicit record for unavailable
-accelerators. It packages the ISO, SHA-256 checksums, proof transcript, ten TCG
-result sets, accelerator record and robustness result. A locally available WHPX
-accelerator consumes the retained per-scenario ISOs; its final sweep record is
-added to the release evidence rather than claiming Linux runner availability.
+scenario inside ten complete serial TCG sweeps and an explicit accelerator
+record. It does not probe or use KVM because doing so requires the excluded host
+device file `/dev/kvm`. It packages the ISO, SHA-256 checksums, proof transcript,
+ten TCG result sets, accelerator record and robustness result. A locally
+available WHPX accelerator consumes the retained per-scenario ISOs; its final
+sweep record is added to the release evidence. KVM remains an explicitly
+unmeasured evidence gap under this task's authorization boundary.

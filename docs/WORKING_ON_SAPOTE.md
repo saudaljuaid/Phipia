@@ -38,7 +38,9 @@ first is speed: finding out in eight seconds is better than finding out ninety
 seconds into a push you thought was finished.
 
 Device-substrate changes also run at least ten complete TCG suite sweeps and one
-complete sweep under every accelerator the host exposes. Record flakes and
+complete sweep under every accelerator the task permits the host to expose.
+Never probe an accelerator through a host device file when the task boundary
+excludes such access; record that evidence gap explicitly. Record flakes and
 rerun an affected complete sweep serially. The `device-substrate` scenario must
 use the standard `virtio-rng-pci` fixture and must retain host exit 97; a green
 run is not evidence if its transcript lacks real MSI-X delivery, a `0 -> 1`
