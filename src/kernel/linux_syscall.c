@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 
+#include <sapote/console.h>
 #include <sapote/cpu.h>
 #include <sapote/memory.h>
 
@@ -538,6 +539,7 @@ static enum linux_syscall_status execute_call(
                 return LINUX_SYSCALL_STATUS_STDOUT;
             }
         }
+        console_write_n((const char *)output, sizeof(output));
         runtime.stdout_state = STDOUT_SINK_WRITTEN;
         runtime.result.stdout_bytes = LINUX_SYSCALL_STDOUT_BYTES;
         runtime.result.stdout_valid = true;
