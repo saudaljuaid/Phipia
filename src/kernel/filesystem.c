@@ -640,10 +640,6 @@ static enum filesystem_status transition(
     if (*state == next) {
         return FILESYSTEM_STATUS_TRANSITION_REPEATED;
     }
-    if (next < *state && next != FILESYSTEM_STOPPING &&
-        next != FILESYSTEM_RELEASED) {
-        return FILESYSTEM_STATUS_TRANSITION_REVERSED;
-    }
     switch (*state) {
     case FILESYSTEM_UNOPENED:
         allowed = next == FILESYSTEM_SESSION_READY;
@@ -676,6 +672,10 @@ static enum filesystem_status transition(
         break;
     }
     if (!allowed) {
+        if (next < *state && next != FILESYSTEM_STOPPING &&
+            next != FILESYSTEM_RELEASED) {
+            return FILESYSTEM_STATUS_TRANSITION_REVERSED;
+        }
         return FILESYSTEM_STATUS_TRANSITION_INVALID;
     }
     *state = next;
@@ -754,15 +754,32 @@ static bool control_ownership(void)
 {
     enum filesystem_state state = FILESYSTEM_UNOPENED;
 
-    return transition(&state, FILESYSTEM_SESSION_READY) ==
-            FILESYSTEM_STATUS_OK &&
-        transition(&state, FILESYSTEM_BLOCK_CONTROLLER_OWNED) ==
-            FILESYSTEM_STATUS_OK &&
-        !cpu_block_operation_allowed(state) &&
-        transition(&state, FILESYSTEM_VOLUME_VALIDATED) ==
-            FILESYSTEM_STATUS_TRANSITION_INVALID &&
-        transition(&state, FILESYSTEM_BLOCK_CPU_OWNED) ==
-            FILESYSTEM_STATUS_OK && cpu_block_operation_allowed(state);
+    if (transition(&state, FILESYSTEM_SESSION_READY) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_BLOCK_CONTROLLER_OWNED) !=
+            FILESYSTEM_STATUS_OK || cpu_block_operation_allowed(state) ||
+        transition(&state, FILESYSTEM_VOLUME_VALIDATED) !=
+            FILESYSTEM_STATUS_TRANSITION_INVALID ||
+        transition(&state, FILESYSTEM_BLOCK_CPU_OWNED) !=
+            FILESYSTEM_STATUS_OK || !cpu_block_operation_allowed(state) ||
+        transition(&state, FILESYSTEM_VOLUME_VALIDATED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_BLOCK_CONTROLLER_OWNED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_BLOCK_CPU_OWNED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_FILE_LOCATED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_BLOCK_CONTROLLER_OWNED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_BLOCK_CPU_OWNED) !=
+            FILESYSTEM_STATUS_OK ||
+        transition(&state, FILESYSTEM_FILE_READ) != FILESYSTEM_STATUS_OK) {
+        return false;
+    }
+    return cpu_block_operation_allowed(state) &&
+        transition(&state, FILESYSTEM_FILE_READ) ==
+            FILESYSTEM_STATUS_TRANSITION_REPEATED;
 }
 
 static bool control_cleanup_boundaries(void)
