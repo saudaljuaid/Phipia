@@ -162,10 +162,15 @@ def main():
         qmp = Qmp(port)
         wait_serial(serial, PROOF_LINE)
         time.sleep(0.25)
+        # Park the real PS/2 cursor on empty desktop space so the clean frame
+        # keeps every status label unobscured.
+        qmp.hmp("mouse_move -260 320")
+        time.sleep(0.12)
         clean = capture(qmp, output, "sapote-first-light")
 
-        # Focus remains on Terminal while the real PS/2 cursor hovers Ledger.
-        for dx, dy in ((-127, 127), (-127, 127), (-74, 127), (0, 61)):
+        # Focus remains on Terminal while the real PS/2 cursor hovers the
+        # second tile in the vertical Workspace dock.
+        for dx, dy in ((230, -226), (235, -227)):
             qmp.hmp(f"mouse_move {dx} {dy}")
             time.sleep(0.08)
         focus = capture(qmp, output, "sapote-first-light-focus")

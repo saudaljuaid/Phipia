@@ -22,6 +22,7 @@ NM := nm
 OBJDUMP := objdump
 RUSTC := rustc
 PYTHON := python3
+FFMPEG ?= ffmpeg
 QEMU_ACCEL ?= tcg
 
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
@@ -47,6 +48,7 @@ FIRST_LIGHT_IMAGE := assets/sapote-first-light.png
 FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-first-light-focus.png
 FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
+FIRST_LIGHT_BOOT_VIDEO := assets/sapote-first-light-boot-20s.mp4
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
 PROCESS_ELF := $(TEST_BUILD_DIR)/process/SAPOTE.BIN
@@ -97,7 +99,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-first-light clean contract-counts contract-scenarios hooks \
+.PHONY: all capture-boot-video capture-first-light clean contract-counts contract-scenarios hooks \
 	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
@@ -209,7 +211,7 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'DBDA2F52A5F66CD2F9EFA202CB892C7AB45A29DF83DB37C5C6FDD79B1DEE7CB0'
+		'15C13E740D26BED1019E99C7FE5CE1B9E293F2A1712BFFFF51EAD3ED2C37A4FE'
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
@@ -549,6 +551,10 @@ capture-first-light: iso
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
 		$(FIRST_LIGHT_TERMINAL_IMAGE) \
 		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
+
+capture-boot-video: iso
+	$(PYTHON) tools/capture-boot-video.py --iso $(ISO) \
+		--ffmpeg $(FFMPEG) --output $(FIRST_LIGHT_BOOT_VIDEO)
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub

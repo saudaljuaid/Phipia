@@ -4426,7 +4426,7 @@ static void first_light_click_dock_item(
     first_light_expect_text_pixel(title_initial,
         ui->layout.panel.x + 4U +
             (ui->layout.panel.width - 8U - title_width) / 2U,
-        ui->layout.panel_title_baseline, ui->theme.white,
+        ui->layout.panel_title_baseline, ui->theme.ink,
         "First Light panel title glyph pixel is incorrect");
 }
 
@@ -4452,8 +4452,8 @@ _Noreturn void kernel_test_complete_first_light(void)
     const struct boot_stage_receipt *proof_receipt;
     const struct boot_stage_receipt *wc;
     const struct ui_state *ui = ui_get_state();
-    const struct ui_point initial_pointer = ui->pointer;
     const struct ui_render_counters initial_renders = ui->renders;
+    struct ui_point trail_probe;
     struct ui_proof proof;
     enum ui_status proof_status;
 
@@ -4517,9 +4517,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     if (first_light_pixel(ui->layout.menu_bar.x,
             ui->layout.menu_bar.y) != ui->theme.white ||
         first_light_pixel(ui->layout.workspace_bar.x + 4U,
-            ui->layout.workspace_bar.y) != ui->theme.desktop_light ||
-        first_light_pixel(ui->layout.workspace_bar.x + 4U,
-            ui->layout.workspace_bar.y + 2U) != ui->theme.desktop_dark ||
+            ui->layout.workspace_bar.y + 4U) != ui->theme.ink ||
         first_light_pixel(ui->layout.hero_window.x,
             ui->layout.hero_window.y) != ui->theme.ink) {
         kernel_test_fail("First Light Workbench chrome stable pixel is incorrect");
@@ -4535,11 +4533,23 @@ _Noreturn void kernel_test_complete_first_light(void)
     first_light_expect_text_pixel('S', ui->layout.wordmark.x,
         ui->layout.title_baseline, ui->theme.ink,
         "First Light wordmark stable pixel is incorrect");
+    first_light_expect_text_pixel('V', ui->layout.version_label.x,
+        ui->layout.version_baseline, ui->theme.ink,
+        "First Light version stable pixel is incorrect");
     if (first_light_pixel(ui->layout.dock.x, ui->layout.dock.y) !=
-            ui->theme.ink ||
-        first_light_pixel(ui->layout.ledger_status.x + 4U,
-            ui->layout.ledger_status.y + 4U) != ui->theme.white) {
-        kernel_test_fail("First Light dock or ledger stable pixel is incorrect");
+            ui->theme.ink) {
+        kernel_test_fail("First Light dock stable pixel is incorrect");
+    }
+
+    first_light_move_pointer(
+        ui->layout.hero_window.x + ui->layout.hero_window.width - 24U,
+        ui->layout.hero_window.y + ui->layout.hero_window.height - 24U,
+        "First Light cursor trail probe movement failed");
+    ui = ui_get_state();
+    trail_probe = ui->pointer;
+    if (first_light_pixel((uint32_t)trail_probe.x,
+            (uint32_t)trail_probe.y) != ui->theme.ink) {
+        kernel_test_fail("First Light cursor trail probe is not visible");
     }
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -4547,9 +4557,9 @@ _Noreturn void kernel_test_complete_first_light(void)
             panels[index], initials[index]);
         ui = ui_get_state();
     }
-    if (initial_pointer.x < 0 || initial_pointer.y < 0 ||
-        first_light_pixel((uint32_t)initial_pointer.x,
-            (uint32_t)initial_pointer.y) != ui->theme.window_face ||
+    if (trail_probe.x < 0 || trail_probe.y < 0 ||
+        first_light_pixel((uint32_t)trail_probe.x,
+            (uint32_t)trail_probe.y) != ui->theme.window_face ||
         first_light_pixel((uint32_t)ui->pointer.x,
             (uint32_t)ui->pointer.y) != ui->theme.ink ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||

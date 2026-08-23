@@ -142,7 +142,7 @@ struct ui_layout {
     struct ui_rect logo;
     struct ui_rect wordmark;
     struct ui_rect motto;
-    struct ui_rect ledger_status;
+    struct ui_rect version_label;
     struct ui_rect dock;
     struct ui_dock_item dock_items[UI_DOCK_ITEM_COUNT];
     struct ui_rect panel;
@@ -151,7 +151,7 @@ struct ui_layout {
     uint32_t hero_title_baseline;
     uint32_t title_baseline;
     uint32_t motto_baseline;
-    uint32_t status_baseline;
+    uint32_t version_baseline;
     uint32_t dock_label_baseline;
     uint32_t panel_title_baseline;
     uint32_t panel_text_baseline;
