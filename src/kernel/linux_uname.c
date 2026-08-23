@@ -1100,8 +1100,11 @@ bool linux_uname_image_uts_foundation_self_test(size_t *completed_tests)
     }
     *completed_tests = 0U;
     if (sapote_linux_uname_elf64_self_test() !=
-            LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS ||
-        (PAGING_LINUX_UNAME_IMAGE_BASE & (PAGING_PAGE_SIZE - 1U)) != 0U ||
+            LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS) {
+        return false;
+    }
+    *completed_tests = LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS;
+    if ((PAGING_LINUX_UNAME_IMAGE_BASE & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         (PAGING_LINUX_STACK_GUARD & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         (PAGING_LINUX_STACK_END & UINT64_C(15)) != 0U ||
         !canonical_user(PAGING_LINUX_UNAME_IMAGE_BASE) ||
@@ -1113,10 +1116,16 @@ bool linux_uname_image_uts_foundation_self_test(size_t *completed_tests)
         PAGING_LINUX_ANON_ADDRESS + PAGING_PAGE_SIZE >
             PAGING_LINUX_STACK_GUARD ||
         LINUX_ARGUMENT_BYTES != 17U || LINUX_INITIAL_STACK_WORDS != 10U ||
-        !initial_stack_foundation_self_test() ||
-        !linux_syscall_enosys_self_test() ||
-        !linux_syscall_uname_semantic_self_test() ||
-        transition_process(&state, LINUX_UNAME_PROCESS_BUILDING) !=
+        !initial_stack_foundation_self_test()) {
+        return false;
+    }
+    *completed_tests += LINUX_UNAME_ABI_STACK_FOUNDATION_CONTROLS;
+    if (!linux_syscall_enosys_self_test() ||
+        !linux_syscall_uname_semantic_self_test()) {
+        return false;
+    }
+    *completed_tests += LINUX_UNAME_SYSCALL_SEMANTIC_CONTROLS;
+    if (transition_process(&state, LINUX_UNAME_PROCESS_BUILDING) !=
             LINUX_UNAME_ABI_STATUS_OK ||
         transition_process(&state, LINUX_UNAME_PROCESS_INSTALLED) !=
             LINUX_UNAME_ABI_STATUS_OK ||

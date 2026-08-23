@@ -1606,6 +1606,9 @@ static void execute_linux_uname_image_uts_foundation(
 
     if (!linux_uname_image_uts_foundation_self_test(&completed) ||
         completed != LINUX_UNAME_ABI_IMAGE_UTS_FOUNDATION_CONTROLS) {
+        console_write("Sapote: BusyBox uname foundation stopped after ");
+        console_write_u64(completed);
+        console_write(" counted controls\n");
         stage_failed(context, result,
             "BusyBox uname ELF, stack, and UTS controls failed");
         return;
