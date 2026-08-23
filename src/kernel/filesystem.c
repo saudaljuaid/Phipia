@@ -15,6 +15,13 @@
 #define FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN 14U
 #define FILESYSTEM_LINUX_UNAME_READ_FAILURE_MAX 14U
 
+_Static_assert(NVME_FILESYSTEM_READ_LIMIT ==
+    3U + LINUX_UNAME_FAT16_FILE_CLUSTERS,
+    "private NVMe read ceiling must cover the uname fixture exactly");
+_Static_assert(FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN ==
+    NVME_FILESYSTEM_READ_LIMIT + 1U,
+    "uname after-open failure token must remain outside read ordinals");
+
 struct filesystem_block_result {
     uint32_t ordinal;
     uint32_t byte_count;

@@ -89,3 +89,13 @@ FAT, and root consume ordinals 1–3; the nine `BUSYBOX` data clusters consume
 completion, one interrupt-count increment, CPU ownership before inspection,
 and zero ignored completions. The inherited filesystem and process consumers
 still stop at ordinal 4 and keep their stable four-read transcripts.
+
+## BusyBox uname thirteen-read interval
+
+v0.9.0 keeps the same private, read-only session and raises only its bounded
+ordinal ceiling to 13. BPB, FAT, and root consume ordinals 1–3; the ten
+`UNAMEBOX` data clusters consume 4–13. The original nine-cluster `BUSYBOX`
+path still ends at ordinal 12. Every uname ordinal retains the same unique CID,
+single successful I/O-queue completion, single interrupt-count increment, CPU
+ownership-before-inspection, guard-page, zero-ignored-completion, and teardown
+requirements.
