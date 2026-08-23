@@ -66,7 +66,8 @@ musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-
     make --jobs=2
     rm -f obj/src/stdio/vfprintf.o lib/libc.a
     make --jobs=2 \
-        CFLAGS="$musl_cflags -mno-mmx -mno-sse -mno-sse2 -mfpmath=387" \
+        CFLAGS="$musl_cflags -O0 -fno-store-merging \
+            -fno-tree-slp-vectorize -fno-tree-vectorize" \
         obj/src/stdio/vfprintf.o lib/libc.a
     make install
 )
