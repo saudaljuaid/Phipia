@@ -64,10 +64,11 @@ musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-
         CC=gcc \
         CFLAGS="$musl_cflags"
     make --jobs=2
+    cp "$repository_root/userspace/busybox/musl-vfprintf-scalar.h" \
+        scalar-vfprintf.h
     rm -f obj/src/stdio/vfprintf.o lib/libc.a
     make --jobs=2 \
-        CFLAGS="$musl_cflags -O0 -fno-store-merging \
-            -fno-tree-slp-vectorize -fno-tree-vectorize" \
+        CFLAGS="$musl_cflags -include scalar-vfprintf.h" \
         obj/src/stdio/vfprintf.o lib/libc.a
     make install
 )
