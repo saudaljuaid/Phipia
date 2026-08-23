@@ -3,6 +3,8 @@
 
 /// Exact pinned executable length.
 pub const FILE_BYTES: usize = 33_584;
+/// Exact pinned uname executable length.
+pub const UNAME_FILE_BYTES: usize = 38_368;
 /// Maximum admitted ELF program headers.
 pub const MAX_PROGRAM_HEADERS: usize = 8;
 /// Exact measured program-header count.
@@ -11,6 +13,8 @@ pub const PROGRAM_HEADERS: usize = 5;
 pub const MAX_LOAD_SEGMENTS: usize = 4;
 /// Exact installed image page count.
 pub const IMAGE_PAGES: usize = 9;
+/// Exact installed uname image page count.
+pub const UNAME_IMAGE_PAGES: usize = 11;
 /// Parser robustness controls represented by the frozen matrix.
 pub const ROBUSTNESS_CONTROLS: u32 = 24;
 
@@ -258,6 +262,81 @@ const MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
     },
 ];
 
+const UNAME_MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0,
+        virtual_address: 0x4000_0100_0000,
+        physical_address: 0x4000_0100_0000,
+        file_size: 0x158,
+        memory_size: 0x158,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_X,
+        offset: 0x1000,
+        virtual_address: 0x4000_0100_1000,
+        physical_address: 0x4000_0100_1000,
+        file_size: 0x6D7F,
+        memory_size: 0x6D7F,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0x8000,
+        virtual_address: 0x4000_0100_8000,
+        physical_address: 0x4000_0100_8000,
+        file_size: 0x1181,
+        memory_size: 0x1181,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_W,
+        offset: 0x91A0,
+        virtual_address: 0x4000_0100_A1A0,
+        physical_address: 0x4000_0100_A1A0,
+        file_size: 0x20E,
+        memory_size: 0xC70,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_GNU_STACK,
+        flags: PF_R | PF_W,
+        offset: 0,
+        virtual_address: 0,
+        physical_address: 0,
+        file_size: 0,
+        memory_size: 0,
+        alignment: 0x10,
+    },
+];
+
+#[derive(Clone, Copy)]
+struct Contract {
+    file_bytes: usize,
+    image_pages: usize,
+    entry: u64,
+    measured: [ProgramHeader; PROGRAM_HEADERS],
+}
+
+const ECHO_CONTRACT: Contract = Contract {
+    file_bytes: FILE_BYTES,
+    image_pages: IMAGE_PAGES,
+    entry: ENTRY,
+    measured: MEASURED,
+};
+
+const UNAME_CONTRACT: Contract = Contract {
+    file_bytes: UNAME_FILE_BYTES,
+    image_pages: UNAME_IMAGE_PAGES,
+    entry: ENTRY,
+    measured: UNAME_MEASURED,
+};
+
 fn byte(input: &[u8], offset: usize) -> Result<u8, Status> {
     input.get(offset).copied().ok_or(Status::Truncated)
 }
@@ -361,12 +440,13 @@ fn same_header(left: ProgramHeader, right: ProgramHeader) -> bool {
 }
 
 fn validate_programs(
+    contract: Contract,
     programs: &[ProgramHeader; PROGRAM_HEADERS],
 ) -> Result<[Segment; MAX_LOAD_SEGMENTS], Status> {
     let mut segments = [Segment::invalid(); MAX_LOAD_SEGMENTS];
     let mut loads = 0usize;
     let mut stacks = 0usize;
-    for (program, measured) in programs.iter().copied().zip(MEASURED) {
+    for (program, measured) in programs.iter().copied().zip(contract.measured) {
         if program.kind == PT_GNU_STACK {
             if program.flags != PF_R | PF_W
                 || program.offset != 0
@@ -403,7 +483,7 @@ fn validate_programs(
             .offset
             .checked_add(program.file_size)
             .ok_or(Status::FileRange)?;
-        if file_end > FILE_BYTES as u64 {
+        if file_end > contract.file_bytes as u64 {
             return Err(Status::FileRange);
         }
         if program.alignment != PAGE_BYTES
@@ -467,18 +547,18 @@ fn validate_programs(
         .virtual_address
         .checked_add(executable.file_size)
         .ok_or(Status::AddressOverflow)?;
-    if ENTRY < executable.virtual_address || ENTRY >= executable_end {
+    if contract.entry < executable.virtual_address || contract.entry >= executable_end {
         return Err(Status::Entry);
     }
     Ok(segments)
 }
 
 /// Decode and validate the exact checksum-pinned static BusyBox image.
-pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
-    if input.len() < FILE_BYTES {
+fn parse_for(input: &[u8], contract: Contract) -> Result<ValidatedImage, Status> {
+    if input.len() < contract.file_bytes {
         return Err(Status::Truncated);
     }
-    if input.len() != FILE_BYTES {
+    if input.len() != contract.file_bytes {
         return Err(Status::FileLength);
     }
     if byte(input, 0)? != 0x7F
@@ -553,9 +633,9 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
             .ok_or(Status::ProgramTable)?;
         *program = decode_program(input, offset)?;
     }
-    let segments = validate_programs(&programs)?;
+    let segments = validate_programs(contract, &programs)?;
     let entry = u64_le(input, ELF_ENTRY)?;
-    if entry != ENTRY {
+    if entry != contract.entry {
         return Err(Status::Entry);
     }
     Ok(ValidatedImage {
@@ -568,25 +648,44 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     })
 }
 
+/// Decode and validate the exact checksum-pinned echo BusyBox image.
+pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
+    parse_for(input, ECHO_CONTRACT)
+}
+
+/// Decode and validate the exact checksum-pinned uname BusyBox image.
+pub fn parse_uname(input: &[u8]) -> Result<ValidatedImage, Status> {
+    parse_for(input, UNAME_CONTRACT)
+}
+
 /// Run pointer-free invariants for the measured header conjunction.
-pub fn self_test() -> u32 {
-    if FILE_BYTES > 2 * 1024 * 1024
-        || FILE_BYTES.div_ceil(PAGE_BYTES as usize) != IMAGE_PAGES
+fn self_test_for(contract: Contract) -> u32 {
+    let Ok(segments) = validate_programs(contract, &contract.measured) else {
+        return 0;
+    };
+    let Some(mapping_bytes) = segments[3]
+        .mapping_end
+        .checked_sub(segments[0].mapping_start)
+    else {
+        return 0;
+    };
+    if contract.file_bytes > 2 * 1024 * 1024
+        || mapping_bytes / PAGE_BYTES != contract.image_pages as u64
+        || mapping_bytes % PAGE_BYTES != 0
         || PROGRAM_HEADERS > MAX_PROGRAM_HEADERS
         || MAX_LOAD_SEGMENTS != 4
-        || validate_programs(&MEASURED).is_err()
     {
         return 0;
     }
-    let mut changed = MEASURED;
+    let mut changed = contract.measured;
     let Some(executable) = changed.get_mut(1) else {
         return 0;
     };
     executable.flags |= PF_W;
-    if validate_programs(&changed).is_ok() {
+    if validate_programs(contract, &changed).is_ok() {
         return 0;
     }
-    changed = MEASURED;
+    changed = contract.measured;
     let Some(writable) = changed.get_mut(3) else {
         return 0;
     };
@@ -594,8 +693,18 @@ pub fn self_test() -> u32 {
         return 0;
     };
     writable.memory_size = invalid_size;
-    if validate_programs(&changed).is_ok() {
+    if validate_programs(contract, &changed).is_ok() {
         return 0;
     }
     ROBUSTNESS_CONTROLS
+}
+
+/// Run pointer-free invariants for the measured echo header conjunction.
+pub fn self_test() -> u32 {
+    self_test_for(ECHO_CONTRACT)
+}
+
+/// Run pointer-free invariants for the measured uname header conjunction.
+pub fn self_test_uname() -> u32 {
+    self_test_for(UNAME_CONTRACT)
 }

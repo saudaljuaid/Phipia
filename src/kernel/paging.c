@@ -135,6 +135,19 @@ _Static_assert(
     PAGING_LINUX_IMAGE_WRITE_PAGE + 1U == PAGING_LINUX_IMAGE_PAGES,
     "the measured Linux image permission pages no longer cover the image"
 );
+_Static_assert(
+    PAGING_LINUX_UNAME_IMAGE_READ_PREFIX_PAGE <
+        PAGING_LINUX_UNAME_IMAGE_EXECUTE_FIRST_PAGE &&
+    PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_FIRST_PAGE ==
+        PAGING_LINUX_UNAME_IMAGE_EXECUTE_FIRST_PAGE +
+            PAGING_LINUX_UNAME_IMAGE_EXECUTE_PAGES &&
+    PAGING_LINUX_UNAME_IMAGE_WRITE_PAGE ==
+        PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_FIRST_PAGE +
+            PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_PAGES &&
+    PAGING_LINUX_UNAME_IMAGE_WRITE_PAGE + 1U ==
+        PAGING_LINUX_UNAME_IMAGE_PAGES,
+    "the measured uname image permission pages no longer cover the image"
+);
 
 /* The private hierarchy paging_self_test builds: a root and five tables. */
 #define PAGING_TEST_ARENA_PAGES 6U
@@ -2088,6 +2101,29 @@ static bool process_mapping_request_valid(
         return page == PAGING_LINUX_IMAGE_WRITE_PAGE &&
             permissions == PAGING_WRITE;
     }
+    if (kind == PAGING_PROCESS_MAPPING_LINUX_UNAME_IMAGE) {
+        if (virtual_address < PAGING_LINUX_UNAME_IMAGE_BASE ||
+            virtual_address >= PAGING_LINUX_UNAME_IMAGE_END ||
+            (virtual_address & (PAGING_PAGE_SIZE - 1U)) != 0U) {
+            return false;
+        }
+        const size_t page = (size_t)((virtual_address -
+            PAGING_LINUX_UNAME_IMAGE_BASE) / PAGING_PAGE_SIZE);
+
+        if (page == PAGING_LINUX_UNAME_IMAGE_READ_PREFIX_PAGE ||
+            (page >= PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_FIRST_PAGE &&
+                page < PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_FIRST_PAGE +
+                    PAGING_LINUX_UNAME_IMAGE_READ_SUFFIX_PAGES)) {
+            return permissions == PAGING_READ;
+        }
+        if (page >= PAGING_LINUX_UNAME_IMAGE_EXECUTE_FIRST_PAGE &&
+            page < PAGING_LINUX_UNAME_IMAGE_EXECUTE_FIRST_PAGE +
+                PAGING_LINUX_UNAME_IMAGE_EXECUTE_PAGES) {
+            return permissions == PAGING_EXECUTE;
+        }
+        return page == PAGING_LINUX_UNAME_IMAGE_WRITE_PAGE &&
+            permissions == PAGING_WRITE;
+    }
     if (kind == PAGING_PROCESS_MAPPING_LINUX_STACK) {
         return virtual_address >= PAGING_LINUX_STACK_BASE &&
             virtual_address < PAGING_LINUX_STACK_END &&
@@ -2780,11 +2816,14 @@ enum paging_status paging_process_validate_linux(
         const bool image = process_mapping_request_valid(
             PAGING_PROCESS_MAPPING_LINUX_IMAGE, expected->virtual_address,
             expected->permissions);
+        const bool uname_image = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_LINUX_UNAME_IMAGE,
+            expected->virtual_address, expected->permissions);
         const bool stack = process_mapping_request_valid(
             PAGING_PROCESS_MAPPING_LINUX_STACK, expected->virtual_address,
             expected->permissions);
 
-        if ((!image && !stack) ||
+        if ((!image && !uname_image && !stack) ||
             translate_address(&process_space_runtime.hierarchy,
                 expected->virtual_address, &translation, state.pat_after) !=
                 PAGING_STATUS_OK || !translation.user ||

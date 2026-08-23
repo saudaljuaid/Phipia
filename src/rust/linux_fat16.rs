@@ -12,6 +12,35 @@ pub const BUSYBOX_SHA256: [u8; 32] = [
     0xB3, 0x08, 0xF2, 0xCA, 0xD5, 0xB5, 0xCD, 0x0E, 0xEB, 0x92, 0xA6, 0x22, 0xDE, 0xC8, 0xD7, 0x1C,
     0x1A, 0x08, 0xF6, 0x28, 0xA2, 0x2C, 0xDC, 0x5B, 0xCD, 0xE2, 0xB9, 0x8B, 0x53, 0x22, 0x07, 0x46,
 ];
+pub const UNAME_FILE_BYTES: u32 = 38_368;
+pub const UNAME_FILE_CLUSTERS: u32 = 10;
+pub const UNAME_NAME: [u8; 11] = *b"UNAMEBOX   ";
+pub const UNAME_SHA256: [u8; 32] = [
+    0x38, 0x9A, 0xD6, 0xB1, 0x38, 0x04, 0xEB, 0x73, 0x07, 0xBA, 0x58, 0x9C, 0x8E, 0x8A, 0x7C, 0x70,
+    0x2F, 0x91, 0x30, 0x20, 0x05, 0xA7, 0xC5, 0xFC, 0x6E, 0x9E, 0x99, 0x12, 0x4F, 0xCE, 0xAF, 0x43,
+];
+
+#[derive(Clone, Copy)]
+struct Contract {
+    file_bytes: u32,
+    file_clusters: u32,
+    name: [u8; 11],
+    sha256: [u8; 32],
+}
+
+const ECHO_CONTRACT: Contract = Contract {
+    file_bytes: FILE_BYTES,
+    file_clusters: FILE_CLUSTERS,
+    name: BUSYBOX_NAME,
+    sha256: BUSYBOX_SHA256,
+};
+
+const UNAME_CONTRACT: Contract = Contract {
+    file_bytes: UNAME_FILE_BYTES,
+    file_clusters: UNAME_FILE_CLUSTERS,
+    name: UNAME_NAME,
+    sha256: UNAME_SHA256,
+};
 
 const ATTR_ARCHIVE: u8 = 0x20;
 const ATTR_LONG_NAME: u8 = 0x0F;
@@ -143,13 +172,22 @@ fn geometry_valid(geometry: &Geometry) -> bool {
         && geometry.total_sectors <= geometry.namespace_blocks
 }
 
-pub fn make_query() -> RootQuery {
+fn make_query_for(contract: Contract) -> RootQuery {
     RootQuery {
-        canonical_name: BUSYBOX_NAME,
+        canonical_name: contract.name,
     }
 }
 
-pub fn find_root(
+pub fn make_query() -> RootQuery {
+    make_query_for(ECHO_CONTRACT)
+}
+
+pub fn make_uname_query() -> RootQuery {
+    make_query_for(UNAME_CONTRACT)
+}
+
+fn find_root_for(
+    contract: Contract,
     block: &[u8],
     geometry: &Geometry,
     query: &RootQuery,
@@ -158,7 +196,7 @@ pub fn find_root(
     if block.len() != fat16::BLOCK_BYTES || !geometry_valid(geometry) {
         return Err(Status::Truncated);
     }
-    if query.canonical_name != BUSYBOX_NAME || !canonical_name(&query.canonical_name) {
+    if query.canonical_name != contract.name || !canonical_name(&query.canonical_name) {
         return Err(Status::NameMalformed);
     }
     let mut found = RootEntry::invalid();
@@ -210,15 +248,15 @@ pub fn find_root(
             .checked_add(cluster_bytes - 1)
             .ok_or(Status::FileSize)?
             / cluster_bytes;
-        if file_size != FILE_BYTES
+        if file_size != contract.file_bytes
             || file_size > destination_bytes
-            || clusters != FILE_CLUSTERS
+            || clusters != contract.file_clusters
             || clusters as usize > MAX_CLUSTERS
         {
             return Err(Status::FileSize);
         }
         found = RootEntry {
-            canonical_name: BUSYBOX_NAME,
+            canonical_name: contract.name,
             attribute: ATTR_ARCHIVE,
             first_cluster: cluster,
             file_size,
@@ -232,6 +270,24 @@ pub fn find_root(
         return Err(Status::TargetAbsent);
     }
     Ok(found)
+}
+
+pub fn find_root(
+    block: &[u8],
+    geometry: &Geometry,
+    query: &RootQuery,
+    destination_bytes: u32,
+) -> Result<RootEntry, Status> {
+    find_root_for(ECHO_CONTRACT, block, geometry, query, destination_bytes)
+}
+
+pub fn find_uname_root(
+    block: &[u8],
+    geometry: &Geometry,
+    query: &RootQuery,
+    destination_bytes: u32,
+) -> Result<RootEntry, Status> {
+    find_root_for(UNAME_CONTRACT, block, geometry, query, destination_bytes)
 }
 
 fn cluster_lba(geometry: &Geometry, cluster: u16) -> Result<u64, Status> {
@@ -251,16 +307,21 @@ fn cluster_lba(geometry: &Geometry, cluster: u16) -> Result<u64, Status> {
     Ok(lba)
 }
 
-pub fn build_chain(fat: &[u8], geometry: &Geometry, entry: &RootEntry) -> Result<Chain, Status> {
+fn build_chain_for(
+    contract: Contract,
+    fat: &[u8],
+    geometry: &Geometry,
+    entry: &RootEntry,
+) -> Result<Chain, Status> {
     if fat.len() != fat16::BLOCK_BYTES || !geometry_valid(geometry) {
         return Err(Status::Truncated);
     }
     if read_u16(fat, 0)? != 0xFFF8 || read_u16(fat, 2)? < FAT16_EOC_MIN {
         return Err(Status::FatReserved);
     }
-    if entry.canonical_name != BUSYBOX_NAME
+    if entry.canonical_name != contract.name
         || entry.attribute != ATTR_ARCHIVE
-        || entry.file_size != FILE_BYTES
+        || entry.file_size != contract.file_bytes
     {
         return Err(Status::FileSize);
     }
@@ -273,7 +334,7 @@ pub fn build_chain(fat: &[u8], geometry: &Geometry, entry: &RootEntry) -> Result
         .checked_add(cluster_bytes - 1)
         .ok_or(Status::FileSize)?
         / cluster_bytes;
-    if needed == 0 || needed != FILE_CLUSTERS || needed as usize > MAX_CLUSTERS {
+    if needed == 0 || needed != contract.file_clusters || needed as usize > MAX_CLUSTERS {
         return Err(Status::ChainCapacity);
     }
     let mut chain = Chain::invalid();
@@ -327,6 +388,18 @@ pub fn build_chain(fat: &[u8], geometry: &Geometry, entry: &RootEntry) -> Result
     chain.final_cluster_bytes = entry.file_size - (needed - 1) * cluster_bytes;
     chain.valid = 1;
     Ok(chain)
+}
+
+pub fn build_chain(fat: &[u8], geometry: &Geometry, entry: &RootEntry) -> Result<Chain, Status> {
+    build_chain_for(ECHO_CONTRACT, fat, geometry, entry)
+}
+
+pub fn build_uname_chain(
+    fat: &[u8],
+    geometry: &Geometry,
+    entry: &RootEntry,
+) -> Result<Chain, Status> {
+    build_chain_for(UNAME_CONTRACT, fat, geometry, entry)
 }
 
 const SHA256_INITIAL: [u32; 8] = [
@@ -464,13 +537,13 @@ fn sha256(data: &[u8]) -> Result<[u8; 32], Status> {
     Ok(digest)
 }
 
-pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
-    if data.len() != FILE_BYTES as usize {
+fn validate_payload_for(data: &[u8], contract: Contract) -> Result<Payload, Status> {
+    if data.len() != contract.file_bytes as usize {
         return Err(Status::PayloadLength);
     }
     let digest = sha256(data)?;
     let mut difference = 0u8;
-    for (actual, expected) in digest.iter().zip(BUSYBOX_SHA256.iter()) {
+    for (actual, expected) in digest.iter().zip(contract.sha256.iter()) {
         difference |= actual ^ expected;
     }
     if difference != 0 {
@@ -478,20 +551,35 @@ pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
     }
     Ok(Payload {
         sha256: digest,
-        byte_count: FILE_BYTES,
+        byte_count: contract.file_bytes,
         deterministic: 1,
     })
 }
 
-pub fn self_test() -> u32 {
+pub fn validate_payload(data: &[u8]) -> Result<Payload, Status> {
+    validate_payload_for(data, ECHO_CONTRACT)
+}
+
+pub fn validate_uname_payload(data: &[u8]) -> Result<Payload, Status> {
+    validate_payload_for(data, UNAME_CONTRACT)
+}
+
+fn self_test_for(contract: Contract) -> u32 {
     if MAX_CLUSTERS != 512
-        || FILE_CLUSTERS != 9
-        || FILE_BYTES.div_ceil(fat16::BLOCK_BYTES as u32) != FILE_CLUSTERS
-        || !canonical_name(&BUSYBOX_NAME)
+        || contract.file_bytes.div_ceil(fat16::BLOCK_BYTES as u32) != contract.file_clusters
+        || !canonical_name(&contract.name)
     {
         return 0;
     }
     ROBUSTNESS_CONTROLS
+}
+
+pub fn self_test() -> u32 {
+    self_test_for(ECHO_CONTRACT)
+}
+
+pub fn self_test_uname() -> u32 {
+    self_test_for(UNAME_CONTRACT)
 }
 
 #[cfg(test)]

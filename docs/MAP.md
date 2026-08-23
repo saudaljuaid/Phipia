@@ -1,6 +1,6 @@
 # Where everything is
 
-Sapote has sixty-six source files and fifty-five focused documents. This map points
+Sapote has sixty-seven source files and sixty-one focused documents. This map points
 directly from each implementation to its contract.
 
 ## Start here, in this order
@@ -27,9 +27,9 @@ long you will be in there.
 
 | File | | |
 | --- | ---: | --- |
-| `kernel.c` | 129 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
-| `boot_plan.c` | 2914 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
-| `boot_ledger.c` | 2422 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
+| `kernel.c` | 137 | Reversible console bootstrap, validate/execute/installed-proof boundary, then scenario or shell/UI handoff. |
+| `boot_plan.c` | 3099 | The installed descriptors, typed dependency declarations, context population and private stage execution functions. |
+| `boot_ledger.c` | 2482 | Pure bounded planning, named refusals, receipts, deterministic fingerprint and installed-ledger verification. |
 | `boot_report.c` | 281 | Turns what was discovered into the transcript. Never decides anything. |
 | `boot_proofs.c` | 2661 | Every proof and bring-up boot runs. Panics rather than returning a status. |
 
@@ -71,7 +71,7 @@ long you will be in there.
 | `virtio_rng_proof.c` | 669 | Isolated modern VirtIO RNG fixture proving BAR mapping, DMA, MSI-X, and teardown. |
 | `xhci.c` | 2730 | Bounded xHCI register validation, rings, contexts, endpoint-zero descriptor DMA, MSI-X completion, and teardown. |
 | `nvme.c` | 2807 | One bounded NVMe controller, namespace, Admin/I/O queue pair, private bounded read session, MSI-X completion, and teardown. |
-| `filesystem.c` | 1631 | Typed FAT16 orchestration, CPU/controller ownership, inherited four-read proofs, stable proof, and separate process and BusyBox file seams. |
+| `filesystem.c` | 1708 | Typed FAT16 orchestration, CPU/controller ownership, inherited four-read proofs, stable proof, and separate process, echo, and uname file seams. |
 
 ### Interrupt hardware
 
@@ -97,10 +97,11 @@ long you will be in there.
 | File | | |
 | --- | ---: | --- |
 | `physical_memory.c` | 747 | Which physical frames exist and which are free, including aligned bounded contiguous extents and usable-range overlap queries. |
-| `paging.c` | 4202 | Four-level page tables, W^X, supervisor mapping intent, one private user hierarchy, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` and `PROCESS_ADDRESS_SPACE.md`. |
+| `paging.c` | 4241 | Four-level page tables, W^X, supervisor mapping intent, one private user hierarchy, exact echo/uname layouts, PAT ownership, and WB/WC/UC memory types. Read `DEVICE_WINDOWS.md` and `PROCESS_ADDRESS_SPACE.md`. |
 | `process.c`, `arch/x86_64/process.S` | 869 + 93 | One typed ELF image/process/stack lifecycle, 16 cleanup-injection boundaries, real CPL3 entry, authenticated proof return and complete reverse teardown. |
-| `linux_abi.c` | 1659 | One typed BusyBox candidate-to-release lifecycle, Linux initial stack, bounded stdout sink, syscall provenance, exhaustive cleanup injection, census and reverse teardown. |
-| `linux_syscall.c`, `arch/x86_64/linux_syscall.S` | 1187 + 151 | Programmed Linux x86-64 SYSCALL MSRs, immediate kernel-stack entry, checked dispatch, controlled before/after-call failure returns and IRETQ return. |
+| `linux_abi.c` | 1663 | The inherited typed echo BusyBox lifecycle, Linux initial stack, bounded stdout sink, syscall provenance, exhaustive cleanup injection, census and reverse teardown. |
+| `linux_uname.c` | 1701 | The separate uname executable/stack/process/read lifecycle, eleven-page W^X install, 81 cleanup injections, census and reverse teardown. |
+| `linux_syscall.c`, `arch/x86_64/linux_syscall.S` | 1814 + 151 | Programmed Linux x86-64 SYSCALL MSRs, immediate kernel-stack entry, checked echo/uname dispatch, non-partial UTS copy-out, controlled call failures and IRETQ return. |
 | `heap.c` | 792 | A bounded, guarded allocator. The first thing that is not a fixed array. |
 
 ### More than one thing at a time
@@ -129,15 +130,15 @@ long you will be in there.
 | `rust/ui_font.rs` | 265 | Bounded `SUF1` parser and glyph reader for the build-packed Spleen face. |
 | `rust/fat16.rs` | 1195 | Safe exact FAT16 geometry, FAT/root/extent and deterministic payload parsing. |
 | `rust/elf64.rs` | 590 | Safe exact 128-byte ELF64 parser with checked header, segment, address and code validation. |
-| `rust/linux_elf64.rs` | 601 | Safe bounded static BusyBox `ET_EXEC` parser with measured program headers, W^X mappings, BSS and entry validation. |
-| `rust/linux_fat16.rs` | 705 | Safe nine-cluster BusyBox FAT16 chain parser and bounded multi-cluster payload copier. |
-| `rust/abi.rs`, `rust/lib.rs` | 758 + 43 | What the two languages promise each other. |
+| `rust/linux_elf64.rs` | 710 | Safe bounded static BusyBox parser with separate measured echo/uname program-header, W^X, BSS and entry contracts. |
+| `rust/linux_fat16.rs` | 793 | Safe separately typed nine-cluster echo and ten-cluster uname FAT16 chains and bounded payload digests. |
+| `rust/abi.rs`, `rust/lib.rs` | 926 + 43 | What the two languages promise each other. |
 
 ### Proving it
 
 | File | | |
 | --- | ---: | --- |
-| `test.c` | 5059 | The thirty-eight QEMU scenarios and what each must print. |
+| `test.c` | 5139 | The thirty-nine QEMU scenarios and what each must print. |
 | `self_test.c` | 611 | Subsystem checks over synthetic data; the separate pure ledger planner test lives in `boot_ledger.c`. |
 
 ## The boot sequence, in order
@@ -168,6 +169,8 @@ The canonical descriptor sequence is:
     -> optional installed Ring 3 process proof/outcome
     -> Linux syscall CPU foundation -> static BusyBox image/stack foundation
     -> optional installed BusyBox proof/outcome
+    -> static BusyBox uname image/UTS foundation
+    -> optional installed BusyBox uname proof/outcome
     -> closing proofs
     -> optional desktop construction -> activation -> installed UI proof
 

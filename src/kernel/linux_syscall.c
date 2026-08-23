@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* One measured Linux x86-64 SYSCALL subset for the BusyBox echo proof. */
+/* Two measured Linux x86-64 SYSCALL profiles for bounded BusyBox proofs. */
 
 #include <sapote/linux_syscall.h>
 
@@ -8,6 +8,7 @@
 #include <sapote/console.h>
 #include <sapote/cpu.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_uname.h>
 #include <sapote/memory.h>
 
 #define CPUID_EXTENDED_ROOT UINT32_C(0x80000000)
@@ -28,7 +29,10 @@
         (UINT64_C(1) << 18U))
 #define LINUX_USER_RFLAGS_ALLOWED UINT64_C(0x8D7)
 #define LINUX_ERRNO_EINVAL 22
+#define LINUX_ERRNO_EFAULT 14
+#define LINUX_ERRNO_ENOTTY 25
 #define LINUX_ERRNO_ENOSYS 38
+#define LINUX_TIOCGWINSZ UINT64_C(0x5413)
 #define LINUX_KERNEL_STACK_BYTES (16U * 1024U)
 
 _Static_assert(sizeof(struct linux_syscall_frame) == 144U,
@@ -44,6 +48,36 @@ _Static_assert(offsetof(struct linux_syscall_frame, rax) == 0U &&
     "Linux syscall assembly frame offsets changed");
 _Static_assert(LINUX_SYSCALL_ALLOWLIST_COUNT <= LINUX_SYSCALL_ALLOWLIST_MAX,
     "Linux syscall allowlist exceeds the fixed ceiling");
+_Static_assert(LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT <=
+    LINUX_SYSCALL_ALLOWLIST_MAX,
+    "Linux uname syscall allowlist exceeds the fixed ceiling");
+
+struct linux_utsname_record {
+    char sysname[LINUX_UTS_FIELD_BYTES];
+    char nodename[LINUX_UTS_FIELD_BYTES];
+    char release[LINUX_UTS_FIELD_BYTES];
+    char version[LINUX_UTS_FIELD_BYTES];
+    char machine[LINUX_UTS_FIELD_BYTES];
+    char domainname[LINUX_UTS_FIELD_BYTES];
+};
+
+struct linux_iovec {
+    uint64_t base;
+    uint64_t length;
+};
+
+_Static_assert(sizeof(struct linux_utsname_record) == LINUX_UTS_BYTES &&
+    _Alignof(struct linux_utsname_record) == 1U &&
+    offsetof(struct linux_utsname_record, sysname) == 0U &&
+    offsetof(struct linux_utsname_record, nodename) == 65U &&
+    offsetof(struct linux_utsname_record, release) == 130U &&
+    offsetof(struct linux_utsname_record, version) == 195U &&
+    offsetof(struct linux_utsname_record, machine) == 260U &&
+    offsetof(struct linux_utsname_record, domainname) == 325U,
+    "Linux x86-64 utsname layout changed");
+_Static_assert(sizeof(struct linux_iovec) == 16U &&
+    _Alignof(struct linux_iovec) == 8U,
+    "Linux x86-64 iovec layout changed");
 
 enum stdout_sink_state {
     STDOUT_SINK_CANDIDATE = 0,
@@ -72,8 +106,10 @@ struct linux_syscall_runtime {
     uint32_t request_ordinal;
     enum linux_syscall_cpu_state state;
     enum stdout_sink_state stdout_state;
+    enum linux_uts_copy_state uts_state;
+    enum linux_uname_stdout_state uname_stdout_state;
     enum provenance_state provenance_state;
-    bool seen[LINUX_SYSCALL_ALLOWLIST_COUNT];
+    bool seen[LINUX_SYSCALL_ALLOWLIST_MAX];
     bool heap_mapped[PAGING_LINUX_HEAP_PAGES];
     bool anonymous_mapped;
     bool active;
@@ -91,6 +127,31 @@ static const uint64_t expected_calls[LINUX_SYSCALL_EXPECTED_CALLS] = {
 
 static const uint8_t expected_stdout[LINUX_SYSCALL_STDOUT_BYTES] = {
     'S', 'A', 'P', 'O', 'T', 'E', '\n'
+};
+
+static const uint64_t uname_allowlist[LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT] = {
+    UINT64_C(16), UINT64_C(20), UINT64_C(63), UINT64_C(158),
+    UINT64_C(218), UINT64_C(231)
+};
+
+static const uint64_t uname_expected_calls[
+    LINUX_UNAME_SYSCALL_EXPECTED_CALLS] = {
+    UINT64_C(158), UINT64_C(218), UINT64_C(63), UINT64_C(16),
+    UINT64_C(20), UINT64_C(231)
+};
+
+static const uint8_t uname_expected_stdout[
+    LINUX_UNAME_SYSCALL_STDOUT_BYTES] = {
+    'L', 'i', 'n', 'u', 'x', '\n'
+};
+
+static const struct linux_utsname_record sapote_uts_record = {
+    .sysname = "Linux",
+    .nodename = "sapote",
+    .release = "0.9.0-sapote",
+    .version = "Sapote",
+    .machine = "x86_64",
+    .domainname = "(none)"
 };
 
 static struct linux_syscall_runtime runtime;
@@ -114,7 +175,7 @@ static bool canonical_user(uint64_t address)
 
 static bool user_range_shape_valid(uint64_t address, size_t length)
 {
-    return length != 0U && canonical_user(address) &&
+    return address != 0U && length != 0U && canonical_user(address) &&
         address <= UINT64_MAX - (uint64_t)(length - 1U) &&
         canonical_user(address + (uint64_t)(length - 1U));
 }
@@ -197,6 +258,78 @@ static enum linux_syscall_status transition_stdout(enum stdout_sink_state next)
     return LINUX_SYSCALL_STATUS_OK;
 }
 
+static enum linux_syscall_status transition_uts(
+    enum linux_uts_copy_state next
+)
+{
+    bool allowed = false;
+
+    if (next >= LINUX_UTS_COPY_STATE_COUNT || runtime.uts_state == next) {
+        return LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    switch (runtime.uts_state) {
+    case LINUX_UTS_COPY_CANDIDATE:
+        allowed = next == LINUX_UTS_COPY_ACTIVE ||
+            next == LINUX_UTS_COPY_RELEASED;
+        break;
+    case LINUX_UTS_COPY_ACTIVE:
+        allowed = next == LINUX_UTS_COPY_COMPLETED ||
+            next == LINUX_UTS_COPY_FAILED;
+        break;
+    case LINUX_UTS_COPY_COMPLETED:
+    case LINUX_UTS_COPY_FAILED:
+        allowed = next == LINUX_UTS_COPY_RELEASED;
+        break;
+    case LINUX_UTS_COPY_RELEASED:
+    case LINUX_UTS_COPY_STATE_COUNT:
+        break;
+    }
+    if (!allowed) {
+        return LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    runtime.uts_state = next;
+    return LINUX_SYSCALL_STATUS_OK;
+}
+
+static enum linux_syscall_status transition_uname_stdout(
+    enum linux_uname_stdout_state next
+)
+{
+    bool allowed = false;
+
+    if (next >= LINUX_UNAME_STDOUT_STATE_COUNT ||
+        runtime.uname_stdout_state == next) {
+        return LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    switch (runtime.uname_stdout_state) {
+    case LINUX_UNAME_STDOUT_CANDIDATE:
+        allowed = next == LINUX_UNAME_STDOUT_EMPTY ||
+            next == LINUX_UNAME_STDOUT_RELEASED;
+        break;
+    case LINUX_UNAME_STDOUT_EMPTY:
+        allowed = next == LINUX_UNAME_STDOUT_RECEIVING ||
+            next == LINUX_UNAME_STDOUT_INVALID ||
+            next == LINUX_UNAME_STDOUT_RELEASED;
+        break;
+    case LINUX_UNAME_STDOUT_RECEIVING:
+        allowed = next == LINUX_UNAME_STDOUT_VALID ||
+            next == LINUX_UNAME_STDOUT_INVALID;
+        break;
+    case LINUX_UNAME_STDOUT_VALID:
+    case LINUX_UNAME_STDOUT_INVALID:
+        allowed = next == LINUX_UNAME_STDOUT_RELEASED;
+        break;
+    case LINUX_UNAME_STDOUT_RELEASED:
+    case LINUX_UNAME_STDOUT_STATE_COUNT:
+        break;
+    }
+    if (!allowed) {
+        return LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    runtime.uname_stdout_state = next;
+    return LINUX_SYSCALL_STATUS_OK;
+}
+
 static enum linux_syscall_status transition_provenance(
     enum provenance_state next
 )
@@ -229,19 +362,56 @@ static enum linux_syscall_status transition_provenance(
     return LINUX_SYSCALL_STATUS_OK;
 }
 
-static size_t allowlist_index(uint64_t number)
+static size_t profile_allowlist_count(enum linux_syscall_profile profile)
 {
-    for (size_t index = 0U; index < LINUX_SYSCALL_ALLOWLIST_COUNT; ++index) {
-        if (allowlist[index] == number) {
+    return profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT : LINUX_SYSCALL_ALLOWLIST_COUNT;
+}
+
+static size_t profile_expected_calls(enum linux_syscall_profile profile)
+{
+    return profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        LINUX_UNAME_SYSCALL_EXPECTED_CALLS : LINUX_SYSCALL_EXPECTED_CALLS;
+}
+
+static uint64_t profile_allowed(
+    enum linux_syscall_profile profile,
+    size_t index
+)
+{
+    return profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        uname_allowlist[index] : allowlist[index];
+}
+
+static uint64_t profile_expected(
+    enum linux_syscall_profile profile,
+    size_t index
+)
+{
+    return profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        uname_expected_calls[index] : expected_calls[index];
+}
+
+static size_t allowlist_index(
+    enum linux_syscall_profile profile,
+    uint64_t number
+)
+{
+    for (size_t index = 0U; index < profile_allowlist_count(profile); ++index) {
+        if (profile_allowed(profile, index) == number) {
             return index;
         }
     }
     return SIZE_MAX;
 }
 
-static bool enosys_result(uint64_t number, uint64_t *result)
+static bool enosys_result(
+    enum linux_syscall_profile profile,
+    uint64_t number,
+    uint64_t *result
+)
 {
-    if (result == NULL || allowlist_index(number) != SIZE_MAX) {
+    if (result == NULL || allowlist_index(profile, number) != SIZE_MAX) {
         return false;
     }
     *result = (uint64_t)(int64_t)-LINUX_ERRNO_ENOSYS;
@@ -253,7 +423,8 @@ static bool context_equal(
     const struct linux_syscall_context *right
 )
 {
-    if (left->address_space != right->address_space ||
+    if (left->profile != right->profile ||
+        left->address_space != right->address_space ||
         left->process_generation != right->process_generation ||
         left->executable_start != right->executable_start ||
         left->executable_end != right->executable_end ||
@@ -271,6 +442,11 @@ static bool context_equal(
     }
     for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
         if (left->heap_frames[index] != right->heap_frames[index]) {
+            return false;
+        }
+    }
+    for (size_t index = 0U; index < PAGING_LINUX_STACK_PAGES; ++index) {
+        if (left->stack_frames[index] != right->stack_frames[index]) {
             return false;
         }
     }
@@ -295,7 +471,8 @@ static bool result_equal(
         left->cr3_authenticated == right->cr3_authenticated &&
         left->cpu_disarmed == right->cpu_disarmed &&
         left->controlled_failure_observed ==
-            right->controlled_failure_observed;
+            right->controlled_failure_observed &&
+        left->uts_copy_valid == right->uts_copy_valid;
 }
 
 static bool runtime_equal(
@@ -315,12 +492,14 @@ static bool runtime_equal(
         left->request_ordinal != right->request_ordinal ||
         left->state != right->state ||
         left->stdout_state != right->stdout_state ||
+        left->uts_state != right->uts_state ||
+        left->uname_stdout_state != right->uname_stdout_state ||
         left->provenance_state != right->provenance_state ||
         left->anonymous_mapped != right->anonymous_mapped ||
         left->active != right->active) {
         return false;
     }
-    for (size_t index = 0U; index < LINUX_SYSCALL_ALLOWLIST_COUNT; ++index) {
+    for (size_t index = 0U; index < LINUX_SYSCALL_ALLOWLIST_MAX; ++index) {
         if (left->seen[index] != right->seen[index]) {
             return false;
         }
@@ -370,12 +549,89 @@ static bool user_writable(uint64_t address, size_t length)
         }
         if (paging_process_translate(runtime.context.address_space, cursor,
                 &translation) != PAGING_STATUS_OK || !translation.user ||
-            (translation.permissions & PAGING_WRITE) == 0U ||
+            translation.permissions != PAGING_WRITE ||
             translation.level != 1U ||
             !frame_range_overlaps_allocatable_memory(
                 translation.physical_address, chunk)) {
             return false;
         }
+        cursor += chunk;
+        remaining -= chunk;
+    }
+    return true;
+}
+
+static bool user_stack_writable(uint64_t address, size_t length)
+{
+    uint64_t cursor = address;
+    size_t remaining = length;
+
+    if (!user_range_shape_valid(address, length) ||
+        address < runtime.context.stack_start ||
+        address + (uint64_t)(length - 1U) >= runtime.context.stack_end) {
+        return false;
+    }
+    while (remaining > 0U) {
+        struct paging_translation translation;
+        const size_t page = (size_t)((cursor -
+            runtime.context.stack_start) / PAGING_PAGE_SIZE);
+        size_t chunk = (size_t)(PAGING_PAGE_SIZE -
+            (cursor & (PAGING_PAGE_SIZE - 1U)));
+
+        if (chunk > remaining) {
+            chunk = remaining;
+        }
+        if (page >= PAGING_LINUX_STACK_PAGES ||
+            runtime.context.stack_frames[page] == 0U ||
+            paging_process_translate(runtime.context.address_space, cursor,
+                &translation) != PAGING_STATUS_OK || !translation.user ||
+            translation.permissions != PAGING_WRITE ||
+            translation.level != 1U ||
+            (translation.physical_address & ~(PAGING_PAGE_SIZE - 1U)) !=
+                runtime.context.stack_frames[page] ||
+            !frame_range_overlaps_allocatable_memory(
+                translation.physical_address, chunk)) {
+            return false;
+        }
+        cursor += chunk;
+        remaining -= chunk;
+    }
+    return true;
+}
+
+static bool copy_to_user_stack(
+    uint64_t address,
+    const void *source,
+    size_t length
+)
+{
+    const uint8_t *input = source;
+    uint64_t cursor = address;
+    size_t remaining = length;
+
+    /* Full ownership and permission validation precedes the first store. */
+    if (source == NULL || !user_stack_writable(address, length)) {
+        return false;
+    }
+    while (remaining > 0U) {
+        struct paging_translation translation;
+        size_t chunk = (size_t)(PAGING_PAGE_SIZE -
+            (cursor & (PAGING_PAGE_SIZE - 1U)));
+
+        if (chunk > remaining) {
+            chunk = remaining;
+        }
+        if (paging_process_translate(runtime.context.address_space, cursor,
+                &translation) != PAGING_STATUS_OK) {
+            return false;
+        }
+        uint8_t *output =
+            (uint8_t *)(uintptr_t)translation.physical_address;
+
+        for (size_t index = 0U; index < chunk; ++index) {
+            output[index] = input[index];
+        }
+        input += chunk;
         cursor += chunk;
         remaining -= chunk;
     }
@@ -606,15 +862,17 @@ bool linux_syscall_enosys_self_test(void)
          ++index) {
         uint64_t result = 0U;
 
-        if (!enosys_result(refused[index], &result) ||
+        if (!enosys_result(runtime.context.profile, refused[index], &result) ||
             (int64_t)result != -LINUX_ERRNO_ENOSYS) {
             return false;
         }
     }
-    for (size_t index = 0U; index < LINUX_SYSCALL_ALLOWLIST_COUNT; ++index) {
+    for (size_t index = 0U;
+         index < profile_allowlist_count(runtime.context.profile); ++index) {
         uint64_t result = 0U;
 
-        if (enosys_result(allowlist[index], &result)) {
+        if (enosys_result(runtime.context.profile,
+                profile_allowed(runtime.context.profile, index), &result)) {
             return false;
         }
     }
@@ -636,30 +894,48 @@ enum linux_syscall_status linux_syscall_arm(
     if (!syscall_supported()) {
         return LINUX_SYSCALL_STATUS_UNSUPPORTED_CPU;
     }
-    if (!cpu_user_transition_contract_valid() || kernel_stack == 0U ||
+    if (context->profile >= LINUX_SYSCALL_PROFILE_COUNT ||
+        !cpu_user_transition_contract_valid() || kernel_stack == 0U ||
         cpu_interrupts_enabled() ||
         context->address_space->state != PAGING_PROCESS_SPACE_INSTALLED ||
         context->process_generation == 0U ||
-        context->executable_start != LINUX_ABI_EXECUTABLE_START ||
-        context->executable_end != LINUX_ABI_EXECUTABLE_END ||
         context->stack_start != PAGING_LINUX_STACK_BASE ||
         context->stack_end != PAGING_LINUX_STACK_END ||
-        context->fs_address != LINUX_ABI_FS_ADDRESS ||
-        context->tid_address != LINUX_ABI_TID_ADDRESS) {
+        (context->profile == LINUX_SYSCALL_PROFILE_ECHO &&
+            (context->executable_start != LINUX_ABI_EXECUTABLE_START ||
+                context->executable_end != LINUX_ABI_EXECUTABLE_END ||
+                context->fs_address != LINUX_ABI_FS_ADDRESS ||
+                context->tid_address != LINUX_ABI_TID_ADDRESS)) ||
+        (context->profile == LINUX_SYSCALL_PROFILE_UNAME &&
+            (context->executable_start !=
+                    LINUX_UNAME_ABI_EXECUTABLE_START ||
+                context->executable_end != LINUX_UNAME_ABI_EXECUTABLE_END ||
+                context->fs_address != LINUX_UNAME_ABI_FS_ADDRESS ||
+                context->tid_address != LINUX_UNAME_ABI_TID_ADDRESS))) {
         return LINUX_SYSCALL_STATUS_BAD_PROCESS;
     }
     for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
-        if (context->heap_frames[index] == 0U) {
+        if (context->profile == LINUX_SYSCALL_PROFILE_ECHO &&
+            context->heap_frames[index] == 0U) {
             return LINUX_SYSCALL_STATUS_BAD_PROCESS;
         }
     }
-    if (context->anonymous_frame == 0U || context->exit_observed == NULL) {
+    for (size_t index = 0U; index < PAGING_LINUX_STACK_PAGES; ++index) {
+        if (context->stack_frames[index] == 0U) {
+            return LINUX_SYSCALL_STATUS_BAD_PROCESS;
+        }
+    }
+    if ((context->profile == LINUX_SYSCALL_PROFILE_ECHO &&
+            context->anonymous_frame == 0U) ||
+        context->exit_observed == NULL) {
         return LINUX_SYSCALL_STATUS_BAD_PROCESS;
     }
     if ((context->failure_before_ordinal != 0U &&
             context->failure_after_ordinal != 0U) ||
-        context->failure_before_ordinal > LINUX_SYSCALL_EXPECTED_CALLS ||
-        context->failure_after_ordinal > LINUX_SYSCALL_EXPECTED_CALLS ||
+        context->failure_before_ordinal >
+            profile_expected_calls(context->profile) ||
+        context->failure_after_ordinal >
+            profile_expected_calls(context->profile) ||
         context->controlled_run == context->publish_stdout ||
         ((context->failure_before_ordinal != 0U ||
             context->failure_after_ordinal != 0U) &&
@@ -671,6 +947,8 @@ enum linux_syscall_status linux_syscall_arm(
     runtime.state = LINUX_SYSCALL_CPU_CANDIDATE;
     runtime.result.cpu_state = runtime.state;
     runtime.stdout_state = STDOUT_SINK_CANDIDATE;
+    runtime.uts_state = LINUX_UTS_COPY_CANDIDATE;
+    runtime.uname_stdout_state = LINUX_UNAME_STDOUT_CANDIDATE;
     runtime.provenance_state = PROVENANCE_CANDIDATE;
     runtime.request_generation = context->process_generation;
     runtime.saved_efer = cpu_read_msr(IA32_EFER);
@@ -685,7 +963,18 @@ enum linux_syscall_status linux_syscall_arm(
     cpu_write_msr(IA32_EFER, runtime.saved_efer | EFER_SCE);
     runtime.active = true;
     if (transition_cpu(LINUX_SYSCALL_CPU_ARMED) != LINUX_SYSCALL_STATUS_OK ||
-        transition_stdout(STDOUT_SINK_ARMED) != LINUX_SYSCALL_STATUS_OK ||
+        (context->profile == LINUX_SYSCALL_PROFILE_ECHO &&
+            (transition_stdout(STDOUT_SINK_ARMED) !=
+                    LINUX_SYSCALL_STATUS_OK ||
+                transition_uts(LINUX_UTS_COPY_RELEASED) !=
+                    LINUX_SYSCALL_STATUS_OK ||
+                transition_uname_stdout(LINUX_UNAME_STDOUT_RELEASED) !=
+                    LINUX_SYSCALL_STATUS_OK)) ||
+        (context->profile == LINUX_SYSCALL_PROFILE_UNAME &&
+            (transition_stdout(STDOUT_SINK_RELEASED) !=
+                    LINUX_SYSCALL_STATUS_OK ||
+                transition_uname_stdout(LINUX_UNAME_STDOUT_EMPTY) !=
+                    LINUX_SYSCALL_STATUS_OK)) ||
         !msr_contract_valid()) {
         (void)linux_syscall_disarm();
         return LINUX_SYSCALL_STATUS_MSR_CONTRACT;
@@ -728,7 +1017,7 @@ static enum linux_syscall_status map_heap(void)
     return LINUX_SYSCALL_STATUS_OK;
 }
 
-static bool arguments_match(
+static bool echo_arguments_match(
     const struct linux_syscall_runtime *candidate,
     size_t call_index,
     const struct linux_syscall_frame *frame
@@ -774,6 +1063,57 @@ static bool arguments_match(
     }
 }
 
+static bool uname_arguments_match(
+    const struct linux_syscall_runtime *candidate,
+    size_t call_index,
+    const struct linux_syscall_frame *frame
+)
+{
+    if (candidate == NULL || frame == NULL) {
+        return false;
+    }
+    switch (call_index) {
+    case 0U:
+        return frame->rdi == ARCH_SET_FS &&
+            frame->rsi == candidate->context.fs_address;
+    case 1U:
+        return frame->rdi == candidate->context.tid_address;
+    case 2U:
+        return user_range_shape_valid(frame->rdi, LINUX_UTS_BYTES) &&
+            candidate->uts_state == LINUX_UTS_COPY_CANDIDATE;
+    case 3U:
+        return frame->rdi == 1U && frame->rsi == LINUX_TIOCGWINSZ &&
+            user_range_shape_valid(frame->rdx, 8U) &&
+            candidate->uts_state == LINUX_UTS_COPY_COMPLETED;
+    case 4U:
+        return frame->rdi == 1U && frame->rdx == 2U &&
+            user_range_shape_valid(frame->rsi,
+                2U * sizeof(struct linux_iovec)) &&
+            candidate->uts_state == LINUX_UTS_COPY_COMPLETED &&
+            candidate->uname_stdout_state == LINUX_UNAME_STDOUT_EMPTY;
+    case 5U:
+        return frame->rdi == 0U &&
+            candidate->uts_state == LINUX_UTS_COPY_COMPLETED &&
+            candidate->uname_stdout_state == LINUX_UNAME_STDOUT_VALID;
+    default:
+        return false;
+    }
+}
+
+static bool arguments_match(
+    const struct linux_syscall_runtime *candidate,
+    size_t call_index,
+    const struct linux_syscall_frame *frame
+)
+{
+    if (candidate == NULL) {
+        return false;
+    }
+    return candidate->context.profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        uname_arguments_match(candidate, call_index, frame) :
+        echo_arguments_match(candidate, call_index, frame);
+}
+
 static void expected_arguments(
     struct linux_syscall_runtime *candidate,
     size_t call_index,
@@ -784,6 +1124,7 @@ static void expected_arguments(
     zero_bytes(frame, sizeof(*frame));
     candidate->context.fs_address = LINUX_ABI_FS_ADDRESS;
     candidate->context.tid_address = LINUX_ABI_TID_ADDRESS;
+    candidate->context.profile = LINUX_SYSCALL_PROFILE_ECHO;
     switch (call_index) {
     case 0U:
         frame->rdi = ARCH_SET_FS;
@@ -940,7 +1281,175 @@ bool linux_syscall_semantic_self_test(void)
         !user_range_shape_valid(UINT64_C(0x00007FFFFFFFFFFF), 2U);
 }
 
-static enum linux_syscall_status execute_call(
+static bool bytes_equal(const void *left, const void *right, size_t length)
+{
+    const uint8_t *left_bytes = left;
+    const uint8_t *right_bytes = right;
+
+    for (size_t index = 0U; index < length; ++index) {
+        if (left_bytes[index] != right_bytes[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool uts_field_valid(
+    const char field[LINUX_UTS_FIELD_BYTES],
+    const char *value,
+    size_t value_bytes
+)
+{
+    if (value == NULL || value_bytes == 0U ||
+        value_bytes >= LINUX_UTS_FIELD_BYTES ||
+        !bytes_equal(field, value, value_bytes) || field[value_bytes] != '\0') {
+        return false;
+    }
+    for (size_t index = value_bytes + 1U;
+         index < LINUX_UTS_FIELD_BYTES; ++index) {
+        if (field[index] != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool linux_syscall_uname_semantic_self_test(void)
+{
+    struct linux_syscall_runtime candidate;
+    struct linux_syscall_frame frame;
+
+    if (!uts_field_valid(sapote_uts_record.sysname, "Linux", 5U) ||
+        !uts_field_valid(sapote_uts_record.nodename, "sapote", 6U) ||
+        !uts_field_valid(sapote_uts_record.release, "0.9.0-sapote", 12U) ||
+        !uts_field_valid(sapote_uts_record.version, "Sapote", 6U) ||
+        !uts_field_valid(sapote_uts_record.machine, "x86_64", 6U) ||
+        !uts_field_valid(sapote_uts_record.domainname, "(none)", 6U) ||
+        sizeof(sapote_uts_record) != 390U ||
+        LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT >
+            LINUX_SYSCALL_ALLOWLIST_MAX) {
+        return false;
+    }
+    zero_bytes(&candidate, sizeof(candidate));
+    zero_bytes(&frame, sizeof(frame));
+    candidate.context.profile = LINUX_SYSCALL_PROFILE_UNAME;
+    candidate.context.fs_address = LINUX_UNAME_ABI_FS_ADDRESS;
+    candidate.context.tid_address = LINUX_UNAME_ABI_TID_ADDRESS;
+    candidate.uts_state = LINUX_UTS_COPY_CANDIDATE;
+    candidate.uname_stdout_state = LINUX_UNAME_STDOUT_EMPTY;
+    for (size_t call = 0U; call < LINUX_UNAME_SYSCALL_EXPECTED_CALLS;
+         ++call) {
+        zero_bytes(&frame, sizeof(frame));
+        switch (call) {
+        case 0U:
+            frame.rdi = ARCH_SET_FS;
+            frame.rsi = candidate.context.fs_address;
+            break;
+        case 1U:
+            frame.rdi = candidate.context.tid_address;
+            break;
+        case 2U:
+            frame.rdi = UINT64_C(0x500000);
+            break;
+        case 3U:
+            candidate.uts_state = LINUX_UTS_COPY_COMPLETED;
+            frame.rdi = 1U;
+            frame.rsi = LINUX_TIOCGWINSZ;
+            frame.rdx = UINT64_C(0x500000);
+            break;
+        case 4U:
+            frame.rdi = 1U;
+            frame.rsi = UINT64_C(0x500000);
+            frame.rdx = 2U;
+            break;
+        case 5U:
+            candidate.uname_stdout_state = LINUX_UNAME_STDOUT_VALID;
+            break;
+        default:
+            return false;
+        }
+        if (!uname_arguments_match(&candidate, call, &frame)) {
+            return false;
+        }
+        if (call == 2U) {
+            frame.rdi = 0U;
+        } else {
+            frame.rdi ^= UINT64_C(1);
+        }
+        if (uname_arguments_match(&candidate, call, &frame)) {
+            return false;
+        }
+    }
+    for (size_t allowed = 0U;
+         allowed < LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT; ++allowed) {
+        bool seen = false;
+
+        for (size_t call = 0U; call < LINUX_UNAME_SYSCALL_EXPECTED_CALLS;
+             ++call) {
+            if (uname_expected_calls[call] == uname_allowlist[allowed]) {
+                seen = true;
+            }
+        }
+        if (!seen) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool linux_syscall_uname_copyout_self_test(size_t *completed_tests)
+{
+    uint8_t before[LINUX_UTS_BYTES];
+    uint8_t after[LINUX_UTS_BYTES];
+    uint8_t prefix_before[LINUX_UTS_BYTES / 2U];
+    uint8_t prefix_after[LINUX_UTS_BYTES / 2U];
+    const uint64_t valid = runtime.context.stack_start + PAGING_PAGE_SIZE -
+        LINUX_UTS_BYTES / 2U;
+    const uint64_t invalid_cross = runtime.context.stack_end -
+        LINUX_UTS_BYTES / 2U;
+
+    if (completed_tests == NULL) {
+        return false;
+    }
+    *completed_tests = 0U;
+    if (!runtime.active ||
+        runtime.context.profile != LINUX_SYSCALL_PROFILE_UNAME ||
+        runtime.state != LINUX_SYSCALL_CPU_ARMED ||
+        runtime.uts_state != LINUX_UTS_COPY_CANDIDATE ||
+        runtime.context.address_space == NULL ||
+        runtime.context.address_space->state !=
+            PAGING_PROCESS_SPACE_INSTALLED ||
+        !copy_from_user(before, valid, sizeof(before)) ||
+        copy_to_user_stack(0U, &sapote_uts_record,
+            sizeof(sapote_uts_record)) ||
+        copy_to_user_stack(UINT64_MAX - 1U, &sapote_uts_record,
+            sizeof(sapote_uts_record)) ||
+        copy_to_user_stack(UINT64_C(0x0000800000000000),
+            &sapote_uts_record, sizeof(sapote_uts_record)) ||
+        copy_to_user_stack(PAGING_LINUX_STACK_GUARD,
+            &sapote_uts_record, sizeof(sapote_uts_record)) ||
+        copy_to_user_stack(runtime.context.executable_start,
+            &sapote_uts_record, sizeof(sapote_uts_record)) ||
+        !copy_from_user(prefix_before, invalid_cross,
+            sizeof(prefix_before)) ||
+        copy_to_user_stack(invalid_cross, &sapote_uts_record,
+            sizeof(sapote_uts_record)) ||
+        !copy_from_user(prefix_after, invalid_cross,
+            sizeof(prefix_after)) ||
+        !bytes_equal(prefix_before, prefix_after, sizeof(prefix_before)) ||
+        !copy_to_user_stack(valid, &sapote_uts_record,
+            sizeof(sapote_uts_record)) ||
+        !copy_from_user(after, valid, sizeof(after)) ||
+        !bytes_equal(after, &sapote_uts_record,
+            sizeof(sapote_uts_record)) ||
+        !copy_to_user_stack(valid, before, sizeof(before))) {
+        return false;
+    }
+    *completed_tests = LINUX_UNAME_COPYOUT_CONTROLS;
+    return true;
+}
+
+static enum linux_syscall_status execute_echo_call(
     struct linux_syscall_frame *frame,
     uint64_t *return_value
 )
@@ -1039,6 +1548,111 @@ static enum linux_syscall_status execute_call(
     }
 }
 
+static enum linux_syscall_status execute_uname_call(
+    struct linux_syscall_frame *frame,
+    uint64_t *return_value
+)
+{
+    if (!uname_arguments_match(&runtime, runtime.call_index, frame)) {
+        return LINUX_SYSCALL_STATUS_BAD_ARGUMENT;
+    }
+    switch (runtime.call_index) {
+    case 0U:
+        if (!user_writable(frame->rsi, sizeof(uint64_t))) {
+            return LINUX_SYSCALL_STATUS_BAD_ARGUMENT;
+        }
+        cpu_write_msr(IA32_FS_BASE, frame->rsi);
+        if (cpu_read_msr(IA32_FS_BASE) != frame->rsi) {
+            return LINUX_SYSCALL_STATUS_MSR_CONTRACT;
+        }
+        *return_value = 0U;
+        return LINUX_SYSCALL_STATUS_OK;
+    case 1U:
+        if (!user_writable(frame->rdi, sizeof(uint32_t))) {
+            return LINUX_SYSCALL_STATUS_BAD_ARGUMENT;
+        }
+        *return_value = 1U;
+        return LINUX_SYSCALL_STATUS_OK;
+    case 2U:
+        if (transition_uts(LINUX_UTS_COPY_ACTIVE) !=
+                LINUX_SYSCALL_STATUS_OK) {
+            return LINUX_SYSCALL_STATUS_BAD_STATE;
+        }
+        if (!copy_to_user_stack(frame->rdi, &sapote_uts_record,
+                sizeof(sapote_uts_record))) {
+            if (transition_uts(LINUX_UTS_COPY_FAILED) !=
+                    LINUX_SYSCALL_STATUS_OK) {
+                return LINUX_SYSCALL_STATUS_BAD_STATE;
+            }
+            *return_value = (uint64_t)(int64_t)-LINUX_ERRNO_EFAULT;
+            return LINUX_SYSCALL_STATUS_OK;
+        }
+        if (transition_uts(LINUX_UTS_COPY_COMPLETED) !=
+                LINUX_SYSCALL_STATUS_OK) {
+            return LINUX_SYSCALL_STATUS_BAD_STATE;
+        }
+        runtime.result.uts_copy_valid = true;
+        *return_value = 0U;
+        return LINUX_SYSCALL_STATUS_OK;
+    case 3U:
+        *return_value = (uint64_t)(int64_t)-LINUX_ERRNO_ENOTTY;
+        return LINUX_SYSCALL_STATUS_OK;
+    case 4U: {
+        struct linux_iovec vectors[2];
+        uint8_t first[5];
+        uint8_t second[1];
+
+        if (transition_uname_stdout(LINUX_UNAME_STDOUT_RECEIVING) !=
+                LINUX_SYSCALL_STATUS_OK) {
+            return LINUX_SYSCALL_STATUS_BAD_STATE;
+        }
+        if (!copy_from_user(vectors, frame->rsi, sizeof(vectors)) ||
+            vectors[0].length != sizeof(first) ||
+            vectors[1].length != sizeof(second) ||
+            !copy_from_user(first, vectors[0].base, sizeof(first)) ||
+            !copy_from_user(second, vectors[1].base, sizeof(second)) ||
+            !bytes_equal(first, uname_expected_stdout, sizeof(first)) ||
+            second[0] != uname_expected_stdout[sizeof(first)]) {
+            (void)transition_uname_stdout(LINUX_UNAME_STDOUT_INVALID);
+            return LINUX_SYSCALL_STATUS_STDOUT;
+        }
+        if (transition_uname_stdout(LINUX_UNAME_STDOUT_VALID) !=
+                LINUX_SYSCALL_STATUS_OK) {
+            return LINUX_SYSCALL_STATUS_BAD_STATE;
+        }
+        if (runtime.context.publish_stdout) {
+            console_write_n((const char *)uname_expected_stdout,
+                sizeof(uname_expected_stdout));
+        }
+        runtime.result.stdout_bytes = LINUX_UNAME_SYSCALL_STDOUT_BYTES;
+        runtime.result.stdout_valid = true;
+        *return_value = LINUX_UNAME_SYSCALL_STDOUT_BYTES;
+        return LINUX_SYSCALL_STATUS_OK;
+    }
+    case 5U:
+        if (!runtime.context.exit_observed(
+                runtime.context.process_generation)) {
+            return LINUX_SYSCALL_STATUS_EXIT;
+        }
+        runtime.result.exit_status = 0U;
+        runtime.result.exit_zero = true;
+        *return_value = 0U;
+        return LINUX_SYSCALL_STATUS_OK;
+    default:
+        return LINUX_SYSCALL_STATUS_BAD_ORDER;
+    }
+}
+
+static enum linux_syscall_status execute_call(
+    struct linux_syscall_frame *frame,
+    uint64_t *return_value
+)
+{
+    return runtime.context.profile == LINUX_SYSCALL_PROFILE_UNAME ?
+        execute_uname_call(frame, return_value) :
+        execute_echo_call(frame, return_value);
+}
+
 uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame)
 {
     enum linux_syscall_status status = validate_entry(frame);
@@ -1061,9 +1675,9 @@ uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame)
         runtime.result.controlled_failure_observed = true;
         return return_to_kernel(LINUX_SYSCALL_STATUS_CONTROLLED_FAILURE);
     }
-    allowed_index = allowlist_index(frame->rax);
+    allowed_index = allowlist_index(runtime.context.profile, frame->rax);
     if (allowed_index == SIZE_MAX) {
-        if (!enosys_result(frame->rax, &frame->rax)) {
+        if (!enosys_result(runtime.context.profile, frame->rax, &frame->rax)) {
             return return_to_kernel(LINUX_SYSCALL_STATUS_BAD_ARGUMENT);
         }
         if (transition_provenance(PROVENANCE_COMPLETED) !=
@@ -1080,8 +1694,10 @@ uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame)
         }
         return 0U;
     }
-    if (runtime.call_index >= LINUX_SYSCALL_EXPECTED_CALLS ||
-        frame->rax != expected_calls[runtime.call_index]) {
+    if (runtime.call_index >=
+            profile_expected_calls(runtime.context.profile) ||
+        frame->rax != profile_expected(runtime.context.profile,
+            runtime.call_index)) {
         return return_to_kernel(LINUX_SYSCALL_STATUS_BAD_ORDER);
     }
     status = execute_call(frame, &return_value);
@@ -1114,7 +1730,8 @@ uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame)
             LINUX_SYSCALL_STATUS_OK) {
         return return_to_kernel(LINUX_SYSCALL_STATUS_BAD_PROVENANCE);
     }
-    if (runtime.call_index != LINUX_SYSCALL_EXPECTED_CALLS) {
+    if (runtime.call_index != profile_expected_calls(
+            runtime.context.profile)) {
         return 0U;
     }
     if (paging_process_restore_kernel(runtime.context.address_space) !=
@@ -1154,6 +1771,16 @@ enum linux_syscall_status linux_syscall_disarm(void)
     }
     if (runtime.stdout_state != STDOUT_SINK_RELEASED &&
         transition_stdout(STDOUT_SINK_RELEASED) !=
+            LINUX_SYSCALL_STATUS_OK) {
+        result = LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    if (runtime.uts_state != LINUX_UTS_COPY_RELEASED &&
+        transition_uts(LINUX_UTS_COPY_RELEASED) !=
+            LINUX_SYSCALL_STATUS_OK) {
+        result = LINUX_SYSCALL_STATUS_BAD_STATE;
+    }
+    if (runtime.uname_stdout_state != LINUX_UNAME_STDOUT_RELEASED &&
+        transition_uname_stdout(LINUX_UNAME_STDOUT_RELEASED) !=
             LINUX_SYSCALL_STATUS_OK) {
         result = LINUX_SYSCALL_STATUS_BAD_STATE;
     }

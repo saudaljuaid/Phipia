@@ -20,8 +20,8 @@ busybox_version=1.38.0
 busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
-busybox_config_sha256=3fbc0403c6a4865fc4397240961c367ee9b36d6d350cc6ceb2d22cbbbea28480
-busybox_binary_sha256=b308f2cad5b5cd0eeb92a622dec8d71c1a08f628a22cdc5bcde2b98b53220746
+busybox_config_sha256=6d972c7a1f3df0034d5996cc24b58b7364efbb7851f926c5d8d2fd18c41ebb2b
+busybox_binary_sha256=389ad6b13804eb7307ba589c8e8a7c702f91302005a7c5fc6e9e99124fceaf43
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -59,6 +59,12 @@ musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-
         CC=gcc \
         CFLAGS="$musl_cflags"
     make --jobs=2
+    cp "$repository_root/userspace/busybox/musl-vfprintf-scalar.h" \
+        scalar-vfprintf.h
+    rm -f obj/src/stdio/vfprintf.o lib/libc.a
+    make --jobs=2 \
+        CFLAGS="$musl_cflags -include scalar-vfprintf.h" \
+        obj/src/stdio/vfprintf.o lib/libc.a
     make install
 )
 # musl-gcc deliberately defaults every non-shared link to Scrt1.o.  This proof
@@ -83,7 +89,7 @@ if grep -Fq 'crtendS.o' "$work_dir/musl-install/lib/musl-gcc.specs"; then
     exit 1
 fi
 
-cp "$repository_root/userspace/busybox/busybox.config" \
+cp "$repository_root/userspace/busybox/busybox-uname.config" \
     "$work_dir/busybox.config"
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$work_dir/busybox.config" | sha256sum --check --strict
@@ -96,8 +102,9 @@ printf '%s  %s\n' "$busybox_config_sha256" \
     test "$(grep -Ec '^CONFIG_[A-Z0-9_]+=y$' .config)" -ge 1
     grep -Fxq 'CONFIG_BUSYBOX=y' .config
     grep -Fxq 'CONFIG_STATIC=y' .config
-    grep -Fxq 'CONFIG_ECHO=y' .config
-    grep -Fxq '# CONFIG_FEATURE_FANCY_ECHO is not set' .config
+    grep -Fxq '# CONFIG_ECHO is not set' .config
+    grep -Fxq 'CONFIG_UNAME=y' .config
+    grep -Fxq 'CONFIG_UNAME_OSNAME=""' .config
     make --jobs=2 \
         CC="$work_dir/musl-install/bin/musl-gcc" \
         HOSTCFLAGS='-Wno-unused-result'
@@ -106,13 +113,8 @@ printf '%s  %s\n' "$busybox_config_sha256" \
 busybox_binary="$busybox_source/busybox"
 cp "$busybox_binary" "$output_dir/busybox"
 cp "$busybox_source/.config" "$output_dir/busybox.config"
-if [ "$busybox_binary_sha256" != measure ]; then
-    printf '%s  %s\n' "$busybox_binary_sha256" \
-        "$output_dir/busybox" | sha256sum --check --strict
-else
-    printf 'warning: BusyBox binary SHA-256 pin bypassed for measurement only\n' \
-        >&2
-fi
+printf '%s  %s\n' "$busybox_binary_sha256" \
+    "$output_dir/busybox" | sha256sum --check --strict
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$output_dir/busybox.config" | sha256sum --check --strict
 cp "$busybox_source/LICENSE" "$output_dir/BUSYBOX-LICENSE"
@@ -189,38 +191,31 @@ stdout_file="$output_dir/stdout.txt"
 stderr_file="$output_dir/stderr.txt"
 trace_file="$output_dir/syscall-trace.txt"
 env -i strace --argv0=busybox --quiet=all --string-limit=256 \
-    --output="$trace_file" "$output_dir/busybox" echo SAPOTE \
+    --output="$trace_file" "$output_dir/busybox" uname -s \
     >"$stdout_file" 2>"$stderr_file"
-printf 'SAPOTE\n' | cmp --silent - "$stdout_file"
+printf 'Linux\n' | cmp --silent - "$stdout_file"
 test ! -s "$stderr_file"
 sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' "$trace_file" \
     | grep -v '^execve$' >"$output_dir/syscall-sequence.txt"
-cat >"$work_dir/expected-syscall-sequence.txt" <<'EOF'
-arch_prctl
-set_tid_address
-brk
-brk
-mmap
-mmap
-write
-munmap
-exit_group
-EOF
-cmp --silent "$work_dir/expected-syscall-sequence.txt" \
+cmp --silent "$repository_root/userspace/busybox/uname-syscall-sequence.txt" \
     "$output_dir/syscall-sequence.txt"
-test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 7
-grep -Fq 'arch_prctl(ARCH_SET_FS, 0x400001008998)' "$trace_file"
-grep -Fq 'set_tid_address(0x400001008b34)' "$trace_file"
-grep -Fq 'write(1, "SAPOTE\n", 7)' "$trace_file"
+test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 6
+grep -Fq 'arch_prctl(ARCH_SET_FS,' "$trace_file"
+grep -Fq 'set_tid_address(' "$trace_file"
+grep -Fq 'uname({sysname="Linux",' "$trace_file"
+grep -Fq 'ioctl(1, TIOCGWINSZ,' "$trace_file"
+grep -Fq '= -1 ENOTTY (Inappropriate ioctl for device)' "$trace_file"
+grep -Fq 'writev(1, [{iov_base="Linux", iov_len=5}, {iov_base="\n", iov_len=1}], 2) = 6' \
+    "$trace_file"
 grep -Fq 'exit_group(0)' "$trace_file"
 
 qemu_stdout="$output_dir/qemu-stdout.txt"
 qemu_stderr="$output_dir/qemu-stderr.txt"
 qemu_trace="$output_dir/exercised-instructions.txt"
 env -i qemu-x86_64 -0 busybox -d in_asm -D "$qemu_trace" \
-    "$output_dir/busybox" echo SAPOTE \
+    "$output_dir/busybox" uname -s \
     >"$qemu_stdout" 2>"$qemu_stderr"
-printf 'SAPOTE\n' | cmp --silent - "$qemu_stdout"
+printf 'Linux\n' | cmp --silent - "$qemu_stdout"
 test ! -s "$qemu_stderr"
 python3 "$repository_root/tools/check-exercised-instructions.py" --self-test
 python3 "$repository_root/tools/check-exercised-instructions.py" \

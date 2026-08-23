@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+// The shared parser module also contains the independently exercised uname
+// contract. This legacy echo harness intentionally reaches only the echo half.
+#![allow(dead_code)]
+
 #[path = "../src/rust/linux_elf64.rs"]
 mod linux_elf64;
 

@@ -134,3 +134,18 @@ It contains no address, process generation, host path, timing, PCI topology,
 filesystem identifier, or toolchain path.  Ordinary boots and other fixtures
 publish one neutral absence outcome.  Installed verification requires exactly
 one success or neutral outcome.
+
+## Preserved by the uname increment
+
+Scenario 39 is a separate proof and does not alter this scenario's fixture,
+configuration, binary digest, syscall sequence, seven output bytes, transcript,
+guest exit, or host exit. `make verify` continues to build and trace the echo
+image independently, compares its pinned SHA-256 and syscall contract, and now
+joins QEMU translated ranges to full disassembly before accepting the
+no-floating-point/MMX/SSE/AVX assertion.
+
+The complete suite requires both permanent lines: this inherited echo receipt
+and the new uname receipt documented in `LINUX_UNAME_QEMU_PROOF.md`. Ordinary
+boots require one neutral uname absence receipt. Ten serialized TCG sweeps run
+the full 39-scenario suite; accelerator evidence is recorded separately and
+never probes KVM.

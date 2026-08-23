@@ -73,3 +73,19 @@ archive, complete configuration, BusyBox license, musl source/toolchain record,
 musl copyright notice, build script, and checksum manifest.  The release must
 identify these as userspace/source assets, not Sapote kernel code.  A binary is
 not published unless all of those records are present and their hashes match.
+
+## Separate uname build
+
+v0.9.0 does not modify this v0.8.0 image or configuration. It adds
+`busybox-uname.config` and the independent procedure documented in
+`BUSYBOX_UNAME_CONTRACT.md`. Both profiles use the same pinned source archives
+and preserve their bytes. The uname build applies a build-only scalar target
+attribute to musl `vfprintf` so the exact exercised `uname -s` trace contains
+no floating-point, MMX, SSE, or AVX instruction; the kernel keeps its blanket
+instruction prohibition and gains no SIMD state support.
+
+The release must ship both profile records distinctly. For uname that includes
+the exact configuration, source archives, BusyBox license, musl copyright
+record, build script and scalar overlay, two-build provenance, syscall trace
+and allowlist, disassembly/translated-block audit, fixture layout and digest,
+and checksum manifests.

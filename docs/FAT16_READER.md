@@ -125,3 +125,17 @@ requires zero padding after the final 816 bytes, validates the BusyBox SHA-256,
 and closes the typed session during reverse teardown. No path parser,
 partition, directory traversal, cache, mount, VFS, public block API, or write
 operation is added.
+
+## Separate uname chain
+
+v0.9.0 adds a second typed query and read session for canonical root entry
+`UNAMEBOX`. Its checksum-pinned 38,368-byte payload occupies ten 4,096-byte
+clusters and is retrieved by thirteen bounded reads covering BPB, root, FAT,
+and payload. It reuses the same safe Rust geometry, chain, arithmetic, padding,
+and digest rules without changing the inherited `BUSYBOX` echo contract.
+
+The deterministic unpartitioned image is attached read-only and has SHA-256
+`48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3`.
+Only CPU-owned blocks cross the Rust ABI. No path lookup, directory traversal,
+partition layer, write path, cache, VFS, mount, or public block interface is
+introduced. See `LINUX_UNAME_INITIAL_STACK_AND_FIXTURE.md`.

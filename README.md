@@ -32,9 +32,9 @@ paths, and manages its own memory.
 
 First Light is a fixed kernel workbench with a patterned blue-gray desktop,
 beveled utility windows, bitmap type, direct launchers, and status indicators.
-The Boot Ledger checks installed state. Thirty-eight deterministic QEMU
-scenarios cover boot, memory, interrupts, devices, the interface, and one
-bounded static-BusyBox Linux ABI proof.
+The Boot Ledger checks installed state. Thirty-nine deterministic QEMU
+scenarios cover boot, memory, interrupts, devices, the interface, and two
+bounded static-BusyBox Linux ABI proofs.
 
 ## Identity
 
@@ -54,13 +54,13 @@ asset, palette, voice, and naming contract is in
 | Memory | Firmware memory map, bounded contiguous DMA, four-level paging, W^X, a validated device-window registry and MMIO arena, explicit PAT memory types, guarded heap and stacks |
 | Interrupts and time | Local APIC, I/O APIC edge and level routes, dynamic vectors and MSI-X, retired PIC/PIT paths, PM timer, TSC, deadlines |
 | Hardware discovery | Checksummed ACPI tables, checked PCI configuration reads/writes, bridge-aware enumeration, sized BAR claims, explicit resource ownership, and bounded xHCI and NVMe controller lifecycles |
-| Storage format | Three deterministic read-only FAT16 fixtures; the Linux ABI fixture admits one canonical `BUSYBOX` root file and a checked nine-cluster chain parsed in Rust |
-| Process foundation | One process at a time in a private four-level W^X address space: the inherited fixed proof image or one static position-fixed BusyBox with a bounded Linux initial stack |
-| Linux ABI increment | Real x86-64 `SYSCALL` through `IA32_LSTAR`, checked `IRETQ` return, seven allowlisted syscall numbers, `-ENOSYS` otherwise, and exactly `busybox echo SAPOTE` |
+| Storage format | Four deterministic read-only FAT16 fixtures; separate Linux ABI roots admit the pinned nine-cluster echo and ten-cluster uname executables parsed in Rust |
+| Process foundation | One process at a time in a private four-level W^X address space: the inherited fixed proof image or one of two static position-fixed BusyBox profiles with exact Linux initial stacks |
+| Linux ABI increments | Real x86-64 `SYSCALL` through `IA32_LSTAR`, checked `IRETQ` return, profile-specific bounded allowlists, `-ENOSYS` otherwise, and exactly `busybox echo SAPOTE` or `busybox uname -s`; uname uses checked non-partial copy-out of one deterministic UTS record |
 | Scheduling | Guarded kernel threads, round-robin switching, and timer preemption |
 | Graphics and input | Write-combining RGB framebuffer, cached drawing surface, screen console and shell, PS/2 keyboard/pointer, software cursor, and bounded First Light desktop shell |
 | Language boundary | C11 and x86_64 assembly kernel; safe Rust parses kernel-external logo, font, FAT16, and the inherited and BusyBox ELF64 shapes through one reviewed unsafe FFI boundary |
-| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, real VirtIO RNG, xHCI USB descriptor, NVMe/FAT16 DMA/MSI-X, real loaded CPL3 ELF and `SYSCALL` instructions, actual framebuffer screenshots, and 38 deterministic QEMU scenarios |
+| Proof | Capability-validated boot receipts, installed-state invariants, deliberate fault probes, real VirtIO RNG, xHCI USB descriptor, NVMe/FAT16 DMA/MSI-X, real loaded CPL3 ELF and `SYSCALL` instructions, actual framebuffer screenshots, and 39 deterministic QEMU scenarios |
 
 ## Build and run
 
@@ -83,7 +83,7 @@ Then choose the verification or boot target:
 
 ```sh
 make verify       # clean build plus ELF, Multiboot2, symbol, and W^X checks
-make qemu-tests   # all 38 deterministic fault, memory, device, process, ABI, and UI scenarios
+make qemu-tests   # all 39 deterministic fault, memory, device, process, ABI, and UI scenarios
 make smoke        # strict normal-boot contract
 make run          # interactive graphical boot
 ```
@@ -108,6 +108,7 @@ The build produces `build/sapote.elf` and `build/sapote.iso`.
 - [`docs/FAT16_READER.md`](docs/FAT16_READER.md), [`docs/FILESYSTEM_FILE_READ.md`](docs/FILESYSTEM_FILE_READ.md), and [`docs/FAT16_QEMU_PROOF.md`](docs/FAT16_QEMU_PROOF.md) — the exact FAT16 parser, one-root-file contract, and four-read installed proof.
 - [`docs/ELF64_LOADER.md`](docs/ELF64_LOADER.md), [`docs/PROCESS_ADDRESS_SPACE.md`](docs/PROCESS_ADDRESS_SPACE.md), [`docs/CPL3_INTERRUPT_BOUNDARY.md`](docs/CPL3_INTERRUPT_BOUNDARY.md), and [`docs/PROCESS_QEMU_PROOF.md`](docs/PROCESS_QEMU_PROOF.md) — the bounded executable, private W^X hierarchy, privilege boundary, and installed fixture proof.
 - [`docs/LINUX_SYSCALL_ABI.md`](docs/LINUX_SYSCALL_ABI.md), [`docs/LINUX_INITIAL_STACK.md`](docs/LINUX_INITIAL_STACK.md), [`docs/BUSYBOX_REPRODUCIBLE_BUILD.md`](docs/BUSYBOX_REPRODUCIBLE_BUILD.md), and [`docs/LINUX_ABI_QEMU_PROOF.md`](docs/LINUX_ABI_QEMU_PROOF.md) — the first bounded Linux ABI increment, measured BusyBox input, and installed proof.
+- [`docs/LINUX_UNAME_ABI.md`](docs/LINUX_UNAME_ABI.md), [`docs/DETERMINISTIC_UTS_RECORD.md`](docs/DETERMINISTIC_UTS_RECORD.md), [`docs/CHECKED_USER_COPYOUT.md`](docs/CHECKED_USER_COPYOUT.md), [`docs/BUSYBOX_UNAME_CONTRACT.md`](docs/BUSYBOX_UNAME_CONTRACT.md), [`docs/LINUX_UNAME_INITIAL_STACK_AND_FIXTURE.md`](docs/LINUX_UNAME_INITIAL_STACK_AND_FIXTURE.md), and [`docs/LINUX_UNAME_QEMU_PROOF.md`](docs/LINUX_UNAME_QEMU_PROOF.md) — the second bounded profile, deterministic UTS copy-out, separate fixture, and controlled robustness matrix.
 - [`docs/DEVICE_FOUNDATION_VERIFICATION.md`](docs/DEVICE_FOUNDATION_VERIFICATION.md) — executed controls, proof evidence, accelerator sweeps, and the recorded flake.
 - [`docs/THREADS.md`](docs/THREADS.md) — guarded threads, switching, and preemption.
 - [`docs/FRAMEBUFFER.md`](docs/FRAMEBUFFER.md), [`docs/SURFACE.md`](docs/SURFACE.md), and [`docs/WRITE_COMBINING.md`](docs/WRITE_COMBINING.md) — pixels, cached drawing, memory types, and fenced presentation.

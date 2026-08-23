@@ -200,3 +200,19 @@ will pull in the forbidden GOT before it can boot.
 - **No Rust in an interrupt handler**, and no Rust that runs before paging.
 - **The panic handler has never executed.** See above.
 - **Verified under QEMU only**, with one Rust toolchain version.
+
+## v0.9.0 measured uname boundary
+
+The existing `linux_fat16.rs` and `linux_elf64.rs` modules now carry a second
+constant contract selected by separate FFI entry points. Safe Rust accepts
+only the ten-cluster `UNAMEBOX` payload with SHA-256
+`389AD6B13804EB7307BA589C8E8A7C702F91302005A7C5FC6E9E99124FCEAF43`
+and only its exact five-header/four-load ELF conjunction. The inherited echo
+constants and entry points remain byte-for-byte separate.
+
+Unsafe code remains confined to `src/rust/abi.rs`, where complete C pointers are
+checked before becoming slices and pointer-free validated structures are
+copied back. C still owns device I/O, mappings, process lifecycle, syscall
+state, and checked UTS copy-out; it does not duplicate FAT16 or ELF decoding.
+Host harnesses consume the exact pinned uname binary and exercise both the
+positive contract and named digest/header mutations during `make verify`.

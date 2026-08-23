@@ -1,0 +1,6 @@
+arch_prctl
+set_tid_address
+uname
+ioctl
+writev
+exit_group

@@ -673,6 +673,136 @@ pub unsafe extern "C" fn sapote_linux_fat16_validate_payload(
     }
 }
 
+/// Run the pointer-free uname BusyBox FAT-chain invariant controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_linux_uname_fat16_self_test() -> u32 {
+    linux_fat16::self_test_uname()
+}
+
+/// Construct the canonical uname fixture root query by value.
+///
+/// # Safety
+///
+/// `out` must address one writable root query.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_uname_fat16_make_query(
+    out: *mut fat16::RootQuery,
+) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable RootQuery and null was refused.
+    unsafe { *out = linux_fat16::make_uname_query() };
+    linux_fat16_status_code(linux_fat16::Status::Ok)
+}
+
+/// Locate the bounded uname BusyBox root entry in a CPU-owned block.
+///
+/// # Safety
+///
+/// Inputs must name their complete readable values and `out` one writable
+/// non-overlapping root entry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_uname_fat16_find_root(
+    block: *const u8,
+    block_len: usize,
+    geometry: *const fat16::Geometry,
+    query: *const fat16::RootQuery,
+    destination_bytes: u32,
+    out: *mut fat16::RootEntry,
+) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable RootEntry and null was refused.
+    unsafe { *out = fat16::RootEntry::invalid() };
+    if block.is_null() || geometry.is_null() || query.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises the readable, non-aliased values above.
+    let (bytes, checked_geometry, checked_query) = unsafe {
+        (core::slice::from_raw_parts(block, block_len), *geometry, *query)
+    };
+    match linux_fat16::find_uname_root(
+        bytes, &checked_geometry, &checked_query, destination_bytes,
+    ) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+/// Validate the exact bounded uname FAT chain.
+///
+/// # Safety
+///
+/// Inputs must name complete readable values and `out` one writable,
+/// non-overlapping chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_uname_fat16_build_chain(
+    fat_block: *const u8,
+    fat_len: usize,
+    geometry: *const fat16::Geometry,
+    entry: *const fat16::RootEntry,
+    out: *mut linux_fat16::Chain,
+) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Chain and null was refused.
+    unsafe { *out = linux_fat16::Chain::invalid() };
+    if fat_block.is_null() || geometry.is_null() || entry.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises the readable, non-aliased values above.
+    let (bytes, checked_geometry, checked_entry) = unsafe {
+        (core::slice::from_raw_parts(fat_block, fat_len), *geometry, *entry)
+    };
+    match linux_fat16::build_uname_chain(bytes, &checked_geometry, &checked_entry) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+/// Validate the complete CPU-owned uname BusyBox bytes and SHA-256.
+///
+/// # Safety
+///
+/// `data` must name `data_len` readable bytes and `out` one writable,
+/// non-overlapping payload.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_uname_fat16_validate_payload(
+    data: *const u8,
+    data_len: usize,
+    out: *mut linux_fat16::Payload,
+) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Payload and null was refused.
+    unsafe { *out = linux_fat16::Payload::invalid() };
+    if data.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(data, data_len) };
+    match linux_fat16::validate_uname_payload(bytes) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
 fn linux_elf64_status_code(status: linux_elf64::Status) -> i32 {
     status as i32
 }
@@ -706,6 +836,44 @@ pub unsafe extern "C" fn sapote_linux_elf64_parse(
     // SAFETY: the caller promises this complete readable range.
     let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
     match linux_elf64::parse(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            linux_elf64_status_code(linux_elf64::Status::Ok)
+        }
+        Err(status) => linux_elf64_status_code(status),
+    }
+}
+
+/// Run the pointer-free measured uname BusyBox ELF conjunction controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_linux_uname_elf64_self_test() -> u32 {
+    linux_elf64::self_test_uname()
+}
+
+/// Parse the complete CPU-owned uname BusyBox ELF into segment facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` one
+/// writable validated image. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_uname_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut linux_elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *out = linux_elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this complete readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match linux_elf64::parse_uname(bytes) {
         Ok(value) => {
             // SAFETY: the validated output pointer still names one value.
             unsafe { *out = value };

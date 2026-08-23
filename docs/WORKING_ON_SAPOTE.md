@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-eight bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-nine bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -71,7 +71,7 @@ read-only reopen the ordinary 16 MiB file; QEMU receives explicit read-only
 file/raw `-blockdev` nodes and its standard NVMe device. Evidence requires
 metadata-derived BPB/FAT/root/data order, four real PRP1/MSI-X completions,
 unchanged guards, the documented 128-byte digest, CPU → controller → CPU
-ownership for every block, and clean teardown. Run all 38 scenarios, ten
+ownership for every block, and clean teardown. Run all 39 scenarios, ten
 complete serial TCG sweeps and one sweep under every safely available
 accelerator. Never probe `/dev/kvm`, mount the fixture or attach host storage.
 
@@ -82,7 +82,7 @@ a linker as sole truth. Evidence must prove the bytes returned to CPU ownership,
 safe Rust parsing, one private CR3, supervisor-only kernel intent, RX image,
 RW/NX stack plus absent guard, real `IRETQ` CPL3 fetch, private DPL3 vector
 `0x81` return, kernel CR3 restoration and equal resource census before the
-receipt. Run all 38 scenarios, ten serial TCG sweeps and every safely exposed
+receipt. Run all 39 scenarios, ten serial TCG sweeps and every safely exposed
 accelerator. Never probe KVM, mount a fixture, attach host storage or pass
 through hardware.
 
@@ -94,7 +94,7 @@ NVMe-loaded image entered at CPL3, executed the real x86-64 `syscall`
 instruction through the programmed `IA32_LSTAR` boundary, wrote exactly
 `SAPOTE\n`, exited zero, restored kernel CR3 and returned the complete resource
 census to baseline. Unknown syscalls must return `-ENOSYS`; the private
-`int 0x81` process gate is not Linux proof evidence. Run all 38 scenarios, ten
+`int 0x81` process gate is not Linux proof evidence. Run all 39 scenarios, ten
 complete serial TCG sweeps, two clean reproducible BusyBox builds and every
 safely exposed accelerator. Never probe KVM, add an untraced syscall, widen the
 fixture, or publish a binary without its source, configuration and license
@@ -226,3 +226,19 @@ When you do not understand a subsystem, the order that works:
 
 Step 5 is the one people skip. Most of the questions worth asking about this
 kernel were answered by whoever wrote the line, in the commit that added it.
+
+## Changing a measured Linux profile
+
+Treat each BusyBox invocation as an immutable, separate profile. Rebuild from
+the committed BusyBox and musl archives in two clean directories, require
+byte-identical output, capture the syscall trace independently, pin the
+configuration/binary/ELF/fixture digests, and audit translated instruction
+ranges against full disassembly. Never edit the inherited echo configuration
+or silently widen an allowlist to fit a new applet.
+
+For uname-specific work, start with `BUSYBOX_UNAME_CONTRACT.md`,
+`LINUX_UNAME_ABI.md`, `CHECKED_USER_COPYOUT.md`, and
+`LINUX_UNAME_QEMU_PROOF.md`. An expected malformed-input refusal belongs in a
+green self-test assertion. Any unexpected warning, red job, mismatch, or
+rejected control stops integration until it is classified, fixed or contained,
+and the complete affected gate is green again.

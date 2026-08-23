@@ -321,20 +321,28 @@ executable failure test, and a boot that proves it or refuses.
    `docs/ELF64_LOADER.md`, `docs/PROCESS_ADDRESS_SPACE.md`,
    `docs/CPL3_INTERRUPT_BOUNDARY.md` and `docs/PROCESS_QEMU_PROOF.md`.
 10. **The Linux system-call ABI, incrementally — first increment complete in
-    v0.8.0.** One unmodified checksum-pinned static BusyBox enters through the
+    v0.8.0; bounded second increment complete in v0.9.0.** One unmodified
+    checksum-pinned static BusyBox enters through the
     real x86-64 `SYSCALL` instruction and `IA32_LSTAR`, runs only
     `busybox echo SAPOTE`, writes seven bytes to a proof-only stdout sink, and
     exits zero. Seven syscall numbers implement only the measured invocation;
     every other number returns `-ENOSYS`. There is still no general POSIX,
     descriptor, pathname, signal, threading, dynamic-linking, or multi-process
-    environment. Any next ABI increment requires a new live roadmap choice and
-    a newly measured executable contract; this item is not authority to widen
-    v0.8.0 silently.
+    environment. The v0.9.0 increment is a separate, newly measured
+    `busybox uname -s` executable and fixture adding only Linux x86-64 `uname`
+    plus fully checked copy-out of one deterministic Sapote-owned UTS record.
+    It preserves the v0.8.0 echo contract and does not authorize any other
+    applet, syscall, POSIX facility, hostname service, or UTS namespace.
 
 **Wireless, last, because it needs all of it.**
 
-11. **A FullMAC adapter**, firmware from a file, vendor command interface,
-    WPA2-PSK offloaded to firmware.
+11. **A FullMAC adapter — future, blocked on upstream QEMU support.** The
+    [committed feasibility report](https://github.com/saudaljuaid/Sapote/blob/de49647f15c271c31a56231334ad9ea4889f1199/docs/FULLMAC_FEASIBILITY.md)
+    at commit `de49647f15c271c31a56231334ad9ea4889f1199` concludes that local
+    QEMU 11.1.0 and CI QEMU 8.2.2 expose neither an ordinary FullMAC device nor
+    a deterministic virtual WPA2 peer. This remains blocked until upstream
+    QEMU provides an ordinary x86-compatible FullMAC device-and-peer model;
+    v0.9.0 does not implement or claim FullMAC work.
 12. **A network stack** — or, more cheaply at first, a userspace one over a raw
     device interface.
 13. **`nl80211` shape and `wpa_supplicant`** for WPA3 and enterprise, running as

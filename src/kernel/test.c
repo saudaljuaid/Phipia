@@ -29,6 +29,7 @@
 #include <sapote/process.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_uname.h>
 #include <sapote/screen.h>
 #include <sapote/shell.h>
 #include <sapote/pm_timer.h>
@@ -313,6 +314,10 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_LINUX_ABI;
     }
 
+    if (token_equals(value, length, "linux-abi-uname")) {
+        return KERNEL_TEST_LINUX_ABI_UNAME;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -404,6 +409,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x34);
     case KERNEL_TEST_LINUX_ABI:
         return UINT8_C(0x36);
+    case KERNEL_TEST_LINUX_ABI_UNAME:
+        return UINT8_C(0x37);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -477,6 +484,19 @@ bool kernel_test_linux_abi_exit_self_test(void)
             scenario_exit_value(KERNEL_TEST_LINUX_ABI)) &&
         !linux_abi_exit_contract(UINT8_C(0x35)) &&
         !linux_abi_exit_contract(UINT8_C(0x34));
+}
+
+static bool linux_uname_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x37);
+}
+
+bool kernel_test_linux_uname_exit_self_test(void)
+{
+    return linux_uname_exit_contract(
+            scenario_exit_value(KERNEL_TEST_LINUX_ABI_UNAME)) &&
+        !linux_uname_exit_contract(UINT8_C(0x36)) &&
+        !linux_uname_exit_contract(UINT8_C(0x38));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -4059,6 +4079,9 @@ void kernel_test_run(
     case KERNEL_TEST_LINUX_ABI:
         /* Deferred until the proof receipt is installed and published. */
         return;
+    case KERNEL_TEST_LINUX_ABI_UNAME:
+        /* Deferred until the uname proof receipt is installed and published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4902,6 +4925,61 @@ _Noreturn void kernel_test_complete_linux_abi(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_linux_uname(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *syscall_cpu;
+    const struct boot_stage_receipt *uname_foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct linux_uname_abi_proof_result proof =
+        linux_uname_abi_get_proof_result();
+
+    if (active_scenario != KERNEL_TEST_LINUX_ABI_UNAME) {
+        kernel_test_fail("Linux uname completion used outside its scenario");
+    }
+    syscall_cpu = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_LINUX_SYSCALL_CPU_FOUNDATION);
+    uname_foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_LINUX_UNAME_IMAGE_UTS_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_LINUX_UNAME_INSTALLED_PROOF);
+    if (ledger == NULL || syscall_cpu == NULL || uname_foundation == NULL ||
+        receipt == NULL || syscall_cpu->result != BOOT_RECEIPT_RAN ||
+        uname_foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != LINUX_UNAME_ABI_IMAGE_BYTES ||
+        receipt->proof_counters[1] != 6U ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_UNAME_INSTALLED_PROOF_COMPLETE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_UNAME_OUTCOME_DECIDED) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_UNAME_FIXTURE_ABSENT)) {
+        kernel_test_fail("Linux uname installed receipt is invalid");
+    }
+    if (proof.file_bytes != LINUX_UNAME_ABI_IMAGE_BYTES ||
+        proof.program_headers != 5U || proof.load_segments != 4U ||
+        proof.file_clusters != 10U || proof.stdout_bytes != 6U ||
+        proof.syscall_count != 6U || proof.distinct_syscalls != 6U ||
+        proof.exit_status != 0U ||
+        proof.robustness_tests !=
+            LINUX_UNAME_ABI_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.ring_three || !proof.private_address_space ||
+        !proof.real_syscall_instruction || !proof.uts_copy_valid ||
+        !proof.stdout_valid || !proof.exit_zero || !proof.unknown_enosys ||
+        !proof.write_xor_execute || !proof.kernel_cr3_restored ||
+        !proof.teardown_complete || !proof.resource_census_equal ||
+        !linux_uname_abi_resources_released()) {
+        kernel_test_fail("Linux uname installed proof is inconsistent");
+    }
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -5040,6 +5118,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "process";
     case KERNEL_TEST_LINUX_ABI:
         return "linux-abi";
+    case KERNEL_TEST_LINUX_ABI_UNAME:
+        return "linux-abi-uname";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:
