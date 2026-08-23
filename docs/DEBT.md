@@ -292,8 +292,8 @@ Measured, and healthy:
 
 - **Thirty-eight QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
-- **1,940 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
-  Sapote mark (1,986,736 and 21,573 bytes respectively in the measured current
+- **1,942 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
+  Sapote mark (1,988,272 and 21,573 bytes respectively in the measured current
   tree).
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.
