@@ -10,6 +10,9 @@
 
 #include <sapote/filesystem.h>
 
+#define FILESYSTEM_LINUX_READ_FAILURE_AFTER_OPEN 13U
+#define FILESYSTEM_LINUX_READ_FAILURE_MAX 13U
+
 struct filesystem_block_result {
     uint32_t ordinal;
     uint32_t byte_count;
@@ -27,7 +30,15 @@ struct filesystem_private_read_runtime {
     struct nvme_filesystem_read_session session;
     enum filesystem_state state;
     uint64_t generation;
+    uint8_t fat_block[FAT16_BLOCK_BYTES];
+    uint32_t kind;
     bool owned;
+};
+
+enum private_read_kind {
+    PRIVATE_READ_NONE = 0,
+    PRIVATE_READ_PROCESS,
+    PRIVATE_READ_LINUX
 };
 
 static struct filesystem_private_read_runtime private_read_runtime;
@@ -47,6 +58,12 @@ _Static_assert(sizeof(struct fat16_payload) == 40U,
     "Rust/C FAT16 payload ABI changed");
 _Static_assert(FAT16_STATUS_COUNT == 32,
     "Rust/C FAT16 status ABI changed");
+_Static_assert(sizeof(struct linux_fat16_chain) == 5136U,
+    "Rust/C Linux FAT16 chain ABI changed");
+_Static_assert(sizeof(struct linux_fat16_payload) == 40U,
+    "Rust/C Linux FAT16 payload ABI changed");
+_Static_assert(LINUX_FAT16_STATUS_COUNT == 20,
+    "Rust/C Linux FAT16 status ABI changed");
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -1196,6 +1213,7 @@ enum filesystem_status filesystem_private_read_open(
     private_read_runtime.owned = true;
     private_read_runtime.state = FILESYSTEM_UNOPENED;
     private_read_runtime.generation = next_private_read_generation++;
+    private_read_runtime.kind = PRIVATE_READ_PROCESS;
     if (next_private_read_generation == 0U) {
         next_private_read_generation = 1U;
     }
@@ -1303,12 +1321,251 @@ enum filesystem_status filesystem_private_read_close(
         return FILESYSTEM_STATUS_NULL_ARGUMENT;
     }
     if (!file->active || !private_read_runtime.owned ||
+        private_read_runtime.kind != PRIVATE_READ_PROCESS ||
         file->generation != private_read_runtime.generation) {
         return FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN;
     }
     status = private_read_cleanup();
     if (status == FILESYSTEM_STATUS_OK) {
         zero_private_file(file);
+    }
+    return status;
+}
+
+static void zero_linux_file(struct filesystem_linux_file *file)
+{
+    zero_bytes(file, sizeof(*file));
+}
+
+static bool linux_read_failure_observed(uint32_t failure_boundary)
+{
+    return failure_boundary >= 1U && failure_boundary <=
+        3U + LINUX_FAT16_FILE_CLUSTERS &&
+        private_read_runtime.session.read_count == failure_boundary;
+}
+
+enum filesystem_status filesystem_linux_read_open(
+    struct filesystem_linux_file *file,
+    uint8_t *destination,
+    size_t destination_bytes,
+    uint32_t failure_boundary
+)
+{
+    struct fat16_geometry geometry;
+    struct fat16_root_query query;
+    struct fat16_root_entry entry;
+    struct linux_fat16_chain chain;
+    struct linux_fat16_payload payload;
+    const uint8_t *block = NULL;
+    size_t block_length = 0U;
+    size_t copied = 0U;
+    enum filesystem_status result;
+    enum nvme_status nvme_status;
+
+    if (file == NULL || destination == NULL) {
+        return FILESYSTEM_STATUS_NULL_ARGUMENT;
+    }
+    zero_linux_file(file);
+    if (destination_bytes != LINUX_FAT16_FILE_BYTES ||
+        failure_boundary > FILESYSTEM_LINUX_READ_FAILURE_MAX) {
+        return FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER;
+    }
+    zero_bytes(destination, destination_bytes);
+    if (private_read_runtime.owned) {
+        return FILESYSTEM_STATUS_PRIVATE_BUSY;
+    }
+    zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
+    zero_bytes(&geometry, sizeof(geometry));
+    zero_bytes(&query, sizeof(query));
+    zero_bytes(&entry, sizeof(entry));
+    zero_bytes(&chain, sizeof(chain));
+    zero_bytes(&payload, sizeof(payload));
+    if (sapote_linux_fat16_make_query(&query) != LINUX_FAT16_STATUS_OK) {
+        return FILESYSTEM_STATUS_PARSER_FAILURE;
+    }
+    nvme_status = nvme_filesystem_session_open(&private_read_runtime.session);
+    if (nvme_status == NVME_STATUS_ABSENT) {
+        return FILESYSTEM_STATUS_ABSENT;
+    }
+    if (nvme_status != NVME_STATUS_OK) {
+        return FILESYSTEM_STATUS_NVME_FAILURE;
+    }
+    private_read_runtime.owned = true;
+    private_read_runtime.state = FILESYSTEM_UNOPENED;
+    private_read_runtime.generation = next_private_read_generation++;
+    private_read_runtime.kind = PRIVATE_READ_LINUX;
+    if (next_private_read_generation == 0U) {
+        next_private_read_generation = 1U;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_SESSION_READY) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    if (failure_boundary == FILESYSTEM_LINUX_READ_FAILURE_AFTER_OPEN) {
+        result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
+        goto fail;
+    }
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, 0U, 1U, &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK) {
+        goto fail;
+    }
+    if (linux_read_failure_observed(failure_boundary)) {
+        result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
+        goto fail;
+    }
+    if (sapote_fat16_parse_bpb(block, block_length,
+            private_read_runtime.session.namespace_blocks,
+            private_read_runtime.session.logical_block_bytes,
+            &geometry) != FAT16_STATUS_OK) {
+        result = FILESYSTEM_STATUS_PARSER_FAILURE;
+        goto fail;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_VOLUME_VALIDATED) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    block = NULL;
+    block_length = 0U;
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, geometry.first_fat_sector, 2U,
+        &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK) {
+        goto fail;
+    }
+    if (linux_read_failure_observed(failure_boundary)) {
+        result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
+        goto fail;
+    }
+    if (block_length != FAT16_BLOCK_BYTES) {
+        result = FILESYSTEM_STATUS_BLOCK_RESULT;
+        goto fail;
+    }
+    for (size_t index = 0U; index < FAT16_BLOCK_BYTES; ++index) {
+        private_read_runtime.fat_block[index] = block[index];
+    }
+    block = NULL;
+    block_length = 0U;
+    result = read_block(&private_read_runtime.session,
+        &private_read_runtime.state, geometry.first_root_sector, 3U,
+        &block, &block_length);
+    if (result != FILESYSTEM_STATUS_OK) {
+        goto fail;
+    }
+    if (linux_read_failure_observed(failure_boundary)) {
+        result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
+        goto fail;
+    }
+    if (sapote_linux_fat16_find_root(block, block_length, &geometry, &query,
+            (uint32_t)destination_bytes, &entry) !=
+                LINUX_FAT16_STATUS_OK ||
+        sapote_linux_fat16_build_chain(private_read_runtime.fat_block,
+            sizeof(private_read_runtime.fat_block), &geometry, &entry,
+            &chain) != LINUX_FAT16_STATUS_OK ||
+        chain.valid != 1U ||
+        chain.cluster_count != LINUX_FAT16_FILE_CLUSTERS) {
+        result = FILESYSTEM_STATUS_LINUX_CHAIN;
+        goto fail;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_FILE_LOCATED) !=
+            FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_SESSION_STATE;
+        goto fail;
+    }
+    for (size_t index = 0U; index < chain.cluster_count; ++index) {
+        size_t bytes = destination_bytes - copied;
+
+        block = NULL;
+        block_length = 0U;
+        result = read_block(&private_read_runtime.session,
+            &private_read_runtime.state, chain.lbas[index],
+            (uint32_t)(4U + index), &block, &block_length);
+        if (result != FILESYSTEM_STATUS_OK) {
+            goto fail;
+        }
+        if (linux_read_failure_observed(failure_boundary)) {
+            result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
+            goto fail;
+        }
+        if (block_length != FAT16_BLOCK_BYTES) {
+            result = FILESYSTEM_STATUS_BLOCK_RESULT;
+            goto fail;
+        }
+        if (bytes > FAT16_BLOCK_BYTES) {
+            bytes = FAT16_BLOCK_BYTES;
+        }
+        for (size_t byte = 0U; byte < bytes; ++byte) {
+            destination[copied + byte] = block[byte];
+        }
+        if (index + 1U == chain.cluster_count) {
+            for (size_t byte = bytes; byte < FAT16_BLOCK_BYTES; ++byte) {
+                if (block[byte] != 0U) {
+                    result = FILESYSTEM_STATUS_CONTENT;
+                    goto fail;
+                }
+            }
+        }
+        copied += bytes;
+    }
+    if (copied != destination_bytes ||
+        sapote_linux_fat16_validate_payload(destination, destination_bytes,
+            &payload) != LINUX_FAT16_STATUS_OK ||
+        payload.deterministic != 1U ||
+        payload.byte_count != LINUX_FAT16_FILE_BYTES) {
+        result = FILESYSTEM_STATUS_LINUX_PAYLOAD;
+        goto fail;
+    }
+    if (transition(&private_read_runtime.state, FILESYSTEM_FILE_READ) !=
+            FILESYSTEM_STATUS_OK ||
+        private_read_runtime.session.read_count !=
+            3U + LINUX_FAT16_FILE_CLUSTERS ||
+        private_read_runtime.session.msix_completion_count !=
+            3U + LINUX_FAT16_FILE_CLUSTERS ||
+        private_read_runtime.session.ignored_completions != 0U ||
+        private_read_runtime.session.state !=
+            NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED) {
+        result = FILESYSTEM_STATUS_OWNERSHIP;
+        goto fail;
+    }
+    file->generation = private_read_runtime.generation;
+    file->msix_completion_count =
+        private_read_runtime.session.msix_completion_count;
+    file->file_bytes = entry.file_size;
+    file->read_count = private_read_runtime.session.read_count;
+    file->cluster_count = chain.cluster_count;
+    file->cpu_owned = true;
+    file->active = true;
+    zero_bytes(private_read_runtime.fat_block,
+        sizeof(private_read_runtime.fat_block));
+    return FILESYSTEM_STATUS_OK;
+
+fail:
+    zero_bytes(destination, destination_bytes);
+    if (private_read_cleanup() != FILESYSTEM_STATUS_OK) {
+        result = FILESYSTEM_STATUS_TEARDOWN_FAILURE;
+    }
+    return result;
+}
+
+enum filesystem_status filesystem_linux_read_close(
+    struct filesystem_linux_file *file
+)
+{
+    enum filesystem_status status;
+
+    if (file == NULL) {
+        return FILESYSTEM_STATUS_NULL_ARGUMENT;
+    }
+    if (!file->active || !private_read_runtime.owned ||
+        private_read_runtime.kind != PRIVATE_READ_LINUX ||
+        file->generation != private_read_runtime.generation) {
+        return FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN;
+    }
+    status = private_read_cleanup();
+    if (status == FILESYSTEM_STATUS_OK) {
+        zero_linux_file(file);
     }
     return status;
 }
@@ -1361,7 +1618,13 @@ const char *filesystem_status_string(enum filesystem_status status)
     case FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN:
         return "private filesystem read token is stale";
     case FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER:
-        return "private filesystem destination is not exactly 128 bytes";
+        return "private filesystem destination extent is not exact";
+    case FILESYSTEM_STATUS_LINUX_CHAIN:
+        return "bounded BusyBox FAT16 cluster chain is invalid";
+    case FILESYSTEM_STATUS_LINUX_PAYLOAD:
+        return "BusyBox payload SHA-256 is invalid";
+    case FILESYSTEM_STATUS_CONTROLLED_FAILURE:
+        return "controlled BusyBox read boundary failed";
     case FILESYSTEM_STATUS_COUNT:
     default: return "unknown filesystem status";
     }

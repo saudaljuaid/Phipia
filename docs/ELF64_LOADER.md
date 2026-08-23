@@ -83,5 +83,9 @@ and [CPL3_INTERRUPT_BOUNDARY.md](CPL3_INTERRUPT_BOUNDARY.md).
 
 PIE/`ET_DYN`, more segments, writable data, BSS, relocations, dynamic linking,
 interpreters, symbols, TLS, arguments, environment, auxiliary vectors and a
-public executable API are outside v0.7.0. The later Linux ABI milestone must
-design them rather than widening this proof parser implicitly.
+public executable API remain outside this v0.7.0 parser. v0.8.0 adds a separate
+`linux_elf64.rs` parser for one measured static BusyBox conjunction: five
+program headers, four `PT_LOAD` segments, one non-executable `PT_GNU_STACK`,
+checked BSS zero-fill, and final R/RX/R/RW-NX permissions. It does not widen
+this inherited parser; see `BUSYBOX_REPRODUCIBLE_BUILD.md` and
+`LINUX_ABI_QEMU_PROOF.md`.

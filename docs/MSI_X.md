@@ -79,3 +79,13 @@ one matching handler completion and one interrupt-count transition; the total
 delta is exactly four and the ignored-completion count remains zero. No handler
 is called directly, no software interrupt is injected, and teardown masks
 delivery before the vector and DMA are released.
+
+## BusyBox twelve-read interval
+
+v0.8.0 retains the same private session and one masked NVMe MSI-X binding but
+raises its internal ordinal ceiling to 12 for the separate Linux fixture. BPB,
+FAT, and root consume ordinals 1–3; the nine `BUSYBOX` data clusters consume
+4–12. Every ordinal still has a unique CID, exactly one successful I/O-queue
+completion, one interrupt-count increment, CPU ownership before inspection,
+and zero ignored completions. The inherited filesystem and process consumers
+still stop at ordinal 4 and keep their stable four-read transcripts.

@@ -2,10 +2,12 @@
 
 # CPL3 entry, proof return and interrupt frames
 
-Sapote v0.7.0 has one privilege-changing execution boundary. It enters the
+Sapote v0.7.0 has one privilege-changing proof boundary. It enters the
 validated ELF entry with `IRETQ` and can return only through vector `0x81`, a
 temporarily armed DPL3 interrupt gate. This is private proof machinery and not
-a native or Linux syscall ABI.
+a native or Linux syscall ABI. v0.8.0 preserves it byte-for-byte and adds a
+separate architectural `SYSCALL`/`IA32_LSTAR` boundary for the measured
+BusyBox invocation.
 
 AMD64 APM Volume 2 revision 3.44, Chapter 4 and Sections 8.9 through 8.9.3
 define long-mode code/data and 16-byte TSS descriptors, interrupt-gate DPL
@@ -82,3 +84,27 @@ resume stack belonging to the active dispatch. Assembly then abandons the user
 interrupt frame, returns on that saved kernel stack, clears the boundary token
 and restores the six callee-saved registers exactly. The gate remains owned
 until C validates the returned state and disarms it during teardown.
+
+## Separate v0.8.0 SYSCALL boundary
+
+The Linux path programs and reads back `IA32_EFER.SCE`, `IA32_STAR`,
+`IA32_LSTAR`, and `IA32_FMASK` only while one authenticated Linux process is
+active. The first LSTAR instruction saves the user RSP without touching user
+memory; the second selects the already validated TSS/RSP0 kernel stack. FMASK
+and the initial user flags keep interrupts clear until the complete 144-byte
+frame exists and System V call alignment is established. Kernel C therefore
+never executes on the user stack.
+
+The frame records Linux RAX/RDI/RSI/RDX/R10/R8/R9 arguments, callee-saved
+registers, post-`syscall` RIP in RCX, RFLAGS in R11, and user SS:RSP. Before
+every checked `IRETQ`, C authenticates CPL0 entry, DPL3 selectors, lower-half
+canonical RIP/RSP, stack and executable bounds, permitted flags, process
+generation, active private CR3, candidate request provenance, and the `0f 05`
+bytes immediately before the saved RIP. RCX and R11 are reconstructed from the
+return frame as the architecture specifies. Exit restores the installed
+kernel CR3 and abandons the user frame on the saved kernel continuation; no
+`SYSRETQ`, `int 0x80`, vector `0x81`, or direct C call can satisfy this proof.
+
+The MSRs, FS base, CPU state, boundary token, and kernel-stack pointer are
+disarmed only after return-state validation. The exact register layout and
+allowlist are in `LINUX_SYSCALL_ABI.md`.

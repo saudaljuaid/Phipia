@@ -10,6 +10,7 @@
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
 #include <sapote/interrupt_vector.h>
+#include <sapote/linux_abi.h>
 #include <sapote/msix.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
@@ -76,8 +77,14 @@ static const char *const stage_names[] = {
     "installed FAT16 file-read proof",
     "private process address-space foundation",
     "bounded ELF64 loader foundation",
-    "installed Ring 3 process proof"
+    "installed Ring 3 process proof",
+    "Linux x86-64 syscall CPU foundation",
+    "static BusyBox image and initial-stack foundation",
+    "installed static BusyBox proof"
 };
+
+_Static_assert(sizeof(stage_names) / sizeof(stage_names[0]) ==
+    BOOT_STAGE_COUNT, "boot stage string table is incomplete");
 
 static const char *const capability_names[] = {
     "invalid capability",
@@ -136,8 +143,16 @@ static const char *const capability_names[] = {
     "ELF64 loader foundation available",
     "process installed proof complete",
     "process fixture absent",
-    "process outcome decided"
+    "process outcome decided",
+    "Linux syscall CPU foundation available",
+    "Linux image and stack foundation available",
+    "Linux installed proof complete",
+    "Linux fixture absent",
+    "Linux outcome decided"
 };
+
+_Static_assert(sizeof(capability_names) / sizeof(capability_names[0]) ==
+    BOOT_CAPABILITY_COUNT, "boot capability string table is incomplete");
 
 static const char *const status_names[] = {
     "ok",
@@ -175,10 +190,6 @@ static const char *const result_names[] = {
     "failed"
 };
 
-_Static_assert(sizeof(stage_names) / sizeof(stage_names[0]) ==
-    BOOT_STAGE_COUNT, "boot stage string table is incomplete");
-_Static_assert(sizeof(capability_names) / sizeof(capability_names[0]) ==
-    BOOT_CAPABILITY_COUNT, "boot capability string table is incomplete");
 _Static_assert(sizeof(status_names) / sizeof(status_names[0]) ==
     BOOT_LEDGER_STATUS_COUNT, "boot ledger status string table is incomplete");
 _Static_assert(sizeof(result_names) / sizeof(result_names[0]) ==
@@ -1591,6 +1602,56 @@ enum boot_ledger_status boot_ledger_verify_installed(
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_PROCESS_INSTALLED_PROOF,
                 BOOT_CAPABILITY_PROCESS_INSTALLED_PROOF_COMPLETE);
+            return ledger->status;
+        }
+    }
+
+    const bool linux_complete = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_LINUX_INSTALLED_PROOF_COMPLETE);
+    const bool linux_absent = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_LINUX_FIXTURE_ABSENT);
+    const bool linux_decided = boot_ledger_has_capability(ledger,
+        BOOT_CAPABILITY_LINUX_OUTCOME_DECIDED);
+    const bool linux_planned = descriptor_for_stage(ledger,
+        BOOT_STAGE_LINUX_INSTALLED_PROOF) != NULL;
+    if (linux_decided != linux_planned ||
+        !optional_outcome_valid(linux_planned, linux_complete, linux_absent)) {
+        set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+            BOOT_STAGE_LINUX_INSTALLED_PROOF,
+            BOOT_CAPABILITY_LINUX_INSTALLED_PROOF_COMPLETE);
+        return ledger->status;
+    }
+    if (linux_complete || linux_absent) {
+        const struct boot_stage_receipt *linux_receipt =
+            boot_ledger_receipt_for(ledger,
+                BOOT_STAGE_LINUX_INSTALLED_PROOF);
+        const struct linux_abi_proof_result proof =
+            linux_abi_get_proof_result();
+
+        if (linux_receipt == NULL ||
+            (linux_complete &&
+                (linux_receipt->result != BOOT_RECEIPT_RAN ||
+                 linux_receipt->proof_counter_count != 2U ||
+                 linux_receipt->proof_counters[0] != LINUX_ABI_IMAGE_BYTES ||
+                 linux_receipt->proof_counters[1] != 9U ||
+                 proof.file_bytes != LINUX_ABI_IMAGE_BYTES ||
+                 proof.program_headers != 5U || proof.load_segments != 4U ||
+                 proof.file_clusters != 9U || proof.stdout_bytes != 7U ||
+                 proof.syscall_count != 9U ||
+                 proof.distinct_syscalls != 7U || proof.exit_status != 0U ||
+                 proof.robustness_tests !=
+                    LINUX_ABI_CONTROLLED_ROBUSTNESS_TESTS ||
+                 !proof.ring_three || !proof.private_address_space ||
+                 !proof.real_syscall_instruction || !proof.stdout_valid ||
+                 !proof.exit_zero || !proof.unknown_enosys ||
+                 !proof.write_xor_execute || !proof.kernel_cr3_restored ||
+                 !proof.teardown_complete || !proof.resource_census_equal ||
+                 !linux_abi_resources_released())) ||
+            (linux_absent &&
+                linux_receipt->result != BOOT_RECEIPT_SKIPPED)) {
+            set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
+                BOOT_STAGE_LINUX_INSTALLED_PROOF,
+                BOOT_CAPABILITY_LINUX_INSTALLED_PROOF_COMPLETE);
             return ledger->status;
         }
     }

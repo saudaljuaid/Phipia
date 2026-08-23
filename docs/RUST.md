@@ -77,6 +77,20 @@ families include every truncation boundary and every rejected identifier,
 header, table, extent, alignment, permission, address and entry state. C owns
 frame allocation, copying, mappings and lifecycle; see `docs/ELF64_LOADER.md`.
 
+`src/rust/linux_fat16.rs` — the v0.8.0 bounded multi-cluster reader. It
+consumes only copied FAT16 geometry and CPU-owned block slices, validates one
+canonical `BUSYBOX` root entry, builds a fixed 512-slot checked chain,
+translates its nine clusters, and verifies the exact payload digest. It retains
+no filesystem or DMA pointer.
+
+`src/rust/linux_elf64.rs` — the v0.8.0 measured BusyBox parser. It accepts the
+exact 33,584-byte static `ET_EXEC` header conjunction, no more than eight
+program headers, and exactly four `PT_LOAD` segments plus non-executable
+`PT_GNU_STACK`. Checked readers and arithmetic reject dynamic, interpreter,
+TLS, relocation-dependent, overlapping, wrapped, noncanonical, invalid-BSS,
+or W+X shapes. Its result is a pointer-free fixed segment array; C never
+duplicates the decode.
+
 `src/rust/abi.rs` — the boundary. Every entry point is `extern "C"`. Unsafe
 blocks appear only where an ABI function turns validated C pointers into Rust
 slices or writes through validated C pointers, with the caller's obligation
@@ -103,6 +117,13 @@ flags exactly — no MMX, no SSE, soft float, no red zone — which is what lets
 two languages share a stack and an interrupt frame without a shim. Warnings are
 errors on both sides: `-Werror` for C, `-D warnings` plus
 `deny(unsafe_op_in_unsafe_fn)` and `deny(missing_docs)` for Rust.
+
+The bounded Linux parsers also compile with LLVM aggregate-copy thresholds of
+1024 bytes. This makes their fixed arrays expand to ordinary stores instead of
+introducing hosted `memcpy`/`memset` GOT calls. `make verify` requires an empty
+GOT and keeps core bounds-panic and formatting machinery out of the
+freestanding image; the existing minimal abort handler remains the final
+backstop.
 
 ## What linking a second language actually cost
 

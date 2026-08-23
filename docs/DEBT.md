@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-seven scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-eight scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -29,9 +29,10 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 4,980
+roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 5,059
 lines. Splitting panel rendering or scenario helpers may improve shape later.
-v0.7.0 proves one synchronous CPL3 object, not a general process model;
+v0.8.0 proves one synchronous static BusyBox invocation through a seven-syscall
+Linux allowlist, not a general process or POSIX model;
 multi-process service, a window manager, and a compositor remain architectural
 layers rather than refactors owed by this milestone.
 
@@ -186,10 +187,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 231 shell assertion lines
+### 4. The harness contract is 252 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    231
+    252
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -204,7 +205,11 @@ former 191-line contract. The v0.6.0 FAT16 increment appends scenario 36 and
 twenty-three fixture, source-boundary, exit and transcript checks, producing the
 measured 214 lines shown above. The v0.7.0 process increment appends scenario
 37 and seventeen executable, source-boundary, exit and transcript checks,
-producing the measured 231 lines shown above. The harness
+producing the former 231-line contract. The v0.8.0 Linux ABI increment appends
+scenario 38 and twenty BusyBox, syscall-entry, source-boundary, fixture, exit
+and transcript checks, producing 251 lines; the private paging-failure seam
+adds one source-boundary assertion, producing the measured 252 lines shown
+above. The harness
 was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It
@@ -252,6 +257,12 @@ debugging a Rust component will rebuild it from scratch.
 A `make rust-check` that compiles `src/rust/logo.rs` for the host and runs its
 tests is a few lines and pays for itself the first time it is used.
 
+**Partially paid.** `make verify` now compiles and runs committed host harnesses
+for the ordinary FAT16 and ELF64 parsers and for both new Linux FAT16 and ELF64
+parsers; the Linux ELF harness consumes the exact checksum-pinned BusyBox
+binary. The logo and font decoders still lack the general host target described
+above, so the register stays open.
+
 ### 7. Single-core state, spread wider every increment
 
     $ mutable statics per file
@@ -269,14 +280,20 @@ and filesystem session. That is bounded proof state, not a scalable process
 table. Concurrency, per-CPU current-process state and TLB shootdown are future
 architecture and this milestone does not mark the single-core debt resolved.
 
+The v0.8.0 Linux ABI proof adds one more deliberately singular owner: syscall
+CPU state, candidate/installed/running process state, one initial stack, one
+bounded heap extent and one stdout sink. That state is generation- and
+CR3-authenticated, but it is not per-CPU, schedulable or reusable as a general
+Linux process table.
+
 ## Not debt
 
 Measured, and healthy:
 
-- **Thirty-seven QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty-eight QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
-- **1,556 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
-  Sapote mark (1,593,184 and 21,573 bytes respectively in the measured current
+- **1,942 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
+  Sapote mark (1,988,288 and 21,573 bytes respectively in the measured current
   tree).
 - **No `TODO`, `FIXME`, `XXX` or `HACK` anywhere** in `src/`, `include/`, `docs/`
   or the `Makefile`.

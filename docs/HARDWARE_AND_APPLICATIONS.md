@@ -305,7 +305,9 @@ executable failure test, and a boot that proves it or refuses.
    write path. See `docs/FAT16_READER.md`, `docs/FILESYSTEM_FILE_READ.md` and
    `docs/FAT16_QEMU_PROOF.md`. The next milestone must be selected from the live
    roadmap rather than inferred by widening this fixture; general USB/class
-   drivers and AHCI remain later work.
+   drivers and AHCI remain later work. v0.8.0 adds only a separately typed,
+   nine-cluster `BUSYBOX` consumer; it does not widen the inherited fixture or
+   create a public block/filesystem layer.
 
 **Programs.**
 
@@ -318,8 +320,16 @@ executable failure test, and a boot that proves it or refuses.
    deliberately not general process management or a syscall ABI. See
    `docs/ELF64_LOADER.md`, `docs/PROCESS_ADDRESS_SPACE.md`,
    `docs/CPL3_INTERRUPT_BOUNDARY.md` and `docs/PROCESS_QEMU_PROOF.md`.
-10. **The Linux system-call ABI, incrementally.** Target a statically-linked
-   busybox first and add syscalls until it runs. `ENOSYS` for everything else.
+10. **The Linux system-call ABI, incrementally — first increment complete in
+    v0.8.0.** One unmodified checksum-pinned static BusyBox enters through the
+    real x86-64 `SYSCALL` instruction and `IA32_LSTAR`, runs only
+    `busybox echo SAPOTE`, writes seven bytes to a proof-only stdout sink, and
+    exits zero. Seven syscall numbers implement only the measured invocation;
+    every other number returns `-ENOSYS`. There is still no general POSIX,
+    descriptor, pathname, signal, threading, dynamic-linking, or multi-process
+    environment. Any next ABI increment requires a new live roadmap choice and
+    a newly measured executable contract; this item is not authority to widen
+    v0.8.0 silently.
 
 **Wireless, last, because it needs all of it.**
 
