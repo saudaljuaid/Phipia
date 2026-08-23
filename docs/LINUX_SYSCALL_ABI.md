@@ -35,8 +35,10 @@ can name stdin, another descriptor, a path, a writable file, a terminal, a
 pipe, another process, or a user-selected mapping.
 
 Every other syscall number returns `-ENOSYS` without changing process,
-mapping, heap, sink, or syscall-CPU state.  The allowlist has a compile-time
-ceiling of sixteen and a committed cardinality of seven.
+mapping, heap, sink, or process-resource state.  Normal request-ordinal and
+provenance accounting and the syscall CPU `entered` to `returned` transition
+still occur.  The allowlist has a compile-time ceiling of sixteen and a
+committed cardinality of seven.
 
 The CPU foundation programs and reads back `IA32_EFER.SCE`, `IA32_STAR`,
 `IA32_LSTAR`, and `IA32_FMASK`.  The reviewed assembly saves user RSP before

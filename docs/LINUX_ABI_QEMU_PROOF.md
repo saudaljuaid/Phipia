@@ -93,7 +93,7 @@ pre-proof resource census.
 | 52 | wrong RAX/RDI/RSI/RDX/R10/R8/R9 decoding, RCX/R11 clobber, result, or errno encoding |
 | 53 | invalid return RIP, RSP, CS, SS, RFLAGS, CR3, generation, provenance, or state |
 | 54 | repeated entry/return, return after disarm, disarm while entered, or stale CPU-state reuse |
-| 55 | every non-allowlisted sample and an over-16-entry proposed allowlist returns `-ENOSYS` without mutation |
+| 55 | every non-allowlisted sample and an over-16-entry proposed allowlist returns `-ENOSYS` without process-resource mutation; normal request/provenance and syscall CPU entry/return state advances |
 | 56 | `write` with descriptor other than 1, wrong operation order, or repeated sink publication |
 | 57 | `write` with count/content other than exactly seven bytes `SAPOTE\n`, including short sink capacity |
 | 58 | `write` from wrapped, unreadable, kernel, MMIO, DMA, page-table, guard, cross-segment, or partially readable memory |

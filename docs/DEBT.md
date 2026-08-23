@@ -29,7 +29,7 @@ it would make the move bigger, and the next increment added 221 lines before
 anyone acted on it.
 
 First Light deliberately does not pretend this debt register became a desktop
-roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 5,058
+roadmap. `ui.c` is one 2,125-line bounded kernel shell and `test.c` is now 5,059
 lines. Splitting panel rendering or scenario helpers may improve shape later.
 v0.8.0 proves one synchronous static BusyBox invocation through a seven-syscall
 Linux allowlist, not a general process or POSIX model;

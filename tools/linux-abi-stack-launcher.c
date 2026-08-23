@@ -107,10 +107,40 @@ int main(void)
     uintptr_t stack_bytes = STACK_PAGES * PAGE_BYTES;
     uintptr_t busybox_start = (uintptr_t)_binary_busybox_start;
     uintptr_t busybox_end = (uintptr_t)_binary_busybox_end;
+    size_t busybox_bytes;
     uint64_t entry;
-    void *stack = mmap((void *)STACK_BASE, stack_bytes, PROT_NONE,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
-                       -1, 0);
+    void *stack;
+
+    if (busybox_end < busybox_start) {
+        errno = EINVAL;
+        fail("measured BusyBox blob extent is invalid");
+    }
+    busybox_bytes = (size_t)(busybox_end - busybox_start);
+    if (busybox_bytes < ELF64_ENTRY_OFFSET + ELF64_ENTRY_BYTES) {
+        errno = EINVAL;
+        fail("measured BusyBox ELF header is truncated");
+    }
+    for (size_t index = 0U;
+         index < sizeof(measured_segments) / sizeof(measured_segments[0]);
+         ++index) {
+        const struct measured_segment *segment = &measured_segments[index];
+
+        if (segment->memory_bytes < segment->file_bytes ||
+            segment->file_offset > busybox_bytes ||
+            segment->file_bytes > busybox_bytes - segment->file_offset) {
+            errno = EINVAL;
+            fail("measured BusyBox segment file extent is truncated");
+        }
+    }
+    entry = read_u64_le(_binary_busybox_start + ELF64_ENTRY_OFFSET);
+    if (entry != BUSYBOX_ENTRY) {
+        errno = EINVAL;
+        fail("measured BusyBox ELF entry contract failed");
+    }
+
+    stack = mmap((void *)STACK_BASE, stack_bytes, PROT_NONE,
+                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+                 -1, 0);
 
     if (stack == MAP_FAILED || (uintptr_t)stack != STACK_BASE) {
         fail("minimal Linux initial-stack mapping failed");
@@ -124,17 +154,6 @@ int main(void)
          index < sizeof(measured_segments) / sizeof(measured_segments[0]);
          ++index) {
         install_segment(&measured_segments[index]);
-    }
-
-    if (busybox_end < busybox_start ||
-        busybox_end - busybox_start < ELF64_ENTRY_OFFSET + ELF64_ENTRY_BYTES) {
-        errno = EINVAL;
-        fail("measured BusyBox ELF header is truncated");
-    }
-    entry = read_u64_le(_binary_busybox_start + ELF64_ENTRY_OFFSET);
-    if (entry != BUSYBOX_ENTRY) {
-        errno = EINVAL;
-        fail("measured BusyBox ELF entry contract failed");
     }
 
     uintptr_t cursor = STACK_BASE + stack_bytes;
