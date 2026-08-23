@@ -21,7 +21,7 @@ busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 busybox_config_sha256=6d972c7a1f3df0034d5996cc24b58b7364efbb7851f926c5d8d2fd18c41ebb2b
-busybox_binary_sha256=566e0139be6e4d01c4fccc0bcc812661756d2069eec6606cb9ba11c8ec3ae003
+busybox_binary_sha256=389ad6b13804eb7307ba589c8e8a7c702f91302005a7c5fc6e9e99124fceaf43
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -59,6 +59,12 @@ musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-
         CC=gcc \
         CFLAGS="$musl_cflags"
     make --jobs=2
+    cp "$repository_root/userspace/busybox/musl-vfprintf-scalar.h" \
+        scalar-vfprintf.h
+    rm -f obj/src/stdio/vfprintf.o lib/libc.a
+    make --jobs=2 \
+        CFLAGS="$musl_cflags -include scalar-vfprintf.h" \
+        obj/src/stdio/vfprintf.o lib/libc.a
     make install
 )
 # musl-gcc deliberately defaults every non-shared link to Scrt1.o.  This proof
@@ -211,12 +217,7 @@ env -i qemu-x86_64 -0 busybox -d in_asm -D "$qemu_trace" \
     >"$qemu_stdout" 2>"$qemu_stderr"
 printf 'Linux\n' | cmp --silent - "$qemu_stdout"
 test ! -s "$qemu_stderr"
-forbidden_instructions=$(grep -Ei \
-    '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*0x[0-9a-f]+:[[:space:]]+[0-9a-f ]+[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$)' \
-    "$qemu_trace" \
-    | grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true)
-test -z "$forbidden_instructions" || {
-    printf 'BusyBox exercised text contains floating-point or vector instructions:\n%s\n' \
-        "$forbidden_instructions" >&2
-    exit 1
-}
+python3 "$repository_root/tools/check-exercised-instructions.py" --self-test
+python3 "$repository_root/tools/check-exercised-instructions.py" \
+    --disassembly "$output_dir/busybox-disassembly.txt" \
+    --trace "$qemu_trace"

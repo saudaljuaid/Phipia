@@ -279,8 +279,8 @@ const UNAME_MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
         offset: 0x1000,
         virtual_address: 0x4000_0100_1000,
         physical_address: 0x4000_0100_1000,
-        file_size: 0x6D79,
-        memory_size: 0x6D79,
+        file_size: 0x6D7F,
+        memory_size: 0x6D7F,
         alignment: 0x1000,
     },
     ProgramHeader {

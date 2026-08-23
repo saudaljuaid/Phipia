@@ -25,9 +25,7 @@ PYTHON := python3
 QEMU_ACCEL ?= tcg
 
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
-# compiler SSE, soft float, no red zone - which is why the two halves can share
-# a stack. The only explicit kernel SIMD instructions live in cpu.S's bounded
-# Linux user-state reset shim and are checked instruction-for-instruction below.
+# SSE, soft float, no red zone - which is why the two halves can share a stack.
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
@@ -143,6 +141,7 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
 
 $(BUSYBOX_BINARY): tools/build-busybox-proof.sh \
+		tools/check-exercised-instructions.py \
 		userspace/busybox/busybox.config \
 		userspace/busybox/source/busybox-1.38.0.tar.bz2 \
 		userspace/busybox/source/musl-1.2.6.tar.gz
@@ -154,7 +153,9 @@ $(LINUX_ABI_FIXTURE): $(BUSYBOX_BINARY) tools/make-linux-abi-fixture.py
 	$(PYTHON) tools/make-linux-abi-fixture.py $(BUSYBOX_BINARY) $@
 
 $(BUSYBOX_UNAME_BINARY): tools/build-busybox-uname-proof.sh \
+		tools/check-exercised-instructions.py \
 		userspace/busybox/busybox-uname.config \
+		userspace/busybox/musl-vfprintf-scalar.h \
 		userspace/busybox/source/busybox-1.38.0.tar.bz2 \
 		userspace/busybox/source/musl-1.2.6.tar.gz
 	SAPOTE_BUSYBOX_BUILD_ONLY=1 bash tools/build-busybox-uname-proof.sh \
@@ -241,7 +242,7 @@ verify: toolchain lint
 	$(RUST_LINUX_ELF64_TEST)
 	$(MAKE) $(LINUX_UNAME_FIXTURE)
 	@test "$$(sha256sum $(LINUX_UNAME_FIXTURE) | awk '{ print toupper($$1) }')" = \
-		'4097ADC246B54DB7F1A2A9A895DE824AA5FEE1CD22ECB8AB352B0E9F171DFC5B'
+		'48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3'
 	SAPOTE_UNAME_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_UNAME_BINARY)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/linux-uname-fat16-host-test.rs \
@@ -279,22 +280,10 @@ verify: toolchain lint
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
-	@for register in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
-		test "$$(grep -Fxc "    pxor %xmm$$register, %xmm$$register" \
-			src/arch/x86_64/cpu.S)" -eq 1 || exit 1; \
-	done
-	@for instruction in 'fninit' 'ldmxcsr (%rsp)' 'stmxcsr (%rsp)' \
-		'fnstcw (%rsp)'; do \
-		test "$$(grep -Fxc "    $$instruction" src/arch/x86_64/cpu.S)" \
-			-eq 1 || exit 1; \
-	done
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
-		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { symbol = $$0 } \
-			{ print symbol " :: " $$0 }' | \
-		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|::[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
-		grep -Ev '<cpu_linux_simd_reset>:.*[[:space:]]fninit([[:space:]]|$$)|<cpu_linux_simd_reset>:.*[[:space:]](ldmxcsr|pxor)[[:space:]]|<cpu_read_mxcsr>:.*[[:space:]]stmxcsr[[:space:]]|<cpu_read_x87_control>:.*[[:space:]]fnstcw[[:space:]]' | \
+		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
-		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions outside the reviewed user-state reset shim'; echo "$$forbidden"; exit 1; }
+		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __rodata_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'

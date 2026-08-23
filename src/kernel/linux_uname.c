@@ -9,7 +9,6 @@
 #include <sapote/filesystem.h>
 #include <sapote/interrupt_vector.h>
 #include <sapote/linux_elf64.h>
-#include <sapote/linux_simd.h>
 #include <sapote/linux_syscall.h>
 #include <sapote/memory.h>
 #include <sapote/msix.h>
@@ -1445,10 +1444,6 @@ static enum linux_uname_abi_status linux_attempt(
     }
     if (failure_point == LINUX_FAILURE_AFTER_CR3_ACTIVATION) {
         status = failure_status(failure_point);
-        goto cleanup;
-    }
-    if (!linux_simd_reset_user()) {
-        status = LINUX_UNAME_ABI_STATUS_ENTRY;
         goto cleanup;
     }
     linux_process_enter_user(runtime.image.entry,

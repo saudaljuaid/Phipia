@@ -4953,8 +4953,6 @@ _Noreturn void kernel_test_complete_linux_uname(void)
         !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE) ||
         !boot_ledger_has_capability(ledger,
-            BOOT_CAPABILITY_LINUX_USER_SIMD_FOUNDATION_AVAILABLE) ||
-        !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE) ||
         !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_UNAME_INSTALLED_PROOF_COMPLETE) ||

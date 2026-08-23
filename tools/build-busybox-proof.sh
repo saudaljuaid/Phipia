@@ -222,12 +222,7 @@ env -i qemu-x86_64 -0 busybox -d in_asm -D "$qemu_trace" \
     >"$qemu_stdout" 2>"$qemu_stderr"
 printf 'SAPOTE\n' | cmp --silent - "$qemu_stdout"
 test ! -s "$qemu_stderr"
-forbidden_instructions=$(grep -Ei \
-    '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*0x[0-9a-f]+:[[:space:]]+[0-9a-f ]+[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$)' \
-    "$qemu_trace" \
-    | grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true)
-test -z "$forbidden_instructions" || {
-    printf 'BusyBox exercised text contains floating-point or vector instructions:\n%s\n' \
-        "$forbidden_instructions" >&2
-    exit 1
-}
+python3 "$repository_root/tools/check-exercised-instructions.py" --self-test
+python3 "$repository_root/tools/check-exercised-instructions.py" \
+    --disassembly "$output_dir/busybox-disassembly.txt" \
+    --trace "$qemu_trace"
