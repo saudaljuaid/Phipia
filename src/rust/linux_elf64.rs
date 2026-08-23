@@ -206,11 +206,56 @@ impl ProgramHeader {
 }
 
 const MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
-    ProgramHeader { kind: PT_LOAD, flags: PF_R, offset: 0, virtual_address: 0x4000_0100_0000, physical_address: 0x4000_0100_0000, file_size: 0x158, memory_size: 0x158, alignment: 0x1000 },
-    ProgramHeader { kind: PT_LOAD, flags: PF_R | PF_X, offset: 0x1000, virtual_address: 0x4000_0100_1000, physical_address: 0x4000_0100_1000, file_size: 0x5563, memory_size: 0x5563, alignment: 0x1000 },
-    ProgramHeader { kind: PT_LOAD, flags: PF_R, offset: 0x7000, virtual_address: 0x4000_0100_7000, physical_address: 0x4000_0100_7000, file_size: 0xED1, memory_size: 0xED1, alignment: 0x1000 },
-    ProgramHeader { kind: PT_LOAD, flags: PF_R | PF_W, offset: 0x8000, virtual_address: 0x4000_0100_8000, physical_address: 0x4000_0100_8000, file_size: 0xFE, memory_size: 0xB38, alignment: 0x1000 },
-    ProgramHeader { kind: PT_GNU_STACK, flags: PF_R | PF_W, offset: 0, virtual_address: 0, physical_address: 0, file_size: 0, memory_size: 0, alignment: 0x10 },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0,
+        virtual_address: 0x4000_0100_0000,
+        physical_address: 0x4000_0100_0000,
+        file_size: 0x158,
+        memory_size: 0x158,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_X,
+        offset: 0x1000,
+        virtual_address: 0x4000_0100_1000,
+        physical_address: 0x4000_0100_1000,
+        file_size: 0x5563,
+        memory_size: 0x5563,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0x7000,
+        virtual_address: 0x4000_0100_7000,
+        physical_address: 0x4000_0100_7000,
+        file_size: 0xED1,
+        memory_size: 0xED1,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_W,
+        offset: 0x8000,
+        virtual_address: 0x4000_0100_8000,
+        physical_address: 0x4000_0100_8000,
+        file_size: 0xFE,
+        memory_size: 0xB38,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_GNU_STACK,
+        flags: PF_R | PF_W,
+        offset: 0,
+        virtual_address: 0,
+        physical_address: 0,
+        file_size: 0,
+        memory_size: 0,
+        alignment: 0x10,
+    },
 ];
 
 fn byte(input: &[u8], offset: usize) -> Result<u8, Status> {
@@ -219,14 +264,19 @@ fn byte(input: &[u8], offset: usize) -> Result<u8, Status> {
 
 fn u16_le(input: &[u8], offset: usize) -> Result<u16, Status> {
     Ok(u16::from(byte(input, offset)?)
-        | (u16::from(byte(input, offset.checked_add(1).ok_or(Status::Truncated)?)?) << 8))
+        | (u16::from(byte(
+            input,
+            offset.checked_add(1).ok_or(Status::Truncated)?,
+        )?) << 8))
 }
 
 fn u32_le(input: &[u8], offset: usize) -> Result<u32, Status> {
     let mut value = 0u32;
     for index in 0..4usize {
-        value |= u32::from(byte(input, offset.checked_add(index).ok_or(Status::Truncated)?)?)
-            << (index * 8);
+        value |= u32::from(byte(
+            input,
+            offset.checked_add(index).ok_or(Status::Truncated)?,
+        )?) << (index * 8);
     }
     Ok(value)
 }
@@ -234,8 +284,10 @@ fn u32_le(input: &[u8], offset: usize) -> Result<u32, Status> {
 fn u64_le(input: &[u8], offset: usize) -> Result<u64, Status> {
     let mut value = 0u64;
     for index in 0..8usize {
-        value |= u64::from(byte(input, offset.checked_add(index).ok_or(Status::Truncated)?)?)
-            << (index * 8);
+        value |= u64::from(byte(
+            input,
+            offset.checked_add(index).ok_or(Status::Truncated)?,
+        )?) << (index * 8);
     }
     Ok(value)
 }
@@ -246,42 +298,90 @@ fn canonical_user(address: u64) -> bool {
 
 fn decode_program(input: &[u8], offset: usize) -> Result<ProgramHeader, Status> {
     Ok(ProgramHeader {
-        kind: u32_le(input, offset.checked_add(PROGRAM_TYPE).ok_or(Status::ProgramTable)?)?,
-        flags: u32_le(input, offset.checked_add(PROGRAM_FLAGS).ok_or(Status::ProgramTable)?)?,
-        offset: u64_le(input, offset.checked_add(PROGRAM_OFFSET).ok_or(Status::ProgramTable)?)?,
-        virtual_address: u64_le(input, offset.checked_add(PROGRAM_VIRTUAL).ok_or(Status::ProgramTable)?)?,
-        physical_address: u64_le(input, offset.checked_add(PROGRAM_PHYSICAL).ok_or(Status::ProgramTable)?)?,
-        file_size: u64_le(input, offset.checked_add(PROGRAM_FILE_SIZE).ok_or(Status::ProgramTable)?)?,
-        memory_size: u64_le(input, offset.checked_add(PROGRAM_MEMORY_SIZE).ok_or(Status::ProgramTable)?)?,
-        alignment: u64_le(input, offset.checked_add(PROGRAM_ALIGNMENT).ok_or(Status::ProgramTable)?)?,
+        kind: u32_le(
+            input,
+            offset
+                .checked_add(PROGRAM_TYPE)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        flags: u32_le(
+            input,
+            offset
+                .checked_add(PROGRAM_FLAGS)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        offset: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_OFFSET)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        virtual_address: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_VIRTUAL)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        physical_address: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_PHYSICAL)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        file_size: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_FILE_SIZE)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        memory_size: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_MEMORY_SIZE)
+                .ok_or(Status::ProgramTable)?,
+        )?,
+        alignment: u64_le(
+            input,
+            offset
+                .checked_add(PROGRAM_ALIGNMENT)
+                .ok_or(Status::ProgramTable)?,
+        )?,
     })
 }
 
 fn same_header(left: ProgramHeader, right: ProgramHeader) -> bool {
-    left.kind == right.kind && left.flags == right.flags && left.offset == right.offset
+    left.kind == right.kind
+        && left.flags == right.flags
+        && left.offset == right.offset
         && left.virtual_address == right.virtual_address
         && left.physical_address == right.physical_address
-        && left.file_size == right.file_size && left.memory_size == right.memory_size
+        && left.file_size == right.file_size
+        && left.memory_size == right.memory_size
         && left.alignment == right.alignment
 }
 
-fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Segment; MAX_LOAD_SEGMENTS], Status> {
+fn validate_programs(
+    programs: &[ProgramHeader; PROGRAM_HEADERS],
+) -> Result<[Segment; MAX_LOAD_SEGMENTS], Status> {
     let mut segments = [Segment::invalid(); MAX_LOAD_SEGMENTS];
     let mut loads = 0usize;
     let mut stacks = 0usize;
     for (program, measured) in programs.iter().copied().zip(MEASURED) {
-        if !same_header(program, measured) {
-            return Err(Status::MeasuredConjunction);
-        }
         if program.kind == PT_GNU_STACK {
-            if program.flags != PF_R | PF_W || program.offset != 0
-                || program.virtual_address != 0 || program.physical_address != 0
-                || program.file_size != 0 || program.memory_size != 0
+            if program.flags != PF_R | PF_W
+                || program.offset != 0
+                || program.virtual_address != 0
+                || program.physical_address != 0
+                || program.file_size != 0
+                || program.memory_size != 0
                 || program.alignment != 16
             {
                 return Err(Status::Stack);
             }
             stacks += 1;
+            if !same_header(program, measured) {
+                return Err(Status::MeasuredConjunction);
+            }
             continue;
         }
         if program.kind != PT_LOAD {
@@ -290,9 +390,7 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
         if loads == MAX_LOAD_SEGMENTS {
             return Err(Status::ProgramCount);
         }
-        if program.flags != PF_R && program.flags != PF_R | PF_X
-            && program.flags != PF_R | PF_W
-        {
+        if program.flags != PF_R && program.flags != PF_R | PF_X && program.flags != PF_R | PF_W {
             return Err(Status::SegmentFlags);
         }
         if program.flags & (PF_W | PF_X) == (PF_W | PF_X) {
@@ -301,31 +399,39 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
         if program.file_size == 0 || program.memory_size < program.file_size {
             return Err(Status::LoadSize);
         }
-        let file_end = program.offset.checked_add(program.file_size).ok_or(Status::FileRange)?;
+        let file_end = program
+            .offset
+            .checked_add(program.file_size)
+            .ok_or(Status::FileRange)?;
         if file_end > FILE_BYTES as u64 {
             return Err(Status::FileRange);
         }
-        if program.alignment != PAGE_BYTES || !program.alignment.is_power_of_two()
+        if program.alignment != PAGE_BYTES
+            || !program.alignment.is_power_of_two()
             || program.offset & (program.alignment - 1)
                 != program.virtual_address & (program.alignment - 1)
         {
             return Err(Status::Alignment);
         }
-        let virtual_end = program.virtual_address.checked_add(program.memory_size)
+        let virtual_end = program
+            .virtual_address
+            .checked_add(program.memory_size)
             .ok_or(Status::AddressOverflow)?;
-        if virtual_end == 0 || !canonical_user(program.virtual_address)
+        if virtual_end == 0
+            || !canonical_user(program.virtual_address)
             || !canonical_user(virtual_end - 1)
         {
             return Err(Status::VirtualAddress);
         }
         let mapping_start = program.virtual_address & !(PAGE_BYTES - 1);
-        let mapping_end = virtual_end.checked_add(PAGE_BYTES - 1)
-            .ok_or(Status::AddressOverflow)? & !(PAGE_BYTES - 1);
+        let mapping_end = virtual_end
+            .checked_add(PAGE_BYTES - 1)
+            .ok_or(Status::AddressOverflow)?
+            & !(PAGE_BYTES - 1);
         if mapping_end <= mapping_start || !canonical_user(mapping_end - 1) {
             return Err(Status::VirtualAddress);
         }
-        let prior_segments = segments.get(..loads)
-            .ok_or(Status::ProgramCount)?;
+        let prior_segments = segments.get(..loads).ok_or(Status::ProgramCount)?;
         for prior in prior_segments {
             if program.virtual_address < prior.virtual_address + prior.memory_size
                 && prior.virtual_address < virtual_end
@@ -334,8 +440,7 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
                 return Err(Status::Overlap);
             }
         }
-        let destination = segments.get_mut(loads)
-            .ok_or(Status::ProgramCount)?;
+        let destination = segments.get_mut(loads).ok_or(Status::ProgramCount)?;
         *destination = Segment {
             file_offset: program.offset,
             virtual_address: program.virtual_address,
@@ -346,14 +451,21 @@ fn validate_programs(programs: &[ProgramHeader; PROGRAM_HEADERS]) -> Result<[Seg
             flags: program.flags,
             reserved: 0,
         };
+        if !same_header(program, measured) {
+            return Err(Status::MeasuredConjunction);
+        }
         loads += 1;
     }
     if loads != MAX_LOAD_SEGMENTS || stacks != 1 {
         return Err(Status::ProgramCount);
     }
-    let executable = segments.iter().find(|segment| segment.flags == PF_R | PF_X)
+    let executable = segments
+        .iter()
+        .find(|segment| segment.flags == PF_R | PF_X)
         .ok_or(Status::Entry)?;
-    let executable_end = executable.virtual_address.checked_add(executable.file_size)
+    let executable_end = executable
+        .virtual_address
+        .checked_add(executable.file_size)
         .ok_or(Status::AddressOverflow)?;
     if ENTRY < executable.virtual_address || ENTRY >= executable_end {
         return Err(Status::Entry);
@@ -369,45 +481,83 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     if input.len() != FILE_BYTES {
         return Err(Status::FileLength);
     }
-    if byte(input, 0)? != 0x7F || byte(input, 1)? != b'E'
-        || byte(input, 2)? != b'L' || byte(input, 3)? != b'F'
+    if byte(input, 0)? != 0x7F
+        || byte(input, 1)? != b'E'
+        || byte(input, 2)? != b'L'
+        || byte(input, 3)? != b'F'
     {
         return Err(Status::Magic);
     }
-    if byte(input, 4)? != 2 { return Err(Status::Class); }
-    if byte(input, 5)? != 1 { return Err(Status::Data); }
-    if byte(input, 6)? != 1 { return Err(Status::IdentVersion); }
-    if byte(input, 7)? != 0 || byte(input, 8)? != 0 { return Err(Status::Abi); }
-    for offset in 9..16 {
-        if byte(input, offset)? != 0 { return Err(Status::IdentPadding); }
+    if byte(input, 4)? != 2 {
+        return Err(Status::Class);
     }
-    if u16_le(input, ELF_TYPE)? != 2 { return Err(Status::Type); }
-    if u16_le(input, ELF_MACHINE)? != 62 { return Err(Status::Machine); }
-    if u32_le(input, ELF_VERSION)? != 1 { return Err(Status::HeaderVersion); }
-    if u32_le(input, ELF_FLAGS)? != 0 { return Err(Status::HeaderFlags); }
-    if u16_le(input, ELF_HEADER_SIZE)? != HEADER_BYTES { return Err(Status::HeaderSize); }
+    if byte(input, 5)? != 1 {
+        return Err(Status::Data);
+    }
+    if byte(input, 6)? != 1 {
+        return Err(Status::IdentVersion);
+    }
+    if byte(input, 7)? != 0 || byte(input, 8)? != 0 {
+        return Err(Status::Abi);
+    }
+    for offset in 9..16 {
+        if byte(input, offset)? != 0 {
+            return Err(Status::IdentPadding);
+        }
+    }
+    if u16_le(input, ELF_TYPE)? != 2 {
+        return Err(Status::Type);
+    }
+    if u16_le(input, ELF_MACHINE)? != 62 {
+        return Err(Status::Machine);
+    }
+    if u32_le(input, ELF_VERSION)? != 1 {
+        return Err(Status::HeaderVersion);
+    }
+    if u32_le(input, ELF_FLAGS)? != 0 {
+        return Err(Status::HeaderFlags);
+    }
+    if u16_le(input, ELF_HEADER_SIZE)? != HEADER_BYTES {
+        return Err(Status::HeaderSize);
+    }
     let program_offset = u64_le(input, ELF_PROGRAM_OFFSET)?;
-    if program_offset != u64::from(HEADER_BYTES) { return Err(Status::ProgramOffset); }
+    if program_offset != u64::from(HEADER_BYTES) {
+        return Err(Status::ProgramOffset);
+    }
     let program_size = u16_le(input, ELF_PROGRAM_SIZE)?;
-    if program_size != PROGRAM_HEADER_BYTES { return Err(Status::ProgramSize); }
+    if program_size != PROGRAM_HEADER_BYTES {
+        return Err(Status::ProgramSize);
+    }
     let program_count = u16_le(input, ELF_PROGRAM_COUNT)?;
     if program_count as usize != PROGRAM_HEADERS || program_count as usize > MAX_PROGRAM_HEADERS {
         return Err(Status::ProgramCount);
     }
     let table_offset = usize::try_from(program_offset).map_err(|_| Status::ProgramTable)?;
-    let table_bytes = usize::from(program_size).checked_mul(usize::from(program_count))
+    let table_bytes = usize::from(program_size)
+        .checked_mul(usize::from(program_count))
         .ok_or(Status::ProgramTable)?;
-    let table_end = table_offset.checked_add(table_bytes).ok_or(Status::ProgramTable)?;
-    if table_end > input.len() { return Err(Status::ProgramTable); }
+    let table_end = table_offset
+        .checked_add(table_bytes)
+        .ok_or(Status::ProgramTable)?;
+    if table_end > input.len() {
+        return Err(Status::ProgramTable);
+    }
     let mut programs = [ProgramHeader::invalid(); PROGRAM_HEADERS];
     for (index, program) in programs.iter_mut().enumerate() {
-        let offset = table_offset.checked_add(index.checked_mul(usize::from(program_size))
-            .ok_or(Status::ProgramTable)?).ok_or(Status::ProgramTable)?;
+        let offset = table_offset
+            .checked_add(
+                index
+                    .checked_mul(usize::from(program_size))
+                    .ok_or(Status::ProgramTable)?,
+            )
+            .ok_or(Status::ProgramTable)?;
         *program = decode_program(input, offset)?;
     }
     let segments = validate_programs(&programs)?;
     let entry = u64_le(input, ELF_ENTRY)?;
-    if entry != ENTRY { return Err(Status::Entry); }
+    if entry != ENTRY {
+        return Err(Status::Entry);
+    }
     Ok(ValidatedImage {
         valid: 1,
         program_header_count: PROGRAM_HEADERS as u32,
@@ -420,8 +570,10 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
 
 /// Run pointer-free invariants for the measured header conjunction.
 pub fn self_test() -> u32 {
-    if FILE_BYTES > 2 * 1024 * 1024 || FILE_BYTES.div_ceil(PAGE_BYTES as usize) != IMAGE_PAGES
-        || PROGRAM_HEADERS > MAX_PROGRAM_HEADERS || MAX_LOAD_SEGMENTS != 4
+    if FILE_BYTES > 2 * 1024 * 1024
+        || FILE_BYTES.div_ceil(PAGE_BYTES as usize) != IMAGE_PAGES
+        || PROGRAM_HEADERS > MAX_PROGRAM_HEADERS
+        || MAX_LOAD_SEGMENTS != 4
         || validate_programs(&MEASURED).is_err()
     {
         return 0;

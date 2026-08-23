@@ -112,6 +112,18 @@ pre-proof resource census.
 | 71 | missing/duplicate Boot Ledger prerequisite, stage/result cardinality error, or non-neutral ordinary outcome |
 | 72 | alternate scenario/guest/host exit values, direct handler, non-CPL3 fetch, non-`syscall` instruction, or premature result publication |
 
+The 72 rows are stable refusal families, not a count of individual mutations.
+The installed runner expands them into 82 named teardown checkpoints: 14
+filesystem/session boundaries, the parse boundary, 16 private-frame
+allocations, 13 initial-stack writes, two install transitions, address-space
+and alias construction, 13 initial mappings, the permission audit, syscall
+arming, CR3 activation, and both sides of all nine observed syscalls.  A
+separate allocator control then fails every four-level process-page-table
+allocation ordinal until the first provably unused ordinal.  Every injected
+run suppresses proof stdout, requires a named non-success status, restores the
+kernel CR3 and complete census, and leaves the publishable result all-zero.
+Only the final uninjected run may emit `SAPOTE\n` and publish success.
+
 The installed stable line is fixed to:
 
 ```text

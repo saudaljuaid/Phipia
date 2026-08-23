@@ -451,9 +451,11 @@ identity map, 8 GiB paging probes, 16 GiB heap, and 32 GiB thread stacks. See
   claim arena maps BARs UC. No typed write-combining or write-protected BAR
   policy exists yet; MTRR inspection and a physical-alias audit remain missing.
 - **General userspace and process management.** v0.7.0 admits one fixed RX image
-  and one guarded RW/NX stack through private typed functions. The public mapper
-  still cannot request `U/S`; arbitrary user mappings, concurrent processes and
-  user-controlled layout remain unsupported. See `docs/PROCESS_ADDRESS_SPACE.md`.
+  and v0.8.0 admits one separately measured four-segment static BusyBox image,
+  guarded stack, bounded heap, and one anonymous page through private typed
+  functions. The public mapper still cannot request `U/S`; arbitrary user
+  mappings, concurrent processes and user-controlled layout remain unsupported.
+  See `docs/PROCESS_ADDRESS_SPACE.md`.
 - **Demand paging, swap, or any fault-driven mapping.** The page-fault handler
   stays fatal.
 - **Anything per-processor.** The hierarchy is a single static and there is no
@@ -503,3 +505,23 @@ proof interrupt restores the installed root before C removes mappings or frees
 frames. The closing proof additionally requires no private root, image alias,
 user mapping or non-kernel CR3. The exact layout and teardown order are in
 `docs/PROCESS_ADDRESS_SPACE.md`.
+
+## Private v0.8.0 Linux ABI extension
+
+The Linux proof reuses the private-hierarchy lifecycle but not the v0.7.0
+fixture layout. Nine initially installed image pages cover four exact
+`PT_LOAD` segments with final R, RX, R, and RW/NX permissions; four guarded
+RW/NX stack pages hold the Linux entry vectors and strings. Four preallocated
+heap frames and one anonymous frame are mapped only at the measured `brk` and
+`mmap` calls, and are unmapped by the observed `mmap`/`munmap` sequence or
+reverse teardown. Every leaf is a 4 KiB user mapping in the reserved high
+lower-half window. The effective walk rejects any user reachability into the
+kernel, device/MMIO, DMA, filesystem, page-table, null, or guard ranges and any
+W+X conjunction.
+
+Six executable-image identity aliases are narrowed to supervisor RO/NX before
+the user RX leaves exist. The LSTAR exit path restores the installed kernel
+root before C disarms syscall state, removes dynamic mappings, removes stack
+and image mappings, restores aliases, releases the private hierarchy, and
+returns all frames. No Linux ABI mapping operation is public or
+user-controlled.

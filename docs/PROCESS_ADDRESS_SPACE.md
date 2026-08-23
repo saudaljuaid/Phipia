@@ -78,3 +78,22 @@ installed root and table count to match afterward.
 
 There is no PCID, SMP, TLB shootdown, demand paging, COW, ASLR, huge user page,
 user mapping API or concurrent process. Those require separate contracts.
+
+## Separate v0.8.0 BusyBox owner
+
+The Linux ABI proof is a second typed consumer of this foundation; it does not
+alter the v0.7.0 image, stack, vector `0x81`, transcript, or exit. Its exact
+high lower-half layout is declared in `paging.h`: nine initial image pages,
+four stack pages above an absent guard, four bounded heap pages, and one fixed
+anonymous page. The Rust BusyBox parser supplies four measured load segments,
+and C installs each page with its final R, RX, R, or RW/NX conjunction. Six
+identity aliases covering executable file bytes are narrowed RO/NX before the
+private hierarchy becomes active.
+
+The process states are candidate, building, installed, running, exiting,
+stopping, and released. Only the measured `brk`/`mmap` sequence can add the
+preallocated heap and anonymous leaves. The real LSTAR return restores kernel
+CR3 before reverse-order unmapping and table/frame release. A census includes
+frames, table counts, DMA, PCI claims, vectors, MSI-X, filesystem session,
+syscall state, boundary state, interrupt state, and CR3; the BusyBox result is
+published only when it exactly matches the pre-proof census.

@@ -113,3 +113,15 @@ different independently verified 128-byte payload. The private process consumer
 receives copied CPU-owned bytes and hands them to the ELF parser; FAT16 never
 interprets executable metadata. The original filesystem scenario, payload and
 digest remain unchanged.
+
+v0.8.0 adds `linux_fat16.rs` as a separate exact consumer over the same
+validated geometry. It accepts only the canonical extensionless `BUSYBOX`
+root name, 33,584 bytes, and one nine-cluster chain (clusters 2–10). At most
+512 clusters can be represented. Every FAT step checks free, bad, reserved,
+below-two, out-of-volume, premature-EOC, late-EOC, overlong, repeated and cyclic
+states plus cluster/LBA arithmetic. C reads one cluster at a time only after
+MSI-X returns the shared DMA block to the CPU, copies the bounded file prefix,
+requires zero padding after the final 816 bytes, validates the BusyBox SHA-256,
+and closes the typed session during reverse teardown. No path parser,
+partition, directory traversal, cache, mount, VFS, public block API, or write
+operation is added.

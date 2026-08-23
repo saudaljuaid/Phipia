@@ -16,6 +16,11 @@ No direct push to `main` is acceptable. Every change uses a pull request and the
 red, skipped, stale, or missing check. Do not force-push `main`, delete `main`, or
 merge an unreviewed kernel change.
 
+A red required check is a DEFCON event: stop feature work, identify the first
+failing contract, restore the current head to green, and rerun every affected
+check before continuing. Never normalize red as an expected development state,
+and never stack unrelated changes on a known-red head.
+
 ## Code standard
 
 - The implementation languages are C11, GNU assembly, and Rust 2024 for the
@@ -61,9 +66,19 @@ merge an unreviewed kernel change.
   fixed 128-byte ELF64 image, one guarded stack and private vector `0x81`.
   Preserve supervisor-only kernel mappings, effective ancestor/leaf W^X walks,
   real `iretq`/CPL3 fetch, authenticated return, kernel-CR3-first reverse
-  teardown and the equal resource census. Do not introduce a syscall ABI,
-  generalized process API, concurrent processes, wider ELF subset or public
-  filesystem seam as part of this foundation.
+  teardown and the equal resource census. Preserve this v0.7.0 fixture and gate
+  unchanged; do not turn it into a generalized process API or public filesystem
+  seam.
+- Linux ABI work stays inside the v0.8.0 measured BusyBox contract: one
+  checksum-pinned static position-fixed `ET_EXEC`, one nine-cluster read-only
+  `BUSYBOX` root file, `argc == 3`, empty `envp`, the measured auxiliary vector,
+  and the seven-number syscall allowlist. Unknown calls return `-ENOSYS` without
+  mutation. Do not add `int 0x80`, descriptors beyond proof stdout, pathname
+  operations, signals, threads, multiple processes, PIE, dynamic linking,
+  relocations, public mappings, writable files, or a native Sapote syscall ABI.
+  The real `SYSCALL`/`IA32_LSTAR` path, kernel/TSS stack switch, checked `IRETQ`,
+  authenticated process/CR3, and kernel-CR3-first equal-census teardown are
+  mandatory.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

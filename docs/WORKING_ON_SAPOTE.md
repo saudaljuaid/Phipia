@@ -28,7 +28,7 @@ Five commands, in this order, every time.
 
     make verify        #  8 s from clean.  Build, link, and inspect the image.
     make smoke         #  2 s.  Boot the kernel in QEMU and require the transcript.
-    make qemu-tests    # All thirty-seven bounded scenarios; time varies by host.
+    make qemu-tests    # All thirty-eight bounded scenarios; time varies by host.
     git commit         # the pre-commit hook runs make verify again
     git push           # the pre-push hook runs make qemu-tests again
 
@@ -71,7 +71,7 @@ read-only reopen the ordinary 16 MiB file; QEMU receives explicit read-only
 file/raw `-blockdev` nodes and its standard NVMe device. Evidence requires
 metadata-derived BPB/FAT/root/data order, four real PRP1/MSI-X completions,
 unchanged guards, the documented 128-byte digest, CPU → controller → CPU
-ownership for every block, and clean teardown. Run all 37 scenarios, ten
+ownership for every block, and clean teardown. Run all 38 scenarios, ten
 complete serial TCG sweeps and one sweep under every safely available
 accelerator. Never probe `/dev/kvm`, mount the fixture or attach host storage.
 
@@ -82,9 +82,23 @@ a linker as sole truth. Evidence must prove the bytes returned to CPU ownership,
 safe Rust parsing, one private CR3, supervisor-only kernel intent, RX image,
 RW/NX stack plus absent guard, real `IRETQ` CPL3 fetch, private DPL3 vector
 `0x81` return, kernel CR3 restoration and equal resource census before the
-receipt. Run all 37 scenarios, ten serial TCG sweeps and every safely exposed
+receipt. Run all 38 scenarios, ten serial TCG sweeps and every safely exposed
 accelerator. Never probe KVM, mount a fixture, attach host storage or pass
 through hardware.
+
+Linux-ABI changes use only the `linux-abi` scenario with guest exit `0x36` and
+host exit 109. Retain the checksum-pinned BusyBox 1.38.0 source, musl 1.2.6
+toolchain source, exact configuration, static `ET_EXEC` image, separate
+read-only FAT16 fixture and committed syscall trace. Evidence must show the
+NVMe-loaded image entered at CPL3, executed the real x86-64 `syscall`
+instruction through the programmed `IA32_LSTAR` boundary, wrote exactly
+`SAPOTE\n`, exited zero, restored kernel CR3 and returned the complete resource
+census to baseline. Unknown syscalls must return `-ENOSYS`; the private
+`int 0x81` process gate is not Linux proof evidence. Run all 38 scenarios, ten
+complete serial TCG sweeps, two clean reproducible BusyBox builds and every
+safely exposed accelerator. Never probe KVM, add an untraced syscall, widen the
+fixture, or publish a binary without its source, configuration and license
+record.
 
 **Run `make verify` before you believe anything.** It is the cheapest thing in
 this list and it catches the largest class of mistakes: a warning (this build
@@ -144,7 +158,10 @@ are worked examples, but the shape is:
   everything in this repository and belongs in every one of these sections.
 
 Wait for the green check. Do not merge around a red one, a skipped one, or one
-that ran against an older commit than the branch's current head.
+that ran against an older commit than the branch's current head. A red required
+check is a DEFCON event: freeze unrelated work and pushes, diagnose the first
+failure on the exact current head, restore it to green, and rerun every affected
+contract before resuming. Red is never a normal intermediate state.
 
 ## When it refuses you
 

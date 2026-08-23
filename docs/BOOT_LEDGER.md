@@ -26,9 +26,9 @@ installed-state proof whose assertions run in the same kernel they check.
 
 | Object | Capacity |
 | --- | ---: |
-| descriptors and canonical plan | 43 stages |
-| receipts | 43 receipts |
-| required, success or fallback capabilities per descriptor | 18 each |
+| descriptors and canonical plan | 46 stages |
+| receipts | 46 receipts |
+| required, success or fallback capabilities per descriptor | 21 each |
 | stable proof counters per receipt | 2 |
 
 Plan construction, validation, execution bookkeeping and the pure planner test
@@ -92,7 +92,10 @@ no new public capability; it still receives one ordered receipt.
 | 41 | private process address-space foundation | page tables, W^X, frames, heap, IDT/TSS, controllers | process address-space foundation available | required | services |
 | 42 | bounded ELF64 loader foundation | process address-space foundation | ELF64 loader foundation available | required | services |
 | 43 | installed Ring 3 process proof | page tables, W^X, frames, heap, IDT/TSS/controllers, interrupts, deadlines, threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe, FAT16, private one-file read, address-space and ELF64 foundations | installed process proof plus outcome decided; declared fixture absence plus outcome decided on neutral skip | optional neutral | services |
-| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler, process foundations, process outcome decided | boot proofs complete | required | proofs |
+| 44 | Linux x86-64 syscall CPU foundation | page tables, validated IDT/GDT/TSS contract, controllers, process address-space foundation | Linux syscall CPU foundation available | required | services |
+| 45 | static BusyBox image and Linux initial-stack foundation | FAT16, private one-file read, process address-space, ELF64, syscall CPU foundations | Linux image/stack foundation available | required | services |
+| 46 | installed static BusyBox proof | exact 21-member Linux proof prerequisite set | installed Linux proof plus outcome decided; declared fixture absence plus outcome decided on neutral skip | optional neutral | services |
+| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler, process and Linux foundations, both outcome decisions | boot proofs complete | required | proofs |
 | 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
 | 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
 | 30 | First Light installed proof | activated desktop, WC, closing proofs | First Light installed proof complete | optional | proofs |
@@ -161,8 +164,13 @@ The complete capability enumeration is:
 52. process address-space foundation available;
 53. ELF64 loader foundation available;
 54. process installed proof complete;
-55. process fixture absent; and
-56. process outcome decided.
+55. process fixture absent;
+56. process outcome decided;
+57. Linux syscall CPU foundation available;
+58. Linux image/stack foundation available;
+59. Linux installed proof complete;
+60. Linux fixture absent; and
+61. Linux outcome decided.
 
 The appended identifiers preserve every inherited stable stage and capability
 number. Declared phases and requirements place the device and process
@@ -254,7 +262,7 @@ requires exactly one of a ran receipt (`128` file bytes and MSI-X delta `4`) or
 the neutral filesystem-fixture-absent capability. Closing proofs additionally
 require that the private filesystem session is released.
 
-The process proof exactly fills the new eighteen-capability bound: page tables,
+The process proof retains its exact eighteen prerequisites: page tables,
 installed W^X, physical frames, heap, IDT/TSS and interrupt controllers,
 interrupt enable, calibrated deadlines, threading, scheduler, PCI resources,
 vectors/MSI-X, DMA, NVMe, FAT16, the private one-file read seam, process
@@ -265,6 +273,19 @@ authenticated result and clean census) or process-fixture absence, plus the
 common outcome-decision capability. Closing proofs depend on that decision and
 independently require kernel CR3 plus zero process, mapping, image, stack, gate
 and filesystem ownership.
+
+The Linux installed proof exactly fills the 21-capability bound. It requires
+page tables and installed W^X, frames, heap, the validated IDT/GDT/TSS and
+interrupt-controller path, interrupts, calibrated deadlines, PCI access,
+threading, scheduler, PCI resources, vectors/MSI-X, DMA, NVMe, FAT16, the
+private one-file read seam, process-address-space and ELF64 foundations, and
+the two Linux foundations. Its local missing and duplicate copies are rejected
+before fixture discovery. Installed verification accepts exactly one ran
+receipt (33,584 bytes, nine syscalls, real LSTAR provenance, valid stdout,
+zero exit, W^X and clean census) or one neutral Linux-fixture absence, plus the
+common Linux outcome capability. Closing proofs require that decision and
+independently require kernel CR3 plus no Linux mappings, frames, tables,
+filesystem session, syscall CPU state, or user boundary.
 
 The framebuffer and cached-surface store fences remain in their existing
 implementation paths. The ledger changes who may call those paths, not their
@@ -363,7 +384,7 @@ permanent boot output is a host-test failure.
 At `sap>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
-    plan 38  run 35  skip 3  caps 42  receipts 38
+    plan 46  run 40  skip 6  caps 53  receipts 46
     fingerprint 0xHHHHHHHHHHHHHHHH
 
 The exact fingerprint is build-plan dependent. Fixture and pointer absence use
@@ -401,8 +422,11 @@ build; the narrowest scenario was used and the snapshot was restored without
 | change NVMe guest exit `0x32` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 101 |
 | omit or duplicate one filesystem proof prerequisite | exact fourteen-member semantic refusal before PCI discovery | PASS — temporary local descriptors are rejected |
 | omit or duplicate one process proof prerequisite | exact eighteen-member semantic refusal before the private read | PASS — temporary local descriptors are rejected |
+| omit or duplicate one Linux proof prerequisite | exact 21-member semantic refusal before the BusyBox read | PASS — temporary local descriptors are rejected |
 | remove the common process-outcome edge from closing proofs | canonical graph orders closing stage 23 before process stage 43 | PASS — source and installed receipt assertions reject the mutation |
+| remove the common Linux-outcome edge from closing proofs | canonical graph can close before stage 46 | PASS — source and installed receipt assertions reject the mutation |
 | change process guest exit `0x34` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 105 |
+| change Linux ABI guest exit `0x36` | exit-contract negative control | PASS — temporary values are rejected; host contract remains 109 |
 | change filesystem guest exit `0x33` | exit-contract negative control | PASS — temporary `0x34` is rejected; host contract remains 103 |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |

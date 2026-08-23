@@ -48,6 +48,7 @@ enum filesystem_status {
     FILESYSTEM_STATUS_PRIVATE_BAD_BUFFER,
     FILESYSTEM_STATUS_LINUX_CHAIN,
     FILESYSTEM_STATUS_LINUX_PAYLOAD,
+    FILESYSTEM_STATUS_CONTROLLED_FAILURE,
     FILESYSTEM_STATUS_COUNT
 };
 
@@ -123,7 +124,8 @@ enum filesystem_status filesystem_private_read_close(
 enum filesystem_status filesystem_linux_read_open(
     struct filesystem_linux_file *file,
     uint8_t *destination,
-    size_t destination_bytes
+    size_t destination_bytes,
+    uint32_t failure_boundary
 );
 enum filesystem_status filesystem_linux_read_close(
     struct filesystem_linux_file *file

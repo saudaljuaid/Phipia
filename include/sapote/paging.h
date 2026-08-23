@@ -320,6 +320,13 @@ enum paging_status paging_audit_hierarchy(struct paging_audit *audit);
 enum paging_status paging_process_space_build(
     struct paging_process_space *space
 );
+bool paging_process_table_failure_arm(size_t allocation_ordinal);
+bool paging_process_table_failure_result(
+    size_t *allocation_count,
+    bool *observed
+);
+bool paging_process_table_failure_disarm(void);
+bool paging_process_table_failure_armed(void);
 enum paging_status paging_process_image_alias_narrow(
     const struct paging_process_space *space,
     uint64_t physical_address,

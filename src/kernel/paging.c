@@ -202,6 +202,12 @@ struct supervisor_mapping_intent {
 
 static struct process_space_runtime process_space_runtime;
 static struct process_alias_runtime process_alias_runtime;
+static struct {
+    size_t failure_ordinal;
+    size_t allocation_count;
+    bool observed;
+    bool armed;
+} process_table_failure;
 static uint64_t next_process_generation = UINT64_C(1);
 static uint64_t next_alias_generation = UINT64_C(1);
 static struct supervisor_mapping_intent supervisor_intents[
@@ -729,6 +735,16 @@ static enum paging_status allocate_table(
 )
 {
     uintptr_t frame = 0U;
+
+    if (process_table_failure.armed &&
+        hierarchy == &process_space_runtime.hierarchy) {
+        ++process_table_failure.allocation_count;
+        if (process_table_failure.allocation_count ==
+                process_table_failure.failure_ordinal) {
+            process_table_failure.observed = true;
+            return PAGING_STATUS_OUT_OF_FRAMES;
+        }
+    }
 
     if (hierarchy->arena_capacity != 0U) {
         if (hierarchy->arena_used == hierarchy->arena_capacity) {
@@ -2310,6 +2326,54 @@ enum paging_status paging_process_space_build(
     return PAGING_STATUS_OK;
 }
 
+bool paging_process_table_failure_arm(size_t allocation_ordinal)
+{
+    if (allocation_ordinal == 0U || process_table_failure.armed ||
+        process_space_runtime.owned || process_alias_runtime.owned ||
+        !state.active || (cpu_read_cr3() & PAGE_FRAME_MASK) !=
+            live_hierarchy.root) {
+        return false;
+    }
+    process_table_failure.failure_ordinal = allocation_ordinal;
+    process_table_failure.allocation_count = 0U;
+    process_table_failure.observed = false;
+    process_table_failure.armed = true;
+    return true;
+}
+
+bool paging_process_table_failure_result(
+    size_t *allocation_count,
+    bool *observed
+)
+{
+    if (allocation_count == NULL || observed == NULL ||
+        !process_table_failure.armed) {
+        return false;
+    }
+    *allocation_count = process_table_failure.allocation_count;
+    *observed = process_table_failure.observed;
+    return true;
+}
+
+bool paging_process_table_failure_disarm(void)
+{
+    if (!process_table_failure.armed || process_space_runtime.owned ||
+        process_alias_runtime.owned ||
+        (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
+        return false;
+    }
+    process_table_failure.failure_ordinal = 0U;
+    process_table_failure.allocation_count = 0U;
+    process_table_failure.observed = false;
+    process_table_failure.armed = false;
+    return true;
+}
+
+bool paging_process_table_failure_armed(void)
+{
+    return process_table_failure.armed;
+}
+
 static enum paging_status restore_alias_page(
     struct process_alias_page_runtime *page,
     bool private_hierarchy
@@ -2905,6 +2969,7 @@ enum paging_status paging_process_space_release(
 bool paging_process_resources_released(void)
 {
     return !process_space_runtime.owned && !process_alias_runtime.owned &&
+        !process_table_failure.armed &&
         (!state.active ||
             (cpu_read_cr3() & PAGE_FRAME_MASK) == live_hierarchy.root);
 }

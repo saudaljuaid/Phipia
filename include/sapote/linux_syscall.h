@@ -45,6 +45,7 @@ enum linux_syscall_status {
     LINUX_SYSCALL_STATUS_MAPPING,
     LINUX_SYSCALL_STATUS_STDOUT,
     LINUX_SYSCALL_STATUS_EXIT,
+    LINUX_SYSCALL_STATUS_CONTROLLED_FAILURE,
     LINUX_SYSCALL_STATUS_RESTORE,
     LINUX_SYSCALL_STATUS_COUNT
 };
@@ -83,6 +84,10 @@ struct linux_syscall_context {
     uintptr_t heap_frames[PAGING_LINUX_HEAP_PAGES];
     uintptr_t anonymous_frame;
     bool (*exit_observed)(uint64_t process_generation);
+    uint32_t failure_before_ordinal;
+    uint32_t failure_after_ordinal;
+    bool controlled_run;
+    bool publish_stdout;
 };
 
 struct linux_syscall_result {
@@ -98,10 +103,12 @@ struct linux_syscall_result {
     bool process_authenticated;
     bool cr3_authenticated;
     bool cpu_disarmed;
+    bool controlled_failure_observed;
 };
 
 bool linux_syscall_cpu_foundation_self_test(size_t *completed_tests);
 bool linux_syscall_enosys_self_test(void);
+bool linux_syscall_semantic_self_test(void);
 enum linux_syscall_status linux_syscall_arm(
     const struct linux_syscall_context *context
 );

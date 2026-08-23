@@ -14,7 +14,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	linux-abi
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 38
-EXPECTED_SHELL_ASSERTION_COUNT := 251
+EXPECTED_SHELL_ASSERTION_COUNT := 252
 
 CC := gcc
 LD := ld
@@ -207,10 +207,11 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
-	$(RUSTC) --edition 2024 --test -D warnings \
+	$(MAKE) $(LINUX_ABI_FIXTURE)
+	SAPOTE_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_BINARY)' \
+		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/linux-fat16-host-test.rs -o $(RUST_LINUX_FAT16_TEST)
 	$(RUST_LINUX_FAT16_TEST)
-	$(MAKE) $(LINUX_ABI_FIXTURE)
 	SAPOTE_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_BINARY)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/linux-elf64-host-test.rs -o $(RUST_LINUX_ELF64_TEST)
@@ -331,6 +332,12 @@ verify: toolchain lint
 		src/kernel --include='*.c' --exclude=filesystem.c \
 		--exclude=linux_abi.c; then \
 		echo 'private BusyBox read seam escaped the Linux process owner'; exit 1; \
+	fi
+	@if grep -ERn '\bpaging_process_table_failure_(arm|result|disarm|armed)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=paging.c \
+		--exclude=linux_abi.c; then \
+		echo 'private paging failure control escaped the Linux process owner'; \
+		exit 1; \
 	fi
 	@if grep -ERn '\bnvme_filesystem_session_(open|read|view|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c --exclude=nvme.c; then \
