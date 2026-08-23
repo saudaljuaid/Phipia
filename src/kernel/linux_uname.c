@@ -1274,6 +1274,21 @@ static enum linux_uname_abi_status linux_attempt(
         runtime.file.read_count != 3U + LINUX_UNAME_FAT16_FILE_CLUSTERS ||
         runtime.file.msix_completion_count !=
             3U + LINUX_UNAME_FAT16_FILE_CLUSTERS) {
+        if (filesystem_status != FILESYSTEM_STATUS_CONTROLLED_FAILURE) {
+            console_write("Sapote: Linux uname filesystem unexpected ");
+            console_write(filesystem_status_string(filesystem_status));
+            console_write(" boundary ");
+            console_write_u64(filesystem_failure_boundary(failure_point));
+            console_write(" reads ");
+            console_write_u64(runtime.file.read_count);
+            console_write(" completions ");
+            console_write_u64(runtime.file.msix_completion_count);
+            console_write(" bytes ");
+            console_write_u64(runtime.file.file_bytes);
+            console_write(" clusters ");
+            console_write_u64(runtime.file.cluster_count);
+            console_putc('\n');
+        }
         status = LINUX_UNAME_ABI_STATUS_FILESYSTEM;
         goto cleanup;
     }
