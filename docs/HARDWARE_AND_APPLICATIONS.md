@@ -321,14 +321,14 @@ executable failure test, and a boot that proves it or refuses.
    `docs/ELF64_LOADER.md`, `docs/PROCESS_ADDRESS_SPACE.md`,
    `docs/CPL3_INTERRUPT_BOUNDARY.md` and `docs/PROCESS_QEMU_PROOF.md`.
 10. **The Linux system-call ABI, incrementally — first increment complete in
-    v0.8.0; bounded second increment selected for v0.9.0.** One unmodified
+    v0.8.0; bounded second increment complete in v0.9.0.** One unmodified
     checksum-pinned static BusyBox enters through the
     real x86-64 `SYSCALL` instruction and `IA32_LSTAR`, runs only
     `busybox echo SAPOTE`, writes seven bytes to a proof-only stdout sink, and
     exits zero. Seven syscall numbers implement only the measured invocation;
     every other number returns `-ENOSYS`. There is still no general POSIX,
     descriptor, pathname, signal, threading, dynamic-linking, or multi-process
-    environment. The selected v0.9.0 increment is a separate, newly measured
+    environment. The v0.9.0 increment is a separate, newly measured
     `busybox uname -s` executable and fixture adding only Linux x86-64 `uname`
     plus fully checked copy-out of one deterministic Sapote-owned UTS record.
     It preserves the v0.8.0 echo contract and does not authorize any other

@@ -97,3 +97,18 @@ CR3 before reverse-order unmapping and table/frame release. A census includes
 frames, table counts, DMA, PCI claims, vectors, MSI-X, filesystem session,
 syscall state, boundary state, interrupt state, and CR3; the BusyBox result is
 published only when it exactly matches the pre-proof census.
+
+## Separate uname process ownership
+
+v0.9.0 adds a distinct single-process owner with candidate, building,
+installed, running, exiting, stopping, and released states. Eleven measured
+image pages retain their final R/RX/R/RW-NX permissions beside the inherited
+guarded four-page stack. The executable, stack, syscall profile, UTS copy-out,
+stdout sink, generation, private CR3, fixture session, and teardown census are
+all profile-specific; the v0.8.0 echo owner cannot satisfy a uname result.
+
+The uname profile does not make process creation public and does not add
+scheduling, multiple processes, ASLR, demand paging, copy-on-write, user
+mappings, or a reusable executable service. Kernel CR3 is restored before any
+private resource is reclaimed, and the installed result remains unpublished
+until the exact pre-proof census returns.

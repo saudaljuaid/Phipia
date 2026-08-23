@@ -69,16 +69,19 @@ and never stack unrelated changes on a known-red head.
   teardown and the equal resource census. Preserve this v0.7.0 fixture and gate
   unchanged; do not turn it into a generalized process API or public filesystem
   seam.
-- Linux ABI work stays inside the v0.8.0 measured BusyBox contract: one
-  checksum-pinned static position-fixed `ET_EXEC`, one nine-cluster read-only
-  `BUSYBOX` root file, `argc == 3`, empty `envp`, the measured auxiliary vector,
-  and the seven-number syscall allowlist. Unknown calls return `-ENOSYS` without
-  mutation. Do not add `int 0x80`, descriptors beyond proof stdout, pathname
-  operations, signals, threads, multiple processes, PIE, dynamic linking,
-  relocations, public mappings, writable files, or a native Sapote syscall ABI.
-  The real `SYSCALL`/`IA32_LSTAR` path, kernel/TSS stack switch, checked `IRETQ`,
-  authenticated process/CR3, and kernel-CR3-first equal-census teardown are
-  mandatory.
+- Linux ABI work stays inside the separately measured v0.8.0 echo and v0.9.0
+  uname profiles. Each has its own checksum-pinned static position-fixed
+  `ET_EXEC`, read-only FAT16 root, exact `argc == 3` stack, empty `envp`,
+  measured auxiliary vector, syscall sequence, allowlist, output sink, fixture,
+  digest, and lifecycle. Unknown calls return `-ENOSYS` without mutation. Uname
+  adds only syscall 63 and a fully validated, non-partial 390-byte copy-out of
+  the immutable Sapote UTS record; invalid ranges return `-EFAULT`. Do not add
+  hostname mutation, a UTS namespace, `int 0x80`, descriptors beyond the exact
+  proof sinks, pathname operations, signals, threads, multiple processes, PIE,
+  dynamic linking, relocations, public mappings, writable files, or a native
+  Sapote syscall ABI. The real `SYSCALL`/`IA32_LSTAR` path, kernel/TSS stack
+  switch, checked `IRETQ`, authenticated process/generation/CR3, and
+  kernel-CR3-first equal-census teardown are mandatory.
 - Generated binaries, ISO images, editor state, and local toolchains never enter
   version control.
 

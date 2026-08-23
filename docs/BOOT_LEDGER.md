@@ -26,9 +26,9 @@ installed-state proof whose assertions run in the same kernel they check.
 
 | Object | Capacity |
 | --- | ---: |
-| descriptors and canonical plan | 46 stages |
-| receipts | 46 receipts |
-| required, success or fallback capabilities per descriptor | 21 each |
+| descriptors and canonical plan | 48 stages |
+| receipts | 48 receipts |
+| required, success or fallback capabilities per descriptor | 23 each |
 | stable proof counters per receipt | 2 |
 
 Plan construction, validation, execution bookkeeping and the pure planner test
@@ -95,7 +95,9 @@ no new public capability; it still receives one ordered receipt.
 | 44 | Linux x86-64 syscall CPU foundation | page tables, validated IDT/GDT/TSS contract, controllers, process address-space foundation | Linux syscall CPU foundation available | required | services |
 | 45 | static BusyBox image and Linux initial-stack foundation | FAT16, private one-file read, process address-space, ELF64, syscall CPU foundations | Linux image/stack foundation available | required | services |
 | 46 | installed static BusyBox proof | exact 21-member Linux proof prerequisite set | installed Linux proof plus outcome decided; declared fixture absence plus outcome decided on neutral skip | optional neutral | services |
-| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler, process and Linux foundations, both outcome decisions | boot proofs complete | required | proofs |
+| 47 | static BusyBox uname image and UTS foundation | FAT16/read seam, process/ELF, syscall CPU and inherited Linux image/stack foundations | uname image/UTS foundation available | required | services |
+| 48 | installed static BusyBox uname proof | exact 23-member uname proof prerequisite set | installed uname proof plus outcome decided; declared fixture absence plus outcome decided on neutral skip | optional neutral | services |
+| 23 | closing boot proofs | page tables, installed windows, heap, PCI, scheduler, process/Linux/uname foundations, all three outcome decisions | boot proofs complete | required | proofs |
 | 28 | desktop construction | surface, UI font, layout, pointer decision | desktop shell available | optional | proofs |
 | 29 | desktop activation | desktop, framebuffer output, WC, surface, font, layout, keyboard, threading, scheduler, closing proofs | desktop shell activated | optional | proofs |
 | 30 | First Light installed proof | activated desktop, WC, closing proofs | First Light installed proof complete | optional | proofs |
@@ -169,8 +171,12 @@ The complete capability enumeration is:
 57. Linux syscall CPU foundation available;
 58. Linux image/stack foundation available;
 59. Linux installed proof complete;
-60. Linux fixture absent; and
-61. Linux outcome decided.
+60. Linux fixture absent;
+61. Linux outcome decided;
+62. Linux uname image and UTS foundation available;
+63. Linux uname installed proof complete;
+64. Linux uname fixture absent; and
+65. Linux uname outcome decided.
 
 The appended identifiers preserve every inherited stable stage and capability
 number. Declared phases and requirements place the device and process
@@ -384,7 +390,7 @@ permanent boot output is a host-test failure.
 At `sap>`, `ledger` prints a bounded summary with no machine addresses:
 
     boot ledger :: PASS
-    plan 46  run 40  skip 6  caps 53  receipts 46
+    plan 48  run 41  skip 7  caps 56  receipts 48
     fingerprint 0xHHHHHHHHHHHHHHHH
 
 The exact fingerprint is build-plan dependent. Fixture and pointer absence use
@@ -423,10 +429,13 @@ build; the narrowest scenario was used and the snapshot was restored without
 | omit or duplicate one filesystem proof prerequisite | exact fourteen-member semantic refusal before PCI discovery | PASS — temporary local descriptors are rejected |
 | omit or duplicate one process proof prerequisite | exact eighteen-member semantic refusal before the private read | PASS — temporary local descriptors are rejected |
 | omit or duplicate one Linux proof prerequisite | exact 21-member semantic refusal before the BusyBox read | PASS — temporary local descriptors are rejected |
+| omit or duplicate one Linux uname proof prerequisite | exact 23-member semantic refusal before the uname BusyBox read | PASS — temporary local descriptors are rejected |
 | remove the common process-outcome edge from closing proofs | canonical graph orders closing stage 23 before process stage 43 | PASS — source and installed receipt assertions reject the mutation |
 | remove the common Linux-outcome edge from closing proofs | canonical graph can close before stage 46 | PASS — source and installed receipt assertions reject the mutation |
+| remove the common Linux-uname-outcome edge from closing proofs | canonical graph can close before stage 48 | PASS — source and installed receipt assertions reject the mutation |
 | change process guest exit `0x34` | exit-contract negative control | PASS — temporary `0x33` is rejected; host contract remains 105 |
 | change Linux ABI guest exit `0x36` | exit-contract negative control | PASS — temporary values are rejected; host contract remains 109 |
+| change Linux uname ABI guest exit `0x37` | exit-contract negative control | PASS — temporary values are rejected; host contract remains 111 |
 | change filesystem guest exit `0x33` | exit-contract negative control | PASS — temporary `0x34` is rejected; host contract remains 103 |
 | execute paging before device-window validation | stage/capability precondition refusal | PASS — `stage executed before its requirements`; paging stage; registry capability |
 | move interrupt enable before IDT | irreversible-order refusal | PASS — `irreversible stage ordered too early`; keyboard stage; `IDT installed` |
@@ -457,3 +466,20 @@ rejected both mutations as well as the proof-line deletion.
   measurement and remote attestation are outside this design.
 - The ledger does not add userspace, SMP scheduling, MTRR programming,
   higher-half conversion or display-driver work.
+
+## v0.9.0 uname stages
+
+Two stable stages extend the Linux tail of the graph. `static BusyBox uname
+image and UTS foundation` proves the second measured ELF/stack profile, exact
+UTS record, syscall semantics, and neutral bounds. `installed BusyBox uname
+proof` is optional-neutral: it either publishes one authenticated success for
+the dedicated fixture or one declared absence outcome.
+
+The installed proof requires 23 exact capabilities spanning paging, GDT/TSS,
+interrupt and scheduler state, NVMe/DMA/read ownership, FAT16, process and ELF
+foundations, the reused Linux syscall CPU foundation, the inherited Linux
+image/stack and installed-proof outcome, and the uname image/UTS foundation.
+Closing proofs require the uname outcome as well as the inherited process and
+echo outcomes. Missing or duplicate prerequisites, providers, receipts, or
+success/neutral results are named ledger failures; no other scenario can
+substitute its fixture or result.

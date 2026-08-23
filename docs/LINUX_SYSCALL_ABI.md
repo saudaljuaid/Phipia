@@ -49,3 +49,24 @@ validating user RIP, RSP, CS, SS, RFLAGS, generation, active CR3, provenance,
 and the candidate/armed/entered/returned state.  `int 0x80`, the private
 v0.7.0 `int 0x81` proof gate, direct handler calls, and `sysretq` cannot satisfy
 this proof.
+
+## v0.9.0 uname profile
+
+The second profile reuses this exact CPU boundary and adds no entry mechanism.
+Its measured call order is `arch_prctl(158)`, `set_tid_address(218)`,
+`uname(63)`, the exact rejected `ioctl(16)` terminal-size probe, the exact
+`writev(20)` of `Linux\n`, and `exit_group(231)`. Those six numbers are the
+entire profile allowlist; all others return `-ENOSYS`.
+
+Syscall 63 accepts only a complete 390-byte destination in active-process
+RW/NX memory. The complete range is authenticated and validated before any
+byte changes, so null, wrapped, noncanonical, foreign, supervisor, MMIO, DMA,
+page-table, filesystem, guard, RX, read-only, unmapped, and cross-resource
+ranges return `-EFAULT` without partial output. See `LINUX_UNAME_ABI.md`,
+`DETERMINISTIC_UTS_RECORD.md`, and `CHECKED_USER_COPYOUT.md`.
+
+The profile's stdout support is similarly private: descriptor 1, the measured
+two-element vector only, exactly six bytes, once, from the expected process,
+generation, CR3, call index, and provenance. It does not create a descriptor
+table, terminal, vector-I/O ABI, or general output service. The v0.8.0 echo
+profile and its seven-byte sink are unchanged.

@@ -89,3 +89,13 @@ program headers, four `PT_LOAD` segments, one non-executable `PT_GNU_STACK`,
 checked BSS zero-fill, and final R/RX/R/RW-NX permissions. It does not widen
 this inherited parser; see `BUSYBOX_REPRODUCIBLE_BUILD.md` and
 `LINUX_ABI_QEMU_PROOF.md`.
+
+v0.9.0 reuses that safe Rust boundary with a second exact measured contract
+rather than widening its general surface. The uname executable is 38,368
+bytes, has five program headers, four `PT_LOAD` segments, entry
+`0x40000100107A`, and final R/RX/R/RW-NX pages. Its executable load is
+`0x6D7F` bytes; its RW load has `0x20E` file bytes and `0xC70` memory bytes, so
+the existing checked zero-fill rule supplies BSS. PIE, an interpreter,
+relocations, a dynamic dependency, RWX, an executable stack, overlapping or
+noncanonical loads, and any different header conjunction remain refusals. See
+`BUSYBOX_UNAME_CONTRACT.md`.

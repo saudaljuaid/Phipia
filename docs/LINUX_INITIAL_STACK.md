@@ -39,3 +39,15 @@ process states own the stack explicitly.  Stack construction failure releases
 all partial frames and mappings.  Teardown switches to installed kernel CR3
 first, removes the stack in reverse ownership order, and requires the complete
 pre-proof resource census before the installed result can be published.
+
+## Separate uname stack
+
+v0.9.0 constructs a second exact stack for the separately configured uname
+image. It keeps `argc == 3`, an empty environment, `AT_PAGESZ == 4096`, and a
+terminating `AT_NULL`, but its 17 string bytes are `busybox\0uname\0-s\0`.
+The same checked 16-byte alignment and private RW/NX four-page stack rules
+apply. No extra auxiliary entry or deterministic `AT_RANDOM` was added.
+
+The two stack profiles are selected by typed process ownership; neither image
+can consume or satisfy the other profile. The full word layout and separate
+fixture lifecycle are in `LINUX_UNAME_INITIAL_STACK_AND_FIXTURE.md`.

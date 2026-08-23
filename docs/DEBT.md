@@ -11,7 +11,7 @@ can re-measure rather than trust it.
 ## Verdict
 
 **The engineering discipline held; the structure did not keep up.** Nothing
-here is a correctness hole in a shipped layer — the thirty-eight scenarios pass,
+here is a correctness hole in a shipped layer — the thirty-nine scenarios pass,
 `nm -u` is empty, the image has no global offset table, and W^X is enforced by
 hardware rather than by a linker script. What slipped is *shape*: one file
 absorbing every new proof and a test harness whose contract grew into a wall of
@@ -187,10 +187,10 @@ the removed fixed fine-region storage reduced BSS by one 4 KiB page, so the
 linked image size remained unchanged. The normal transcript otherwise retained
 its stable words and mapping/device counts.
 
-### 4. The harness contract is 252 shell assertion lines
+### 4. The harness contract is 266 shell assertion lines
 
     $ grep -c 'grep -F\|grep -E' Makefile
-    252
+    266
 
 The stale figures before this remeasurement were thirty-one scenarios and 91
 matching assertions. The v0.2.0 `main` snapshot already contained thirty-two
@@ -208,8 +208,10 @@ measured 214 lines shown above. The v0.7.0 process increment appends scenario
 producing the former 231-line contract. The v0.8.0 Linux ABI increment appends
 scenario 38 and twenty BusyBox, syscall-entry, source-boundary, fixture, exit
 and transcript checks, producing 251 lines; the private paging-failure seam
-adds one source-boundary assertion, producing the measured 252 lines shown
-above. The harness
+adds one source-boundary assertion, producing the former 252 lines. The v0.9.0
+uname increment adds scenario 39 and fourteen separate fixture, exit,
+transcript, instruction-audit, and boundary assertion lines, producing the
+remeasured 266-line contract. The harness
 was extended, not refactored, so this debt is explicitly **not paid**.
 
 Most of them are one `||`-joined chain checking the normal boot transcript. It
@@ -286,11 +288,19 @@ bounded heap extent and one stdout sink. That state is generation- and
 CR3-authenticated, but it is not per-CPU, schedulable or reusable as a general
 Linux process table.
 
+The v0.9.0 uname increment adds another deliberately singular owner rather
+than making that table general: a separate executable/stack/process lifecycle,
+one UTS copy state, one six-byte stdout sink, one private filesystem session,
+and one six-call syscall profile. All are generation- and CR3-authenticated and
+released before result publication. Multiple processes, shared UTS state,
+public copy-out, hostname mutation, and SMP remain future architecture, not
+features implied by this proof.
+
 ## Not debt
 
 Measured, and healthy:
 
-- **Thirty-eight QEMU scenarios.** Runtime depends on the host; every scenario
+- **Thirty-nine QEMU scenarios.** Runtime depends on the host; every scenario
   remains bounded, including the 786,432-pixel framebuffer readback.
 - **1,942 KiB on-disk kernel ELF**, of which 21.1 KiB is the packed canonical
   Sapote mark (1,988,288 and 21,573 bytes respectively in the measured current

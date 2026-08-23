@@ -68,3 +68,28 @@ The same workflow compiles `tools/linux-uname-abi-measure.c` against both the
 runner libc and the freshly built pinned musl. Their exact syscall number,
 structure size, alignment, field order, offsets, and 65-byte field widths must
 match before the digest is pinned or implementation begins.
+
+## Installed proof contract
+
+The accepted binary is 38,368 bytes with SHA-256
+`389AD6B13804EB7307BA589C8E8A7C702F91302005A7C5FC6E9E99124FCEAF43`.
+It occupies ten FAT16 clusters in the separate image whose SHA-256 is
+`48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3`.
+The measured sequence contains six calls and six distinct numbers. The 97
+controlled robustness results are 24 ELF, 12 FAT16, 8 stack, 10 syscall-CPU,
+18 uname semantics, 18 copy-out, and 7 lifecycle controls.
+
+Scenario 39 is `linux-abi-uname`, guest exit `0x37`, host status 111. It
+requires exactly these permanent lines:
+
+```text
+Linux
+ST LINUX ABI busybox uname bytes 6 syscalls 6 output valid exit 0 ring 3 address-space private copy-out valid teardown clean robustness 97
+ST PASS linux-abi-uname
+```
+
+The scenario uses a read-only raw NVMe fixture and accepts success only after
+real CPL3 instruction fetch, real `syscall`/`IA32_LSTAR` entry, RDI copy-out,
+zero exit, kernel-CR3 restoration, and exact census equality. The inherited
+`int 0x81` gate, a direct handler call, another profile, or kernel-generated
+bytes cannot satisfy it. Ordinary boots publish one neutral absence outcome.
