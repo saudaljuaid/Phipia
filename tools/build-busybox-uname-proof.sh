@@ -7,8 +7,13 @@ if [ "$#" -ne 2 ]; then
 fi
 
 build_only=${SAPOTE_BUSYBOX_BUILD_ONLY:-0}
+candidate=${SAPOTE_UNAME_CANDIDATE:-0}
 if [ "$build_only" != 0 ] && [ "$build_only" != 1 ]; then
     printf 'SAPOTE_BUSYBOX_BUILD_ONLY must be 0 or 1\n' >&2
+    exit 2
+fi
+if [ "$candidate" != 0 ] && [ "$candidate" != 1 ]; then
+    printf 'SAPOTE_UNAME_CANDIDATE must be 0 or 1\n' >&2
     exit 2
 fi
 
@@ -59,6 +64,10 @@ musl_cflags='-Os -fno-pie -mcmodel=large -fno-stack-protector -fno-asynchronous-
         CC=gcc \
         CFLAGS="$musl_cflags"
     make --jobs=2
+    rm -f obj/src/stdio/vfprintf.o lib/libc.a
+    make --jobs=2 \
+        CFLAGS="$musl_cflags -mno-mmx -mno-sse -mno-sse2 -mfpmath=387" \
+        obj/src/stdio/vfprintf.o lib/libc.a
     make install
 )
 # musl-gcc deliberately defaults every non-shared link to Scrt1.o.  This proof
@@ -107,8 +116,10 @@ printf '%s  %s\n' "$busybox_config_sha256" \
 busybox_binary="$busybox_source/busybox"
 cp "$busybox_binary" "$output_dir/busybox"
 cp "$busybox_source/.config" "$output_dir/busybox.config"
-printf '%s  %s\n' "$busybox_binary_sha256" \
-    "$output_dir/busybox" | sha256sum --check --strict
+if [ "$candidate" = 0 ]; then
+    printf '%s  %s\n' "$busybox_binary_sha256" \
+        "$output_dir/busybox" | sha256sum --check --strict
+fi
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$output_dir/busybox.config" | sha256sum --check --strict
 cp "$busybox_source/LICENSE" "$output_dir/BUSYBOX-LICENSE"
@@ -211,12 +222,7 @@ env -i qemu-x86_64 -0 busybox -d in_asm -D "$qemu_trace" \
     >"$qemu_stdout" 2>"$qemu_stderr"
 printf 'Linux\n' | cmp --silent - "$qemu_stdout"
 test ! -s "$qemu_stderr"
-forbidden_instructions=$(grep -Ei \
-    '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*0x[0-9a-f]+:[[:space:]]+[0-9a-f ]+[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$)' \
-    "$qemu_trace" \
-    | grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true)
-test -z "$forbidden_instructions" || {
-    printf 'BusyBox exercised text contains floating-point or vector instructions:\n%s\n' \
-        "$forbidden_instructions" >&2
-    exit 1
-}
+python3 "$repository_root/tools/check-exercised-instructions.py" --self-test
+python3 "$repository_root/tools/check-exercised-instructions.py" \
+    --disassembly "$output_dir/busybox-disassembly.txt" \
+    --trace "$qemu_trace"

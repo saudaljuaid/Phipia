@@ -33,6 +33,8 @@ jobs:
                       build-essential bzip2 file qemu-user strace
             - name: Build, trace, and measure twice
               shell: bash
+              env:
+                  SAPOTE_UNAME_CANDIDATE: 1
               run: |
                   set -euo pipefail
                   bash tools/build-busybox-uname-proof.sh \
