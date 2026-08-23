@@ -292,7 +292,7 @@ verify: toolchain lint
 		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { symbol = $$0 } \
 			{ print symbol " :: " $$0 }' | \
 		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|::[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
-		grep -Ev '<cpu_linux_simd_reset>:.*[[:space:]](fninit|ldmxcsr|pxor)[[:space:]]|<cpu_read_mxcsr>:.*[[:space:]]stmxcsr[[:space:]]|<cpu_read_x87_control>:.*[[:space:]]fnstcw[[:space:]]' | \
+		grep -Ev '<cpu_linux_simd_reset>:.*[[:space:]]fninit([[:space:]]|$$)|<cpu_linux_simd_reset>:.*[[:space:]](ldmxcsr|pxor)[[:space:]]|<cpu_read_mxcsr>:.*[[:space:]]stmxcsr[[:space:]]|<cpu_read_x87_control>:.*[[:space:]]fnstcw[[:space:]]' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
 		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions outside the reviewed user-state reset shim'; echo "$$forbidden"; exit 1; }
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
