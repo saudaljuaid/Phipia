@@ -221,8 +221,6 @@ jobs:
                   } >"$release/deterministic-uts-record.txt"
                   {
                       printf 'FullMAC remains future and blocked on an upstream ordinary QEMU FullMAC device-and-peer model.\n'
-                      printf 'Feasibility report commit: de49647f15c271c31a56231334ad9ea4889f1199\n'
-                      printf 'Report: https://github.com/saudaljuaid/Sapote/blob/de49647f15c271c31a56231334ad9ea4889f1199/docs/FULLMAC_FEASIBILITY.md\n'
                       printf 'Observed QEMU surfaces: local 11.1.0 and CI 8.2.2 exposed no ordinary FullMAC device or deterministic WPA2 peer.\n'
                   } >"$release/fullmac-feasibility-reference.txt"
                   {
