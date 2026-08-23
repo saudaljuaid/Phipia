@@ -1,0 +1,73 @@
+name: Linux uname BusyBox contract
+
+on:
+    push:
+        branches:
+            - 'abi/**'
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: linux-uname-contract-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    measured-busybox-uname-contract:
+        name: measured-busybox-uname-contract
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install contract tools
+              run: |
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      build-essential bzip2 file qemu-user strace
+            - name: Build, trace, and measure twice
+              shell: bash
+              env:
+                  SAPOTE_BUSYBOX_UNAME_MEASUREMENT_MODE: 1
+              run: |
+                  set -euo pipefail
+                  bash tools/build-busybox-uname-proof.sh \
+                      evidence/linux-uname/build-one build/linux-uname/one
+                  bash tools/build-busybox-uname-proof.sh \
+                      evidence/linux-uname/build-two build/linux-uname/two
+                  cmp evidence/linux-uname/build-one/busybox \
+                      evidence/linux-uname/build-two/busybox
+                  cmp evidence/linux-uname/build-one/busybox.config \
+                      evidence/linux-uname/build-two/busybox.config
+                  gcc -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+                      tools/linux-uname-abi-measure.c \
+                      -o build/linux-uname/glibc-abi-measure
+                  build/linux-uname/glibc-abi-measure \
+                      >evidence/linux-uname/glibc-utsname-layout.txt
+                  build/linux-uname/one/musl-install/bin/musl-gcc \
+                      -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+                      tools/linux-uname-abi-measure.c \
+                      -o build/linux-uname/musl-abi-measure
+                  build/linux-uname/musl-abi-measure \
+                      >evidence/linux-uname/musl-utsname-layout.txt
+                  cmp evidence/linux-uname/glibc-utsname-layout.txt \
+                      evidence/linux-uname/musl-utsname-layout.txt
+                  sha256sum evidence/linux-uname/build-one/busybox \
+                      evidence/linux-uname/build-one/busybox.config \
+                      >evidence/linux-uname/measured-SHA256SUMS
+                  printf 'two clean source and toolchain builds: byte-identical\n' \
+                      >>evidence/linux-uname/build-one/build-record.txt
+            - name: Upload measured contract
+              if: always()
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: linux-uname-busybox-contract-${{ github.sha }}
+                  path: evidence/linux-uname
+                  if-no-files-found: error
+                  retention-days: 30
