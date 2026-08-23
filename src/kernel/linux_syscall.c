@@ -175,7 +175,7 @@ static bool canonical_user(uint64_t address)
 
 static bool user_range_shape_valid(uint64_t address, size_t length)
 {
-    return length != 0U && canonical_user(address) &&
+    return address != 0U && length != 0U && canonical_user(address) &&
         address <= UINT64_MAX - (uint64_t)(length - 1U) &&
         canonical_user(address + (uint64_t)(length - 1U));
 }
