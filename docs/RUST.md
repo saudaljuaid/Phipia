@@ -210,7 +210,7 @@ only the ten-cluster `UNAMEBOX` payload with SHA-256
 and only its exact five-header/four-load ELF conjunction. The inherited echo
 constants and entry points remain byte-for-byte separate.
 
-Unsafe code remains confined to `rust/abi.rs`, where complete C pointers are
+Unsafe code remains confined to `src/rust/abi.rs`, where complete C pointers are
 checked before becoming slices and pointer-free validated structures are
 copied back. C still owns device I/O, mappings, process lifecycle, syscall
 state, and checked UTS copy-out; it does not duplicate FAT16 or ELF decoding.

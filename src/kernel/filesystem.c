@@ -1605,8 +1605,9 @@ enum filesystem_status filesystem_linux_uname_read_open(
         destination_bytes, failure_boundary, true);
 }
 
-enum filesystem_status filesystem_linux_read_close(
-    struct filesystem_linux_file *file
+static enum filesystem_status filesystem_linux_read_close_profile(
+    struct filesystem_linux_file *file,
+    uint32_t expected_kind
 )
 {
     enum filesystem_status status;
@@ -1615,7 +1616,7 @@ enum filesystem_status filesystem_linux_read_close(
         return FILESYSTEM_STATUS_NULL_ARGUMENT;
     }
     if (!file->active || !private_read_runtime.owned ||
-        private_read_runtime.kind != PRIVATE_READ_LINUX ||
+        private_read_runtime.kind != expected_kind ||
         file->generation != private_read_runtime.generation) {
         return FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN;
     }
@@ -1626,25 +1627,19 @@ enum filesystem_status filesystem_linux_read_close(
     return status;
 }
 
+enum filesystem_status filesystem_linux_read_close(
+    struct filesystem_linux_file *file
+)
+{
+    return filesystem_linux_read_close_profile(file, PRIVATE_READ_LINUX);
+}
+
 enum filesystem_status filesystem_linux_uname_read_close(
     struct filesystem_linux_file *file
 )
 {
-    enum filesystem_status status;
-
-    if (file == NULL) {
-        return FILESYSTEM_STATUS_NULL_ARGUMENT;
-    }
-    if (!file->active || !private_read_runtime.owned ||
-        private_read_runtime.kind != PRIVATE_READ_LINUX_UNAME ||
-        file->generation != private_read_runtime.generation) {
-        return FILESYSTEM_STATUS_PRIVATE_BAD_TOKEN;
-    }
-    status = private_read_cleanup();
-    if (status == FILESYSTEM_STATUS_OK) {
-        zero_linux_file(file);
-    }
-    return status;
+    return filesystem_linux_read_close_profile(file,
+        PRIVATE_READ_LINUX_UNAME);
 }
 
 struct filesystem_file_proof filesystem_get_file_proof(void)
