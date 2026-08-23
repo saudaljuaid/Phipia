@@ -129,5 +129,9 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_linux_abi();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_LINUX_ABI_UNAME) {
+        kernel_test_complete_linux_uname();
+    }
+
     shell_run();
 }

@@ -130,6 +130,15 @@ enum filesystem_status filesystem_linux_read_open(
 enum filesystem_status filesystem_linux_read_close(
     struct filesystem_linux_file *file
 );
+enum filesystem_status filesystem_linux_uname_read_open(
+    struct filesystem_linux_file *file,
+    uint8_t *destination,
+    size_t destination_bytes,
+    uint32_t failure_boundary
+);
+enum filesystem_status filesystem_linux_uname_read_close(
+    struct filesystem_linux_file *file
+);
 bool filesystem_resources_released(void);
 const char *filesystem_status_string(enum filesystem_status status);
 

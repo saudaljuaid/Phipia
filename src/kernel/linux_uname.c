@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* One private static BusyBox process and its complete reverse-order teardown. */
+/* One private static BusyBox uname process and reverse-order teardown. */
 
-#include <sapote/linux_abi.h>
+#include <sapote/linux_uname.h>
 
 #include <sapote/console.h>
 #include <sapote/cpu.h>
@@ -15,14 +15,14 @@
 #include <sapote/paging.h>
 #include <sapote/pci_resource.h>
 
-#define LINUX_ARGUMENT_BYTES 20U
+#define LINUX_ARGUMENT_BYTES 17U
 #define LINUX_INITIAL_STACK_WORDS 10U
 #define LINUX_PAGING_FAILURE_CEILING 64U
 #define LINUX_INITIAL_USER_PAGES \
-    (PAGING_LINUX_IMAGE_PAGES + PAGING_LINUX_STACK_PAGES)
+    (PAGING_LINUX_UNAME_IMAGE_PAGES + PAGING_LINUX_STACK_PAGES)
 
-_Static_assert(LINUX_ABI_IMAGE_BYTES == LINUX_ELF64_FILE_BYTES &&
-    LINUX_ABI_IMAGE_BYTES == LINUX_FAT16_FILE_BYTES,
+_Static_assert(LINUX_UNAME_ABI_IMAGE_BYTES == LINUX_UNAME_ELF64_FILE_BYTES &&
+    LINUX_UNAME_ABI_IMAGE_BYTES == LINUX_UNAME_FAT16_FILE_BYTES,
     "Linux ABI image-byte contracts diverged");
 _Static_assert(sizeof(struct linux_fat16_chain) == 5136U &&
     _Alignof(struct linux_fat16_chain) == 8U &&
@@ -59,18 +59,20 @@ _Static_assert(sizeof(struct linux_elf64_validated_image) == 248U &&
     offsetof(struct linux_elf64_validated_image, entry) == 16U &&
     offsetof(struct linux_elf64_validated_image, segments) == 24U,
     "Rust/C Linux ELF64 validated-image ABI changed");
-_Static_assert(LINUX_ELF64_PARSER_ROBUSTNESS_CONTROLS +
-    LINUX_FAT16_ROBUSTNESS_CONTROLS +
-    LINUX_ABI_STACK_FOUNDATION_CONTROLS +
+_Static_assert(LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS +
+    LINUX_UNAME_FAT16_ROBUSTNESS_CONTROLS +
+    LINUX_UNAME_ABI_STACK_FOUNDATION_CONTROLS +
     LINUX_SYSCALL_CPU_FOUNDATION_CONTROLS +
-    LINUX_SYSCALL_SEMANTIC_CONTROLS +
-    LINUX_ABI_LIFECYCLE_CONTROLS ==
-        LINUX_ABI_CONTROLLED_ROBUSTNESS_TESTS,
+    LINUX_UNAME_SYSCALL_SEMANTIC_CONTROLS +
+    LINUX_UNAME_COPYOUT_CONTROLS +
+    LINUX_UNAME_ABI_LIFECYCLE_CONTROLS ==
+        LINUX_UNAME_ABI_CONTROLLED_ROBUSTNESS_TESTS,
     "Linux ABI robustness matrix cardinality changed");
-_Static_assert(LINUX_ABI_IMAGE_STACK_FOUNDATION_CONTROLS ==
-    LINUX_ELF64_PARSER_ROBUSTNESS_CONTROLS +
-        LINUX_ABI_STACK_FOUNDATION_CONTROLS,
-    "Linux image/stack foundation total changed");
+_Static_assert(LINUX_UNAME_ABI_IMAGE_UTS_FOUNDATION_CONTROLS ==
+    LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS +
+        LINUX_UNAME_ABI_STACK_FOUNDATION_CONTROLS +
+        LINUX_UNAME_SYSCALL_SEMANTIC_CONTROLS,
+    "Linux uname image/UTS foundation total changed");
 _Static_assert(LINUX_INITIAL_USER_PAGES <=
     PAGING_PROCESS_EXPECTED_MAX_PAGES,
     "Linux initial mappings exceed paging audit capacity");
@@ -92,13 +94,13 @@ struct linux_resource_census {
 
 struct linux_runtime {
     uint64_t generation;
-    enum linux_process_state state;
-    enum linux_executable_state executable_state;
-    enum linux_stack_state stack_state;
+    enum linux_uname_process_state state;
+    enum linux_uname_executable_state executable_state;
+    enum linux_uname_stack_state stack_state;
     struct filesystem_linux_file file;
-    uint8_t elf_bytes[LINUX_ELF64_FILE_BYTES];
+    uint8_t elf_bytes[LINUX_UNAME_ELF64_FILE_BYTES];
     struct linux_elf64_validated_image image;
-    uintptr_t image_frames[PAGING_LINUX_IMAGE_PAGES];
+    uintptr_t image_frames[PAGING_LINUX_UNAME_IMAGE_PAGES];
     uintptr_t stack_frames[PAGING_LINUX_STACK_PAGES];
     uintptr_t heap_frames[PAGING_LINUX_HEAP_PAGES];
     uintptr_t anonymous_frame;
@@ -133,6 +135,7 @@ enum linux_failure_point {
     LINUX_FAILURE_AFTER_FILESYSTEM_READ_TEN,
     LINUX_FAILURE_AFTER_FILESYSTEM_READ_ELEVEN,
     LINUX_FAILURE_AFTER_FILESYSTEM_READ_TWELVE,
+    LINUX_FAILURE_AFTER_FILESYSTEM_READ_THIRTEEN,
     LINUX_FAILURE_AFTER_PARSE,
     LINUX_FAILURE_AFTER_IMAGE_FRAME_ONE,
     LINUX_FAILURE_AFTER_IMAGE_FRAME_TWO,
@@ -143,6 +146,8 @@ enum linux_failure_point {
     LINUX_FAILURE_AFTER_IMAGE_FRAME_SEVEN,
     LINUX_FAILURE_AFTER_IMAGE_FRAME_EIGHT,
     LINUX_FAILURE_AFTER_IMAGE_FRAME_NINE,
+    LINUX_FAILURE_AFTER_IMAGE_FRAME_TEN,
+    LINUX_FAILURE_AFTER_IMAGE_FRAME_ELEVEN,
     LINUX_FAILURE_AFTER_STACK_FRAME_ONE,
     LINUX_FAILURE_AFTER_STACK_FRAME_TWO,
     LINUX_FAILURE_AFTER_STACK_FRAME_THREE,
@@ -176,6 +181,8 @@ enum linux_failure_point {
     LINUX_FAILURE_AFTER_IMAGE_MAPPING_SEVEN,
     LINUX_FAILURE_AFTER_IMAGE_MAPPING_EIGHT,
     LINUX_FAILURE_AFTER_IMAGE_MAPPING_NINE,
+    LINUX_FAILURE_AFTER_IMAGE_MAPPING_TEN,
+    LINUX_FAILURE_AFTER_IMAGE_MAPPING_ELEVEN,
     LINUX_FAILURE_AFTER_STACK_MAPPING_ONE,
     LINUX_FAILURE_AFTER_STACK_MAPPING_TWO,
     LINUX_FAILURE_AFTER_STACK_MAPPING_THREE,
@@ -189,31 +196,25 @@ enum linux_failure_point {
     LINUX_FAILURE_BEFORE_SYSCALL_FOUR,
     LINUX_FAILURE_BEFORE_SYSCALL_FIVE,
     LINUX_FAILURE_BEFORE_SYSCALL_SIX,
-    LINUX_FAILURE_BEFORE_SYSCALL_SEVEN,
-    LINUX_FAILURE_BEFORE_SYSCALL_EIGHT,
-    LINUX_FAILURE_BEFORE_SYSCALL_NINE,
     LINUX_FAILURE_AFTER_SYSCALL_ONE,
     LINUX_FAILURE_AFTER_SYSCALL_TWO,
     LINUX_FAILURE_AFTER_SYSCALL_THREE,
     LINUX_FAILURE_AFTER_SYSCALL_FOUR,
     LINUX_FAILURE_AFTER_SYSCALL_FIVE,
     LINUX_FAILURE_AFTER_SYSCALL_SIX,
-    LINUX_FAILURE_AFTER_SYSCALL_SEVEN,
-    LINUX_FAILURE_AFTER_SYSCALL_EIGHT,
-    LINUX_FAILURE_AFTER_SYSCALL_NINE,
     LINUX_FAILURE_POINT_COUNT
 };
 
-_Static_assert(LINUX_FAILURE_POINT_COUNT - 1U == 82U,
-    "Linux installed cleanup control count changed");
+_Static_assert(LINUX_FAILURE_POINT_COUNT - 1U == 81U,
+    "Linux uname installed cleanup control count changed");
 
 static struct linux_runtime runtime;
-static struct linux_abi_proof_result installed_result;
+static struct linux_uname_abi_proof_result installed_result;
 static uint64_t next_generation = UINT64_C(1);
 static bool proof_active;
 static const uint8_t linux_argv_zero[] = "busybox";
-static const uint8_t linux_argv_one[] = "echo";
-static const uint8_t linux_argv_two[] = "SAPOTE";
+static const uint8_t linux_argv_one[] = "uname";
+static const uint8_t linux_argv_two[] = "-s";
 
 static bool failure_in_range(
     enum linux_failure_point point,
@@ -224,67 +225,67 @@ static bool failure_in_range(
     return point >= first && point <= last;
 }
 
-static enum linux_abi_status failure_status(enum linux_failure_point point)
+static enum linux_uname_abi_status failure_status(enum linux_failure_point point)
 {
     if (failure_in_range(point, LINUX_FAILURE_AFTER_FILESYSTEM,
-            LINUX_FAILURE_AFTER_FILESYSTEM_READ_TWELVE)) {
-        return LINUX_ABI_STATUS_FILESYSTEM;
+            LINUX_FAILURE_AFTER_FILESYSTEM_READ_THIRTEEN)) {
+        return LINUX_UNAME_ABI_STATUS_FILESYSTEM;
     }
     if (point == LINUX_FAILURE_AFTER_PARSE) {
-        return LINUX_ABI_STATUS_ELF;
+        return LINUX_UNAME_ABI_STATUS_ELF;
     }
     if (failure_in_range(point, LINUX_FAILURE_AFTER_IMAGE_FRAME_ONE,
             LINUX_FAILURE_AFTER_ANONYMOUS_FRAME)) {
-        return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+        return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
     }
     if (point == LINUX_FAILURE_AFTER_IMAGE_INSTALL) {
-        return LINUX_ABI_STATUS_ELF_INSTALL;
+        return LINUX_UNAME_ABI_STATUS_ELF_INSTALL;
     }
     if (failure_in_range(point, LINUX_FAILURE_AFTER_STACK_STRING_ZERO,
             LINUX_FAILURE_AFTER_STACK_WORD_TEN) ||
         point == LINUX_FAILURE_AFTER_STACK_INSTALL) {
-        return LINUX_ABI_STATUS_STACK;
+        return LINUX_UNAME_ABI_STATUS_STACK;
     }
     if (point == LINUX_FAILURE_AFTER_ADDRESS_SPACE) {
-        return LINUX_ABI_STATUS_ADDRESS_SPACE;
+        return LINUX_UNAME_ABI_STATUS_ADDRESS_SPACE;
     }
     if (point == LINUX_FAILURE_AFTER_ALIAS_NARROW) {
-        return LINUX_ABI_STATUS_ALIAS;
+        return LINUX_UNAME_ABI_STATUS_ALIAS;
     }
     if (failure_in_range(point, LINUX_FAILURE_AFTER_IMAGE_MAPPING_ONE,
             LINUX_FAILURE_AFTER_STACK_MAPPING_FOUR)) {
-        return LINUX_ABI_STATUS_MAPPING;
+        return LINUX_UNAME_ABI_STATUS_MAPPING;
     }
     if (point == LINUX_FAILURE_AFTER_PERMISSION_AUDIT) {
-        return LINUX_ABI_STATUS_PERMISSION_AUDIT;
+        return LINUX_UNAME_ABI_STATUS_PERMISSION_AUDIT;
     }
     if (point == LINUX_FAILURE_AFTER_SYSCALL_ARM) {
-        return LINUX_ABI_STATUS_SYSCALL_CPU;
+        return LINUX_UNAME_ABI_STATUS_SYSCALL_CPU;
     }
     if (point == LINUX_FAILURE_AFTER_CR3_ACTIVATION) {
-        return LINUX_ABI_STATUS_ENTRY;
+        return LINUX_UNAME_ABI_STATUS_ENTRY;
     }
     if (failure_in_range(point, LINUX_FAILURE_BEFORE_SYSCALL_ONE,
-            LINUX_FAILURE_AFTER_SYSCALL_NINE)) {
-        return LINUX_ABI_STATUS_SYSCALL_CONTROL;
+            LINUX_FAILURE_AFTER_SYSCALL_SIX)) {
+        return LINUX_UNAME_ABI_STATUS_SYSCALL_CONTROL;
     }
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
 static uint32_t failure_before_ordinal(enum linux_failure_point point)
 {
     return failure_in_range(point, LINUX_FAILURE_BEFORE_SYSCALL_ONE,
-        LINUX_FAILURE_BEFORE_SYSCALL_NINE) ?
+        LINUX_FAILURE_BEFORE_SYSCALL_SIX) ?
             (uint32_t)(point - LINUX_FAILURE_BEFORE_SYSCALL_ONE + 1U) : 0U;
 }
 
 static uint32_t filesystem_failure_boundary(enum linux_failure_point point)
 {
     if (point == LINUX_FAILURE_AFTER_FILESYSTEM_OPEN) {
-        return 13U;
+        return 14U;
     }
     return failure_in_range(point, LINUX_FAILURE_AFTER_FILESYSTEM_READ_ONE,
-        LINUX_FAILURE_AFTER_FILESYSTEM_READ_TWELVE) ?
+        LINUX_FAILURE_AFTER_FILESYSTEM_READ_THIRTEEN) ?
             (uint32_t)(point - LINUX_FAILURE_AFTER_FILESYSTEM_READ_ONE + 1U) :
             0U;
 }
@@ -292,7 +293,7 @@ static uint32_t filesystem_failure_boundary(enum linux_failure_point point)
 static uint32_t failure_after_ordinal(enum linux_failure_point point)
 {
     return failure_in_range(point, LINUX_FAILURE_AFTER_SYSCALL_ONE,
-        LINUX_FAILURE_AFTER_SYSCALL_NINE) ?
+        LINUX_FAILURE_AFTER_SYSCALL_SIX) ?
             (uint32_t)(point - LINUX_FAILURE_AFTER_SYSCALL_ONE + 1U) : 0U;
 }
 
@@ -305,7 +306,7 @@ static void zero_bytes(void *pointer, size_t length)
     }
 }
 
-static bool proof_result_zero(const struct linux_abi_proof_result *result)
+static bool proof_result_zero(const struct linux_uname_abi_proof_result *result)
 {
     const uint8_t *bytes = (const uint8_t *)(const void *)result;
 
@@ -320,8 +321,8 @@ static bool proof_result_zero(const struct linux_abi_proof_result *result)
 static void report_control_failure(
     const char *kind,
     uint64_t ordinal,
-    enum linux_abi_status status,
-    enum linux_abi_status expected,
+    enum linux_uname_abi_status status,
+    enum linux_uname_abi_status expected,
     bool observed
 )
 {
@@ -342,126 +343,126 @@ static bool canonical_user(uint64_t address)
     return address <= UINT64_C(0x00007FFFFFFFFFFF);
 }
 
-static enum linux_abi_status transition_process(
-    enum linux_process_state *state,
-    enum linux_process_state next
+static enum linux_uname_abi_status transition_process(
+    enum linux_uname_process_state *state,
+    enum linux_uname_process_state next
 )
 {
     bool allowed = false;
 
-    if (state == NULL || next >= LINUX_PROCESS_STATE_COUNT) {
-        return LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (state == NULL || next >= LINUX_UNAME_PROCESS_STATE_COUNT) {
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     if (*state == next) {
-        return LINUX_ABI_STATUS_TRANSITION_REPEATED;
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED;
     }
     switch (*state) {
-    case LINUX_PROCESS_CANDIDATE:
-        allowed = next == LINUX_PROCESS_BUILDING ||
-            next == LINUX_PROCESS_STOPPING;
+    case LINUX_UNAME_PROCESS_CANDIDATE:
+        allowed = next == LINUX_UNAME_PROCESS_BUILDING ||
+            next == LINUX_UNAME_PROCESS_STOPPING;
         break;
-    case LINUX_PROCESS_BUILDING:
-        allowed = next == LINUX_PROCESS_INSTALLED ||
-            next == LINUX_PROCESS_STOPPING;
+    case LINUX_UNAME_PROCESS_BUILDING:
+        allowed = next == LINUX_UNAME_PROCESS_INSTALLED ||
+            next == LINUX_UNAME_PROCESS_STOPPING;
         break;
-    case LINUX_PROCESS_INSTALLED:
-        allowed = next == LINUX_PROCESS_RUNNING ||
-            next == LINUX_PROCESS_STOPPING;
+    case LINUX_UNAME_PROCESS_INSTALLED:
+        allowed = next == LINUX_UNAME_PROCESS_RUNNING ||
+            next == LINUX_UNAME_PROCESS_STOPPING;
         break;
-    case LINUX_PROCESS_RUNNING:
-        allowed = next == LINUX_PROCESS_EXITING ||
-            next == LINUX_PROCESS_STOPPING;
+    case LINUX_UNAME_PROCESS_RUNNING:
+        allowed = next == LINUX_UNAME_PROCESS_EXITING ||
+            next == LINUX_UNAME_PROCESS_STOPPING;
         break;
-    case LINUX_PROCESS_EXITING:
-        allowed = next == LINUX_PROCESS_STOPPING;
+    case LINUX_UNAME_PROCESS_EXITING:
+        allowed = next == LINUX_UNAME_PROCESS_STOPPING;
         break;
-    case LINUX_PROCESS_STOPPING:
-        allowed = next == LINUX_PROCESS_RELEASED;
+    case LINUX_UNAME_PROCESS_STOPPING:
+        allowed = next == LINUX_UNAME_PROCESS_RELEASED;
         break;
-    case LINUX_PROCESS_RELEASED:
-    case LINUX_PROCESS_STATE_COUNT:
+    case LINUX_UNAME_PROCESS_RELEASED:
+    case LINUX_UNAME_PROCESS_STATE_COUNT:
         break;
     }
     if (!allowed) {
-        return next < *state ? LINUX_ABI_STATUS_TRANSITION_REVERSED :
-            LINUX_ABI_STATUS_TRANSITION_INVALID;
+        return next < *state ? LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED :
+            LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     *state = next;
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
-static enum linux_abi_status transition_executable(
-    enum linux_executable_state *state,
-    enum linux_executable_state next
+static enum linux_uname_abi_status transition_executable(
+    enum linux_uname_executable_state *state,
+    enum linux_uname_executable_state next
 )
 {
     bool allowed = false;
 
-    if (state == NULL || next >= LINUX_EXECUTABLE_STATE_COUNT) {
-        return LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (state == NULL || next >= LINUX_UNAME_EXECUTABLE_STATE_COUNT) {
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     if (*state == next) {
-        return LINUX_ABI_STATUS_TRANSITION_REPEATED;
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED;
     }
     switch (*state) {
-    case LINUX_EXECUTABLE_CANDIDATE:
-        allowed = next == LINUX_EXECUTABLE_VALIDATED ||
-            next == LINUX_EXECUTABLE_RELEASED;
+    case LINUX_UNAME_EXECUTABLE_CANDIDATE:
+        allowed = next == LINUX_UNAME_EXECUTABLE_VALIDATED ||
+            next == LINUX_UNAME_EXECUTABLE_RELEASED;
         break;
-    case LINUX_EXECUTABLE_VALIDATED:
-        allowed = next == LINUX_EXECUTABLE_INSTALLED ||
-            next == LINUX_EXECUTABLE_RELEASED;
+    case LINUX_UNAME_EXECUTABLE_VALIDATED:
+        allowed = next == LINUX_UNAME_EXECUTABLE_INSTALLED ||
+            next == LINUX_UNAME_EXECUTABLE_RELEASED;
         break;
-    case LINUX_EXECUTABLE_INSTALLED:
-        allowed = next == LINUX_EXECUTABLE_RELEASED;
+    case LINUX_UNAME_EXECUTABLE_INSTALLED:
+        allowed = next == LINUX_UNAME_EXECUTABLE_RELEASED;
         break;
-    case LINUX_EXECUTABLE_RELEASED:
-    case LINUX_EXECUTABLE_STATE_COUNT:
+    case LINUX_UNAME_EXECUTABLE_RELEASED:
+    case LINUX_UNAME_EXECUTABLE_STATE_COUNT:
         break;
     }
     if (!allowed) {
-        return next < *state ? LINUX_ABI_STATUS_TRANSITION_REVERSED :
-            LINUX_ABI_STATUS_TRANSITION_INVALID;
+        return next < *state ? LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED :
+            LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     *state = next;
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
-static enum linux_abi_status transition_stack(
-    enum linux_stack_state *state,
-    enum linux_stack_state next
+static enum linux_uname_abi_status transition_stack(
+    enum linux_uname_stack_state *state,
+    enum linux_uname_stack_state next
 )
 {
     bool allowed = false;
 
-    if (state == NULL || next >= LINUX_STACK_STATE_COUNT) {
-        return LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (state == NULL || next >= LINUX_UNAME_STACK_STATE_COUNT) {
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     if (*state == next) {
-        return LINUX_ABI_STATUS_TRANSITION_REPEATED;
+        return LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED;
     }
     switch (*state) {
-    case LINUX_STACK_CANDIDATE:
-        allowed = next == LINUX_STACK_BUILDING ||
-            next == LINUX_STACK_RELEASED;
+    case LINUX_UNAME_STACK_CANDIDATE:
+        allowed = next == LINUX_UNAME_STACK_BUILDING ||
+            next == LINUX_UNAME_STACK_RELEASED;
         break;
-    case LINUX_STACK_BUILDING:
-        allowed = next == LINUX_STACK_INSTALLED ||
-            next == LINUX_STACK_RELEASED;
+    case LINUX_UNAME_STACK_BUILDING:
+        allowed = next == LINUX_UNAME_STACK_INSTALLED ||
+            next == LINUX_UNAME_STACK_RELEASED;
         break;
-    case LINUX_STACK_INSTALLED:
-        allowed = next == LINUX_STACK_RELEASED;
+    case LINUX_UNAME_STACK_INSTALLED:
+        allowed = next == LINUX_UNAME_STACK_RELEASED;
         break;
-    case LINUX_STACK_RELEASED:
-    case LINUX_STACK_STATE_COUNT:
+    case LINUX_UNAME_STACK_RELEASED:
+    case LINUX_UNAME_STACK_STATE_COUNT:
         break;
     }
     if (!allowed) {
-        return next < *state ? LINUX_ABI_STATUS_TRANSITION_REVERSED :
-            LINUX_ABI_STATUS_TRANSITION_INVALID;
+        return next < *state ? LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED :
+            LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
     }
     *state = next;
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
 static void capture_census(struct linux_resource_census *census)
@@ -522,18 +523,18 @@ static bool validated_placement(
 )
 {
     if (image == NULL || image->valid != 1U ||
-        image->program_header_count != LINUX_ELF64_PROGRAM_HEADERS ||
-        image->segment_count != LINUX_ELF64_LOAD_SEGMENTS ||
-        image->non_load_count != 1U || image->entry != LINUX_ELF64_ENTRY) {
+        image->program_header_count != LINUX_UNAME_ELF64_PROGRAM_HEADERS ||
+        image->segment_count != LINUX_UNAME_ELF64_LOAD_SEGMENTS ||
+        image->non_load_count != 1U || image->entry != LINUX_UNAME_ELF64_ENTRY) {
         return false;
     }
-    for (size_t index = 0U; index < LINUX_ELF64_LOAD_SEGMENTS; ++index) {
+    for (size_t index = 0U; index < LINUX_UNAME_ELF64_LOAD_SEGMENTS; ++index) {
         const struct linux_elf64_segment *segment = &image->segments[index];
 
         if (segment->reserved != 0U || segment->file_size == 0U ||
             segment->memory_size < segment->file_size ||
-            segment->mapping_start < PAGING_LINUX_IMAGE_BASE ||
-            segment->mapping_end > PAGING_LINUX_IMAGE_END ||
+            segment->mapping_start < PAGING_LINUX_UNAME_IMAGE_BASE ||
+            segment->mapping_end > PAGING_LINUX_UNAME_IMAGE_END ||
             segment->mapping_start >= segment->mapping_end ||
             !canonical_user(segment->virtual_address) ||
             !canonical_user(segment->mapping_end - 1U)) {
@@ -566,12 +567,12 @@ static bool image_write(
     size_t remaining = length;
 
     if (source == NULL || length == 0U ||
-        virtual_address < PAGING_LINUX_IMAGE_BASE ||
-        virtual_address > PAGING_LINUX_IMAGE_END - length) {
+        virtual_address < PAGING_LINUX_UNAME_IMAGE_BASE ||
+        virtual_address > PAGING_LINUX_UNAME_IMAGE_END - length) {
         return false;
     }
     while (remaining > 0U) {
-        const size_t page = (size_t)((cursor - PAGING_LINUX_IMAGE_BASE) /
+        const size_t page = (size_t)((cursor - PAGING_LINUX_UNAME_IMAGE_BASE) /
             PAGING_PAGE_SIZE);
         const size_t page_offset = (size_t)(cursor &
             (PAGING_PAGE_SIZE - 1U));
@@ -600,7 +601,7 @@ static bool image_write(
 static bool install_image(void)
 {
     for (size_t segment_index = 0U;
-         segment_index < LINUX_ELF64_LOAD_SEGMENTS; ++segment_index) {
+         segment_index < LINUX_UNAME_ELF64_LOAD_SEGMENTS; ++segment_index) {
         const struct linux_elf64_segment *segment =
             &runtime.image.segments[segment_index];
         const size_t offset = (size_t)segment->file_offset;
@@ -738,8 +739,8 @@ static bool initial_stack_installed_valid(uint64_t vector_address)
         LINUX_ARGUMENT_BYTES;
     const uint8_t expected[LINUX_ARGUMENT_BYTES] = {
         'b', 'u', 's', 'y', 'b', 'o', 'x', 0,
-        'e', 'c', 'h', 'o', 0,
-        'S', 'A', 'P', 'O', 'T', 'E', 0
+        'u', 'n', 'a', 'm', 'e', 0,
+        '-', 's', 0
     };
 
     if (!stack_read((uint8_t *)(void *)words, vector_address,
@@ -812,10 +813,10 @@ static bool build_initial_stack(enum linux_failure_point failure_point)
 static uint32_t page_permissions(size_t page)
 {
     for (size_t segment_index = 0U;
-         segment_index < LINUX_ELF64_LOAD_SEGMENTS; ++segment_index) {
+         segment_index < LINUX_UNAME_ELF64_LOAD_SEGMENTS; ++segment_index) {
         const struct linux_elf64_segment *segment =
             &runtime.image.segments[segment_index];
-        const uint64_t address = PAGING_LINUX_IMAGE_BASE +
+        const uint64_t address = PAGING_LINUX_UNAME_IMAGE_BASE +
             page * PAGING_PAGE_SIZE;
 
         if (address >= segment->mapping_start &&
@@ -836,14 +837,14 @@ static bool map_initial_pages(enum linux_failure_point failure_point)
 {
     size_t expected = 0U;
 
-    for (size_t page = 0U; page < PAGING_LINUX_IMAGE_PAGES; ++page) {
-        const uint64_t address = PAGING_LINUX_IMAGE_BASE +
+    for (size_t page = 0U; page < PAGING_LINUX_UNAME_IMAGE_PAGES; ++page) {
+        const uint64_t address = PAGING_LINUX_UNAME_IMAGE_BASE +
             page * PAGING_PAGE_SIZE;
         const uint32_t permissions = page_permissions(page);
 
         if (permissions == UINT32_MAX ||
             paging_process_map_user_page(&runtime.address_space,
-                PAGING_PROCESS_MAPPING_LINUX_IMAGE, address,
+                PAGING_PROCESS_MAPPING_LINUX_UNAME_IMAGE, address,
                 runtime.image_frames[page], permissions) != PAGING_STATUS_OK) {
             return false;
         }
@@ -884,13 +885,13 @@ static bool map_initial_pages(enum linux_failure_point failure_point)
 
 static bool exit_observed(uint64_t process_generation)
 {
-    return runtime.active && runtime.state == LINUX_PROCESS_RUNNING &&
+    return runtime.active && runtime.state == LINUX_UNAME_PROCESS_RUNNING &&
         runtime.generation == process_generation &&
         runtime.address_space.state == PAGING_PROCESS_SPACE_ACTIVE &&
         (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) ==
             runtime.address_space.root_physical_address &&
-        transition_process(&runtime.state, LINUX_PROCESS_EXITING) ==
-            LINUX_ABI_STATUS_OK;
+        transition_process(&runtime.state, LINUX_UNAME_PROCESS_EXITING) ==
+            LINUX_UNAME_ABI_STATUS_OK;
 }
 
 static bool unmap_if_present(
@@ -910,7 +911,7 @@ static bool unmap_if_present(
             PAGING_STATUS_OK;
 }
 
-static enum linux_abi_status release_runtime(enum linux_abi_status result)
+static enum linux_uname_abi_status release_runtime(enum linux_uname_abi_status result)
 {
     bool cleanup_failed = false;
 
@@ -920,10 +921,10 @@ static enum linux_abi_status release_runtime(enum linux_abi_status result)
             PAGING_STATUS_OK) {
         cleanup_failed = true;
     }
-    if (runtime.state != LINUX_PROCESS_STOPPING &&
-        runtime.state != LINUX_PROCESS_RELEASED &&
-        transition_process(&runtime.state, LINUX_PROCESS_STOPPING) !=
-            LINUX_ABI_STATUS_OK) {
+    if (runtime.state != LINUX_UNAME_PROCESS_STOPPING &&
+        runtime.state != LINUX_UNAME_PROCESS_RELEASED &&
+        transition_process(&runtime.state, LINUX_UNAME_PROCESS_STOPPING) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
         cleanup_failed = true;
     }
     if (!linux_syscall_resources_released() &&
@@ -961,8 +962,8 @@ static enum linux_abi_status release_runtime(enum linux_abi_status result)
         const size_t page = mapped - 1U;
 
         if (paging_process_unmap_user_page(&runtime.address_space,
-                PAGING_PROCESS_MAPPING_LINUX_IMAGE,
-                PAGING_LINUX_IMAGE_BASE + page * PAGING_PAGE_SIZE) !=
+                PAGING_PROCESS_MAPPING_LINUX_UNAME_IMAGE,
+                PAGING_LINUX_UNAME_IMAGE_BASE + page * PAGING_PAGE_SIZE) !=
                 PAGING_STATUS_OK) {
             cleanup_failed = true;
         } else {
@@ -1022,23 +1023,23 @@ static enum linux_abi_status release_runtime(enum linux_abi_status result)
         }
     }
     zero_bytes(runtime.elf_bytes, sizeof(runtime.elf_bytes));
-    if (runtime.executable_state != LINUX_EXECUTABLE_RELEASED &&
+    if (runtime.executable_state != LINUX_UNAME_EXECUTABLE_RELEASED &&
         transition_executable(&runtime.executable_state,
-            LINUX_EXECUTABLE_RELEASED) != LINUX_ABI_STATUS_OK) {
+            LINUX_UNAME_EXECUTABLE_RELEASED) != LINUX_UNAME_ABI_STATUS_OK) {
         cleanup_failed = true;
     }
-    if (runtime.stack_state != LINUX_STACK_RELEASED &&
-        transition_stack(&runtime.stack_state, LINUX_STACK_RELEASED) !=
-            LINUX_ABI_STATUS_OK) {
+    if (runtime.stack_state != LINUX_UNAME_STACK_RELEASED &&
+        transition_stack(&runtime.stack_state, LINUX_UNAME_STACK_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
         cleanup_failed = true;
     }
     if (runtime.file.active &&
-        filesystem_linux_read_close(&runtime.file) != FILESYSTEM_STATUS_OK) {
+        filesystem_linux_uname_read_close(&runtime.file) != FILESYSTEM_STATUS_OK) {
         cleanup_failed = true;
     }
-    if (runtime.state == LINUX_PROCESS_STOPPING &&
-        transition_process(&runtime.state, LINUX_PROCESS_RELEASED) !=
-            LINUX_ABI_STATUS_OK) {
+    if (runtime.state == LINUX_UNAME_PROCESS_STOPPING &&
+        transition_process(&runtime.state, LINUX_UNAME_PROCESS_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
         cleanup_failed = true;
     }
     runtime.active = false;
@@ -1046,7 +1047,7 @@ static enum linux_abi_status release_runtime(enum linux_abi_status result)
     if (runtime.interrupts_were_enabled) {
         cpu_interrupt_enable();
     }
-    return cleanup_failed ? LINUX_ABI_STATUS_TEARDOWN : result;
+    return cleanup_failed ? LINUX_UNAME_ABI_STATUS_TEARDOWN : result;
 }
 
 static bool initial_stack_foundation_self_test(void)
@@ -1088,125 +1089,125 @@ static bool initial_stack_foundation_self_test(void)
     return true;
 }
 
-bool linux_abi_image_stack_foundation_self_test(size_t *completed_tests)
+bool linux_uname_image_uts_foundation_self_test(size_t *completed_tests)
 {
-    enum linux_process_state state = LINUX_PROCESS_CANDIDATE;
-    enum linux_executable_state executable = LINUX_EXECUTABLE_CANDIDATE;
-    enum linux_stack_state stack = LINUX_STACK_CANDIDATE;
+    enum linux_uname_process_state state = LINUX_UNAME_PROCESS_CANDIDATE;
+    enum linux_uname_executable_state executable = LINUX_UNAME_EXECUTABLE_CANDIDATE;
+    enum linux_uname_stack_state stack = LINUX_UNAME_STACK_CANDIDATE;
 
     if (completed_tests == NULL) {
         return false;
     }
     *completed_tests = 0U;
-    if (sapote_linux_elf64_self_test() !=
-            LINUX_ELF64_PARSER_ROBUSTNESS_CONTROLS ||
-        (PAGING_LINUX_IMAGE_BASE & (PAGING_PAGE_SIZE - 1U)) != 0U ||
+    if (sapote_linux_uname_elf64_self_test() !=
+            LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS ||
+        (PAGING_LINUX_UNAME_IMAGE_BASE & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         (PAGING_LINUX_STACK_GUARD & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         (PAGING_LINUX_STACK_END & UINT64_C(15)) != 0U ||
-        !canonical_user(PAGING_LINUX_IMAGE_BASE) ||
+        !canonical_user(PAGING_LINUX_UNAME_IMAGE_BASE) ||
         !canonical_user(PAGING_LINUX_STACK_END - 1U) ||
-        PAGING_LINUX_IMAGE_END > PAGING_LINUX_HEAP_BASE ||
+        PAGING_LINUX_UNAME_IMAGE_END > PAGING_LINUX_HEAP_BASE ||
         PAGING_LINUX_HEAP_BASE +
             PAGING_LINUX_HEAP_PAGES * PAGING_PAGE_SIZE >
                 PAGING_LINUX_ANON_ADDRESS ||
         PAGING_LINUX_ANON_ADDRESS + PAGING_PAGE_SIZE >
             PAGING_LINUX_STACK_GUARD ||
-        LINUX_ARGUMENT_BYTES != 20U || LINUX_INITIAL_STACK_WORDS != 10U ||
+        LINUX_ARGUMENT_BYTES != 17U || LINUX_INITIAL_STACK_WORDS != 10U ||
         !initial_stack_foundation_self_test() ||
         !linux_syscall_enosys_self_test() ||
-        !linux_syscall_semantic_self_test() ||
-        transition_process(&state, LINUX_PROCESS_BUILDING) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_process(&state, LINUX_PROCESS_INSTALLED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_process(&state, LINUX_PROCESS_RUNNING) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_process(&state, LINUX_PROCESS_EXITING) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_process(&state, LINUX_PROCESS_STOPPING) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_process(&state, LINUX_PROCESS_RELEASED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_executable(&executable, LINUX_EXECUTABLE_VALIDATED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_executable(&executable, LINUX_EXECUTABLE_INSTALLED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_executable(&executable, LINUX_EXECUTABLE_RELEASED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_stack(&stack, LINUX_STACK_BUILDING) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_stack(&stack, LINUX_STACK_INSTALLED) !=
-            LINUX_ABI_STATUS_OK ||
-        transition_stack(&stack, LINUX_STACK_RELEASED) !=
-            LINUX_ABI_STATUS_OK) {
+        !linux_syscall_uname_semantic_self_test() ||
+        transition_process(&state, LINUX_UNAME_PROCESS_BUILDING) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_process(&state, LINUX_UNAME_PROCESS_INSTALLED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_process(&state, LINUX_UNAME_PROCESS_RUNNING) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_process(&state, LINUX_UNAME_PROCESS_EXITING) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_process(&state, LINUX_UNAME_PROCESS_STOPPING) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_process(&state, LINUX_UNAME_PROCESS_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_executable(&executable, LINUX_UNAME_EXECUTABLE_VALIDATED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_executable(&executable, LINUX_UNAME_EXECUTABLE_INSTALLED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_executable(&executable, LINUX_UNAME_EXECUTABLE_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_stack(&stack, LINUX_UNAME_STACK_BUILDING) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_stack(&stack, LINUX_UNAME_STACK_INSTALLED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
+        transition_stack(&stack, LINUX_UNAME_STACK_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
         return false;
     }
-    state = LINUX_PROCESS_BUILDING;
-    if (transition_process(&state, LINUX_PROCESS_BUILDING) !=
-            LINUX_ABI_STATUS_TRANSITION_REPEATED ||
-        transition_process(&state, LINUX_PROCESS_CANDIDATE) !=
-            LINUX_ABI_STATUS_TRANSITION_REVERSED ||
-        transition_executable(&executable, LINUX_EXECUTABLE_RELEASED) !=
-            LINUX_ABI_STATUS_TRANSITION_REPEATED ||
-        transition_executable(&executable, LINUX_EXECUTABLE_CANDIDATE) !=
-            LINUX_ABI_STATUS_TRANSITION_REVERSED ||
-        transition_stack(&stack, LINUX_STACK_RELEASED) !=
-            LINUX_ABI_STATUS_TRANSITION_REPEATED ||
-        transition_stack(&stack, LINUX_STACK_CANDIDATE) !=
-            LINUX_ABI_STATUS_TRANSITION_REVERSED ||
-        !linux_abi_resources_released()) {
+    state = LINUX_UNAME_PROCESS_BUILDING;
+    if (transition_process(&state, LINUX_UNAME_PROCESS_BUILDING) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED ||
+        transition_process(&state, LINUX_UNAME_PROCESS_CANDIDATE) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED ||
+        transition_executable(&executable, LINUX_UNAME_EXECUTABLE_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED ||
+        transition_executable(&executable, LINUX_UNAME_EXECUTABLE_CANDIDATE) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED ||
+        transition_stack(&stack, LINUX_UNAME_STACK_RELEASED) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REPEATED ||
+        transition_stack(&stack, LINUX_UNAME_STACK_CANDIDATE) !=
+            LINUX_UNAME_ABI_STATUS_TRANSITION_REVERSED ||
+        !linux_uname_abi_resources_released()) {
         return false;
     }
-    *completed_tests = LINUX_ABI_IMAGE_STACK_FOUNDATION_CONTROLS;
+    *completed_tests = LINUX_UNAME_ABI_IMAGE_UTS_FOUNDATION_CONTROLS;
     return true;
 }
 
-static enum linux_abi_status allocate_runtime_frames(
+static enum linux_uname_abi_status allocate_runtime_frames(
     enum linux_failure_point failure_point
 )
 {
-    for (size_t page = 0U; page < PAGING_LINUX_IMAGE_PAGES; ++page) {
+    for (size_t page = 0U; page < PAGING_LINUX_UNAME_IMAGE_PAGES; ++page) {
         if (frame_allocate(&runtime.image_frames[page]) != FRAME_STATUS_OK ||
             !initialize_frame(runtime.image_frames[page])) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
         ++runtime.image_frame_count;
         if (failure_point == LINUX_FAILURE_AFTER_IMAGE_FRAME_ONE + page) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
     }
     for (size_t page = 0U; page < PAGING_LINUX_STACK_PAGES; ++page) {
         if (frame_allocate(&runtime.stack_frames[page]) != FRAME_STATUS_OK ||
             !initialize_frame(runtime.stack_frames[page])) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
         ++runtime.stack_frame_count;
         if (failure_point == LINUX_FAILURE_AFTER_STACK_FRAME_ONE + page) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
     }
     for (size_t page = 0U; page < PAGING_LINUX_HEAP_PAGES; ++page) {
         if (frame_allocate(&runtime.heap_frames[page]) != FRAME_STATUS_OK ||
             !initialize_frame(runtime.heap_frames[page])) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
         ++runtime.heap_frame_count;
         if (failure_point == LINUX_FAILURE_AFTER_HEAP_FRAME_ONE + page) {
-            return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+            return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
         }
     }
     if (frame_allocate(&runtime.anonymous_frame) != FRAME_STATUS_OK ||
         !initialize_frame(runtime.anonymous_frame)) {
-        return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+        return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
     }
     if (failure_point == LINUX_FAILURE_AFTER_ANONYMOUS_FRAME) {
-        return LINUX_ABI_STATUS_FRAME_ALLOCATION;
+        return LINUX_UNAME_ABI_STATUS_FRAME_ALLOCATION;
     }
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
-static enum linux_abi_status linux_attempt(
-    struct linux_abi_proof_result *result,
+static enum linux_uname_abi_status linux_attempt(
+    struct linux_uname_abi_proof_result *result,
     enum linux_failure_point failure_point,
     size_t table_failure_ordinal,
     bool *table_failure_observed
@@ -1215,10 +1216,10 @@ static enum linux_abi_status linux_attempt(
     struct linux_resource_census before;
     struct linux_resource_census after;
     struct linux_syscall_context syscall_context;
-    uint64_t executable_aliases[PAGING_LINUX_IMAGE_EXECUTE_PAGES];
+    uint64_t executable_aliases[PAGING_LINUX_UNAME_IMAGE_EXECUTE_PAGES];
     uint32_t file_bytes = 0U;
     uint32_t file_clusters = 0U;
-    enum linux_abi_status status = LINUX_ABI_STATUS_OK;
+    enum linux_uname_abi_status status = LINUX_UNAME_ABI_STATUS_OK;
     enum filesystem_status filesystem_status;
 
     if (result == NULL || table_failure_observed == NULL ||
@@ -1226,18 +1227,18 @@ static enum linux_abi_status linux_attempt(
         table_failure_ordinal > LINUX_PAGING_FAILURE_CEILING ||
         (failure_point != LINUX_FAILURE_NONE &&
             table_failure_ordinal != 0U)) {
-        return LINUX_ABI_STATUS_NULL_ARGUMENT;
+        return LINUX_UNAME_ABI_STATUS_NULL_ARGUMENT;
     }
     zero_bytes(result, sizeof(*result));
     *table_failure_observed = false;
-    if (proof_active || !linux_abi_resources_released()) {
-        return LINUX_ABI_STATUS_BUSY;
+    if (proof_active || !linux_uname_abi_resources_released()) {
+        return LINUX_UNAME_ABI_STATUS_BUSY;
     }
     capture_census(&before);
     zero_bytes(&runtime, sizeof(runtime));
-    runtime.state = LINUX_PROCESS_CANDIDATE;
-    runtime.executable_state = LINUX_EXECUTABLE_CANDIDATE;
-    runtime.stack_state = LINUX_STACK_CANDIDATE;
+    runtime.state = LINUX_UNAME_PROCESS_CANDIDATE;
+    runtime.executable_state = LINUX_UNAME_EXECUTABLE_CANDIDATE;
+    runtime.stack_state = LINUX_UNAME_STACK_CANDIDATE;
     runtime.generation = next_generation++;
     if (next_generation == 0U) {
         next_generation = 1U;
@@ -1245,26 +1246,26 @@ static enum linux_abi_status linux_attempt(
     runtime.interrupts_were_enabled = before.interrupts_enabled;
     runtime.active = true;
     proof_active = true;
-    if (transition_process(&runtime.state, LINUX_PROCESS_BUILDING) !=
-            LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (transition_process(&runtime.state, LINUX_UNAME_PROCESS_BUILDING) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
         goto cleanup;
     }
-    filesystem_status = filesystem_linux_read_open(&runtime.file,
+    filesystem_status = filesystem_linux_uname_read_open(&runtime.file,
         runtime.elf_bytes, sizeof(runtime.elf_bytes),
         filesystem_failure_boundary(failure_point));
     if (filesystem_status == FILESYSTEM_STATUS_ABSENT) {
-        status = LINUX_ABI_STATUS_ABSENT;
+        status = LINUX_UNAME_ABI_STATUS_ABSENT;
         goto cleanup;
     }
     if (filesystem_status != FILESYSTEM_STATUS_OK ||
         !runtime.file.cpu_owned ||
-        runtime.file.file_bytes != LINUX_ELF64_FILE_BYTES ||
-        runtime.file.cluster_count != LINUX_FAT16_FILE_CLUSTERS ||
-        runtime.file.read_count != 3U + LINUX_FAT16_FILE_CLUSTERS ||
+        runtime.file.file_bytes != LINUX_UNAME_ELF64_FILE_BYTES ||
+        runtime.file.cluster_count != LINUX_UNAME_FAT16_FILE_CLUSTERS ||
+        runtime.file.read_count != 3U + LINUX_UNAME_FAT16_FILE_CLUSTERS ||
         runtime.file.msix_completion_count !=
-            3U + LINUX_FAT16_FILE_CLUSTERS) {
-        status = LINUX_ABI_STATUS_FILESYSTEM;
+            3U + LINUX_UNAME_FAT16_FILE_CLUSTERS) {
+        status = LINUX_UNAME_ABI_STATUS_FILESYSTEM;
         goto cleanup;
     }
     file_bytes = runtime.file.file_bytes;
@@ -1273,15 +1274,15 @@ static enum linux_abi_status linux_attempt(
         status = failure_status(failure_point);
         goto cleanup;
     }
-    if (sapote_linux_elf64_parse(runtime.elf_bytes,
+    if (sapote_linux_uname_elf64_parse(runtime.elf_bytes,
             sizeof(runtime.elf_bytes), &runtime.image) !=
             LINUX_ELF64_STATUS_OK || !validated_placement(&runtime.image)) {
-        status = LINUX_ABI_STATUS_ELF;
+        status = LINUX_UNAME_ABI_STATUS_ELF;
         goto cleanup;
     }
     if (transition_executable(&runtime.executable_state,
-            LINUX_EXECUTABLE_VALIDATED) != LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_TRANSITION_INVALID;
+            LINUX_UNAME_EXECUTABLE_VALIDATED) != LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_PARSE) {
@@ -1289,34 +1290,34 @@ static enum linux_abi_status linux_attempt(
         goto cleanup;
     }
     status = allocate_runtime_frames(failure_point);
-    if (status != LINUX_ABI_STATUS_OK) {
+    if (status != LINUX_UNAME_ABI_STATUS_OK) {
         goto cleanup;
     }
     if (!install_image()) {
-        status = LINUX_ABI_STATUS_ELF_INSTALL;
+        status = LINUX_UNAME_ABI_STATUS_ELF_INSTALL;
         goto cleanup;
     }
     if (transition_executable(&runtime.executable_state,
-            LINUX_EXECUTABLE_INSTALLED) != LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_TRANSITION_INVALID;
+            LINUX_UNAME_EXECUTABLE_INSTALLED) != LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_IMAGE_INSTALL) {
         status = failure_status(failure_point);
         goto cleanup;
     }
-    if (transition_stack(&runtime.stack_state, LINUX_STACK_BUILDING) !=
-            LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (transition_stack(&runtime.stack_state, LINUX_UNAME_STACK_BUILDING) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
         goto cleanup;
     }
     if (!build_initial_stack(failure_point)) {
-        status = LINUX_ABI_STATUS_STACK;
+        status = LINUX_UNAME_ABI_STATUS_STACK;
         goto cleanup;
     }
-    if (transition_stack(&runtime.stack_state, LINUX_STACK_INSTALLED) !=
-            LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_TRANSITION_INVALID;
+    if (transition_stack(&runtime.stack_state, LINUX_UNAME_STACK_INSTALLED) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_TRANSITION_INVALID;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_STACK_INSTALL) {
@@ -1325,12 +1326,12 @@ static enum linux_abi_status linux_attempt(
     }
     if (table_failure_ordinal != 0U &&
         !paging_process_table_failure_arm(table_failure_ordinal)) {
-        status = LINUX_ABI_STATUS_ROBUSTNESS;
+        status = LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
         goto cleanup;
     }
     if (paging_process_space_build(&runtime.address_space) !=
             PAGING_STATUS_OK) {
-        status = LINUX_ABI_STATUS_ADDRESS_SPACE;
+        status = LINUX_UNAME_ABI_STATUS_ADDRESS_SPACE;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_ADDRESS_SPACE) {
@@ -1338,14 +1339,14 @@ static enum linux_abi_status linux_attempt(
         goto cleanup;
     }
     cpu_interrupt_disable();
-    for (size_t page = 0U; page < PAGING_LINUX_IMAGE_EXECUTE_PAGES; ++page) {
+    for (size_t page = 0U; page < PAGING_LINUX_UNAME_IMAGE_EXECUTE_PAGES; ++page) {
         executable_aliases[page] = runtime.image_frames[
-            page + PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE];
+            page + PAGING_LINUX_UNAME_IMAGE_EXECUTE_FIRST_PAGE];
     }
     if (paging_process_alias_set_narrow(&runtime.address_space,
-            executable_aliases, PAGING_LINUX_IMAGE_EXECUTE_PAGES,
+            executable_aliases, PAGING_LINUX_UNAME_IMAGE_EXECUTE_PAGES,
             &runtime.aliases) != PAGING_STATUS_OK) {
-        status = LINUX_ABI_STATUS_ALIAS;
+        status = LINUX_UNAME_ABI_STATUS_ALIAS;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_ALIAS_NARROW) {
@@ -1353,13 +1354,13 @@ static enum linux_abi_status linux_attempt(
         goto cleanup;
     }
     if (!map_initial_pages(failure_point)) {
-        status = LINUX_ABI_STATUS_MAPPING;
+        status = LINUX_UNAME_ABI_STATUS_MAPPING;
         goto cleanup;
     }
     if (paging_process_validate_linux(&runtime.address_space,
             runtime.expected_pages, LINUX_INITIAL_USER_PAGES) !=
             PAGING_STATUS_OK) {
-        status = LINUX_ABI_STATUS_PERMISSION_AUDIT;
+        status = LINUX_UNAME_ABI_STATUS_PERMISSION_AUDIT;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_PERMISSION_AUDIT) {
@@ -1367,15 +1368,15 @@ static enum linux_abi_status linux_attempt(
         goto cleanup;
     }
     zero_bytes(&syscall_context, sizeof(syscall_context));
-    syscall_context.profile = LINUX_SYSCALL_PROFILE_ECHO;
+    syscall_context.profile = LINUX_SYSCALL_PROFILE_UNAME;
     syscall_context.address_space = &runtime.address_space;
     syscall_context.process_generation = runtime.generation;
-    syscall_context.executable_start = LINUX_ABI_EXECUTABLE_START;
-    syscall_context.executable_end = LINUX_ABI_EXECUTABLE_END;
+    syscall_context.executable_start = LINUX_UNAME_ABI_EXECUTABLE_START;
+    syscall_context.executable_end = LINUX_UNAME_ABI_EXECUTABLE_END;
     syscall_context.stack_start = PAGING_LINUX_STACK_BASE;
     syscall_context.stack_end = PAGING_LINUX_STACK_END;
-    syscall_context.fs_address = LINUX_ABI_FS_ADDRESS;
-    syscall_context.tid_address = LINUX_ABI_TID_ADDRESS;
+    syscall_context.fs_address = LINUX_UNAME_ABI_FS_ADDRESS;
+    syscall_context.tid_address = LINUX_UNAME_ABI_TID_ADDRESS;
     for (size_t page = 0U; page < PAGING_LINUX_HEAP_PAGES; ++page) {
         syscall_context.heap_frames[page] = runtime.heap_frames[page];
     }
@@ -1393,19 +1394,28 @@ static enum linux_abi_status linux_attempt(
         table_failure_ordinal == 0U;
     if (linux_syscall_arm(&syscall_context) != LINUX_SYSCALL_STATUS_OK ||
         linux_syscall_validate_armed() != LINUX_SYSCALL_STATUS_OK) {
-        status = LINUX_ABI_STATUS_SYSCALL_CPU;
+        status = LINUX_UNAME_ABI_STATUS_SYSCALL_CPU;
         goto cleanup;
+    }
+    {
+        size_t copyout_controls = 0U;
+
+        if (!linux_syscall_uname_copyout_self_test(&copyout_controls) ||
+            copyout_controls != LINUX_UNAME_COPYOUT_CONTROLS) {
+            status = LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
+            goto cleanup;
+        }
     }
     if (failure_point == LINUX_FAILURE_AFTER_SYSCALL_ARM) {
         status = failure_status(failure_point);
         goto cleanup;
     }
-    if (transition_process(&runtime.state, LINUX_PROCESS_INSTALLED) !=
-            LINUX_ABI_STATUS_OK ||
+    if (transition_process(&runtime.state, LINUX_UNAME_PROCESS_INSTALLED) !=
+            LINUX_UNAME_ABI_STATUS_OK ||
         paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK ||
-        transition_process(&runtime.state, LINUX_PROCESS_RUNNING) !=
-            LINUX_ABI_STATUS_OK) {
-        status = LINUX_ABI_STATUS_ENTRY;
+        transition_process(&runtime.state, LINUX_UNAME_PROCESS_RUNNING) !=
+            LINUX_UNAME_ABI_STATUS_OK) {
+        status = LINUX_UNAME_ABI_STATUS_ENTRY;
         goto cleanup;
     }
     if (failure_point == LINUX_FAILURE_AFTER_CR3_ACTIVATION) {
@@ -1423,18 +1433,18 @@ static enum linux_abi_status linux_attempt(
         if (!paging_process_table_failure_result(&allocation_count,
                 &observed) ||
             (observed && allocation_count != table_failure_ordinal)) {
-            status = LINUX_ABI_STATUS_ROBUSTNESS;
+            status = LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
             goto cleanup;
         }
         if (observed && runtime.syscall_result.status !=
                 LINUX_SYSCALL_STATUS_OK) {
             *table_failure_observed = true;
-            status = LINUX_ABI_STATUS_MAPPING;
+            status = LINUX_UNAME_ABI_STATUS_MAPPING;
             goto cleanup;
         }
     }
     if (failure_in_range(failure_point, LINUX_FAILURE_BEFORE_SYSCALL_ONE,
-            LINUX_FAILURE_AFTER_SYSCALL_NINE)) {
+            LINUX_FAILURE_AFTER_SYSCALL_SIX)) {
         if (runtime.syscall_result.status ==
                 LINUX_SYSCALL_STATUS_CONTROLLED_FAILURE &&
             runtime.syscall_result.controlled_failure_observed &&
@@ -1442,26 +1452,29 @@ static enum linux_abi_status linux_attempt(
             status = failure_status(failure_point);
             goto cleanup;
         }
-        status = LINUX_ABI_STATUS_ROBUSTNESS;
+        status = LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
         goto cleanup;
     }
     if (linux_process_boundary_active() ||
         runtime.address_space.state != PAGING_PROCESS_SPACE_INSTALLED ||
         (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) !=
             before.paging.root_physical_address ||
-        runtime.state != LINUX_PROCESS_EXITING ||
+        runtime.state != LINUX_UNAME_PROCESS_EXITING ||
         runtime.syscall_result.status != LINUX_SYSCALL_STATUS_OK ||
         runtime.syscall_result.cpu_state != LINUX_SYSCALL_CPU_RETURNED ||
-        runtime.syscall_result.syscall_count != LINUX_SYSCALL_EXPECTED_CALLS ||
+        runtime.syscall_result.syscall_count !=
+            LINUX_UNAME_SYSCALL_EXPECTED_CALLS ||
         runtime.syscall_result.distinct_syscalls !=
-            LINUX_SYSCALL_ALLOWLIST_COUNT ||
-        runtime.syscall_result.stdout_bytes != LINUX_SYSCALL_STDOUT_BYTES ||
+            LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT ||
+        runtime.syscall_result.stdout_bytes !=
+            LINUX_UNAME_SYSCALL_STDOUT_BYTES ||
+        !runtime.syscall_result.uts_copy_valid ||
         !runtime.syscall_result.stdout_valid ||
         !runtime.syscall_result.exit_zero ||
         !runtime.syscall_result.real_syscall_instruction ||
         !runtime.syscall_result.process_authenticated ||
         !runtime.syscall_result.cr3_authenticated) {
-        status = LINUX_ABI_STATUS_EXIT;
+        status = LINUX_UNAME_ABI_STATUS_EXIT;
     }
 
 cleanup:
@@ -1472,52 +1485,53 @@ cleanup:
 
         if (!paging_process_table_failure_result(&allocation_count,
                 &observed)) {
-            status = LINUX_ABI_STATUS_ROBUSTNESS;
+            status = LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
         } else {
             *table_failure_observed = observed;
         }
     }
     status = release_runtime(status);
-    if (status == LINUX_ABI_STATUS_TEARDOWN ||
-        !linux_abi_resources_released() || paging_verify() != PAGING_STATUS_OK) {
+    if (status == LINUX_UNAME_ABI_STATUS_TEARDOWN ||
+        !linux_uname_abi_resources_released() || paging_verify() != PAGING_STATUS_OK) {
         zero_bytes(result, sizeof(*result));
-        return LINUX_ABI_STATUS_TEARDOWN;
+        return LINUX_UNAME_ABI_STATUS_TEARDOWN;
     }
     capture_census(&after);
     if (!census_equal(&before, &after)) {
         zero_bytes(result, sizeof(*result));
-        return LINUX_ABI_STATUS_RESOURCE_CENSUS;
+        return LINUX_UNAME_ABI_STATUS_RESOURCE_CENSUS;
     }
     if (table_failure_ordinal != 0U && !*table_failure_observed) {
         zero_bytes(result, sizeof(*result));
-        return status == LINUX_ABI_STATUS_OK ?
-            LINUX_ABI_STATUS_PREREQUISITE : LINUX_ABI_STATUS_ROBUSTNESS;
+        return status == LINUX_UNAME_ABI_STATUS_OK ?
+            LINUX_UNAME_ABI_STATUS_PREREQUISITE : LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
     }
-    if (status != LINUX_ABI_STATUS_OK) {
+    if (status != LINUX_UNAME_ABI_STATUS_OK) {
         zero_bytes(result, sizeof(*result));
         return status;
     }
     if (failure_point != LINUX_FAILURE_NONE) {
         zero_bytes(result, sizeof(*result));
-        return LINUX_ABI_STATUS_ROBUSTNESS;
+        return LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
     }
     runtime.syscall_result = linux_syscall_get_result();
     if (!runtime.syscall_result.cpu_disarmed) {
-        return LINUX_ABI_STATUS_TEARDOWN;
+        return LINUX_UNAME_ABI_STATUS_TEARDOWN;
     }
     result->file_bytes = file_bytes;
-    result->program_headers = LINUX_ELF64_PROGRAM_HEADERS;
-    result->load_segments = LINUX_ELF64_LOAD_SEGMENTS;
+    result->program_headers = LINUX_UNAME_ELF64_PROGRAM_HEADERS;
+    result->load_segments = LINUX_UNAME_ELF64_LOAD_SEGMENTS;
     result->file_clusters = file_clusters;
     result->stdout_bytes = runtime.syscall_result.stdout_bytes;
     result->syscall_count = runtime.syscall_result.syscall_count;
     result->distinct_syscalls = runtime.syscall_result.distinct_syscalls;
     result->exit_status = runtime.syscall_result.exit_status;
-    result->robustness_tests = LINUX_ABI_CONTROLLED_ROBUSTNESS_TESTS;
+    result->robustness_tests = LINUX_UNAME_ABI_CONTROLLED_ROBUSTNESS_TESTS;
     result->ring_three = true;
     result->private_address_space = true;
     result->real_syscall_instruction =
         runtime.syscall_result.real_syscall_instruction;
+    result->uts_copy_valid = runtime.syscall_result.uts_copy_valid;
     result->stdout_valid = runtime.syscall_result.stdout_valid;
     result->exit_zero = runtime.syscall_result.exit_zero;
     result->unknown_enosys = linux_syscall_enosys_self_test();
@@ -1526,76 +1540,76 @@ cleanup:
     result->teardown_complete = true;
     result->resource_census_equal = true;
     installed_result = *result;
-    return LINUX_ABI_STATUS_OK;
+    return LINUX_UNAME_ABI_STATUS_OK;
 }
 
-enum linux_abi_status linux_abi_installed_prove(
-    struct linux_abi_proof_result *result
+enum linux_uname_abi_status linux_uname_abi_installed_prove(
+    struct linux_uname_abi_proof_result *result
 )
 {
-    struct linux_abi_proof_result controlled_result;
+    struct linux_uname_abi_proof_result controlled_result;
     bool table_failure_exhausted = false;
 
     if (result == NULL) {
-        return LINUX_ABI_STATUS_NULL_ARGUMENT;
+        return LINUX_UNAME_ABI_STATUS_NULL_ARGUMENT;
     }
     zero_bytes(result, sizeof(*result));
     zero_bytes(&installed_result, sizeof(installed_result));
     for (enum linux_failure_point point = LINUX_FAILURE_AFTER_FILESYSTEM;
          point < LINUX_FAILURE_POINT_COUNT;
          point = (enum linux_failure_point)(point + 1)) {
-        enum linux_abi_status status;
+        enum linux_uname_abi_status status;
         bool table_failure_observed = false;
 
         zero_bytes(&controlled_result, sizeof(controlled_result));
         status = linux_attempt(&controlled_result, point, 0U,
             &table_failure_observed);
         if (point == LINUX_FAILURE_AFTER_FILESYSTEM &&
-            status == LINUX_ABI_STATUS_ABSENT) {
+            status == LINUX_UNAME_ABI_STATUS_ABSENT) {
             return status;
         }
         if (status != failure_status(point) ||
             !proof_result_zero(&controlled_result) ||
-            !linux_abi_resources_released() ||
+            !linux_uname_abi_resources_released() ||
             !proof_result_zero(&installed_result)) {
             report_control_failure("boundary", (uint64_t)point, status,
                 failure_status(point), table_failure_observed);
             zero_bytes(result, sizeof(*result));
-            return LINUX_ABI_STATUS_ROBUSTNESS;
+            return LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
         }
     }
     for (size_t ordinal = 1U; ordinal <= LINUX_PAGING_FAILURE_CEILING;
          ++ordinal) {
-        enum linux_abi_status status;
+        enum linux_uname_abi_status status;
         bool table_failure_observed = false;
 
         zero_bytes(&controlled_result, sizeof(controlled_result));
         status = linux_attempt(&controlled_result, LINUX_FAILURE_NONE,
             ordinal, &table_failure_observed);
-        if (status == LINUX_ABI_STATUS_PREREQUISITE &&
+        if (status == LINUX_UNAME_ABI_STATUS_PREREQUISITE &&
             !table_failure_observed) {
             table_failure_exhausted = true;
             break;
         }
         if (!table_failure_observed ||
-            (status != LINUX_ABI_STATUS_ADDRESS_SPACE &&
-                status != LINUX_ABI_STATUS_ALIAS &&
-                status != LINUX_ABI_STATUS_MAPPING) ||
+            (status != LINUX_UNAME_ABI_STATUS_ADDRESS_SPACE &&
+                status != LINUX_UNAME_ABI_STATUS_ALIAS &&
+                status != LINUX_UNAME_ABI_STATUS_MAPPING) ||
             !proof_result_zero(&controlled_result) ||
-            !linux_abi_resources_released() ||
+            !linux_uname_abi_resources_released() ||
             !proof_result_zero(&installed_result)) {
             report_control_failure("page-table", ordinal, status,
-                LINUX_ABI_STATUS_MAPPING, table_failure_observed);
+                LINUX_UNAME_ABI_STATUS_MAPPING, table_failure_observed);
             zero_bytes(result, sizeof(*result));
-            return LINUX_ABI_STATUS_ROBUSTNESS;
+            return LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
         }
     }
     if (!table_failure_exhausted) {
         report_control_failure("page-table ceiling",
-            LINUX_PAGING_FAILURE_CEILING, LINUX_ABI_STATUS_ROBUSTNESS,
-            LINUX_ABI_STATUS_PREREQUISITE, false);
+            LINUX_PAGING_FAILURE_CEILING, LINUX_UNAME_ABI_STATUS_ROBUSTNESS,
+            LINUX_UNAME_ABI_STATUS_PREREQUISITE, false);
         zero_bytes(result, sizeof(*result));
-        return LINUX_ABI_STATUS_ROBUSTNESS;
+        return LINUX_UNAME_ABI_STATUS_ROBUSTNESS;
     }
     {
         bool table_failure_observed = false;
@@ -1605,12 +1619,12 @@ enum linux_abi_status linux_abi_installed_prove(
     }
 }
 
-struct linux_abi_proof_result linux_abi_get_proof_result(void)
+struct linux_uname_abi_proof_result linux_uname_abi_get_proof_result(void)
 {
     return installed_result;
 }
 
-bool linux_abi_resources_released(void)
+bool linux_uname_abi_resources_released(void)
 {
     const struct paging_state paging = paging_get_state();
 
@@ -1623,9 +1637,9 @@ bool linux_abi_resources_released(void)
                 paging.root_physical_address);
 }
 
-const char *linux_abi_status_string(enum linux_abi_status status)
+const char *linux_uname_abi_status_string(enum linux_uname_abi_status status)
 {
-    static const char *const messages[LINUX_ABI_STATUS_COUNT] = {
+    static const char *const messages[LINUX_UNAME_ABI_STATUS_COUNT] = {
         "ok",
         "Linux ABI BusyBox fixture is absent",
         "null Linux ABI argument",
@@ -1653,10 +1667,10 @@ const char *linux_abi_status_string(enum linux_abi_status status)
     };
 
     _Static_assert(sizeof(messages) / sizeof(messages[0]) ==
-        LINUX_ABI_STATUS_COUNT,
+        LINUX_UNAME_ABI_STATUS_COUNT,
         "Linux ABI status table cardinality changed");
 
-    if (status >= LINUX_ABI_STATUS_COUNT) {
+    if (status >= LINUX_UNAME_ABI_STATUS_COUNT) {
         return "unknown Linux ABI status";
     }
     return messages[status];

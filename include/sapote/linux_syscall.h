@@ -14,6 +14,39 @@
 #define LINUX_SYSCALL_STDOUT_BYTES 7U
 #define LINUX_SYSCALL_CPU_FOUNDATION_CONTROLS 10U
 #define LINUX_SYSCALL_SEMANTIC_CONTROLS 11U
+#define LINUX_UNAME_SYSCALL_ALLOWLIST_COUNT 6U
+#define LINUX_UNAME_SYSCALL_EXPECTED_CALLS 6U
+#define LINUX_UNAME_SYSCALL_STDOUT_BYTES 6U
+#define LINUX_UNAME_SYSCALL_SEMANTIC_CONTROLS 18U
+#define LINUX_UNAME_COPYOUT_CONTROLS 18U
+#define LINUX_UTS_FIELD_BYTES 65U
+#define LINUX_UTS_FIELD_COUNT 6U
+#define LINUX_UTS_BYTES (LINUX_UTS_FIELD_BYTES * LINUX_UTS_FIELD_COUNT)
+
+enum linux_syscall_profile {
+    LINUX_SYSCALL_PROFILE_ECHO = 0,
+    LINUX_SYSCALL_PROFILE_UNAME,
+    LINUX_SYSCALL_PROFILE_COUNT
+};
+
+enum linux_uts_copy_state {
+    LINUX_UTS_COPY_CANDIDATE = 0,
+    LINUX_UTS_COPY_ACTIVE,
+    LINUX_UTS_COPY_COMPLETED,
+    LINUX_UTS_COPY_FAILED,
+    LINUX_UTS_COPY_RELEASED,
+    LINUX_UTS_COPY_STATE_COUNT
+};
+
+enum linux_uname_stdout_state {
+    LINUX_UNAME_STDOUT_CANDIDATE = 0,
+    LINUX_UNAME_STDOUT_EMPTY,
+    LINUX_UNAME_STDOUT_RECEIVING,
+    LINUX_UNAME_STDOUT_VALID,
+    LINUX_UNAME_STDOUT_INVALID,
+    LINUX_UNAME_STDOUT_RELEASED,
+    LINUX_UNAME_STDOUT_STATE_COUNT
+};
 
 enum linux_syscall_cpu_state {
     LINUX_SYSCALL_CPU_CANDIDATE = 0,
@@ -43,6 +76,7 @@ enum linux_syscall_status {
     LINUX_SYSCALL_STATUS_BAD_ARGUMENT,
     LINUX_SYSCALL_STATUS_BAD_POINTER,
     LINUX_SYSCALL_STATUS_MAPPING,
+    LINUX_SYSCALL_STATUS_COPYOUT,
     LINUX_SYSCALL_STATUS_STDOUT,
     LINUX_SYSCALL_STATUS_EXIT,
     LINUX_SYSCALL_STATUS_CONTROLLED_FAILURE,
@@ -73,6 +107,7 @@ struct linux_syscall_frame {
 };
 
 struct linux_syscall_context {
+    enum linux_syscall_profile profile;
     struct paging_process_space *address_space;
     uint64_t process_generation;
     uint64_t executable_start;
@@ -83,6 +118,7 @@ struct linux_syscall_context {
     uint64_t tid_address;
     uintptr_t heap_frames[PAGING_LINUX_HEAP_PAGES];
     uintptr_t anonymous_frame;
+    uintptr_t stack_frames[PAGING_LINUX_STACK_PAGES];
     bool (*exit_observed)(uint64_t process_generation);
     uint32_t failure_before_ordinal;
     uint32_t failure_after_ordinal;
@@ -104,11 +140,14 @@ struct linux_syscall_result {
     bool cr3_authenticated;
     bool cpu_disarmed;
     bool controlled_failure_observed;
+    bool uts_copy_valid;
 };
 
 bool linux_syscall_cpu_foundation_self_test(size_t *completed_tests);
 bool linux_syscall_enosys_self_test(void);
 bool linux_syscall_semantic_self_test(void);
+bool linux_syscall_uname_semantic_self_test(void);
+bool linux_syscall_uname_copyout_self_test(size_t *completed_tests);
 enum linux_syscall_status linux_syscall_arm(
     const struct linux_syscall_context *context
 );
