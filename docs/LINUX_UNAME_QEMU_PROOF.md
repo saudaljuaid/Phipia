@@ -58,6 +58,12 @@ numbers. The trace must add a non-empty semantic delta to v0.8.0; the expected
 delta is Linux x86-64 syscall 63 (`uname`), but the captured trace is
 authoritative.
 
+The first measurement established the bounded sequence `arch_prctl`,
+`set_tid_address`, `uname`, `ioctl`, `writev`, `exit_group`. The `ioctl` is only
+the exact descriptor-1 `TIOCGWINSZ` probe returning `-ENOTTY`; it does not add a
+terminal. The `writev` is only the exact two-element vector `"Linux"`, `"\n"`.
+Both are private proof operations, not public descriptor or vector-I/O ABIs.
+
 The same workflow compiles `tools/linux-uname-abi-measure.c` against both the
 runner libc and the freshly built pinned musl. Their exact syscall number,
 structure size, alignment, field order, offsets, and 65-byte field widths must

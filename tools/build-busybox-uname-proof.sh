@@ -204,22 +204,21 @@ sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' "$trace_file" \
 cat >"$work_dir/expected-syscall-sequence.txt" <<'EOF'
 arch_prctl
 set_tid_address
-brk
-brk
-mmap
-mmap
 uname
-write
-munmap
+ioctl
+writev
 exit_group
 EOF
 cmp --silent "$work_dir/expected-syscall-sequence.txt" \
     "$output_dir/syscall-sequence.txt"
-test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 8
+test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 6
 grep -Fq 'arch_prctl(ARCH_SET_FS,' "$trace_file"
 grep -Fq 'set_tid_address(' "$trace_file"
 grep -Fq 'uname({sysname="Linux",' "$trace_file"
-grep -Fq 'write(1, "Linux\n", 6)' "$trace_file"
+grep -Fq 'ioctl(1, TIOCGWINSZ,' "$trace_file"
+grep -Fq '= -1 ENOTTY (Inappropriate ioctl for device)' "$trace_file"
+grep -Fq 'writev(1, [{iov_base="Linux", iov_len=5}, {iov_base="\n", iov_len=1}], 2) = 6' \
+    "$trace_file"
 grep -Fq 'exit_group(0)' "$trace_file"
 
 qemu_stdout="$output_dir/qemu-stdout.txt"
