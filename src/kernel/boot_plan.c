@@ -33,6 +33,7 @@
 #include <sapote/ioapic.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_simd.h>
 #include <sapote/linux_syscall.h>
 #include <sapote/linux_uname.h>
 #include <sapote/memory.h>
@@ -1558,18 +1559,30 @@ static void execute_linux_syscall_cpu_foundation(
     struct boot_stage_result *result
 )
 {
-    size_t completed = 0U;
+    size_t syscall_completed = 0U;
+    size_t simd_completed = 0U;
 
-    if (!linux_syscall_cpu_foundation_self_test(&completed) ||
-        completed != LINUX_SYSCALL_CPU_FOUNDATION_CONTROLS) {
+    if (!linux_syscall_cpu_foundation_self_test(&syscall_completed) ||
+        syscall_completed != LINUX_SYSCALL_CPU_FOUNDATION_CONTROLS) {
         stage_failed(context, result,
             "Linux SYSCALL CPU foundation controls failed");
         return;
     }
     console_write("Sapote: Linux SYSCALL CPU foundation controls ");
-    console_write_u64(completed);
+    console_write_u64(syscall_completed);
     console_putc('/');
     console_write_u64(LINUX_SYSCALL_CPU_FOUNDATION_CONTROLS);
+    console_write(" passed\n");
+    if (!linux_simd_foundation_install(&simd_completed) ||
+        simd_completed != LINUX_SIMD_FOUNDATION_CONTROLS) {
+        stage_failed(context, result,
+            "Linux user-SIMD CPU foundation controls failed");
+        return;
+    }
+    console_write("Sapote: Linux user-SIMD CPU foundation controls ");
+    console_write_u64(simd_completed);
+    console_putc('/');
+    console_write_u64(LINUX_SIMD_FOUNDATION_CONTROLS);
     console_write(" passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
@@ -1725,7 +1738,7 @@ static void execute_linux_installed_proof(
     result->proof_counter_count = 2U;
 }
 
-#define LINUX_UNAME_PROOF_REQUIREMENT_COUNT 23U
+#define LINUX_UNAME_PROOF_REQUIREMENT_COUNT 24U
 
 static const enum boot_capability linux_uname_proof_requirements[] = {
     BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
@@ -1748,6 +1761,7 @@ static const enum boot_capability linux_uname_proof_requirements[] = {
     BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE,
     BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE,
     BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_LINUX_USER_SIMD_FOUNDATION_AVAILABLE,
     BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE,
     BOOT_CAPABILITY_LINUX_OUTCOME_DECIDED,
     BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE
@@ -2146,7 +2160,8 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
         "bounded ELF64 loader foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_elf64_loader_foundation),
     REQUIRED_STAGE(BOOT_STAGE_LINUX_SYSCALL_CPU_FOUNDATION,
-        "Linux x86-64 syscall CPU foundation", BOOT_PHASE_SERVICES,
+        "Linux x86-64 syscall and user-SIMD CPU foundation",
+        BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_linux_syscall_cpu_foundation),
     REQUIRED_STAGE(BOOT_STAGE_LINUX_IMAGE_STACK_FOUNDATION,
         "static BusyBox image and Linux initial-stack foundation",
@@ -2730,7 +2745,9 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 4U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_LINUX_USER_SIMD_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 2U;
         break;
     case BOOT_STAGE_LINUX_IMAGE_STACK_FOUNDATION:
         descriptor->required_capabilities[0] =
@@ -2761,7 +2778,9 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[5] =
             BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE;
-        descriptor->required_capability_count = 6U;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_LINUX_USER_SIMD_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 7U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE;
         descriptor->provided_capability_count = 1U;
@@ -2849,14 +2868,16 @@ static bool declare_dependencies(
         descriptor->required_capabilities[8] =
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[9] =
-            BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE;
+            BOOT_CAPABILITY_LINUX_USER_SIMD_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[10] =
-            BOOT_CAPABILITY_LINUX_OUTCOME_DECIDED;
+            BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[11] =
-            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE;
+            BOOT_CAPABILITY_LINUX_OUTCOME_DECIDED;
         descriptor->required_capabilities[12] =
+            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[13] =
             BOOT_CAPABILITY_LINUX_UNAME_OUTCOME_DECIDED;
-        descriptor->required_capability_count = 13U;
+        descriptor->required_capability_count = 14U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->provided_capability_count = 1U;

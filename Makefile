@@ -25,7 +25,9 @@ PYTHON := python3
 QEMU_ACCEL ?= tcg
 
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
-# SSE, soft float, no red zone - which is why the two halves can share a stack.
+# compiler SSE, soft float, no red zone - which is why the two halves can share
+# a stack. The only explicit kernel SIMD instructions live in cpu.S's bounded
+# Linux user-state reset shim and are checked instruction-for-instruction below.
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
@@ -277,10 +279,25 @@ verify: toolchain lint
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
+	@test "$$($(OBJDUMP) --disassemble=cpu_linux_simd_reset \
+		--no-show-raw-insn $(KERNEL) | grep -Ec '[[:space:]]pxor[[:space:]]')" \
+		-eq 16
+	@test "$$($(OBJDUMP) --disassemble=cpu_linux_simd_reset \
+		--no-show-raw-insn $(KERNEL) | grep -Ec \
+		'[[:space:]](fninit|ldmxcsr)[[:space:]]')" -eq 2
+	@test "$$($(OBJDUMP) --disassemble=cpu_read_mxcsr \
+		--no-show-raw-insn $(KERNEL) | grep -Ec \
+		'[[:space:]]stmxcsr[[:space:]]')" -eq 1
+	@test "$$($(OBJDUMP) --disassemble=cpu_read_x87_control \
+		--no-show-raw-insn $(KERNEL) | grep -Ec \
+		'[[:space:]]fnstcw[[:space:]]')" -eq 1
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
-		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
+		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { symbol = $$0 } \
+			{ print symbol " :: " $$0 }' | \
+		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|::[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
+		grep -Ev '<cpu_linux_simd_reset>:.*[[:space:]](fninit|ldmxcsr|pxor)[[:space:]]|<cpu_read_mxcsr>:.*[[:space:]]stmxcsr[[:space:]]|<cpu_read_x87_control>:.*[[:space:]]fnstcw[[:space:]]' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
-		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
+		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions outside the reviewed user-state reset shim'; echo "$$forbidden"; exit 1; }
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __text_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __rodata_start$$'
 	@$(NM) $(KERNEL) | grep -Eq ' [ABDRTt] __data_start$$'

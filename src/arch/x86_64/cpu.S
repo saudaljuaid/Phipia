@@ -210,9 +210,9 @@ cpu_read_cr0:
 
 /*
  * void cpu_write_cr0(uint64_t value)
- * Sapote changes exactly one bit through this, CR0.WP, and only while the
- * boot page tables still mark every page writable, so the write cannot revoke
- * a permission from under the instruction performing it.
+ * Callers preserve every unrelated control bit. Paging installs CR0.WP while
+ * the boot page tables still mark every page writable; the Linux user-SIMD
+ * foundation later controls only MP, EM, and TS after proving CPU support.
  */
 .global cpu_write_cr0
 .type cpu_write_cr0, @function
@@ -234,6 +234,68 @@ cpu_read_cr4:
     movq %cr4, %rax
     ret
 .size cpu_read_cr4, . - cpu_read_cr4
+
+/* Callers preserve every unrelated bit and prove each newly enabled feature. */
+.global cpu_write_cr4
+.type cpu_write_cr4, @function
+cpu_write_cr4:
+    movq %rdi, %cr4
+    ret
+.size cpu_write_cr4, . - cpu_write_cr4
+
+/*
+ * Install the independent Linux Ring 3 x87/SSE defaults. The kernel is built
+ * with every compiler SIMD path disabled; these explicit instructions are the
+ * only kernel use of that state. No user execution can overlap on this
+ * single-core kernel, so resetting immediately before IRETQ is sufficient.
+ */
+.global cpu_linux_simd_reset
+.type cpu_linux_simd_reset, @function
+cpu_linux_simd_reset:
+    subq $8, %rsp
+    movl $0x1F80, (%rsp)
+    fninit
+    ldmxcsr (%rsp)
+    pxor %xmm0, %xmm0
+    pxor %xmm1, %xmm1
+    pxor %xmm2, %xmm2
+    pxor %xmm3, %xmm3
+    pxor %xmm4, %xmm4
+    pxor %xmm5, %xmm5
+    pxor %xmm6, %xmm6
+    pxor %xmm7, %xmm7
+    pxor %xmm8, %xmm8
+    pxor %xmm9, %xmm9
+    pxor %xmm10, %xmm10
+    pxor %xmm11, %xmm11
+    pxor %xmm12, %xmm12
+    pxor %xmm13, %xmm13
+    pxor %xmm14, %xmm14
+    pxor %xmm15, %xmm15
+    addq $8, %rsp
+    ret
+.size cpu_linux_simd_reset, . - cpu_linux_simd_reset
+
+.global cpu_read_mxcsr
+.type cpu_read_mxcsr, @function
+cpu_read_mxcsr:
+    subq $8, %rsp
+    stmxcsr (%rsp)
+    movl (%rsp), %eax
+    addq $8, %rsp
+    ret
+.size cpu_read_mxcsr, . - cpu_read_mxcsr
+
+.global cpu_read_x87_control
+.type cpu_read_x87_control, @function
+cpu_read_x87_control:
+    subq $8, %rsp
+    xorl %eax, %eax
+    fnstcw (%rsp)
+    movw (%rsp), %ax
+    addq $8, %rsp
+    ret
+.size cpu_read_x87_control, . - cpu_read_x87_control
 
 /*
  * void cpu_write_cr3(uint64_t value)
