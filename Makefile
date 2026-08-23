@@ -279,18 +279,15 @@ verify: toolchain lint
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
-	@test "$$($(OBJDUMP) --disassemble=cpu_linux_simd_reset \
-		--no-show-raw-insn $(KERNEL) | grep -Ec '[[:space:]]pxor[[:space:]]')" \
-		-eq 16
-	@test "$$($(OBJDUMP) --disassemble=cpu_linux_simd_reset \
-		--no-show-raw-insn $(KERNEL) | grep -Ec \
-		'[[:space:]](fninit|ldmxcsr)[[:space:]]')" -eq 2
-	@test "$$($(OBJDUMP) --disassemble=cpu_read_mxcsr \
-		--no-show-raw-insn $(KERNEL) | grep -Ec \
-		'[[:space:]]stmxcsr[[:space:]]')" -eq 1
-	@test "$$($(OBJDUMP) --disassemble=cpu_read_x87_control \
-		--no-show-raw-insn $(KERNEL) | grep -Ec \
-		'[[:space:]]fnstcw[[:space:]]')" -eq 1
+	@for register in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		test "$$(grep -Fxc "    pxor %xmm$$register, %xmm$$register" \
+			src/arch/x86_64/cpu.S)" -eq 1 || exit 1; \
+	done
+	@for instruction in 'fninit' 'ldmxcsr (%rsp)' 'stmxcsr (%rsp)' \
+		'fnstcw (%rsp)'; do \
+		test "$$(grep -Fxc "    $$instruction" src/arch/x86_64/cpu.S)" \
+			-eq 1 || exit 1; \
+	done
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
 		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { symbol = $$0 } \
 			{ print symbol " :: " $$0 }' | \
