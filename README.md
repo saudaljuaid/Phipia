@@ -81,11 +81,12 @@ services, an IOMMU, and broad physical-hardware coverage remain future work.
 
 ## Documentation
 
-- [First Light](docs/FIRST_LIGHT.md) — interface design and capture proof
-- [Boot Ledger](docs/BOOT_LEDGER.md) — startup model and installed-state checks
-- [Linux syscall ABI](docs/LINUX_SYSCALL_ABI.md) — current userspace boundary
-- [Rust in Sapote](docs/RUST.md) — why Rust owns byte validation
-- [Working on Sapote](docs/WORKING_ON_SAPOTE.md) — build and contribution guide
+- [Architecture](docs/ARCHITECTURE.md) — the durable map of the kernel
+- [Boot Ledger](docs/BOOT_LEDGER.md) — startup dependencies and installed state
+- [First Light](docs/FIRST_LIGHT.md) — interface and capture contract
+- [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles
+- [Rust boundary](docs/RUST.md) — where safe byte validation belongs
+- [Verification](docs/VERIFICATION.md) — build, QEMU, and evidence gates
 
 Small, reviewable contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 Sapote is licensed under [GPL-3.0-only](LICENSE).

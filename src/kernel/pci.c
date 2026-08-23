@@ -198,7 +198,7 @@ enum pci_status pci_config_read_ecam(
     /*
      * Volatile because the compiler must not fold, reorder or drop a read of
      * device memory. The window is mapped uncacheable, so this is a bus cycle
-     * rather than a cache hit; docs/PCI_ENUMERATION.md says why that matters.
+     * rather than a cache hit.
      */
     *value = *(const volatile uint32_t *)(uintptr_t)location;
     return PCI_STATUS_OK;

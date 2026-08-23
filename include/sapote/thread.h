@@ -154,8 +154,7 @@ void thread_yield(void);
  *
  * Preemption rides on the deadline timer rather than on a periodic tick of its
  * own: the scheduler arms a deadline one quantum ahead, and the callback arms
- * the next one. That reuses machinery `docs/MONOTONIC_TIME.md` already proves,
- * and it means there is one owner of the local APIC timer rather than two.
+ * the next one. This keeps one owner of the local APIC timer rather than two.
  *
  * Requires the deadline timer to be started, and refuses by name if it is not.
  */

@@ -214,8 +214,8 @@ static void entry_decompose(
 /*
  * Intel SDM volume 3A section 11.5.5: the directed end-of-interrupt register
  * arrived with I/O APIC version 0x20. Older units have no way to clear a remote
- * IRR from software except the mask and unmask dance, which Sapote does not
- * implement; see docs/IO_APIC.md for why refusing is the deliberate choice.
+ * IRR from software except the mask and unmask dance. Sapote refuses that
+ * fallback because it cannot preserve the same explicit acknowledgement model.
  */
 static bool version_has_directed_eoi(uint8_t version)
 {

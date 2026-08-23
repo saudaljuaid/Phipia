@@ -293,7 +293,7 @@ jobs:
                       printf 'Controlled Linux uname ABI robustness results\n'
                       printf 'Rust mutation tests, UTS/copy-out controls, guest foundation controls, installed permission/provenance checks, and source/host contracts passed.\n'
                       printf 'Result: controls 1-97 passed.\n'
-                      printf 'Matrix: docs/LINUX_UNAME_QEMU_PROOF.md.\n'
+                      printf 'Contract: docs/LINUX_SYSCALL_ABI.md plus workflow and source assertions.\n'
                   } >"$release/controlled-robustness-results.txt"
                   rm -f "$release/SHA256SUMS"
                   (

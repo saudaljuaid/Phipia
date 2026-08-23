@@ -139,7 +139,7 @@ jobs:
                       printf 'Controlled NVMe robustness results\n'
                       printf 'Execution: deterministic guest-local values and explicit test hooks only.\n'
                       printf 'Result: %s\n' "$proof_record"
-                      printf 'Matrix: docs/NVME_QEMU_PROOF.md, controlled robustness matrix 1-22.\n'
+                      printf 'Contract: qemu-test-nvme and the source assertions in nvme.c/test.c.\n'
                   } >evidence/nvme/controlled-robustness-results.txt
                   (cd evidence/nvme && sha256sum \
                       Sapote-nvme-regression.iso \

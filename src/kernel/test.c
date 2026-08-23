@@ -2821,7 +2821,7 @@ static void guard_worker(void *context)
  * What this deliberately does *not* prove is a true stack overflow, where RSP
  * itself has reached the guard. There the fault handler would need to push its
  * own frame onto a stack that has just run out, so the page fault escalates.
- * docs/THREADS.md records what was measured about that and what it needs.
+ * Proving that case would require a dedicated emergency fault stack.
  */
 static void thread_guard_scenario(void)
 {
