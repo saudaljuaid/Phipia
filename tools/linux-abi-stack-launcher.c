@@ -12,8 +12,12 @@
 #define STACK_PAGES UINT64_C(3)
 #define AT_NULL_VALUE UINT64_C(0)
 #define AT_PAGESZ_VALUE UINT64_C(6)
+#define ELF64_ENTRY_OFFSET 24U
+#define ELF64_ENTRY_BYTES 8U
+#define BUSYBOX_ENTRY UINT64_C(0x000040000100107A)
 
 extern const unsigned char _binary_busybox_start[];
+extern const unsigned char _binary_busybox_end[];
 
 __attribute__((noreturn)) void linux_abi_enter(uintptr_t entry,
                                                uintptr_t stack_pointer);
@@ -51,6 +55,16 @@ static uintptr_t page_down(uintptr_t value)
 static uintptr_t page_up(uintptr_t value)
 {
     return (value + PAGE_BYTES - 1U) & ~(uintptr_t)(PAGE_BYTES - 1U);
+}
+
+static uint64_t read_u64_le(const unsigned char *bytes)
+{
+    uint64_t value = 0U;
+
+    for (size_t index = 0U; index < ELF64_ENTRY_BYTES; ++index) {
+        value |= (uint64_t)bytes[index] << (index * 8U);
+    }
+    return value;
 }
 
 static void install_segment(const struct measured_segment *segment)
@@ -91,6 +105,9 @@ int main(void)
     static const char argv_one[] = "echo";
     static const char argv_two[] = "SAPOTE";
     uintptr_t stack_bytes = STACK_PAGES * PAGE_BYTES;
+    uintptr_t busybox_start = (uintptr_t)_binary_busybox_start;
+    uintptr_t busybox_end = (uintptr_t)_binary_busybox_end;
+    uint64_t entry;
     void *stack = mmap((void *)STACK_BASE, stack_bytes, PROT_NONE,
                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
                        -1, 0);
@@ -107,6 +124,17 @@ int main(void)
          index < sizeof(measured_segments) / sizeof(measured_segments[0]);
          ++index) {
         install_segment(&measured_segments[index]);
+    }
+
+    if (busybox_end < busybox_start ||
+        busybox_end - busybox_start < ELF64_ENTRY_OFFSET + ELF64_ENTRY_BYTES) {
+        errno = EINVAL;
+        fail("measured BusyBox ELF header is truncated");
+    }
+    entry = read_u64_le(_binary_busybox_start + ELF64_ENTRY_OFFSET);
+    if (entry != BUSYBOX_ENTRY) {
+        errno = EINVAL;
+        fail("measured BusyBox ELF entry contract failed");
     }
 
     uintptr_t cursor = STACK_BASE + stack_bytes;
@@ -131,6 +159,5 @@ int main(void)
     initial_stack[8] = AT_NULL_VALUE;
     initial_stack[9] = 0U;
 
-    linux_abi_enter(UINT64_C(0x40000100107a),
-        (uintptr_t)initial_stack);
+    linux_abi_enter((uintptr_t)entry, (uintptr_t)initial_stack);
 }

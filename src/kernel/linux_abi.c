@@ -17,12 +17,47 @@
 
 #define LINUX_ARGUMENT_BYTES 20U
 #define LINUX_INITIAL_STACK_WORDS 10U
-#define LINUX_EXECUTABLE_ALIAS_PAGES 6U
 #define LINUX_PAGING_FAILURE_CEILING 64U
 #define LINUX_INITIAL_USER_PAGES \
     (PAGING_LINUX_IMAGE_PAGES + PAGING_LINUX_STACK_PAGES)
 
-_Static_assert(sizeof(struct linux_elf64_validated_image) == 248U,
+_Static_assert(LINUX_ABI_IMAGE_BYTES == LINUX_ELF64_FILE_BYTES &&
+    LINUX_ABI_IMAGE_BYTES == LINUX_FAT16_FILE_BYTES,
+    "Linux ABI image-byte contracts diverged");
+_Static_assert(sizeof(struct linux_fat16_chain) == 5136U &&
+    _Alignof(struct linux_fat16_chain) == 8U &&
+    offsetof(struct linux_fat16_chain, clusters) == 0U &&
+    offsetof(struct linux_fat16_chain, lbas) == 1024U &&
+    offsetof(struct linux_fat16_chain, cluster_count) == 5120U &&
+    offsetof(struct linux_fat16_chain, file_bytes) == 5124U &&
+    offsetof(struct linux_fat16_chain, final_cluster_bytes) == 5128U &&
+    offsetof(struct linux_fat16_chain, valid) == 5132U,
+    "Rust/C Linux FAT16 chain ABI changed");
+_Static_assert(sizeof(struct linux_fat16_payload) == 40U &&
+    _Alignof(struct linux_fat16_payload) == 4U &&
+    offsetof(struct linux_fat16_payload, sha256) == 0U &&
+    offsetof(struct linux_fat16_payload, byte_count) == 32U &&
+    offsetof(struct linux_fat16_payload, deterministic) == 36U,
+    "Rust/C Linux FAT16 payload ABI changed");
+_Static_assert(sizeof(struct linux_elf64_segment) == 56U &&
+    _Alignof(struct linux_elf64_segment) == 8U &&
+    offsetof(struct linux_elf64_segment, file_offset) == 0U &&
+    offsetof(struct linux_elf64_segment, virtual_address) == 8U &&
+    offsetof(struct linux_elf64_segment, file_size) == 16U &&
+    offsetof(struct linux_elf64_segment, memory_size) == 24U &&
+    offsetof(struct linux_elf64_segment, mapping_start) == 32U &&
+    offsetof(struct linux_elf64_segment, mapping_end) == 40U &&
+    offsetof(struct linux_elf64_segment, flags) == 48U &&
+    offsetof(struct linux_elf64_segment, reserved) == 52U,
+    "Rust/C Linux ELF64 segment ABI changed");
+_Static_assert(sizeof(struct linux_elf64_validated_image) == 248U &&
+    _Alignof(struct linux_elf64_validated_image) == 8U &&
+    offsetof(struct linux_elf64_validated_image, valid) == 0U &&
+    offsetof(struct linux_elf64_validated_image, program_header_count) == 4U &&
+    offsetof(struct linux_elf64_validated_image, segment_count) == 8U &&
+    offsetof(struct linux_elf64_validated_image, non_load_count) == 12U &&
+    offsetof(struct linux_elf64_validated_image, entry) == 16U &&
+    offsetof(struct linux_elf64_validated_image, segments) == 24U,
     "Rust/C Linux ELF64 validated-image ABI changed");
 _Static_assert(LINUX_ELF64_PARSER_ROBUSTNESS_CONTROLS +
     LINUX_FAT16_ROBUSTNESS_CONTROLS +
@@ -1180,7 +1215,7 @@ static enum linux_abi_status linux_attempt(
     struct linux_resource_census before;
     struct linux_resource_census after;
     struct linux_syscall_context syscall_context;
-    uint64_t executable_aliases[LINUX_EXECUTABLE_ALIAS_PAGES];
+    uint64_t executable_aliases[PAGING_LINUX_IMAGE_EXECUTE_PAGES];
     uint32_t file_bytes = 0U;
     uint32_t file_clusters = 0U;
     enum linux_abi_status status = LINUX_ABI_STATUS_OK;
@@ -1303,11 +1338,12 @@ static enum linux_abi_status linux_attempt(
         goto cleanup;
     }
     cpu_interrupt_disable();
-    for (size_t page = 0U; page < LINUX_EXECUTABLE_ALIAS_PAGES; ++page) {
-        executable_aliases[page] = runtime.image_frames[page + 1U];
+    for (size_t page = 0U; page < PAGING_LINUX_IMAGE_EXECUTE_PAGES; ++page) {
+        executable_aliases[page] = runtime.image_frames[
+            page + PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE];
     }
     if (paging_process_alias_set_narrow(&runtime.address_space,
-            executable_aliases, LINUX_EXECUTABLE_ALIAS_PAGES,
+            executable_aliases, PAGING_LINUX_IMAGE_EXECUTE_PAGES,
             &runtime.aliases) != PAGING_STATUS_OK) {
         status = LINUX_ABI_STATUS_ALIAS;
         goto cleanup;
@@ -1333,12 +1369,12 @@ static enum linux_abi_status linux_attempt(
     zero_bytes(&syscall_context, sizeof(syscall_context));
     syscall_context.address_space = &runtime.address_space;
     syscall_context.process_generation = runtime.generation;
-    syscall_context.executable_start = UINT64_C(0x0000400001001000);
-    syscall_context.executable_end = UINT64_C(0x0000400001007000);
+    syscall_context.executable_start = LINUX_ABI_EXECUTABLE_START;
+    syscall_context.executable_end = LINUX_ABI_EXECUTABLE_END;
     syscall_context.stack_start = PAGING_LINUX_STACK_BASE;
     syscall_context.stack_end = PAGING_LINUX_STACK_END;
-    syscall_context.fs_address = UINT64_C(0x0000400001008998);
-    syscall_context.tid_address = UINT64_C(0x0000400001008B34);
+    syscall_context.fs_address = LINUX_ABI_FS_ADDRESS;
+    syscall_context.tid_address = LINUX_ABI_TID_ADDRESS;
     for (size_t page = 0U; page < PAGING_LINUX_HEAP_PAGES; ++page) {
         syscall_context.heap_frames[page] = runtime.heap_frames[page];
     }
@@ -1611,6 +1647,10 @@ const char *linux_abi_status_string(enum linux_abi_status status)
         "Linux process resource census differs",
         "Linux ABI controlled robustness failed"
     };
+
+    _Static_assert(sizeof(messages) / sizeof(messages[0]) ==
+        LINUX_ABI_STATUS_COUNT,
+        "Linux ABI status table cardinality changed");
 
     if (status >= LINUX_ABI_STATUS_COUNT) {
         return "unknown Linux ABI status";

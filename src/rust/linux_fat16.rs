@@ -255,7 +255,7 @@ pub fn build_chain(fat: &[u8], geometry: &Geometry, entry: &RootEntry) -> Result
     if fat.len() != fat16::BLOCK_BYTES || !geometry_valid(geometry) {
         return Err(Status::Truncated);
     }
-    if read_u16(fat, 0)? & 0x00FF != 0x00F8 || read_u16(fat, 2)? < FAT16_EOC_MIN {
+    if read_u16(fat, 0)? != 0xFFF8 || read_u16(fat, 2)? < FAT16_EOC_MIN {
         return Err(Status::FatReserved);
     }
     if entry.canonical_name != BUSYBOX_NAME
@@ -681,12 +681,14 @@ mod tests {
             Err(Status::OverlongChain)
         ));
 
-        let mut bad_reserved_header = make_fat();
-        put_u16(&mut bad_reserved_header, 0, 0);
-        assert!(matches!(
-            build_chain(&bad_reserved_header, &geometry, &entry),
-            Err(Status::FatReserved)
-        ));
+        for first_entry in [0u16, 0x00F8, 0xAAF8] {
+            let mut bad_reserved_header = make_fat();
+            put_u16(&mut bad_reserved_header, 0, first_entry);
+            assert!(matches!(
+                build_chain(&bad_reserved_header, &geometry, &entry),
+                Err(Status::FatReserved)
+            ));
+        }
     }
 
     #[test]

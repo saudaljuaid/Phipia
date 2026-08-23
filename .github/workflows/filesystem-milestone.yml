@@ -27,7 +27,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+                      binutils bzip2 file gcc grub-common grub-pc-bin make \
+                      mtools qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
             - name: Record the emulated surface
@@ -113,6 +114,18 @@ jobs:
                           evidence/filesystem/tcg-sweep-10-logs/boot-ledger.log
                   )
                   test -n "$ordinary_record"
+                  stage_capacity=$(sed -nE \
+                      's/^#define BOOT_LEDGER_STAGE_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  receipt_capacity=$(sed -nE \
+                      's/^#define BOOT_LEDGER_RECEIPT_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  capability_capacity=$(sed -nE \
+                      's/^#define BOOT_STAGE_CAPABILITY_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  test -n "$stage_capacity"
+                  test -n "$receipt_capacity"
+                  test -n "$capability_capacity"
                   {
                       printf 'Sapote v0.6.0 deterministic FAT16 fixture\n'
                       printf 'logical sectors: 4096\n'
@@ -131,9 +144,8 @@ jobs:
                       printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
                       printf 'scenarios per sweep: %s\n' "$scenario_count"
                       printf 'Boot Ledger capacity: %s stages, %s receipts, %s capabilities per stage\n' \
-                          "$(sed -nE 's/^#define BOOT_LEDGER_STAGE_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)" \
-                          "$(sed -nE 's/^#define BOOT_LEDGER_RECEIPT_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)" \
-                          "$(sed -nE 's/^#define BOOT_STAGE_CAPABILITY_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)"
+                          "$stage_capacity" "$receipt_capacity" \
+                          "$capability_capacity"
                       printf 'ordinary ledger: %s\n' "$ordinary_record"
                       printf 'source lines (src and include): %s\n' "$source_lines"
                       printf 'shell assertion lines: %s\n' "$assertion_count"

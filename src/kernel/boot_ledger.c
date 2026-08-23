@@ -1629,9 +1629,9 @@ enum boot_ledger_status boot_ledger_verify_installed(
             (linux_complete &&
                 (linux->result != BOOT_RECEIPT_RAN ||
                  linux->proof_counter_count != 2U ||
-                 linux->proof_counters[0] != 33584U ||
+                 linux->proof_counters[0] != LINUX_ABI_IMAGE_BYTES ||
                  linux->proof_counters[1] != 9U ||
-                 proof.file_bytes != 33584U ||
+                 proof.file_bytes != LINUX_ABI_IMAGE_BYTES ||
                  proof.program_headers != 5U || proof.load_segments != 4U ||
                  proof.file_clusters != 9U || proof.stdout_bytes != 7U ||
                  proof.syscall_count != 9U ||

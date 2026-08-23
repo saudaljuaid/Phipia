@@ -19,6 +19,43 @@ use crate::linux_fat16;
 use crate::linux_elf64;
 use crate::ui_font;
 
+const _: () = {
+    assert!(core::mem::size_of::<linux_fat16::Chain>() == 5136);
+    assert!(core::mem::align_of::<linux_fat16::Chain>() == 8);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, clusters) == 0);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, lbas) == 1024);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, cluster_count) == 5120);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, file_bytes) == 5124);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, final_cluster_bytes) == 5128);
+    assert!(core::mem::offset_of!(linux_fat16::Chain, valid) == 5132);
+
+    assert!(core::mem::size_of::<linux_fat16::Payload>() == 40);
+    assert!(core::mem::align_of::<linux_fat16::Payload>() == 4);
+    assert!(core::mem::offset_of!(linux_fat16::Payload, sha256) == 0);
+    assert!(core::mem::offset_of!(linux_fat16::Payload, byte_count) == 32);
+    assert!(core::mem::offset_of!(linux_fat16::Payload, deterministic) == 36);
+
+    assert!(core::mem::size_of::<linux_elf64::Segment>() == 56);
+    assert!(core::mem::align_of::<linux_elf64::Segment>() == 8);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, file_offset) == 0);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, virtual_address) == 8);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, file_size) == 16);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, memory_size) == 24);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, mapping_start) == 32);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, mapping_end) == 40);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, flags) == 48);
+    assert!(core::mem::offset_of!(linux_elf64::Segment, reserved) == 52);
+
+    assert!(core::mem::size_of::<linux_elf64::ValidatedImage>() == 248);
+    assert!(core::mem::align_of::<linux_elf64::ValidatedImage>() == 8);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, valid) == 0);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, program_header_count) == 4);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, segment_count) == 8);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, non_load_count) == 12);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, entry) == 16);
+    assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, segments) == 24);
+};
+
 /// Stop in C's console panic path if a compiler-inserted check ever fires.
 pub(crate) fn panic() -> ! {
     unsafe extern "C" {

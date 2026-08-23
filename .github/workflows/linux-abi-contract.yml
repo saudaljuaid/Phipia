@@ -60,10 +60,16 @@ jobs:
                       printf 'SAPOTE\n' | cmp --silent - \
                           minimal-stack-stdout.txt
                       test ! -s minimal-stack-stderr.txt
-                      sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' \
+                      test "$(grep -Fc \
+                          'arch_prctl(ARCH_SET_FS, 0x400001008998)' \
+                          minimal-stack-syscall-trace.txt)" -eq 1
+                      sed -n \
+                          '/^arch_prctl(ARCH_SET_FS, 0x400001008998)/,$p' \
                           minimal-stack-syscall-trace.txt \
-                          | tail --lines=9 \
+                          | sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' \
                           >minimal-stack-target-syscall-sequence.txt
+                      test "$(wc -l \
+                          <minimal-stack-target-syscall-sequence.txt)" -eq 9
                       cmp syscall-sequence.txt \
                           minimal-stack-target-syscall-sequence.txt
                   )

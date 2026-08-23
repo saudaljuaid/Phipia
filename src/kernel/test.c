@@ -4871,7 +4871,7 @@ _Noreturn void kernel_test_complete_linux_abi(void)
         image_stack->result != BOOT_RECEIPT_RAN ||
         receipt->result != BOOT_RECEIPT_RAN ||
         receipt->proof_counter_count != 2U ||
-        receipt->proof_counters[0] != 33584U ||
+        receipt->proof_counters[0] != LINUX_ABI_IMAGE_BYTES ||
         receipt->proof_counters[1] != 9U ||
         !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE) ||
@@ -4885,7 +4885,8 @@ _Noreturn void kernel_test_complete_linux_abi(void)
             BOOT_CAPABILITY_LINUX_FIXTURE_ABSENT)) {
         kernel_test_fail("Linux ABI installed receipt is invalid");
     }
-    if (proof.file_bytes != 33584U || proof.program_headers != 5U ||
+    if (proof.file_bytes != LINUX_ABI_IMAGE_BYTES ||
+        proof.program_headers != 5U ||
         proof.load_segments != 4U || proof.file_clusters != 9U ||
         proof.stdout_bytes != 7U || proof.syscall_count != 9U ||
         proof.distinct_syscalls != 7U || proof.exit_status != 0U ||

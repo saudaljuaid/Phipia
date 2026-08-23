@@ -1440,6 +1440,7 @@ enum filesystem_status filesystem_linux_read_open(
         goto fail;
     }
     if (block_length != FAT16_BLOCK_BYTES) {
+        result = FILESYSTEM_STATUS_BLOCK_RESULT;
         goto fail;
     }
     for (size_t index = 0U; index < FAT16_BLOCK_BYTES; ++index) {
@@ -1489,6 +1490,7 @@ enum filesystem_status filesystem_linux_read_open(
             goto fail;
         }
         if (block_length != FAT16_BLOCK_BYTES) {
+            result = FILESYSTEM_STATUS_BLOCK_RESULT;
             goto fail;
         }
         if (bytes > FAT16_BLOCK_BYTES) {

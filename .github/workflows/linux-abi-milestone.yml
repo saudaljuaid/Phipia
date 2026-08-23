@@ -80,10 +80,13 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
+                  read -r expected_scenario_count _ < <(
+                      make --no-print-directory -s contract-counts
+                  )
                   scenario_count=$(
                       make --no-print-directory -s contract-scenarios | wc -l
                   )
-                  test "$scenario_count" -eq 38
+                  test "$scenario_count" -eq "$expected_scenario_count"
                   for sweep in $(seq -w 1 10); do
                       raw="evidence/linux-abi/tcg-sweep-${sweep}-raw.txt"
                       normalized="evidence/linux-abi/tcg-sweep-${sweep}.txt"
@@ -110,8 +113,16 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
+                  read -r expected_scenario_count _ < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  scenario_count=$(
+                      make --no-print-directory -s contract-scenarios | wc -l
+                  )
+                  test "$scenario_count" -eq "$expected_scenario_count"
                   {
-                      printf 'TCG available: ten complete 38-scenario sweeps passed.\n'
+                      printf 'TCG available: ten complete %s-scenario sweeps passed.\n' \
+                          "$scenario_count"
                       printf 'KVM unavailable by authorization: no host device file was probed or opened.\n'
                       printf 'WHPX unavailable on this Linux runner.\n'
                       printf 'HVF unavailable on this Linux runner.\n'
@@ -168,29 +179,47 @@ jobs:
                   )
                   test -n "$ordinary_record"
                   rm "$release/ordinary-ledger.log"
-                  read -r scenario_count assertion_count < <(
+                  read -r expected_scenario_count expected_assertion_count < <(
                       make --no-print-directory -s contract-counts
                   )
+                  scenario_count=$(
+                      make --no-print-directory -s contract-scenarios | wc -l
+                  )
+                  assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  test "$scenario_count" -eq "$expected_scenario_count"
+                  test "$assertion_count" -eq "$expected_assertion_count"
                   source_lines=$(
                       find src include -type f -print0 \
                           | sort -z | xargs -0 -r cat | wc -l
                   )
+                  stage_capacity=$(sed -nE \
+                      's/^#define BOOT_LEDGER_STAGE_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  receipt_capacity=$(sed -nE \
+                      's/^#define BOOT_LEDGER_RECEIPT_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  capability_capacity=$(sed -nE \
+                      's/^#define BOOT_STAGE_CAPABILITY_CAPACITY ([0-9]+)U$/\1/p' \
+                      include/sapote/boot_ledger.h)
+                  test -n "$stage_capacity"
+                  test -n "$receipt_capacity"
+                  test -n "$capability_capacity"
                   {
                       printf 'Sapote v0.8.0 Linux ABI and BusyBox Foundation verification\n'
                       printf 'commit: %s\n' "$GITHUB_SHA"
                       printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
                       printf 'scenarios per sweep: %s\n' "$scenario_count"
                       printf 'Boot Ledger capacity: %s stages, %s receipts, %s capabilities per stage\n' \
-                          "$(sed -nE 's/^#define BOOT_LEDGER_STAGE_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)" \
-                          "$(sed -nE 's/^#define BOOT_LEDGER_RECEIPT_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)" \
-                          "$(sed -nE 's/^#define BOOT_STAGE_CAPABILITY_CAPACITY ([0-9]+)U$/\1/p' include/sapote/boot_ledger.h)"
+                          "$stage_capacity" "$receipt_capacity" \
+                          "$capability_capacity"
                       printf 'ordinary ledger: %s\n' "$ordinary_record"
                       printf 'source lines (src and include): %s\n' "$source_lines"
                       printf 'shell assertion lines: %s\n' "$assertion_count"
                       printf 'kernel bytes: %s\n' "$(stat -c %s build/sapote.elf)"
                       printf 'ISO bytes: %s\n' "$(stat -c %s build/sapote.iso)"
                       printf 'make verify: passed without warnings\n'
-                      printf 'all 38 scenarios: passed individually\n'
+                      printf 'all %s scenarios: passed individually\n' \
+                          "$scenario_count"
                       printf 'serial TCG complete sweeps: 10 passed\n'
                       cat "$release/accelerator-results.txt"
                       printf 'BusyBox reproducibility: two clean builds byte-identical\n'

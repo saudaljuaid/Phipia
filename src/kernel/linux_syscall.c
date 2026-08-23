@@ -7,6 +7,7 @@
 
 #include <sapote/console.h>
 #include <sapote/cpu.h>
+#include <sapote/linux_abi.h>
 #include <sapote/memory.h>
 
 #define CPUID_EXTENDED_ROOT UINT32_C(0x80000000)
@@ -247,16 +248,85 @@ static bool enosys_result(uint64_t number, uint64_t *result)
     return true;
 }
 
-static bool runtime_bytes_equal(
+static bool context_equal(
+    const struct linux_syscall_context *left,
+    const struct linux_syscall_context *right
+)
+{
+    if (left->address_space != right->address_space ||
+        left->process_generation != right->process_generation ||
+        left->executable_start != right->executable_start ||
+        left->executable_end != right->executable_end ||
+        left->stack_start != right->stack_start ||
+        left->stack_end != right->stack_end ||
+        left->fs_address != right->fs_address ||
+        left->tid_address != right->tid_address ||
+        left->anonymous_frame != right->anonymous_frame ||
+        left->exit_observed != right->exit_observed ||
+        left->failure_before_ordinal != right->failure_before_ordinal ||
+        left->failure_after_ordinal != right->failure_after_ordinal ||
+        left->controlled_run != right->controlled_run ||
+        left->publish_stdout != right->publish_stdout) {
+        return false;
+    }
+    for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
+        if (left->heap_frames[index] != right->heap_frames[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool result_equal(
+    const struct linux_syscall_result *left,
+    const struct linux_syscall_result *right
+)
+{
+    return left->syscall_count == right->syscall_count &&
+        left->distinct_syscalls == right->distinct_syscalls &&
+        left->stdout_bytes == right->stdout_bytes &&
+        left->exit_status == right->exit_status &&
+        left->status == right->status &&
+        left->cpu_state == right->cpu_state &&
+        left->stdout_valid == right->stdout_valid &&
+        left->exit_zero == right->exit_zero &&
+        left->real_syscall_instruction == right->real_syscall_instruction &&
+        left->process_authenticated == right->process_authenticated &&
+        left->cr3_authenticated == right->cr3_authenticated &&
+        left->cpu_disarmed == right->cpu_disarmed &&
+        left->controlled_failure_observed ==
+            right->controlled_failure_observed;
+}
+
+static bool runtime_equal(
     const struct linux_syscall_runtime *left,
     const struct linux_syscall_runtime *right
 )
 {
-    const uint8_t *left_bytes = (const uint8_t *)(const void *)left;
-    const uint8_t *right_bytes = (const uint8_t *)(const void *)right;
-
-    for (size_t index = 0U; index < sizeof(*left); ++index) {
-        if (left_bytes[index] != right_bytes[index]) {
+    if (!context_equal(&left->context, &right->context) ||
+        !result_equal(&left->result, &right->result) ||
+        left->saved_efer != right->saved_efer ||
+        left->saved_star != right->saved_star ||
+        left->saved_lstar != right->saved_lstar ||
+        left->saved_fmask != right->saved_fmask ||
+        left->saved_fs_base != right->saved_fs_base ||
+        left->request_generation != right->request_generation ||
+        left->call_index != right->call_index ||
+        left->request_ordinal != right->request_ordinal ||
+        left->state != right->state ||
+        left->stdout_state != right->stdout_state ||
+        left->provenance_state != right->provenance_state ||
+        left->anonymous_mapped != right->anonymous_mapped ||
+        left->active != right->active) {
+        return false;
+    }
+    for (size_t index = 0U; index < LINUX_SYSCALL_ALLOWLIST_COUNT; ++index) {
+        if (left->seen[index] != right->seen[index]) {
+            return false;
+        }
+    }
+    for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
+        if (left->heap_mapped[index] != right->heap_mapped[index]) {
             return false;
         }
     }
@@ -548,7 +618,7 @@ bool linux_syscall_enosys_self_test(void)
             return false;
         }
     }
-    return runtime_bytes_equal(&before, &runtime);
+    return runtime_equal(&before, &runtime);
 }
 
 enum linux_syscall_status linux_syscall_arm(
@@ -570,12 +640,12 @@ enum linux_syscall_status linux_syscall_arm(
         cpu_interrupts_enabled() ||
         context->address_space->state != PAGING_PROCESS_SPACE_INSTALLED ||
         context->process_generation == 0U ||
-        context->executable_start != UINT64_C(0x0000400001001000) ||
-        context->executable_end != UINT64_C(0x0000400001007000) ||
+        context->executable_start != LINUX_ABI_EXECUTABLE_START ||
+        context->executable_end != LINUX_ABI_EXECUTABLE_END ||
         context->stack_start != PAGING_LINUX_STACK_BASE ||
         context->stack_end != PAGING_LINUX_STACK_END ||
-        context->fs_address != UINT64_C(0x0000400001008998) ||
-        context->tid_address != UINT64_C(0x0000400001008B34)) {
+        context->fs_address != LINUX_ABI_FS_ADDRESS ||
+        context->tid_address != LINUX_ABI_TID_ADDRESS) {
         return LINUX_SYSCALL_STATUS_BAD_PROCESS;
     }
     for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
@@ -712,8 +782,8 @@ static void expected_arguments(
 {
     zero_bytes(candidate, sizeof(*candidate));
     zero_bytes(frame, sizeof(*frame));
-    candidate->context.fs_address = UINT64_C(0x0000400001008998);
-    candidate->context.tid_address = UINT64_C(0x0000400001008B34);
+    candidate->context.fs_address = LINUX_ABI_FS_ADDRESS;
+    candidate->context.tid_address = LINUX_ABI_TID_ADDRESS;
     switch (call_index) {
     case 0U:
         frame->rdi = ARCH_SET_FS;

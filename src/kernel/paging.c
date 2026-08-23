@@ -124,6 +124,17 @@ _Static_assert(
     PAGING_PROBE_ADDRESS >= SAPOTE_EARLY_PHYSICAL_LIMIT,
     "the paging probe page would collide with the identity window"
 );
+_Static_assert(
+    PAGING_LINUX_IMAGE_READ_PREFIX_PAGE <
+        PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE &&
+    PAGING_LINUX_IMAGE_READ_SUFFIX_PAGE ==
+        PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE +
+            PAGING_LINUX_IMAGE_EXECUTE_PAGES &&
+    PAGING_LINUX_IMAGE_WRITE_PAGE ==
+        PAGING_LINUX_IMAGE_READ_SUFFIX_PAGE + 1U &&
+    PAGING_LINUX_IMAGE_WRITE_PAGE + 1U == PAGING_LINUX_IMAGE_PAGES,
+    "the measured Linux image permission pages no longer cover the image"
+);
 
 /* The private hierarchy paging_self_test builds: a root and five tables. */
 #define PAGING_TEST_ARENA_PAGES 6U
@@ -774,16 +785,18 @@ static enum paging_status allocate_table(
 }
 
 /*
- * Only the installed hierarchy has translations the processor could have
- * cached. A private hierarchy is never in CR3, so flushing on its behalf would
- * evict an unrelated live entry and prove nothing.
+ * The installed hierarchy and the one currently selected private hierarchy
+ * can have cached translations. An inactive private hierarchy cannot, so
+ * invalidating on its behalf would evict an unrelated live entry.
  */
 static void invalidate(
     const struct page_hierarchy *hierarchy,
     uint64_t virtual_address
 )
 {
-    if (hierarchy->live) {
+    if (hierarchy->live ||
+        (hierarchy->root != 0U &&
+            (cpu_read_cr3() & PAGE_FRAME_MASK) == hierarchy->root)) {
         cpu_invalidate_page((uintptr_t)virtual_address);
     }
 }
@@ -2063,13 +2076,17 @@ static bool process_mapping_request_valid(
         const size_t page = (size_t)((virtual_address -
             PAGING_LINUX_IMAGE_BASE) / PAGING_PAGE_SIZE);
 
-        if (page == 0U || page == 7U) {
+        if (page == PAGING_LINUX_IMAGE_READ_PREFIX_PAGE ||
+            page == PAGING_LINUX_IMAGE_READ_SUFFIX_PAGE) {
             return permissions == PAGING_READ;
         }
-        if (page >= 1U && page <= 6U) {
+        if (page >= PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE &&
+            page < PAGING_LINUX_IMAGE_EXECUTE_FIRST_PAGE +
+                PAGING_LINUX_IMAGE_EXECUTE_PAGES) {
             return permissions == PAGING_EXECUTE;
         }
-        return page == 8U && permissions == PAGING_WRITE;
+        return page == PAGING_LINUX_IMAGE_WRITE_PAGE &&
+            permissions == PAGING_WRITE;
     }
     if (kind == PAGING_PROCESS_MAPPING_LINUX_STACK) {
         return virtual_address >= PAGING_LINUX_STACK_BASE &&

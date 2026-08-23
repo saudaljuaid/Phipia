@@ -1595,6 +1595,8 @@ static void execute_linux_image_stack_foundation(
     boot_stage_result_succeed(descriptor, result);
 }
 
+#define LINUX_PROOF_REQUIREMENT_COUNT 21U
+
 static const enum boot_capability linux_proof_requirements[] = {
     BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
     BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
@@ -1620,8 +1622,11 @@ static const enum boot_capability linux_proof_requirements[] = {
 };
 
 _Static_assert(sizeof(linux_proof_requirements) /
-    sizeof(linux_proof_requirements[0]) == BOOT_STAGE_CAPABILITY_CAPACITY,
-    "Linux proof prerequisites no longer exactly fill the bound");
+    sizeof(linux_proof_requirements[0]) == LINUX_PROOF_REQUIREMENT_COUNT,
+    "Linux proof prerequisite count changed");
+_Static_assert(LINUX_PROOF_REQUIREMENT_COUNT <=
+    BOOT_STAGE_CAPABILITY_CAPACITY,
+    "Linux proof prerequisites exceed the descriptor bound");
 
 static bool linux_proof_dependencies_complete(
     const struct boot_stage_descriptor *descriptor
@@ -1679,9 +1684,15 @@ static void execute_linux_installed_proof(
         stage_failed(context, result, linux_abi_status_string(status));
         return;
     }
+    console_write("ST LINUX ABI busybox echo bytes ");
+    console_write_u64(proof.stdout_bytes);
+    console_write(" syscalls ");
+    console_write_u64(proof.syscall_count);
     console_write(
-        "ST LINUX ABI busybox echo bytes 7 syscalls 9 stdout valid exit 0 "
-        "ring 3 address-space private teardown clean robustness 72\n");
+        " stdout valid exit 0 ring 3 address-space private teardown clean "
+        "robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.file_bytes;
     result->proof_counters[1] = proof.syscall_count;

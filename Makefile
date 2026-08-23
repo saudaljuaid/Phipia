@@ -147,6 +147,7 @@ $(LINUX_ABI_FIXTURE): $(BUSYBOX_BINARY) tools/make-linux-abi-fixture.py
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
+		rm -f $@; \
 		sed -n '/__got_start/,/__got_end/p' $(BUILD_DIR)/sapote.map; \
 		sed 's/ASSERT(__got_end == __got_start,/ASSERT(1,/' \
 			linker.ld >$(BUILD_DIR)/linker-got-diagnostic.ld; \
@@ -208,6 +209,8 @@ verify: toolchain lint
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
 	$(MAKE) $(LINUX_ABI_FIXTURE)
+	@test "$$(sha256sum $(LINUX_ABI_FIXTURE) | awk '{ print toupper($$1) }')" = \
+		'41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F'
 	SAPOTE_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_BINARY)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/linux-fat16-host-test.rs -o $(RUST_LINUX_FAT16_TEST)
@@ -353,8 +356,8 @@ verify: toolchain lint
 		{ echo 'process proof return handler has an unexpected call site'; exit 1; }
 	@test "$$($(NM) $(KERNEL) | grep -Ec ' T linux_syscall_entry$$')" -eq 1 || \
 		{ echo 'Linux proof has no unique architectural syscall entry'; exit 1; }
-	@$(OBJDUMP) -d $(BUSYBOX_BINARY) \
-		| grep -Eq '[[:space:]]0f 05[[:space:]]+syscall[[:space:]]*$$' || \
+	@$(OBJDUMP) -d --no-show-raw-insn $(BUSYBOX_BINARY) \
+		| grep -Eq '[[:space:]]syscall[[:space:]]*$$' || \
 		{ echo 'pinned BusyBox has no x86-64 syscall instruction'; exit 1; }
 	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \

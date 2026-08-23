@@ -70,9 +70,18 @@ sed -i \
     "$work_dir/musl-install/lib/musl-gcc.specs"
 grep -Fq "$work_dir/musl-install/lib/crt1.o" \
     "$work_dir/musl-install/lib/musl-gcc.specs"
-! grep -Fq '/Scrt1.o' "$work_dir/musl-install/lib/musl-gcc.specs"
-! grep -Fq 'crtbeginS.o' "$work_dir/musl-install/lib/musl-gcc.specs"
-! grep -Fq 'crtendS.o' "$work_dir/musl-install/lib/musl-gcc.specs"
+if grep -Fq '/Scrt1.o' "$work_dir/musl-install/lib/musl-gcc.specs"; then
+    printf 'musl specs still select the PIE startup object\n' >&2
+    exit 1
+fi
+if grep -Fq 'crtbeginS.o' "$work_dir/musl-install/lib/musl-gcc.specs"; then
+    printf 'musl specs still select the PIE crtbegin object\n' >&2
+    exit 1
+fi
+if grep -Fq 'crtendS.o' "$work_dir/musl-install/lib/musl-gcc.specs"; then
+    printf 'musl specs still select the PIE crtend object\n' >&2
+    exit 1
+fi
 
 cp "$repository_root/userspace/busybox/busybox.config" \
     "$work_dir/busybox.config"
@@ -100,6 +109,9 @@ cp "$busybox_source/.config" "$output_dir/busybox.config"
 if [ "$busybox_binary_sha256" != measure ]; then
     printf '%s  %s\n' "$busybox_binary_sha256" \
         "$output_dir/busybox" | sha256sum --check --strict
+else
+    printf 'warning: BusyBox binary SHA-256 pin bypassed for measurement only\n' \
+        >&2
 fi
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$output_dir/busybox.config" | sha256sum --check --strict
@@ -125,10 +137,22 @@ test $(((busybox_size + 4095) / 4096)) -le 512
 test "$(readelf -W -h "$output_dir/busybox" | awk '/Type:/{print $2}')" = EXEC
 test "$(readelf -W -h "$output_dir/busybox" | awk '/Number of program headers:/{print $5}')" -le 8
 test "$(readelf -W -l "$output_dir/busybox" | grep -Ec '^[[:space:]]+LOAD')" -le 4
-! readelf -W -l "$output_dir/busybox" | grep -Eq \
-    '^[[:space:]]+(INTERP|DYNAMIC)|LOAD[[:space:]].*RWE'
-! readelf -W -r "$output_dir/busybox" | grep -Eq 'R_X86_64_'
-! readelf -W -d "$output_dir/busybox" | grep -Eq '\(NEEDED\)|\(TEXTREL\)'
+if readelf -W -l "$output_dir/busybox" | grep -Eq \
+        '^[[:space:]]+(INTERP|DYNAMIC)|LOAD[[:space:]].*RWE'; then
+    printf 'BusyBox contains an interpreter, dynamic header, or RWX segment\n' \
+        >&2
+    exit 1
+fi
+if readelf -W -r "$output_dir/busybox" | grep -Eq 'R_X86_64_'; then
+    printf 'BusyBox contains an unsupported x86-64 relocation\n' >&2
+    exit 1
+fi
+if readelf -W -d "$output_dir/busybox" \
+        | grep -Eq '\(NEEDED\)|\(TEXTREL\)'; then
+    printf 'BusyBox contains a shared-library dependency or text relocation\n' \
+        >&2
+    exit 1
+fi
 
 objdump -d --no-show-raw-insn "$output_dir/busybox" \
     >"$output_dir/busybox-disassembly.txt"
@@ -140,6 +164,7 @@ sha256sum "$output_dir/busybox" "$output_dir/busybox.config" \
 
 {
     printf 'BusyBox version: %s\n' "$busybox_version"
+    printf 'BusyBox upstream URL: %s\n' "$busybox_url"
     printf 'BusyBox source SHA-256: %s\n' "$busybox_sha256"
     printf 'musl version: %s\n' "$musl_version"
     printf 'musl upstream URL: %s\n' "$musl_upstream_url"
