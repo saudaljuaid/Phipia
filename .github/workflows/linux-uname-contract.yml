@@ -33,8 +33,6 @@ jobs:
                       build-essential bzip2 file qemu-user strace
             - name: Build, trace, and measure twice
               shell: bash
-              env:
-                  SAPOTE_BUSYBOX_UNAME_MEASUREMENT_MODE: 1
               run: |
                   set -euo pipefail
                   bash tools/build-busybox-uname-proof.sh \
@@ -51,7 +49,8 @@ jobs:
                   build/linux-uname/glibc-abi-measure \
                       >evidence/linux-uname/glibc-utsname-layout.txt
                   build/linux-uname/one/musl-install/bin/musl-gcc \
-                      -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic \
+                      -std=c11 -O2 -static -no-pie \
+                      -Wall -Wextra -Werror -Wpedantic \
                       tools/linux-uname-abi-measure.c \
                       -o build/linux-uname/musl-abi-measure
                   build/linux-uname/musl-abi-measure \
@@ -61,6 +60,10 @@ jobs:
                   sha256sum evidence/linux-uname/build-one/busybox \
                       evidence/linux-uname/build-one/busybox.config \
                       >evidence/linux-uname/measured-SHA256SUMS
+                  cp userspace/busybox/uname-syscall-sequence.txt \
+                      evidence/linux-uname/syscall-sequence.txt
+                  cp userspace/busybox/uname-syscall-allowlist.txt \
+                      evidence/linux-uname/syscall-allowlist.txt
                   printf 'two clean source and toolchain builds: byte-identical\n' \
                       >>evidence/linux-uname/build-one/build-record.txt
             - name: Upload measured contract

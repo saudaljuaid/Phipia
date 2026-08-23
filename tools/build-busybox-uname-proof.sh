@@ -21,8 +21,7 @@ busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 busybox_config_sha256=6d972c7a1f3df0034d5996cc24b58b7364efbb7851f926c5d8d2fd18c41ebb2b
-busybox_binary_sha256=measure
-measurement_mode=${SAPOTE_BUSYBOX_UNAME_MEASUREMENT_MODE:-0}
+busybox_binary_sha256=566e0139be6e4d01c4fccc0bcc812661756d2069eec6606cb9ba11c8ec3ae003
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -108,17 +107,8 @@ printf '%s  %s\n' "$busybox_config_sha256" \
 busybox_binary="$busybox_source/busybox"
 cp "$busybox_binary" "$output_dir/busybox"
 cp "$busybox_source/.config" "$output_dir/busybox.config"
-if [ "$busybox_binary_sha256" != measure ]; then
-    printf '%s  %s\n' "$busybox_binary_sha256" \
-        "$output_dir/busybox" | sha256sum --check --strict
-else
-    if [ "$measurement_mode" != 1 ]; then
-        printf 'measurement-only BusyBox SHA-256 bypass was not authorized\n' >&2
-        exit 1
-    fi
-    printf 'warning: BusyBox binary SHA-256 pin bypassed for measurement only\n' \
-        >&2
-fi
+printf '%s  %s\n' "$busybox_binary_sha256" \
+    "$output_dir/busybox" | sha256sum --check --strict
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$output_dir/busybox.config" | sha256sum --check --strict
 cp "$busybox_source/LICENSE" "$output_dir/BUSYBOX-LICENSE"
@@ -201,15 +191,7 @@ printf 'Linux\n' | cmp --silent - "$stdout_file"
 test ! -s "$stderr_file"
 sed -nE 's/^([a-z_][a-z0-9_]*)\(.*/\1/p' "$trace_file" \
     | grep -v '^execve$' >"$output_dir/syscall-sequence.txt"
-cat >"$work_dir/expected-syscall-sequence.txt" <<'EOF'
-arch_prctl
-set_tid_address
-uname
-ioctl
-writev
-exit_group
-EOF
-cmp --silent "$work_dir/expected-syscall-sequence.txt" \
+cmp --silent "$repository_root/userspace/busybox/uname-syscall-sequence.txt" \
     "$output_dir/syscall-sequence.txt"
 test "$(sort -u "$output_dir/syscall-sequence.txt" | wc -l)" -eq 6
 grep -Fq 'arch_prctl(ARCH_SET_FS,' "$trace_file"

@@ -1,0 +1,24 @@
+# Sapote v0.9.0 BusyBox uname syscall contract
+#
+# This is the normalized independent trace of the exact binary identified
+# below. Addresses whose host values vary are expressed by their Sapote fixture
+# meaning. The host execve that installs the image is not part of the in-kernel
+# allowlist.
+#
+# BusyBox SHA-256:
+# 566E0139BE6E4D01C4FCCC0BCC812661756D2069EEC6606CB9BA11C8EC3AE003
+# argv: busybox uname -s
+# envp: empty
+
+01  158  arch_prctl(ARCH_SET_FS, image TLS address) = 0
+02  218  set_tid_address(image TID address) = positive-proof-tid
+03   63  uname(complete 390-byte RW/NX destination) = 0
+04   16  ioctl(1, TIOCGWINSZ, bounded user destination) = -ENOTTY
+05   20  writev(1, [{"Linux", 5}, {"\n", 1}], 2) = 6
+06  231  exit_group(0) = no-return
+
+# Allowlist: 16, 20, 63, 158, 218, 231 (6 distinct numbers).
+# Every other number returns -ENOSYS and leaves process state unchanged.
+# ioctl is only the exact rejected descriptor-1 TIOCGWINSZ probe. It is not a
+# terminal ABI. writev is only the exact two-element output vector above. It is
+# not a public vector-I/O or descriptor ABI.
