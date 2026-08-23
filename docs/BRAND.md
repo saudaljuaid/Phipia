@@ -11,21 +11,21 @@ separate product.
 ## Canonical mark
 
 [`assets/sapote-logo.png`](../assets/sapote-logo.png) is the source of truth. It
-is the exact supplied 375×332 opaque RGBA image. Its SHA-256 is:
+is the exact supplied 1024×943 transparent RGBA image. Its SHA-256 is:
 
-    DBDA2F52A5F66CD2F9EFA202CB892C7AB45A29DF83DB37C5C6FDD79B1DEE7CB0
+    15C13E740D26BED1019E99C7FE5CE1B9E293F2A1712BFFFF51EAD3ED2C37A4FE
 
-The 18,756-byte file is fully opaque. Its near-white field and charcoal
-anti-aliased pixels are part of the asset. Do not redraw, trace, recolour, crop,
-mirror, key out its background, add type to it, or substitute a visually
-similar mark. Public uses preserve its aspect ratio.
+The 37,400-byte file contains the black pebble and its supplied transparent
+field. Do not redraw, trace, recolour, crop, mirror, flatten its transparency,
+add type to it, or substitute a visually similar mark. Public uses preserve
+its aspect ratio.
 
 The kernel does not parse PNG. `tools/make-logo-asset.py` deterministically
 fits the source within a 280-pixel ceiling using a bounded premultiplied box
-filter. The resulting 280×248 image is encoded as a 21,573-byte `SRL1` stream
-and embedded by Rust. This is a runtime presentation size, not a replacement
-source asset. The boot proof decodes it into guest memory and compares every
-drawn pixel with the decoded stream before reporting success.
+filter. The resulting 280×258 image is encoded as an 8,693-byte `SRL1` stream
+with 1,737 runs and embedded by Rust. This is a runtime presentation size, not
+a replacement source asset. The boot proof decodes it into guest memory and
+compares every drawn pixel with the decoded stream before reporting success.
 
 ## Palette
 
@@ -34,38 +34,41 @@ around the unchanged asset:
 
 | Role | Value |
 | --- | --- |
-| Ink and outlines | `#1B1D22` |
-| Desktop | `#6E7FA4` |
-| Desktop rule | `#8294B8` |
-| Active title | `#233A68` |
-| Inactive title | `#65728E` |
-| Teal status | `#2F8B8C` |
-| Gold status | `#D8A43A` |
-| Green status | `#4F8A5B` |
-| Red status | `#B84E4C` |
-| Violet status | `#7B5B89` |
-| Shadow | `#5E626B` |
-| Window face | `#C8CBD0` |
-| White windows and highlights | `#FFFFFF` |
+| Ink and outlines | `#101012` |
+| Desktop | `#595976` |
+| Desktop rule | `#666684` |
+| Active title and selected tools | `#18181C` |
+| Inactive title rule | `#7A7A82` |
+| Teal accent | `#4F837F` |
+| Gold accent | `#C4A44E` |
+| Green accent | `#598561` |
+| Red accent | `#A55050` |
+| Violet accent | `#705984` |
+| Shadow | `#353542` |
+| Window face | `#D7D6CE` |
+| Warm white | `#F7F6F0` |
 
-Status accents identify compact indicators and launcher icons; they are not
-applied to the logo. The First Light workbench displays the exact decoded shape
-as a two-color, two-pixel bitmap with ordered edge dithering directly on the
-grey window face, without a separate field or frame. This display-only
+Accent colors belong to tool icons, not readiness indicators or the logo.
+First Light displays the exact decoded shape once, at its intended presentation
+size, as a one-pixel two-color bitmap with ordered edge dithering directly on
+the warm window face. The menu bar is type-only: it does not put the pebble in
+a miniature tile or frame. This display-only
 treatment leaves the canonical PNG unchanged. The framebuffer console uses
 black on white; early VGA
 text uses bright white on black. The kernel has no alpha compositor, gradients,
 or runtime theme selection.
 
-First Light uses one-pixel outlines, beveled controls, bitmap type, a compact
-menu strip, patterned desktop, utility status window, and bottom launcher tray.
-The composition and code-native icons are Sapote's own; it does not use or
-claim another company's name, wordmark, icons, or trade dress.
+First Light uses one-pixel outlines, platinum bevels, striped title regions,
+bitmap type, a compact menu strip, a slate-violet pinstriped desktop, a left
+Workspace palette, and a vertical tool dock. Its interaction grammar is
+informed by classic Macintosh and NeXT workstation interfaces; the pebble,
+composition, labels, and code-native icons are Sapote's own.
 
 ## Voice
 
-Public copy uses short technical descriptions and avoids broad platform claims.
-First Light's greeting is `hello from the metal.`
+Public copy uses short, direct descriptions and avoids broad platform claims.
+The welcome screen uses sentence case and human language; proof terms such as
+`PASS`, `READY`, and `ONLINE` belong in diagnostic tools, not desktop chrome.
 
 ## Public surfaces
 

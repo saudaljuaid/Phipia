@@ -6,10 +6,12 @@ a window manager, or a userspace boundary. The same installed framebuffer,
 cached surface, screen console, shell, keyboard, interrupt topology, scheduler,
 and Boot Ledger that existed before the milestone remain underneath it.
 
-The desktop has a blue-gray line pattern, beveled menu bar, compact workspace
-status, bitmap labels, one workbench window, and a bottom launcher tray. The
-chrome and code-native icons are Sapote's own. The mark is decoded from the
-exact canonical asset and is neither recoloured nor redrawn.
+The desktop has a slate-violet pinstripe, warm platinum chrome, striped title
+regions, bitmap labels, a persistent Workspace palette, one welcome window,
+and a vertical tool dock. Classic Macintosh and NeXT interfaces inform the
+interaction grammar; the composition and code-native icons are Sapote's own.
+The pebble is decoded from the exact canonical asset and is neither recoloured
+nor redrawn.
 
 ![First Light at 1024 by 768](../assets/sapote-first-light.png)
 
@@ -42,30 +44,30 @@ Only the documented identity palette is installed:
 
 | Role | RGB |
 | --- | --- |
-| White windows and highlights | `#FFFFFF` |
-| Ink and outlines | `#1B1D22` |
-| Desktop | `#6E7FA4` |
-| Desktop rule | `#8294B8` |
-| Active title | `#233A68` |
-| Inactive title | `#65728E` |
-| Teal status | `#2F8B8C` |
-| Gold status | `#D8A43A` |
-| Green status | `#4F8A5B` |
-| Red status | `#B84E4C` |
-| Violet status | `#7B5B89` |
-| Shadow | `#5E626B` |
-| Window face | `#C8CBD0` |
+| Warm white | `#F7F6F0` |
+| Ink and outlines | `#101012` |
+| Desktop | `#595976` |
+| Desktop rule | `#666684` |
+| Active selection | `#18181C` |
+| Inactive title rule | `#7A7A82` |
+| Teal accent | `#4F837F` |
+| Gold accent | `#C4A44E` |
+| Green accent | `#598561` |
+| Red accent | `#A55050` |
+| Violet accent | `#705984` |
+| Shadow | `#353542` |
+| Window face | `#D7D6CE` |
 
-The accents belong to status lights and launcher icons, never to the canonical
+The accents belong to tool icons, never to readiness lights or the canonical
 mark. There is no floating point, alpha compositor, kernel-generated gradient,
 transparency, animation, or runtime theme.
 
-The normal desktop contains a 24-pixel menu bar, a 22-pixel workspace strip, a
-fixed 600 by 350 Workbench window, the canonical mark at its deterministic 280
-by 248 runtime size, stable readiness rows, a 224 by 28 ledger indicator, and a
-four-item launcher tray. The indicator is derived from the published installed
-ledger: it says `LEDGER PASS` only when that ledger is not degraded. No
-default-desktop label contains an address, cycle count, or timing value.
+The normal desktop contains a 24-pixel type-only menu bar, a 132 by 202
+Workspace palette, a responsive welcome window up to 640 by 388, the canonical
+mark at its deterministic 280 by 258 runtime size, a short welcome message, a
+version label, and a four-item vertical tool dock. Diagnostic state stays in
+the Ledger and System tools. No default-desktop label uses readiness language,
+an address, a cycle count, or a timing value.
 
 ## Deterministic layout
 
@@ -76,29 +78,29 @@ first desktop draw.
 
 The constants are:
 
-- menu bar: full width by 24 pixels, followed by a full-width 22-pixel workspace
-  strip;
-- Workbench window: 600 by 350, centred horizontally, at y=56 for 600-pixel
-  modes and y=70 otherwise;
-- mark: 280 by 248, 20 pixels from the Workbench's left edge and 18 pixels below
-  its 26-pixel title region;
-- content column: 224 pixels wide, beginning 330 pixels from the Workbench's
-  left edge;
-- ledger indicator: 224 by 28 in the content column;
-- launcher tray: 596 by 64, centred, eighteen pixels above the bottom edge;
-- launcher items: four 142 by 46 half-open rectangles, four pixels apart and
-  eight pixels inside the tray;
-- icons: 28 by 28 at the left of each launcher;
-- panel width: the lesser of 720 and `surface width - 64`;
-- panel height: 400 at heights of 720 or more, otherwise 300;
-- panel position: centred, eighteen pixels above the dock;
+- menu bar: full width by 24 pixels;
+- Workspace palette: 132 by 202 at `(8, 38)` with one inverted heading and
+  eight fixed rows;
+- welcome window: the lesser of 640 pixels and the space between the palette
+  and dock, by 388 pixels, at y=48 for 600-pixel modes and y=60 otherwise;
+- mark: 280 by 258 in ordinary modes; 210 by 194 at the minimum 800-pixel width;
+- content column: 246 pixels wide, forty pixels from the welcome window's right
+  edge;
+- version label: 246 by 20 in the content column;
+- tool dock: 84 by 274, eight pixels from the right and fourteen below the menu;
+- tool items: four 70 by 62 half-open rectangles, four pixels apart and seven
+  pixels inside the dock;
+- icons: 28 by 28, centred above each item label;
+- panel width: the lesser of 720 and `surface width - 156`;
+- panel height: 400 at heights of 720 or more, otherwise 330;
+- panel position: centred in the area to the left of the tool dock;
 - panel client: eight pixels inside each side, beginning 36 pixels below the
   panel top.
 
-At 1024 by 768 the Workbench begins at `(212,70)`, the mark at `(232,114)`, the
-launcher tray at `(214,686)`, and the panel at `(152,268)`. At 800 by 600 those
-origins are `(100,56)`, `(120,100)`, `(102,518)`, and `(40,200)`. At 1280 by
-720 they are `(340,70)`, `(360,114)`, `(342,638)`, and `(280,220)`.
+At 1024 by 768 the welcome window begins at `(224,60)`, the mark at `(244,118)`,
+the tool dock at `(932,38)`, and the panel at `(110,184)`. At 800 by 600 those
+origins are `(164,48)`, `(184,106)`, `(708,38)`, and `(36,135)`. At 1280 by
+720 they are `(352,60)`, `(372,118)`, `(1188,38)`, and `(238,160)`.
 
 Validation proves every rectangle is inside the surface, the four items do not
 overlap, the client is non-empty, each baseline fits, the cursor hotspot is
@@ -130,8 +132,8 @@ backward, `Enter` activates, and `Escape` closes. Focus wraps across all four
 items. Terminal installs the existing screen console into the validated panel
 client and uses the existing shell parser. Ledger reads the published receipt
 set. System reports stable CPU, memory, PCI, timer, and framebuffer shapes with
-no physical addresses. About identifies Sapote 0.4.0 and the First Light
-milestone. Panels are neither draggable nor resizable.
+no physical addresses. About identifies Sapote 0.9.0 and the First Light /
+Pebble milestone. Panels are neither draggable nor resizable.
 
 Shell characters are routed to the graphical terminal only while Terminal is
 active. Serial output remains independent. The screen retains a fixed 160 by
@@ -146,7 +148,8 @@ direct framebuffer write. The initial activation may present the full surface.
 Later cursor, focus, dock, and panel transitions union bounded damage and
 present only that rectangle. The surface's existing volatile WC row copy and
 post-store `sfence` are unchanged and are statically required by `make verify`.
-The hero, launcher tray, and panel drop shadows have checked bounds. A panel
+The welcome window, Workspace palette, tool dock, and panel drop shadows have
+checked bounds. A panel
 transition damages the union of the window and its six-pixel shadow, so closing
 or replacing a panel cannot leave pixels outside the declared window rectangle.
 
@@ -211,9 +214,10 @@ the real installed ledger, injects real three-byte packets through 8042 command
 `0xD3`, exercises hover/press/release and every panel, runs keyboard navigation,
 checks the synthetic absence plan, proves old/new cursor damage, reads selected
 logo/text/dock/panel/cursor pixels, and recomputes the ledger fingerprint. The
-workbench renders the decoded logo as a two-color, two-pixel bitmap directly on
-the grey window face and applies ordered dithering only to its antialiased edge
-shades. It has no separate logo field and no secondary status strip.
+workbench renders the decoded logo once as a two-color, one-pixel bitmap
+directly on the warm window face and applies ordered dithering only to its
+antialiased edge shades. The menu bar uses type instead of a miniature logo, so
+the mark has no separate tile, field, frame, or secondary status strip.
 
 `tools/capture-first-light.py` uses QMP to capture the emulated display itself.
 It produces clean, focus/hover, and terminal-with-ledger frames. The committed
@@ -256,9 +260,9 @@ No correctness control passed unexpectedly.
 
 ## Verification contract
 
-The current repository has 36 named QEMU scenarios. Pull requests run
+The current repository has 39 named QEMU scenarios. Pull requests run
 `make verify`, capture all three First Light frames from QEMU, compare every
-stable pixel, and execute all 36 scenarios. The milestone evidence workflow
+stable pixel, and execute all 39 scenarios. The milestone evidence workflow
 then runs ten complete serial TCG sweeps and records the authorized accelerator
 surface. It does not probe KVM through the excluded `/dev/kvm` host device.
 Execution results and flakes belong in the workflow artifacts and release
@@ -274,10 +278,15 @@ resolved symbols, non-RWX load segments, no linked relocations, no
 floating-point/MMX/SSE/AVX kernel text, no direct UI framebuffer writes, and no
 drawing from IRQ12.
 
+With FFmpeg installed, `make capture-boot-video` regenerates the committed
+20-second H.264 clip from QEMU's emulated display. The recorder starts at
+firmware, requires the installed Boot Ledger proof, opens Terminal, and enters
+`version`; it does not recreate the interface on the host.
+
 ## Limits
 
-First Light has no userspace, processes, application ABI, filesystem-backed
-applications, networking, GPU acceleration, USB/Bluetooth/touch input, wheel,
+First Light itself is a kernel-owned workspace and does not yet host userspace
+applications. It has no networking, GPU acceleration, USB/Bluetooth/touch input, wheel,
 gestures, live mode switching, animation, dynamic fonts/themes/modules, or SMP
 scheduler expansion. It is not a compositor security boundary or a formally
 verified GUI. Window management, movable/resizable windows, process isolation,

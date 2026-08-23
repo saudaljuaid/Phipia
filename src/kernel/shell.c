@@ -213,7 +213,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 0.4.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Sapote 0.9.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
