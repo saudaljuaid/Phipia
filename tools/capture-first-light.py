@@ -116,7 +116,13 @@ def wait_serial(path, marker, timeout=35.0):
         if path.exists() and marker in path.read_bytes():
             return
         time.sleep(0.05)
-    raise RuntimeError(f"serial transcript omitted {marker.decode('ascii')}")
+    transcript = path.read_bytes() if path.exists() else b""
+    tail = transcript[-8192:].decode("utf-8", errors="replace")
+    raise RuntimeError(
+        f"serial transcript omitted {marker.decode('ascii')}\n"
+        f"--- serial transcript tail ({len(transcript)} bytes total) ---\n"
+        f"{tail}\n--- end serial transcript tail ---"
+    )
 
 
 def capture(qmp, directory, stem):
