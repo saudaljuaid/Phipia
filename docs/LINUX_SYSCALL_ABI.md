@@ -1,72 +1,100 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# Bounded Linux x86-64 syscall ABI subset
+# Measured Linux x86_64 syscall boundary
 
-This milestone implements the Linux machine ABI required by one pinned
-`busybox echo SAPOTE` invocation.  It is not a native Sapote ABI, POSIX layer,
-or general file-descriptor interface.
+Sapote runs two pinned static BusyBox programs as bounded compatibility proofs:
 
-The `syscall` number arrives in `RAX`; arguments arrive in `RDI`, `RSI`, `RDX`,
-`R10`, `R8`, and `R9`; and the signed result leaves in `RAX`.  Refusals use
-negative Linux errno values.  `RCX` and `R11` contain the architecturally
-clobbered return address and flags.  The kernel accepts the request only from
-the armed process generation, expected private CR3, CPL3 code selector, and
-loaded executable range.
+- v0.8.0: `busybox echo SAPOTE`;
+- v0.9.0: `busybox uname -s`.
 
-The normalized independent trace is committed as
-`userspace/busybox/syscall-allowlist.txt`.  Excluding the host `execve` that
-installs the file, the binary makes nine calls across these seven numbers:
+This is not POSIX, a native Sapote ABI, or a general Linux personality. Each
+profile has a distinct executable, configuration, FAT16 fixture, initial stack,
+syscall allowlist, output sink, lifecycle, and checksum.
 
-| number | call | exact bounded semantics |
+## Entry and return
+
+The kernel programs and reads back `IA32_EFER.SCE`, `IA32_STAR`, `IA32_LSTAR`,
+and `IA32_FMASK`. On `syscall`, assembly saves the user stack, closes the
+interrupt window, switches to the validated TSS kernel stack, and calls C only
+after authenticating the active process, generation, private CR3, CPL3 entry,
+and executable range.
+
+The syscall number is in `RAX`; arguments use `RDI`, `RSI`, `RDX`, `R10`, `R8`,
+and `R9`; the signed result returns in `RAX`. Refusals use negative Linux errno
+values. Return uses a checked `iretq` after validating the complete user frame
+and lifecycle state. `int 0x80`, the native proof gate, direct handler calls,
+and `sysretq` cannot satisfy this boundary.
+
+## Echo profile
+
+The committed trace is `userspace/busybox/syscall-allowlist.txt`.
+
+| Number | Call | Accepted operation |
 | ---: | --- | --- |
-| 1 | `write` | descriptor 1, exactly seven readable bytes equal to `SAPOTE\n`, one proof-only sink |
-| 9 | `mmap` | the observed anonymous fixed guard page and one observed anonymous RW page only |
-| 11 | `munmap` | the one anonymous RW page returned by the preceding call |
-| 12 | `brk` | query the fixed heap base, then grow it by exactly 8192 bytes |
-| 158 | `arch_prctl` | `ARCH_SET_FS` to measured writable user address `0x400001008998` only |
-| 218 | `set_tid_address` | measured writable user address `0x400001008b34`, returning one positive proof-process id |
-| 231 | `exit_group` | status zero only; enters the no-return exiting transition |
+| 1 | `write` | fd 1, exactly `SAPOTE\n`, once |
+| 9 | `mmap` | the measured anonymous guard and RW page only |
+| 11 | `munmap` | the preceding measured RW page only |
+| 12 | `brk` | fixed-base query and one exact 8192-byte growth |
+| 158 | `arch_prctl` | measured `ARCH_SET_FS` address only |
+| 218 | `set_tid_address` | measured writable address only |
+| 231 | `exit_group` | status zero only |
 
-Every pointer and extent is checked against the active private address space
-with checked copy-in or copy-out.  Page permissions, overflow, cross-segment
-ranges, partial copies, invalid flags, order changes, repeated operations, and
-post-exit requests are refused with the relevant Linux errno.  No operation
-can name stdin, another descriptor, a path, a writable file, a terminal, a
-pipe, another process, or a user-selected mapping.
+All other numbers return `-ENOSYS` without widening process state.
 
-Every other syscall number returns `-ENOSYS` without changing process,
-mapping, heap, sink, or process-resource state.  Normal request-ordinal and
-provenance accounting and the syscall CPU `entered` to `returned` transition
-still occur.  The allowlist has a compile-time ceiling of sixteen and a
-committed cardinality of seven.
+## Uname profile
 
-The CPU foundation programs and reads back `IA32_EFER.SCE`, `IA32_STAR`,
-`IA32_LSTAR`, and `IA32_FMASK`.  The reviewed assembly saves user RSP before
-using it, disables the architecturally exposed interrupt window, switches
-immediately to the validated kernel/TSS stack, aligns the System V C call, and
-never executes C on user memory.  Return uses a checked `iretq`, after
-validating user RIP, RSP, CS, SS, RFLAGS, generation, active CR3, provenance,
-and the candidate/armed/entered/returned state.  `int 0x80`, the private
-v0.7.0 `int 0x81` proof gate, direct handler calls, and `sysretq` cannot satisfy
-this proof.
+The normalized sequence in
+`userspace/busybox/uname-syscall-sequence.txt` is:
 
-## v0.9.0 uname profile
+```text
+arch_prctl
+set_tid_address
+uname
+ioctl
+writev
+exit_group
+```
 
-The second profile reuses this exact CPU boundary and adds no entry mechanism.
-Its measured call order is `arch_prctl(158)`, `set_tid_address(218)`,
-`uname(63)`, the exact rejected `ioctl(16)` terminal-size probe, the exact
-`writev(20)` of `Linux\n`, and `exit_group(231)`. Those six numbers are the
-entire profile allowlist; all others return `-ENOSYS`.
+The exact arguments are pinned in
+`userspace/busybox/uname-syscall-allowlist.txt`. `ioctl` is only the measured fd
+1 `TIOCGWINSZ` probe returning `-ENOTTY`; `writev` accepts only the measured
+two-element `Linux\n` output. Neither creates a terminal, descriptor table, or
+general vector-I/O service.
 
-Syscall 63 accepts only a complete 390-byte destination in active-process
-RW/NX memory. The complete range is authenticated and validated before any
-byte changes, so null, wrapped, noncanonical, foreign, supervisor, MMIO, DMA,
-page-table, filesystem, guard, RX, read-only, unmapped, and cross-resource
-ranges return `-EFAULT` without partial output. See `LINUX_UNAME_ABI.md`,
-`DETERMINISTIC_UTS_RECORD.md`, and `CHECKED_USER_COPYOUT.md`.
+Linux x86_64 syscall 63 writes one complete 390-byte `new_utsname` record:
 
-The profile's stdout support is similarly private: descriptor 1, the measured
-two-element vector only, exactly six bytes, once, from the expected process,
-generation, CR3, call index, and provenance. It does not create a descriptor
-table, terminal, vector-I/O ABI, or general output service. The v0.8.0 echo
-profile and its seven-byte sink are unchanged.
+| Field | Offset | Width |
+| --- | ---: | ---: |
+| `sysname` | 0 | 65 |
+| `nodename` | 65 | 65 |
+| `release` | 130 | 65 |
+| `version` | 195 | 65 |
+| `machine` | 260 | 65 |
+| `domainname` | 325 | 65 |
+
+The whole destination must be canonical, mapped, user-owned, and RW/NX before
+any byte changes. Null, wrapped, supervisor, executable, read-only, unmapped,
+MMIO, DMA, page-table, guard, foreign, and cross-resource ranges return
+`-EFAULT` with no partial output. The record is immutable and Sapote-owned;
+there is no hostname mutation or UTS namespace.
+
+## Image, stack, and storage limits
+
+Both programs are static, position-fixed x86_64 `ET_EXEC` images parsed by
+Rust before allocation or mapping. Interpreter, dynamic, relocation, PIE,
+executable-stack, and W+X shapes are refused.
+
+Each profile receives exactly three arguments, an empty environment, and the
+measured `AT_PAGESZ`/`AT_NULL` auxiliary vector in a guarded RW/NX stack. Each
+fixture is a separate read-only 16 MiB FAT16 image attached to an emulated NVMe
+namespace. DMA ownership returns to the CPU before Rust inspects file bytes.
+
+Checksums, source provenance, and reproducible build instructions are in
+[`BUSYBOX_REPRODUCIBLE_BUILD.md`](BUSYBOX_REPRODUCIBLE_BUILD.md).
+
+## Deliberate limits
+
+There are no paths, writable files, signals, multiple processes, dynamic
+linking, PIE, sockets, native Sapote syscalls, general mappings, general
+descriptors, hostname mutation, `int 0x80`, or stable compatibility promise.
+Adding another program means measuring and pinning a new profile.

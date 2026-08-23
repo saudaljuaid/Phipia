@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* One reviewed IRETQ boundary for the bounded v0.7.0 CPL3 proof. */
 
-/* Mirrors include/sapote/cpu.h and docs/CPL3_INTERRUPT_BOUNDARY.md. */
+/* Mirrors the selectors and user-frame contract in include/sapote/cpu.h. */
 .set USER_DATA_SELECTOR, 0x2B
 .set USER_CODE_SELECTOR, 0x33
 .set USER_RFLAGS, 0x2

@@ -16,11 +16,8 @@
 /*
  * Hardware proof operations reached by typed Boot Ledger stages.
  *
- * This header exists because kernel.c had grown to 2,211 lines and had stopped
- * having a single responsibility: every increment added a proof and every proof
- * landed there. docs/DEBT.md wrote that down at 1,990 lines and the next
- * increment added 221 more, so the split is the debt being paid rather than
- * described.
+ * This header keeps hardware proof operations out of kernel.c so that file owns
+ * plan execution rather than every subsystem's bring-up details.
  *
  * Nothing declared here is a general-purpose interface. Every migrated call is
  * private to src/kernel/boot_plan.c, where a typed descriptor owns its

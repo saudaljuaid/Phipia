@@ -19,8 +19,7 @@
  * Three things depend on it: the frame allocator addresses exactly this range,
  * acpi_span_is_early_mapped gates every firmware table read against it, and
  * paging.c reads each of its own tables through the table's physical address.
- * Narrowing it means re-pointing all three, so it is deliberately unchanged
- * here; docs/VIRTUAL_MEMORY.md records why.
+ * Narrowing it means re-pointing all three, so it is deliberately unchanged.
  */
 #define SAPOTE_EARLY_PHYSICAL_LIMIT UINT64_C(0x100000000)
 

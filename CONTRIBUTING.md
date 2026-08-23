@@ -1,119 +1,83 @@
 # Contributing to Sapote
 
-Kernel code does not get the benefit of a forgiving runtime. A plausible change
-is not a correct change. These rules are mandatory.
+Sapote is a small freestanding kernel. Changes should stay narrow, preserve the
+existing trust boundaries, and arrive with evidence that matches their risk.
 
-## Commit gate
+## Set up a development host
 
-Every commit must be atomic, buildable, bootable, reviewable, and reversible.
-Before creating a commit, run `make verify`. Before pushing an interrupt or CPU
-state change, run `make qemu-tests`; other changes must run at least `make smoke`.
-Enable the repository hooks once with `make hooks`; disabling or bypassing them
-is grounds to reject the change.
+Ubuntu 24.04 or a compatible Debian system is the reference environment:
 
-No direct push to `main` is acceptable. Every change uses a pull request and the
-`build-and-boot` check must pass against its latest commit. Do not merge around a
-red, skipped, stale, or missing check. Do not force-push `main`, delete `main`, or
-merge an unreviewed kernel change.
-
-A red required check is a DEFCON event: stop feature work, identify the first
-failing contract, restore the current head to green, and rerun every affected
-check before continuing. Never normalize red as an expected development state,
-and never stack unrelated changes on a known-red head.
-
-## Code standard
-
-- The implementation languages are C11, GNU assembly, and Rust 2024 for the
-  selected target. Rust is not a general alternative to C here: it is for
-  decoding byte streams this kernel did not produce, and `docs/RUST.md` states
-  the rule and the reasoning. Code that talks to hardware stays in C, because
-  every such operation is `unsafe` in either language.
-- Rust warnings are errors, `unsafe_op_in_unsafe_fn` is denied, and every
-  `unsafe` block carries a comment naming the condition that makes it sound.
-  A new `unsafe` block outside `src/rust/abi.rs` needs a written justification.
-- The kernel is freestanding: no host libc, hosted assumptions, or hidden runtime.
-- Compiler and assembler warnings are errors. Suppression requires a written
-  reason in the same change and must be narrower than the warning it addresses.
-- Every hardware or ABI constant must name its source contract.
-- Undefined behavior, unbounded waits, silent truncation, RWX mappings, and
-  unexplained `volatile` or inline assembly are rejected.
-- A new subsystem needs a documented invariant and an executable failure test.
-- PCI drivers claim enumerated functions and use typed BAR/MMIO, vector/MSI-X,
-  and DMA handles. Loose physical mappings, fixed private vectors, and bus
-  mastering before device ownership are rejected in review.
-- A DMA teardown disables bus mastering before reclaiming buffers. Until an
-  IOMMU exists, every review must treat a bus-mastering device as capable of
-  reaching all physical memory.
-- xHCI work stays inside the bounded host foundation in `xhci.c`. Do not grow
-  the QEMU descriptor fixture into a generic USB, HID, storage, or hotplug
-  framework. Preserve typed controller and TRB ownership, use monotonic
-  deadlines for every wait, and keep the proof reachable only through its Boot
-  Ledger descriptor.
-- NVMe work stays inside the one-controller, one-namespace, one-block read
-  contract in `nvme.c`. Do not add media-changing commands, host-device
-  passthrough, partition policy, multiple queues or a generic driver
-  framework. Every fixture is a temporary regular file attached read-only to
-  QEMU; all waits use monotonic deadlines and the proof remains reachable only
-  through its Boot Ledger descriptor.
-- FAT16 work stays inside the exact v0.6.0 superfloppy and `SAPOTE.BIN`
-  contract. Rust parses filesystem-owned bytes; C controls the private four-read
-  NVMe session and may copy file bytes only after CPU ownership returns. Do not
-  add writes, partitions, other formats, paths, multiple files or clusters, a
-  VFS, cache or public ABI. The only loader consumer is the separately typed
-  v0.7.0 private process seam. Never mount a fixture or attach a host
-  device; use only the generator and explicit read-only QEMU `-blockdev` nodes.
-- Process work stays inside one synchronous proof object, one private CR3, one
-  fixed 128-byte ELF64 image, one guarded stack and private vector `0x81`.
-  Preserve supervisor-only kernel mappings, effective ancestor/leaf W^X walks,
-  real `iretq`/CPL3 fetch, authenticated return, kernel-CR3-first reverse
-  teardown and the equal resource census. Preserve this v0.7.0 fixture and gate
-  unchanged; do not turn it into a generalized process API or public filesystem
-  seam.
-- Linux ABI work stays inside the separately measured v0.8.0 echo and v0.9.0
-  uname profiles. Each has its own checksum-pinned static position-fixed
-  `ET_EXEC`, read-only FAT16 root, exact `argc == 3` stack, empty `envp`,
-  measured auxiliary vector, syscall sequence, allowlist, output sink, fixture,
-  digest, and lifecycle. Unknown calls return `-ENOSYS` without mutation. Uname
-  adds only syscall 63 and a fully validated, non-partial 390-byte copy-out of
-  the immutable Sapote UTS record; invalid ranges return `-EFAULT`. Do not add
-  hostname mutation, a UTS namespace, `int 0x80`, descriptors beyond the exact
-  proof sinks, pathname operations, signals, threads, multiple processes, PIE,
-  dynamic linking, relocations, public mappings, writable files, or a native
-  Sapote syscall ABI. The real `SYSCALL`/`IA32_LSTAR` path, kernel/TSS stack
-  switch, checked `IRETQ`, authenticated process/generation/CR3, and
-  kernel-CR3-first equal-census teardown are mandatory.
-- Generated binaries, ISO images, editor state, and local toolchains never enter
-  version control.
-
-## Review standard
-
-The author must explain what changed, why it is necessary, its worst credible
-failure mode, how it was tested, and how to revert it. Boot, memory-management,
-interrupt, privilege, ABI, linker, and synchronization changes require focused
-review; screenshots are not proof.
-
-Review the code first, then the disassembly or binary layout when applicable,
-then the QEMU serial transcript. A green CI run proves only the tested contract.
-It does not prove that the design is correct.
-
-## Commit format
-
-Use an imperative subject of at most 72 characters, followed by the reason and
-verification when useful. Keep unrelated formatting and refactors out of
-functional commits. One logical change means one commit.
-
-Examples:
-
-```text
-boot: enter x86_64 long mode
-mm: reject overlapping physical regions
-docs: record the interrupt-entry ABI
+```sh
+sudo apt-get install binutils gcc grub-common grub-pc-bin make mtools \
+    qemu-system-x86 xorriso
+rustup target add x86_64-unknown-none
+make hooks
 ```
 
-## Required repository settings
+`make hooks` enables the repository's pre-commit and pre-push checks for the
+current clone.
 
-Protect `main` with pull requests, one approving review when another maintainer
-is available, required code-owner review, dismissal of stale approvals, required
-conversation resolution, linear history, signed commits, blocked force pushes
-and deletions, and the required `build-and-boot` status check. Administrators do
-not bypass these rules.
+## Work on a branch
+
+Start from the current remote default branch and use a descriptive name:
+
+```sh
+git fetch origin
+git switch -c paging-checks origin/main
+```
+
+Do not push directly to `main`, bypass hooks, or force-push protected history.
+
+## Required checks
+
+| Change | Minimum local evidence |
+| --- | --- |
+| Documentation only | `make lint` and a link check |
+| Ordinary code | `make verify` and `make smoke` |
+| Boot, CPU, interrupt, memory, device, process, or ABI code | `make verify` and `make qemu-tests` |
+| Measured BusyBox profile | Relevant contract workflow plus `make qemu-tests` |
+
+The pull request's `build-and-boot` check must pass on its latest commit. See
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md) for what each gate covers.
+
+## Engineering rules
+
+- C11 and x86_64 assembly own machine-facing work. Rust validates selected
+  untrusted byte streams; [`docs/RUST.md`](docs/RUST.md) defines that boundary.
+- The kernel is freestanding. Do not introduce a host libc, hidden runtime,
+  dynamic linking, floating-point/SIMD kernel state, or a red zone.
+- Warnings are errors. Keep arithmetic bounded, waits timed, mappings W^X, and
+  device ownership explicit.
+- PCI drivers must claim resources before enabling them. DMA teardown disables
+  bus mastering before memory is reclaimed. Sapote has no IOMMU.
+- Preserve supervisor-only kernel mappings and validate every user pointer over
+  its complete range before copying.
+- Keep fixtures ordinary local files attached read-only to emulated QEMU
+  devices. Never use host-device passthrough for project evidence.
+- A new invariant needs a failure test capable of disproving it.
+- Generated kernels, ISOs, fixtures, toolchains, and editor state are not
+  committed.
+
+The current architecture and deliberately bounded feature set are summarized in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The measured Linux compatibility
+surface is specified in
+[`docs/LINUX_SYSCALL_ABI.md`](docs/LINUX_SYSCALL_ABI.md); widening it requires a
+new measured profile, not an edit to an existing allowlist.
+
+## Commits and pull requests
+
+Use an imperative subject of at most 72 characters:
+
+```text
+mm: reject overlapping physical ranges
+docs: clarify the syscall boundary
+```
+
+Keep one logical change per commit. A pull request should explain:
+
+- what changed and why;
+- the exact verification run;
+- the most credible failure the checks do not cover.
+
+Screenshots show presentation, not correctness. For kernel behavior, attach the
+relevant serial transcript or CI result.

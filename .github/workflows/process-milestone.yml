@@ -214,7 +214,7 @@ jobs:
                       printf 'Controlled Ring 3 and ELF64 robustness results\n'
                       printf 'Execution: Rust parser mutations, guest lifecycle controls, installed permission walks, source contracts, temporary descriptor and exit values.\n'
                       printf 'Result: controls 1-50 passed.\n'
-                      printf 'Matrix: docs/PROCESS_ELF64_QEMU_PROOF.md.\n'
+                      printf 'Contract: qemu-test-process and the source assertions in process.c/test.c.\n'
                   } >evidence/process/controlled-robustness-results.txt
                   (
                       cd evidence/process

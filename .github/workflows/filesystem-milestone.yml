@@ -161,7 +161,7 @@ jobs:
                       printf 'Controlled FAT16 robustness results\n'
                       printf 'Execution: synthetic Rust bytes, guest-only lifecycle hooks, temporary descriptor and exit values.\n'
                       printf 'Result: controls 1-28 passed.\n'
-                      printf 'Matrix: docs/FAT16_QEMU_PROOF.md.\n'
+                      printf 'Contract: qemu-test-filesystem and the source assertions in filesystem.c/test.c.\n'
                   } >evidence/filesystem/controlled-robustness-results.txt
                   (
                       cd evidence/filesystem

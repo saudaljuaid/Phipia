@@ -26,7 +26,7 @@
  * this kernel measured in PIT ticks was therefore half the length it believed,
  * and both clocks calibrated against it ran at half their true rate. Nothing
  * caught it, because they were wrong by the same factor and still agreed with
- * each other. See docs/PM_TIMER.md.
+ * each other. The ACPI power management timer is now the reference.
  */
 #define PIT_CHANNEL_ZERO_MODE_RATE_GENERATOR UINT8_C(0x34)
 /*

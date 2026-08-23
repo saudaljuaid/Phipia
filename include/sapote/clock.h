@@ -33,10 +33,9 @@ struct clock_state {
 };
 
 /*
- * Fix the origin of the clock. Requires a calibrated time-stamp counter, whose
- * rate is itself derived from the ACPI power management timer; see
- * docs/MONOTONIC_TIME.md for why that counter is the source rather than the ACPI
- * timer directly.
+ * Fix the origin of the clock. Requires a time-stamp counter calibrated against
+ * the independent ACPI power management timer. The TSC is used after calibration
+ * because it provides a cheap monotonic read without an I/O transaction.
  */
 enum clock_status clock_start(void);
 

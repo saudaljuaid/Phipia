@@ -23,8 +23,8 @@
 /*
  * The reference interval: a tenth of a second of the ACPI power management
  * timer, whose rate the ACPI specification fixes rather than one this kernel
- * measured. The PIT used to serve here, and it was wrong by a factor of two for
- * as long as it did; see docs/PIT_RETIREMENT.md.
+ * measured. The PIT is not used because its earlier mode-3 edge count was not
+ * an independent rate reference.
  */
 #define REFERENCE_PM_TICKS (PM_TIMER_FREQUENCY_HZ / 10U)
 

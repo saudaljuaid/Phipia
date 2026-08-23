@@ -277,7 +277,7 @@ verify: toolchain lint
 	# behind Sapote's W^X claim - while the kernel ran on boot.S's huge pages
 	# with no NX bit enabled at all. It is kept because it catches a bad link
 	# before anything boots, but the guarantee now rests on paging.c walking
-	# the installed tables at runtime; see docs/VIRTUAL_MEMORY.md.
+	# the installed tables at runtime.
 	@if readelf -W -l $(KERNEL) | grep -Eq 'LOAD[[:space:]].*RWE'; then \
 		echo "kernel contains an RWX load segment"; exit 1; \
 	fi

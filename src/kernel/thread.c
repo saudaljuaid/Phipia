@@ -654,9 +654,8 @@ _Noreturn void thread_exit(void)
 
     /*
      * The stack this is running on stays mapped. Unmapping it here would pull
-     * the ground out from under the switch that has not happened yet; it is
-     * released by thread_stop, and docs/THREADS.md records that as deferred for
-     * the same reason the heap never shrinks.
+     * the ground out from under the switch that has not happened yet. It is
+     * released by thread_stop after execution has moved to another stack.
      */
     thread_switch_context(&threads[previous].stack_pointer,
         threads[next].stack_pointer);

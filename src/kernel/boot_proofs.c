@@ -7,11 +7,8 @@
  * booted on. Those are different claims: a self-test says the arithmetic is
  * right, a proof says the hardware agreed.
  *
- * These lived in kernel.c until that file reached 2,211 lines and stopped
- * having a single responsibility. docs/DEBT.md predicted the cost of leaving
- * them there and then measured it - the increment after the warning added 221
- * more lines. They are here so kernel.c can be read as what it is: the order
- * boot happens in.
+ * They are kept out of kernel.c so that file remains responsible for executing
+ * the validated boot plan rather than implementing every subsystem proof.
  *
  * The rule for this file: a function here either proves something and panics
  * when it is not true, or brings a layer up and panics when it will not come
@@ -1116,9 +1113,8 @@ void prove_heap_lifecycle(void)
      * allocation started, so that pointer still names a block and freeing it
      * again is still a double free. The middle allocation's start was swallowed
      * by the merge and now names nothing, so it is refused as a pointer the
-     * heap never returned. Both refuse and neither corrupts anything, but the
-     * name depends on what the neighbours did; docs/KERNEL_HEAP.md says so
-     * rather than leaving a caller to discover it.
+     * heap never returned. Both refuse and neither corrupts anything; the
+     * distinction depends on whether coalescing preserved the block start.
      */
     if (heap_free(pointers[0]) != HEAP_STATUS_DOUBLE_FREE ||
         heap_free(pointers[1]) != HEAP_STATUS_BAD_POINTER) {

@@ -129,7 +129,7 @@ jobs:
                       printf 'Controlled xHCI robustness results\n'
                       printf 'Execution: deterministic guest-local values and explicit test hooks only.\n'
                       printf 'Result: %s\n' "$proof_record"
-                      printf 'Matrix: docs/USB_ENUMERATION.md, controlled robustness matrix 1-19.\n'
+                      printf 'Contract: qemu-test-xhci and the source assertions in xhci.c/test.c.\n'
                   } >evidence/xhci/controlled-robustness-results.txt
                   (cd evidence/xhci && sha256sum \
                       Sapote-v0.4.0.iso \
