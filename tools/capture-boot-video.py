@@ -20,6 +20,7 @@ from pathlib import Path
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
 USERLAND_LINE = b"FL USERLAND launch completed successfully uname ordinal 1"
+COMMAND_SECONDS = 13.0
 
 
 class Qmp:
@@ -103,6 +104,10 @@ def main():
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--fps", type=int, default=10)
     args = parser.parse_args()
+    if args.fps <= 0:
+        parser.error("--fps must be positive")
+    if args.seconds < COMMAND_SECONDS + 1.0 / args.fps:
+        parser.error("--seconds is too short to capture the scheduled command")
 
     if args.seconds <= 0.0 or args.fps <= 0:
         raise ValueError("seconds and fps must be positive")
@@ -151,7 +156,7 @@ def main():
                 if elapsed >= 10.0 and not terminal_opened:
                     qmp.hmp("sendkey ret")
                     terminal_opened = True
-                if elapsed >= 13.0 and not command_entered:
+                if elapsed >= COMMAND_SECONDS and not command_entered:
                     for key in "linux uname":
                         qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
                     qmp.hmp("sendkey ret")

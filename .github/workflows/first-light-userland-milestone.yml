@@ -192,11 +192,13 @@ jobs:
                       printf 'scope: bounded v1.0.0 profiles only; no POSIX, production, general Linux compatibility, or broad stable userspace ABI claim\n'
                   } >"$release/verification-summary.txt"
                   rm -f "$release/SHA256SUMS"
+                  manifest=$(mktemp "$RUNNER_TEMP/sapote-v1.0.0-sha256.XXXXXX")
                   (
                       cd "$release"
                       find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
-                          | sort -z | xargs -0 sha256sum >SHA256SUMS
+                          | sort -z | xargs -0 sha256sum >"$manifest"
                   )
+                  mv "$manifest" "$release/SHA256SUMS"
                   cat "$release/verification-summary.txt"
                   cat "$release/SHA256SUMS"
             - name: Upload v1.0.0 milestone evidence
