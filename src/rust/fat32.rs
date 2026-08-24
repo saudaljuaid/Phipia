@@ -164,17 +164,19 @@ impl Name {
     }
 }
 
-fn le16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+fn field(bytes: &[u8], offset: usize, length: usize) -> Result<&[u8], Status> {
+    let end = offset.checked_add(length).ok_or(Status::SpanOverflow)?;
+    bytes.get(offset..end).ok_or(Status::Truncated)
 }
 
-fn le32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
+fn le16(bytes: &[u8], offset: usize) -> Result<u16, Status> {
+    let value = field(bytes, offset, 2)?;
+    Ok(u16::from_le_bytes([value[0], value[1]]))
+}
+
+fn le32(bytes: &[u8], offset: usize) -> Result<u32, Status> {
+    let value = field(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
 }
 
 fn add(left: u64, right: u64) -> Result<u64, Status> {
@@ -200,7 +202,7 @@ pub(crate) fn parse_bpb(
     if bytes[510] != 0x55 || bytes[511] != 0xaa {
         return Err(Status::BootSignature);
     }
-    let bytes_per_sector = u32::from(le16(bytes, 11));
+    let bytes_per_sector = u32::from(le16(bytes, 11)?);
     if !matches!(bytes_per_sector, 512 | 1024 | 2048 | 4096)
         || bytes_per_sector != namespace_block_bytes
     {
@@ -210,7 +212,7 @@ pub(crate) fn parse_bpb(
     if !power_of_two(sectors_per_cluster) || sectors_per_cluster > 128 {
         return Err(Status::SectorsPerCluster);
     }
-    let reserved_sectors = u32::from(le16(bytes, 14));
+    let reserved_sectors = u32::from(le16(bytes, 14)?);
     if reserved_sectors < 2 {
         return Err(Status::ReservedCount);
     }
@@ -218,14 +220,14 @@ pub(crate) fn parse_bpb(
     if fat_copies != 2 {
         return Err(Status::FatCount);
     }
-    if le16(bytes, 17) != 0 || le16(bytes, 19) != 0 || le16(bytes, 22) != 0 {
+    if le16(bytes, 17)? != 0 || le16(bytes, 19)? != 0 || le16(bytes, 22)? != 0 {
         return Err(Status::LegacyGeometry);
     }
-    let total_sectors = u64::from(le32(bytes, 32));
+    let total_sectors = u64::from(le32(bytes, 32)?);
     if total_sectors == 0 || total_sectors != namespace_blocks {
         return Err(Status::TotalSectors);
     }
-    let fat_sectors = u64::from(le32(bytes, 36));
+    let fat_sectors = u64::from(le32(bytes, 36)?);
     if fat_sectors == 0 {
         return Err(Status::FatSize);
     }
@@ -247,15 +249,15 @@ pub(crate) fn parse_bpb(
     if fat_bytes / 4 <= u64::from(maximum_cluster) {
         return Err(Status::FatCapacity);
     }
-    let root_cluster = le32(bytes, 44);
+    let root_cluster = le32(bytes, 44)?;
     if root_cluster < 2 || root_cluster > maximum_cluster {
         return Err(Status::RootCluster);
     }
-    let fsinfo_sector = u32::from(le16(bytes, 48));
+    let fsinfo_sector = u32::from(le16(bytes, 48)?);
     if fsinfo_sector == 0 || fsinfo_sector >= reserved_sectors {
         return Err(Status::FsInfoSector);
     }
-    let backup_boot_sector = u32::from(le16(bytes, 50));
+    let backup_boot_sector = u32::from(le16(bytes, 50)?);
     if backup_boot_sector == 0
         || backup_boot_sector >= reserved_sectors
         || backup_boot_sector == fsinfo_sector
@@ -286,7 +288,7 @@ pub(crate) fn parse_bpb(
         root_cluster,
         fsinfo_sector,
         backup_boot_sector,
-        volume_id: le32(bytes, 67),
+        volume_id: le32(bytes, 67)?,
         volume_label,
         valid: 1,
     })
@@ -296,14 +298,14 @@ pub(crate) fn parse_fsinfo(bytes: &[u8], geometry: &Geometry) -> Result<FsInfo, 
     if geometry.valid == 0 || bytes.len() < usize::try_from(geometry.bytes_per_sector).unwrap_or(0) {
         return Err(Status::Truncated);
     }
-    if le32(bytes, 0) != 0x4161_5252
-        || le32(bytes, 484) != 0x6141_7272
-        || le32(bytes, 508) != 0xaa55_0000
+    if le32(bytes, 0)? != 0x4161_5252
+        || le32(bytes, 484)? != 0x6141_7272
+        || le32(bytes, 508)? != 0xaa55_0000
     {
         return Err(Status::FsInfoSignature);
     }
-    let free_hint = le32(bytes, 488);
-    let next_hint = le32(bytes, 492);
+    let free_hint = le32(bytes, 488)?;
+    let next_hint = le32(bytes, 492)?;
     let free_valid = free_hint == u32::MAX || u64::from(free_hint) <= geometry.cluster_count;
     let next_valid = next_hint == u32::MAX
         || (next_hint >= 2 && next_hint <= geometry.maximum_cluster);
@@ -332,8 +334,8 @@ pub(crate) fn validate_fat_pair(
     if first != second {
         return Err(Status::FatMismatch);
     }
-    let media = le32(first, 0) & FAT32_MASK;
-    let reserved = le32(first, 4) & FAT32_MASK;
+    let media = le32(first, 0)? & FAT32_MASK;
+    let reserved = le32(first, 4)? & FAT32_MASK;
     if media != 0x0fff_fff8 || reserved < FAT32_EOC_MIN {
         return Err(Status::FatReserved);
     }
@@ -478,11 +480,11 @@ pub(crate) fn parse_directory_entry(bytes: &[u8]) -> Result<DirectoryEntry, Stat
     let attributes = bytes[11];
     if attributes == 0x0f {
         let ordinal = bytes[0] & 0x1f;
-        if ordinal == 0 || ordinal > 20 || bytes[12] != 0 || le16(bytes, 26) != 0 {
+        if ordinal == 0 || ordinal > 20 || bytes[12] != 0 || le16(bytes, 26)? != 0 {
             return Err(Status::LongNameMalformed);
         }
         for offset in [1_usize, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30] {
-            let codepoint = le16(bytes, offset);
+            let codepoint = le16(bytes, offset)?;
             if codepoint != 0 && codepoint != 0xffff && !(0x20..=0x7e).contains(&codepoint) {
                 return Err(Status::LongNameEncoding);
             }
@@ -506,8 +508,8 @@ pub(crate) fn parse_directory_entry(bytes: &[u8]) -> Result<DirectoryEntry, Stat
             }
         }
     }
-    let first_cluster = u32::from(le16(bytes, 20)) << 16 | u32::from(le16(bytes, 26));
-    let size = le32(bytes, 28);
+    let first_cluster = u32::from(le16(bytes, 20)?) << 16 | u32::from(le16(bytes, 26)?);
+    let size = le32(bytes, 28)?;
     if attributes & 0x10 != 0 && (first_cluster < 2 || size != 0) {
         return Err(Status::DirectoryEntry);
     }
