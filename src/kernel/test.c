@@ -5089,26 +5089,37 @@ static bool inject_keyboard_text(const char *text)
     while (text[index] != '\0') {
         const uint8_t scancode = keyboard_scancode_for_ascii(text[index]);
 
-        if (scancode == 0U || !inject_keyboard_byte(scancode) ||
-            !inject_keyboard_byte((uint8_t)(scancode | UINT8_C(0x80)))) {
+        if (scancode == 0U || !inject_keyboard_byte(scancode)) {
             return false;
         }
+        shell_process_keyboard_events();
+        if (!inject_keyboard_byte(
+                (uint8_t)(scancode | UINT8_C(0x80)))) {
+            return false;
+        }
+        shell_process_keyboard_events();
         ++index;
     }
-    shell_process_keyboard_events();
     return true;
 }
 
 static bool inject_keyboard_ctrl_d(void)
 {
-    if (!inject_keyboard_byte(UINT8_C(0x1D)) ||
-        !inject_keyboard_byte(UINT8_C(0x20)) ||
-        !inject_keyboard_byte(UINT8_C(0xA0)) ||
-        !inject_keyboard_byte(UINT8_C(0x9D))) {
+    static const uint8_t sequence[] = {
+        UINT8_C(0x1D), UINT8_C(0x20), UINT8_C(0xA0), UINT8_C(0x9D)
+    };
+
+    for (size_t index = 0U;
+         index < sizeof(sequence) / sizeof(sequence[0]); ++index) {
+        if (!inject_keyboard_byte(sequence[index])) {
+            return false;
+        }
+        shell_process_keyboard_events();
+    }
+    if (keyboard_get_state().control) {
         return false;
     }
-    shell_process_keyboard_events();
-    return !keyboard_get_state().control;
+    return true;
 }
 
 static bool installed_first_light_ready(void)
