@@ -70,6 +70,7 @@
 
 #define KEYBOARD_SCANCODE_LEFT_SHIFT UINT8_C(0x2A)
 #define KEYBOARD_SCANCODE_RIGHT_SHIFT UINT8_C(0x36)
+#define KEYBOARD_SCANCODE_LEFT_CONTROL UINT8_C(0x1D)
 #define KEYBOARD_SCANCODE_CAPS_LOCK UINT8_C(0x3A)
 
 /*
@@ -251,9 +252,12 @@ static void handle_byte(uint8_t byte)
 {
     struct keyboard_event event;
     uint8_t make;
+    bool extended;
 
     if (byte == KEYBOARD_EXTENDED_PREFIX) {
         expecting_extended = true;
+        /* A broken extended sequence must never leave Control latched. */
+        state.control = false;
         state.extended += 1U;
         return;
     }
@@ -264,6 +268,7 @@ static void handle_byte(uint8_t byte)
      * reason to tell them apart, the prefix is consumed and the code is treated
      * as the key it shares a number with, which is what a US layout wants.
      */
+    extended = expecting_extended;
     expecting_extended = false;
 
     make = (uint8_t)(byte & (uint8_t)~KEYBOARD_RELEASE_BIT);
@@ -273,6 +278,9 @@ static void handle_byte(uint8_t byte)
     if (make == KEYBOARD_SCANCODE_LEFT_SHIFT ||
         make == KEYBOARD_SCANCODE_RIGHT_SHIFT) {
         state.shift = event.pressed;
+    } else if (make == KEYBOARD_SCANCODE_LEFT_CONTROL) {
+        /* Only the ordinary set-1 code is the bounded left-Control contract. */
+        state.control = !extended && event.pressed;
     } else if (make == KEYBOARD_SCANCODE_CAPS_LOCK && event.pressed) {
         state.caps_lock = !state.caps_lock;
     }
@@ -281,6 +289,7 @@ static void handle_byte(uint8_t byte)
         ? keyboard_character_for(make, state.shift, state.caps_lock)
         : '\0';
     event.shift = state.shift;
+    event.control = state.control;
 
     enqueue(&event);
 }
@@ -679,6 +688,51 @@ static bool translation_is_right(void)
     return true;
 }
 
+static bool control_edges_are_right(void)
+{
+    const struct keyboard_state saved_state = state;
+    const size_t saved_head = queue_head;
+    const size_t saved_tail = queue_tail;
+    const bool saved_extended = expecting_extended;
+    struct keyboard_event saved_queue[5];
+    bool valid = true;
+
+    for (size_t index = 0U; index < 5U; ++index) {
+        saved_queue[index] = queue[index];
+    }
+
+    queue_head = 0U;
+    queue_tail = 0U;
+    state.control = false;
+    expecting_extended = false;
+
+    handle_byte(KEYBOARD_SCANCODE_LEFT_CONTROL);
+    handle_byte(UINT8_C(0x20));
+    handle_byte((uint8_t)(KEYBOARD_SCANCODE_LEFT_CONTROL |
+        KEYBOARD_RELEASE_BIT));
+    if (!queue[0].pressed || !queue[0].control ||
+        queue[1].character != 'd' || !queue[1].control ||
+        queue[2].pressed || queue[2].control || state.control) {
+        valid = false;
+    }
+
+    handle_byte(KEYBOARD_SCANCODE_LEFT_CONTROL);
+    handle_byte(KEYBOARD_EXTENDED_PREFIX);
+    handle_byte(UINT8_C(0x48));
+    if (state.control || queue[4].control) {
+        valid = false;
+    }
+
+    state = saved_state;
+    queue_head = saved_head;
+    queue_tail = saved_tail;
+    expecting_extended = saved_extended;
+    for (size_t index = 0U; index < 5U; ++index) {
+        queue[index] = saved_queue[index];
+    }
+    return valid;
+}
+
 static bool refusals_are_named(void)
 {
     static const enum keyboard_status every[] = {
@@ -709,7 +763,7 @@ static bool refusals_are_named(void)
 
 bool keyboard_self_test(void)
 {
-    if (!translation_is_right()) {
+    if (!translation_is_right() || !control_edges_are_right()) {
         return false;
     }
 

@@ -47,6 +47,7 @@ struct keyboard_event {
     uint8_t scancode;   /* set 1, with the release bit already stripped */
     bool pressed;       /* false for a release */
     bool shift;         /* modifier snapshot at this exact edge */
+    bool control;       /* left Control snapshot at this exact edge */
     char character;     /* '\0' when the key produces no character */
 };
 
@@ -58,6 +59,7 @@ struct keyboard_state {
     uint64_t extended;      /* how many 0xE0 prefixes were seen */
     size_t queued;          /* how many are waiting to be read now */
     bool shift;
+    bool control;
     bool caps_lock;
 };
 
