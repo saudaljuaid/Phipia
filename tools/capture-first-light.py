@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
-LEDGER_LINE = b"boot ledger :: PASS"
+USERLAND_LINE = b"FL USERLAND launch completed successfully uname ordinal 1"
 
 
 def png_chunk(kind, body):
@@ -140,6 +140,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--iso", required=True)
+    parser.add_argument("--userspace", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -151,7 +152,14 @@ def main():
     port = free_port()
     command = [
         args.qemu, "-machine", "accel=tcg", "-m", "128M", "-smp", "1",
-        "-cdrom", str(Path(args.iso).resolve()), "-display", "none",
+        "-boot", "order=d", "-cdrom", str(Path(args.iso).resolve()),
+        "-display", "none",
+        "-blockdev",
+        f"driver=file,filename={Path(args.userspace).resolve()},node-name=userland-file,read-only=on,auto-read-only=off",
+        "-blockdev",
+        "driver=raw,file=userland-file,node-name=userland-raw,read-only=on",
+        "-device",
+        "nvme,serial=sapote-userland,drive=userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
         "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
         "-serial", f"file:{serial}", "-no-reboot"
     ]
@@ -177,11 +185,11 @@ def main():
 
         qmp.hmp("sendkey ret")
         time.sleep(0.20)
-        for key in "ledger":
-            qmp.hmp(f"sendkey {key}")
+        for key in "linux uname":
+            qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
             time.sleep(0.04)
         qmp.hmp("sendkey ret")
-        wait_serial(serial, LEDGER_LINE)
+        wait_serial(serial, USERLAND_LINE)
         time.sleep(0.20)
         terminal = capture(qmp, output, "sapote-first-light-terminal")
         print(clean)

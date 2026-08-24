@@ -5,8 +5,8 @@
 Frames come directly from QMP ``screendump`` calls. The guest is started in a
 paused state, continued on the first frame, and required to emit the installed
 Boot Ledger proof before the recording is accepted. At ten seconds the script
-opens Terminal; at thirteen seconds it enters ``version`` so the finished clip
-also proves that the newly booted desktop is interactive.
+opens Terminal; at thirteen seconds it enters ``linux uname`` so the finished
+clip demonstrates the measured userspace path.
 """
 
 import argparse
@@ -19,6 +19,7 @@ from pathlib import Path
 
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
+USERLAND_LINE = b"FL USERLAND launch completed successfully uname ordinal 1"
 
 
 class Qmp:
@@ -97,6 +98,7 @@ def main():
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--iso", required=True)
+    parser.add_argument("--userspace", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--fps", type=int, default=10)
@@ -114,7 +116,14 @@ def main():
         port = free_port()
         command = [
             args.qemu, "-S", "-machine", "accel=tcg", "-m", "128M",
-            "-smp", "1", "-cdrom", str(Path(args.iso).resolve()),
+            "-smp", "1", "-boot", "order=d", "-cdrom",
+            str(Path(args.iso).resolve()),
+            "-blockdev",
+            f"driver=file,filename={Path(args.userspace).resolve()},node-name=userland-file,read-only=on,auto-read-only=off",
+            "-blockdev",
+            "driver=raw,file=userland-file,node-name=userland-raw,read-only=on",
+            "-device",
+            "nvme,serial=sapote-userland,drive=userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
             "-display", "none",
             "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
             "-serial", f"file:{serial}", "-no-reboot"
@@ -127,22 +136,26 @@ def main():
             qmp = Qmp(port)
             started = time.monotonic()
             qmp.execute("cont")
+            pointer_parked = False
             terminal_opened = False
-            version_entered = False
+            command_entered = False
             for index in range(frame_count):
                 deadline = started + index / args.fps
                 remaining = deadline - time.monotonic()
                 if remaining > 0.0:
                     time.sleep(remaining)
                 elapsed = index / args.fps
+                if elapsed >= 9.5 and not pointer_parked:
+                    qmp.hmp("mouse_move -260 320")
+                    pointer_parked = True
                 if elapsed >= 10.0 and not terminal_opened:
                     qmp.hmp("sendkey ret")
                     terminal_opened = True
-                if elapsed >= 13.0 and not version_entered:
-                    for key in "version":
-                        qmp.hmp(f"sendkey {key}")
+                if elapsed >= 13.0 and not command_entered:
+                    for key in "linux uname":
+                        qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
                     qmp.hmp("sendkey ret")
-                    version_entered = True
+                    command_entered = True
                 capture(qmp, work / f"frame-{index:04d}.ppm")
         finally:
             if qmp is not None:
@@ -158,10 +171,10 @@ def main():
                 process.wait()
 
         transcript = serial.read_bytes() if serial.exists() else b""
-        if PROOF_LINE not in transcript:
+        if PROOF_LINE not in transcript or USERLAND_LINE not in transcript:
             tail = transcript[-4096:].decode("utf-8", errors="replace")
             raise RuntimeError(
-                "recording omitted the installed Boot Ledger proof\n" + tail
+                "recording omitted the installed proof or uname launch\n" + tail
             )
         encode(
             args.ffmpeg, work / "frame-%04d.ppm", args.fps,

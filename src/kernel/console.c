@@ -184,6 +184,38 @@ void console_write_u64(uint64_t value)
     }
 }
 
+void console_serial_write(const char *text)
+{
+    if (text == NULL) {
+        console_serial_write("<null>");
+        return;
+    }
+    while (*text != '\0') {
+        serial_putc(*text);
+        ++text;
+    }
+}
+
+void console_serial_write_u64(uint64_t value)
+{
+    char digits[20];
+    size_t length = 0U;
+
+    if (value == 0U) {
+        serial_putc('0');
+        return;
+    }
+    while (value != 0U) {
+        digits[length] = (char)('0' + (value % 10U));
+        value /= 10U;
+        ++length;
+    }
+    while (length != 0U) {
+        --length;
+        serial_putc(digits[length]);
+    }
+}
+
 _Noreturn void console_halt(void)
 {
     for (;;) {

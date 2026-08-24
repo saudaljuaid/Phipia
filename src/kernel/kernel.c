@@ -133,5 +133,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_linux_uname();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
+        kernel_test_complete_first_light_userland();
+    }
+
+    if (installed_context.test_scenario ==
+            KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT) {
+        kernel_test_complete_first_light_userland_absent();
+    }
+
     shell_run();
 }
