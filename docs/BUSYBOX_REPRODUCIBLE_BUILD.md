@@ -14,6 +14,7 @@ traces, and build records remain distinct release materials.
 | musl 1.2.6 source archive | `D585FD3B613C66151FC3249E8ED44F77020CB5E6C1E635A616D3F9F82460512A` |
 | `userspace/busybox/busybox.config` | `3FBC0403C6A4865FC4397240961C367EE9B36D6D350CC6CEB2D22CBBBEA28480` |
 | `userspace/busybox/busybox-uname.config` | `6D972C7A1F3DF0034D5996CC24B58B7364EFBB7851F926C5D8D2FD18C41EBB2B` |
+| `userspace/busybox/busybox-cat.config` | `ACC38083863385286FF2BB2D8D594E6DF629CCAE2D84BEB8B838AFED8D7CE669` |
 | BusyBox license from the archive | `BBFC9843646D483C334664F651C208B9839626891D8F17604DB2146962F43548` |
 | musl copyright record from the archive | `B870108EC5E7790E9F9919064F1B9421D62D5F9B0E6C230C6ADF7EA2DA62E97B` |
 
@@ -26,6 +27,8 @@ Ubuntu 24.04, GCC 13.3, binutils 2.42, and a musl 1.2.6 `musl-gcc` wrapper.
 bash tools/build-busybox-proof.sh build/busybox-contract build/busybox-work
 bash tools/build-busybox-uname-proof.sh \
     build/busybox-uname-contract build/busybox-uname-work
+bash tools/build-busybox-cat-proof.sh \
+    build/busybox-cat-contract build/busybox-cat-work
 ```
 
 Each script performs two clean source/toolchain builds and requires
@@ -45,15 +48,19 @@ source archives remain byte-identical.
 | --- | --- | ---: | --- | --- |
 | v0.8.0 | `echo SAPOTE` | 33,584 | `B308F2CAD5B5CD0EEB92A622DEC8D71C1A08F628A22CDC5BCDE2B98B53220746` | `41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F` |
 | v0.9.0 | `uname -s` | 38,368 | `389AD6B13804EB7307BA589C8E8A7C702F91302005A7C5FC6E9E99124FCEAF43` | `48C3465E924D1D2B3C8AB659D2783CAC4AF57DFD83504606AD0DF8F64D7316E3` |
+| v1.1.0 | `cat` | 38,632 | `8191596A22778B575942895071A2E50CCEEE0F82F4D88B6D986584CE0914FC3E` | composed v1.1.0 volume |
 
-Both executables have five program headers, four load segments, no interpreter,
+All three executables have five program headers, four load segments, no interpreter,
 dynamic section, runtime relocation, PIE, shared object, or RWX segment. Their
 exact syscall traces and allowlists are committed beside the configurations.
 
-Version 1.0.0 places those exact executables in one 16 MiB read-only FAT16
+Version 1.1.0 places all three exact executables in one 16 MiB read-only FAT16
 volume. `tools/make-first-light-userland.py` rebuilds every byte, independently
-verifies both files and root entries, runs negative mutations, and pins the
-volume SHA-256 to
+verifies each file and root entry, runs negative mutations, and pins the volume
+SHA-256 to
+`F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB`.
+The same builder preserves the v1.0.0 echo/uname-only image byte-for-byte as the
+v1.1.0 missing-cat negative fixture with SHA-256
 `12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE`.
 
 ## Release requirement
@@ -61,7 +68,8 @@ volume SHA-256 to
 A release containing either executable must also provide the exact BusyBox and
 musl source archives, configurations, BusyBox license, musl copyright record,
 build scripts, checksum manifest, volume builder, and profile-specific syscall
-evidence. The v1.0.0 bundle additionally carries the deterministic FAT16 image,
-production QEMU transcript, positive and negative results, screenshot, video,
-and verification summary generated from the release commit. A binary is not
+evidence. The v1.1.0 bundle additionally carries the deterministic FAT16 image,
+foreground lifecycle and input/output contracts, production positive and
+missing-cat QEMU transcripts, robustness results, screenshot, video, and
+verification summary generated from the release commit. A binary is not
 published unless those records match.

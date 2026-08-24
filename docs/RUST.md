@@ -24,11 +24,13 @@ allocation, mappings, DMA, devices, processes, or teardown. C supplies bounded
 slices only after it owns the underlying memory; Rust never retains a borrowed
 pointer across the call.
 
-For v1.0.0, `linux_fat16.rs` accepts at most the two frozen canonical root
+For v1.1.0, `linux_fat16.rs` accepts at most the three frozen canonical root
 entries, validates each entry against its own byte count and digest contract,
 and returns only the requested profile. It does not expose a path lookup, VFS,
 or reusable file API. The profile-specific ELF parser then validates the whole
-static image before C allocates or maps process pages.
+static image before C allocates or maps process pages. The checked C/Rust
+copy-out boundary validates the complete cat read destination before any byte
+is copied, so invalid or cross-boundary ranges cannot produce partial input.
 
 ## Freestanding build
 

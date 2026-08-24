@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
-  <img src="https://img.shields.io/badge/version-1.0.0-18181C" alt="version 1.0.0">
+  <img src="https://img.shields.io/badge/version-1.1.0-18181C" alt="version 1.1.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-595976" alt="GPL-3.0-only"></a>
 </p>
 
@@ -32,9 +32,9 @@ workspace.
 
 First Light is Sapote's compact desktop shell. It combines the canonical pebble
 with a classic workstation interface, a terminal, keyboard and pointer input,
-and four focused tools. In v1.0.0 its terminal can deliberately launch the two
-measured BusyBox profiles with `linux echo` and `linux uname`, then return to
-the same usable prompt.
+and four focused tools. In v1.1.0 its terminal can launch the measured BusyBox
+profiles with `linux echo`, `linux uname`, and a bounded interactive
+`linux cat`, then return to the same usable prompt.
 
 ## Current capabilities
 
@@ -42,8 +42,9 @@ the same usable prompt.
 - ACPI/PCI discovery, APIC interrupts, MSI-X, monotonic time, and preemption.
 - Bounded xHCI, NVMe, and read-only FAT16 controller/file proofs.
 - Ring 3 execution with private address spaces and checked ELF64 loading.
-- Linux `SYSCALL` support for measured BusyBox `echo` and `uname` programs.
-- First Light, a framebuffer console, the `sap>` shell, and 41 QEMU scenarios.
+- Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
+  `cat` programs.
+- First Light, a framebuffer console, the `sap>` shell, and 43 QEMU scenarios.
 
 ## Build and boot
 
@@ -80,9 +81,10 @@ Sapote is still a foundation-stage, single-core system. First Light is a fixed
 kernel workspace rather than a general window manager. Storage and executable
 support are read-only and deliberately bounded; networking, general process
 services, an IOMMU, and broad physical-hardware coverage remain future work.
-Version 1.0.0 stabilizes only this two-profile milestone contract. It is not a
-claim of POSIX compliance, production readiness, general Linux binary
-compatibility, or a broad stable userspace ABI.
+Version 1.1.0 stabilizes only these three measured profiles and the bounded
+foreground input contract for `cat`. It is not a claim of POSIX compliance,
+general stdin, a TTY subsystem, production readiness, broad Linux binary
+compatibility, or a stable userspace ABI.
 
 ## Documentation
 
