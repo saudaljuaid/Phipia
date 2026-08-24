@@ -59,6 +59,7 @@ enum shell_status shell_feed(char character);
 enum shell_status shell_execute(const char *line);
 
 struct shell_state shell_get_state(void);
+void shell_process_keyboard_events(void);
 
 /*
  * Read keys until the machine is switched off. Never returns. Only reached when
