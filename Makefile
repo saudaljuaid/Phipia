@@ -729,10 +729,10 @@ screenshot-proof:
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
 		--self-test $(FIRST_LIGHT_TERMINAL_IMAGE)
 
-capture-first-light: iso $(FIRST_LIGHT_USERLAND_IMAGE)
+capture-first-light: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	rm -rf $(FIRST_LIGHT_CAPTURE_DIR)
 	$(PYTHON) tools/capture-first-light.py --iso $(ISO) \
-		--userspace $(FIRST_LIGHT_USERLAND_IMAGE) \
+		--system $(FAT32_SYSTEM_IMAGE) --data $(FAT32_DATA_IMAGE) \
 		--output $(FIRST_LIGHT_CAPTURE_DIR)
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
 		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light.png
@@ -743,10 +743,15 @@ capture-first-light: iso $(FIRST_LIGHT_USERLAND_IMAGE)
 		$(FIRST_LIGHT_TERMINAL_IMAGE) \
 		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
 
-capture-boot-video: iso $(FIRST_LIGHT_USERLAND_IMAGE)
-	$(PYTHON) tools/capture-boot-video.py --iso $(ISO) \
-		--userspace $(FIRST_LIGHT_USERLAND_IMAGE) \
-		--ffmpeg $(FFMPEG) --output $(FIRST_LIGHT_BOOT_VIDEO)
+capture-boot-video: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	cp $(FAT32_DATA_IMAGE) $(BUILD_DIR)/capture-video-data-fat32.raw
+	$(PYTHON) tools/capture-fat32-persistence.py --iso $(ISO) \
+		--system $(FAT32_SYSTEM_IMAGE) \
+		--data $(BUILD_DIR)/capture-video-data-fat32.raw \
+		--screenshot $(BUILD_DIR)/fat32-persistence.png \
+		--video $(FIRST_LIGHT_BOOT_VIDEO) \
+		--transcript $(BUILD_DIR)/fat32-persistence.log \
+		--ffmpeg $(FFMPEG)
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
@@ -1258,11 +1263,14 @@ qemu-tests: $(TEST_TARGETS)
 smoke: qemu-test-normal
 	@echo "strict boot smoke test passed"
 
-run: iso $(FIRST_LIGHT_USERLAND_IMAGE)
+run: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	qemu-system-x86_64 -m 128M -smp 1 -boot order=d -cdrom $(ISO) \
-		-blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=first-light-userland-file,read-only=on,auto-read-only=off \
-		-blockdev driver=raw,file=first-light-userland-file,node-name=first-light-userland-raw,read-only=on \
-		-device nvme,serial=sapote-userland,drive=first-light-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1 \
+		-blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=system-file,read-only=on,auto-read-only=off \
+		-blockdev driver=raw,file=system-file,node-name=system-raw,read-only=on \
+		-device nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 \
+		-blockdev driver=file,filename=$(FAT32_DATA_IMAGE),node-name=data-file,read-only=off,auto-read-only=off \
+		-blockdev driver=raw,file=data-file,node-name=data-raw,read-only=off \
+		-device nvme,serial=sapote-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 \
 		-serial stdio -no-reboot -no-shutdown
 
 hooks:

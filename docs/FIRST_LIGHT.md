@@ -63,8 +63,32 @@ or framebuffer shell instead of publishing a partial desktop success.
 
 ## Terminal commands
 
-The native `echo` command is unchanged. The separate `linux` command exposes
-only three measured profiles:
+The native `echo` command is unchanged. Filesystem commands operate only on the
+writable data mount; `drives` reports both independently owned volumes:
+
+```text
+sap> drives
+system  fat32  read-only
+data    fat32  read-write
+sap> mkdir projects
+sap> cd projects
+sap> write notes.txt "first cut"
+sap> append notes.txt "second line"
+sap> read notes.txt
+first cut
+second line
+sap> sync
+data synchronized
+```
+
+`mount`, `ls`, `cd`, `pwd`, `mkdir`, `touch`, `read`, `write`, `append`,
+`writeat`, `truncate`, `stat`, `mv`, `rm`, `sync`, and `reboot` expose the
+bounded kernel filesystem interface. Paths use the documented ASCII 8.3
+subset; quoted write text receives one newline. `sync` and `reboot` establish
+the clean persistence boundary. Missing or corrupt data media produces a
+concise status while the prompt and immutable system commands remain usable.
+
+The separate `linux` command exposes only three measured profiles:
 
 ```text
 sap> linux echo
@@ -79,7 +103,7 @@ sap>
 ```
 
 `help` lists the command and unsupported profile names are refused. A missing
-userspace volume or invalid profile produces one concise error and leaves the
+system volume or invalid profile produces one concise error and leaves the
 prompt usable. Successful output is accepted from the actual userspace `write`
 or `writev` buffers; the shell contains no substitute output strings.
 
@@ -105,7 +129,8 @@ The source captures are:
 - `assets/sapote-first-light.png`;
 - `assets/sapote-first-light-focus.png`;
 - `assets/sapote-first-light-terminal.png`;
-- `assets/sapote-first-light-boot-20s.mp4`.
+- `assets/sapote-first-light-boot-20s.mp4` (an approximately 20-second
+  create/sync/reboot/read persistence demonstration).
 
 `screenshot-proof` compares stable pixels and refuses a one-pixel mutation.
 The `first-light` QEMU scenario checks installed state, event handling, redraw,
@@ -118,11 +143,19 @@ keyboard IRQ events, supplies different lines and Ctrl-D, and proves fresh
 generations and prompt restoration. Its `-absent` companion omits only cat and
 then runs an existing measured Linux command successfully.
 
+Fifteen FAT32 scenarios use the same shell dispatch and NVMe path for system
+loading, writable data, nested directories, multi-cluster growth, random
+overwrite, truncation, rename/move, deletion/reuse, full and corrupt media,
+missing data, clean-reboot persistence, cache behavior, immutable enforcement,
+and handle generations.
+
 ## Limits
 
 First Light has a fixed workspace and fixed tools. It does not provide movable
 arbitrary windows, user applications, compositing, themes, accessibility APIs,
 international text, or a persistent settings service.
+The filesystem is deliberately bounded as described in [`FAT32.md`](FAT32.md);
+it does not turn the shell into a general Unix environment.
 
 The foreground input path is a profile-specific bounded state machine. It is
 not a general stdin ABI, canonical mode, or a TTY subsystem.

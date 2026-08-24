@@ -42,7 +42,8 @@ jobs:
                   make iso
                   python3 tools/capture-first-light.py \
                       --iso build/sapote.iso \
-                      --userspace build/userspace/sapote-userland-fat16.raw \
+                      --system build/userspace/sapote-system-fat32.raw \
+                      --data build/userspace/sapote-data-fat32.raw \
                       --output build/first-light-captures
             - name: Upload Sapote First Light captures
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

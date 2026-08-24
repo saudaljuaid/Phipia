@@ -63,6 +63,12 @@ The same builder preserves the v1.0.0 echo/uname-only image byte-for-byte as the
 v1.1.0 missing-cat negative fixture with SHA-256
 `12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE`.
 
+Version 2.0.0 places those same executable bytes in the deterministic immutable
+FAT32 system image. `tools/fat32_image.py` verifies each filename, size, digest,
+and complete allocation chain independently. The system image SHA-256 is
+`5C9463E3C62A7351E12F7B7832C8A97FF016A264F9C7F356A76201DF4E17317E`.
+The historical FAT16 images and checksums above remain release contracts.
+
 ## Release requirement
 
 A release containing any of these executables must also provide the exact
@@ -73,3 +79,8 @@ deterministic FAT16 image, foreground lifecycle and input/output contracts,
 production positive and missing-cat QEMU transcripts, robustness results,
 screenshot, video, and verification summary generated from the release commit.
 A binary is not published unless those records match.
+
+The v2.0.0 bundle additionally carries both deterministic FAT32 images,
+geometry and identity records, consistency reports, clean-reboot persistence
+evidence, and the same executable sources, configurations, licenses, and
+instruction audits.

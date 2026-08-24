@@ -1,0 +1,244 @@
+name: Persistent FAT32 milestone evidence
+
+on:
+    workflow_dispatch:
+    pull_request:
+        branches: [main]
+    push:
+        tags: [v2.0.0]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: fat32-milestone-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    exact-commit-evidence:
+        name: persistent-fat32-exact-commit-evidence
+        runs-on: ubuntu-24.04
+        timeout-minutes: 300
+        steps:
+            - name: Check out exact source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install build, inspection, capture, and emulation tools
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils build-essential bzip2 ffmpeg file grub-common \
+                      grub-pc-bin make mtools qemu-system-x86 qemu-user \
+                      strace xorriso
+            - name: Install the Rust bare-metal target
+              run: rustup target add x86_64-unknown-none
+            - name: Verify kernel, parsers, host filesystem, and images
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p build/evidence-logs
+                  make verify | tee build/evidence-logs/make-verify.log
+                  python3 -u tools/fat32_host_test.py \
+                      | tee build/evidence-logs/fat32-host-positive-negative.log
+                  git diff --check
+            - name: Reconstruct both FAT32 volumes byte-identically
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p build/reconstruction build/evidence-logs
+                  python3 tools/fat32_image.py format system \
+                      build/reconstruction/system.raw \
+                      --echo build/busybox-contract/busybox \
+                      --uname build/busybox-uname-contract/busybox \
+                      --cat build/busybox-cat-contract/busybox \
+                      | tee build/evidence-logs/system-format-record.json
+                  python3 tools/fat32_image.py format data \
+                      build/reconstruction/data.raw \
+                      | tee build/evidence-logs/data-format-record.json
+                  cmp build/userspace/sapote-system-fat32.raw \
+                      build/reconstruction/system.raw
+                  cmp build/userspace/sapote-data-fat32.raw \
+                      build/reconstruction/data.raw
+                  python3 tools/fat32_image.py inspect \
+                      build/userspace/sapote-system-fat32.raw \
+                      --report build/evidence-logs/system-consistency.json
+                  python3 tools/fat32_image.py inspect \
+                      build/userspace/sapote-data-fat32.raw \
+                      --report build/evidence-logs/data-consistency.json
+            - name: Rebuild and audit every pinned BusyBox profile twice
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  for profile in echo uname cat; do
+                      case "$profile" in
+                          echo) script=tools/build-busybox-proof.sh ;;
+                          uname) script=tools/build-busybox-uname-proof.sh ;;
+                          cat) script=tools/build-busybox-cat-proof.sh ;;
+                      esac
+                      bash "$script" "build/release-$profile/one" \
+                          "build/release-$profile/work-one"
+                      bash "$script" "build/release-$profile/two" \
+                          "build/release-$profile/work-two"
+                      cmp "build/release-$profile/one/busybox" \
+                          "build/release-$profile/two/busybox"
+                      cmp "build/release-$profile/one/syscall-sequence.txt" \
+                          "build/release-$profile/two/syscall-sequence.txt"
+                  done
+                  cmp build/release-echo/one/busybox \
+                      build/busybox-contract/busybox
+                  cmp build/release-uname/one/busybox \
+                      build/busybox-uname-contract/busybox
+                  cmp build/release-cat/one/busybox \
+                      build/busybox-cat-contract/busybox
+            - name: Run all 58 production-path QEMU scenarios individually
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  read -r expected_scenarios expected_assertions < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  scenario_count=$(
+                      make --no-print-directory -s contract-scenarios | wc -l
+                  )
+                  assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  test "$expected_scenarios" -eq 58
+                  test "$scenario_count" -eq "$expected_scenarios"
+                  test "$assertion_count" -eq "$expected_assertions"
+                  make qemu-tests QEMU_ACCEL=tcg \
+                      | tee build/evidence-logs/all-qemu-scenarios.txt
+                  test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
+                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 58
+            - name: Capture authentic clean-reboot persistence media
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make iso
+                  cp build/userspace/sapote-data-fat32.raw \
+                      build/persistence-capture-data.raw
+                  python3 tools/capture-fat32-persistence.py \
+                      --iso build/sapote.iso \
+                      --system build/userspace/sapote-system-fat32.raw \
+                      --data build/persistence-capture-data.raw \
+                      --screenshot build/fat32-persistence.png \
+                      --video build/fat32-persistence-22s.mp4 \
+                      --transcript build/evidence-logs/fat32-persistence.log
+                  file build/fat32-persistence.png \
+                      | grep -Fq 'PNG image data, 1024 x 768'
+                  duration=$(ffprobe -v error -show_entries format=duration \
+                      -of default=noprint_wrappers=1:nokey=1 \
+                      build/fat32-persistence-22s.mp4)
+                  awk -v duration="$duration" \
+                      'BEGIN { exit !(duration >= 21.5 && duration <= 22.5) }'
+                  python3 tools/fat32_image.py inspect \
+                      build/persistence-capture-data.raw \
+                      --report build/evidence-logs/persisted-data-consistency.json
+            - name: Assemble the exact-commit v2.0.0 evidence bundle
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  release=evidence/Sapote-v2.0.0
+                  mkdir -p "$release/qemu-transcripts" \
+                      "$release/reproduction"
+                  cp build/sapote.iso "$release/Sapote-v2.0.0.iso"
+                  cp build/sapote.elf "$release/sapote-v2.0.0.elf"
+                  cp build/userspace/sapote-system-fat32.raw \
+                      "$release/sapote-v2.0.0-system-fat32.raw"
+                  cp build/userspace/sapote-data-fat32.raw \
+                      "$release/sapote-v2.0.0-data-fat32.raw"
+                  cp build/release-echo/one/busybox "$release/busybox-echo"
+                  cp build/release-uname/one/busybox "$release/busybox-uname"
+                  cp build/release-cat/one/busybox "$release/busybox-cat"
+                  cp build/fat32-persistence.png \
+                      "$release/first-light-fat32-persistence.png"
+                  cp build/fat32-persistence-22s.mp4 \
+                      "$release/first-light-fat32-persistence-22s.mp4"
+                  cp build/evidence-logs/fat32-persistence.log \
+                      "$release/clean-reboot-persistence.log"
+                  cp build/evidence-logs/*.json \
+                      build/evidence-logs/make-verify.log \
+                      build/evidence-logs/fat32-host-positive-negative.log \
+                      build/evidence-logs/all-qemu-scenarios.txt "$release/"
+                  while IFS= read -r transcript; do
+                      scenario=$(basename "$(dirname "$transcript")")
+                      cp "$transcript" "$release/qemu-transcripts/$scenario.log"
+                  done < <(find build/tests -mindepth 2 -maxdepth 2 \
+                      -name serial.log -print | sort)
+                  test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
+                      -eq 58
+                  for profile in echo uname cat; do
+                      cp "build/release-$profile/one/build-record.txt" \
+                          "$release/$profile-reproducible-build-record.txt"
+                      cp "build/release-$profile/one/syscall-trace.txt" \
+                          "$release/$profile-host-syscall-trace.txt"
+                      cp "build/release-$profile/one/exercised-instructions.txt" \
+                          "$release/$profile-exercised-instructions.txt"
+                  done
+                  cp userspace/busybox/busybox.config \
+                      userspace/busybox/busybox-uname.config \
+                      userspace/busybox/busybox-cat.config \
+                      userspace/busybox/BUSYBOX-LICENSE \
+                      userspace/busybox/MUSL-COPYRIGHT \
+                      userspace/busybox/musl-vfprintf-scalar.h \
+                      "$release/reproduction/"
+                  cp userspace/busybox/source/busybox-1.38.0.tar.bz2 \
+                      userspace/busybox/source/musl-1.2.6.tar.gz \
+                      "$release/reproduction/"
+                  cp tools/fat32_image.py tools/fat32_host_test.py \
+                      tools/capture-fat32-persistence.py \
+                      tools/build-busybox-proof.sh \
+                      tools/build-busybox-uname-proof.sh \
+                      tools/build-busybox-cat-proof.sh \
+                      tools/check-exercised-instructions.py \
+                      "$release/reproduction/"
+                  git archive --format=tar.gz -o \
+                      "$release/reproduction/Sapote-v2.0.0-source.tar.gz" HEAD
+                  read -r scenarios assertions < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  {
+                      printf 'Sapote v2.0.0 exact-commit verification\n'
+                      printf 'commit: %s\n' "$GITHUB_SHA"
+                      printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
+                      printf 'make verify: passed without warnings\n'
+                      printf 'host FAT32 positive and negative tests: passed\n'
+                      printf 'deterministic system/data reconstruction: byte-identical\n'
+                      printf 'QEMU scenarios: %s passed individually\n' "$scenarios"
+                      printf 'structural assertions: %s passed\n' "$assertions"
+                      printf 'BusyBox profiles: two clean builds each were byte-identical\n'
+                      printf 'instruction audits: no floating point, MMX, SSE, or AVX on exercised paths\n'
+                      printf 'persistence: create, sync, clean reboot, and exact read passed\n'
+                      printf 'scope: bounded FAT32 and measured profiles; no POSIX, VFS, journal, crash-atomic, multi-user, production, or stable ABI claim\n'
+                  } >"$release/verification-summary.txt"
+                  {
+                      printf 'system volume ID: 0x20000001; label: SAPOTESYS; read-only\n'
+                      printf 'data volume ID: 0x20000002; label: SAPOTEDATA; read-write\n'
+                      printf 'sector/cluster bytes: 512/512; reserved: 32; FATs: 2\n'
+                      printf 'total/FAT sectors: 131072/1009; root cluster: 2\n'
+                      printf 'formatters: tools/fat32_image.py format system|data\n'
+                      printf 'FAT order: secondary then primary; FSInfo is a checked hint\n'
+                  } >"$release/fat32-geometry-and-identities.txt"
+                  rm -f "$release/SHA256SUMS"
+                  manifest=$(mktemp "$RUNNER_TEMP/sapote-v2-sha256.XXXXXX")
+                  (
+                      cd "$release"
+                      find . -type f ! -name SHA256SUMS -print0 \
+                          | sort -z | xargs -0 sha256sum >"$manifest"
+                  )
+                  mv "$manifest" "$release/SHA256SUMS"
+                  (
+                      cd evidence
+                      tar -czf Sapote-v2.0.0-evidence.tar.gz Sapote-v2.0.0
+                  )
+                  cat "$release/verification-summary.txt"
+                  cat "$release/SHA256SUMS"
+            - name: Upload v2.0.0 exact-commit evidence
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: Sapote-v2.0.0-evidence-${{ github.sha }}
+                  path: evidence
+                  if-no-files-found: error
+                  retention-days: 90

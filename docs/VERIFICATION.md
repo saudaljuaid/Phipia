@@ -12,7 +12,7 @@ untested hardware support or a broader ABI.
 make lint         # repository whitespace policy
 make verify       # clean build, host tests, ELF/link/layout checks
 make smoke        # normal QEMU boot and transcript
-make qemu-tests   # all 43 bounded QEMU scenarios
+make qemu-tests   # all 58 bounded QEMU scenarios
 ```
 
 Useful inspection targets:
@@ -25,11 +25,12 @@ make contract-scenarios
 `make verify` rejects compiler warnings, undefined symbols, unresolved
 relocations, unexpected linker sections, GOT growth, W+X ELF segments or page
 mappings, missing architectural instructions, forbidden floating-point/SIMD
-kernel code, changed asset/fixture hashes, and failed Rust parser tests.
+kernel code, changed asset/fixture hashes, nondeterministic FAT32
+reconstruction, failed host filesystem checks, and failed Rust parser tests.
 
 ## QEMU scenarios
 
-The Makefile is the source of truth for the 43 names. They cover:
+The Makefile is the source of truth for the 58 names. They cover:
 
 - exception entry, IST handling, APIC/I/O APIC routing, and legacy retirement;
 - clock calibration, deadlines, paging, heap, and guarded threads;
@@ -37,8 +38,12 @@ The Makefile is the source of truth for the 43 names. They cover:
   Boot Ledger;
 - First Light rendering, interaction, measured userspace launch, bounded
   foreground stdin, sequential cat launches, and missing-profile recovery;
-- MSI-X/DMA, xHCI, NVMe, FAT16, Ring 3 ELF64, and the two measured Linux
-  profiles.
+- MSI-X/DMA, xHCI, NVMe, historical FAT16, Ring 3 ELF64, and the measured Linux
+  profiles;
+- FAT32 system loading, data mutation, nested traversal, multi-cluster growth,
+  random writes, truncation, rename/move, deletion/reuse, full/corrupt/missing
+  media, clean-reboot persistence, cache synchronization, immutability, and
+  handle generations.
 
 Each scenario has a stable guest debug-exit value, expected host status, and
 required serial transcript. A scenario target is deliberately not phony so GNU
@@ -48,16 +53,21 @@ runs on every request.
 ## Device and userspace evidence
 
 Device scenarios use only QEMU-emulated hardware and temporary regular-file
-fixtures. Storage is attached read-only. Evidence requires real interrupt/DMA
-ownership transitions and complete teardown; a synthetic unit result cannot
-substitute for the installed path.
+fixtures. The authenticated system namespace is read-only; each writable
+scenario gets a private data-image copy except the controlled persistence
+reboot, which reuses its synchronized backing. Evidence requires real
+interrupt/DMA ownership transitions and complete teardown; a synthetic unit
+result cannot substitute for the installed path.
 
 The xHCI, NVMe, filesystem, process, and Linux-profile workflows add focused
 matrix checks. BusyBox workflows build twice from clean pinned sources, compare
 the binaries byte-for-byte, audit the ELF and exercised instructions, and check
 the exact syscall trace. The dedicated First Light interactive-userspace
 workflow also builds the three-profile volume twice, runs every scenario,
-captures real QEMU media, and assembles the v1.1.0 release evidence. See
+captures real QEMU media, and preserves the v1.1.0 release evidence. The
+dedicated v2.0.0 workflow reconstructs both FAT32 images, runs host positive
+and negative checks plus all 58 guest scenarios, captures clean-reboot media,
+and assembles exact-commit release evidence. See
 [`BUSYBOX_REPRODUCIBLE_BUILD.md`](BUSYBOX_REPRODUCIBLE_BUILD.md).
 
 ## Negative controls
@@ -91,5 +101,5 @@ make capture-boot-video
 ```
 
 These targets produce QEMU evidence for the committed First Light images and
-20-second boot video. Visual output supplements the installed framebuffer and
-transcript checks; it does not replace them.
+approximately 20-second FAT32 persistence video. Visual output supplements the
+installed framebuffer and transcript checks; it does not replace them.
