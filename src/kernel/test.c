@@ -5063,9 +5063,19 @@ static uint8_t keyboard_scancode_for_ascii(char character)
 static bool inject_keyboard_byte(uint8_t byte)
 {
     const struct keyboard_state before = keyboard_get_state();
+    enum keyboard_status status;
 
-    if (!cpu_interrupts_enabled() ||
-        keyboard_inject_scancode(byte) != KEYBOARD_STATUS_OK) {
+    if (!cpu_interrupts_enabled()) {
+        console_serial_write(
+            "ST interactive keyboard injection refused: interrupts clear\n");
+        return false;
+    }
+    status = keyboard_inject_scancode(byte);
+    if (status != KEYBOARD_STATUS_OK) {
+        console_serial_write(
+            "ST interactive keyboard injection controller refusal: ");
+        console_serial_write(keyboard_status_string(status));
+        console_serial_write("\n");
         return false;
     }
     for (uint64_t spins = 0U; spins < UINT64_C(200000000); ++spins) {
@@ -5076,6 +5086,20 @@ static bool inject_keyboard_byte(uint8_t byte)
                 now.dropped == before.dropped;
         }
     }
+    const struct keyboard_state after = keyboard_get_state();
+
+    console_serial_write(
+        "ST interactive keyboard injection delivery timeout byte ");
+    console_serial_write_u64(byte);
+    console_serial_write(" interrupts ");
+    console_serial_write_u64(after.interrupts - before.interrupts);
+    console_serial_write(" events ");
+    console_serial_write_u64(after.events - before.events);
+    console_serial_write(" dropped ");
+    console_serial_write_u64(after.dropped - before.dropped);
+    console_serial_write(" queued ");
+    console_serial_write_u64(after.queued);
+    console_serial_write("\n");
     return false;
 }
 
