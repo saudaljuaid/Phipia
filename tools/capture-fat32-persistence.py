@@ -221,18 +221,20 @@ def main():
             qmp = Qmp(port)
             wait_count(serial, PROOF, 1, 60.0)
             qmp.hmp("mouse_move -260 320")
+            prompt_count = serial.read_bytes().count(b"sap> ")
+            qmp.hmp("sendkey ret")
+            wait_count(serial, b"sap> ", prompt_count + 1, 5.0)
             started = time.monotonic()
             actions = [
-                (0.5, None),
-                (1.2, "drives"),
-                (2.4, "mkdir projects"),
-                (3.8, "write projects/notes.txt first cut"),
-                (5.3, "append projects/notes.txt second line"),
-                (6.8, "sync"),
-                (8.0, "reboot"),
+                (0.5, "drives"),
+                (1.7, "mkdir projects"),
+                (3.1, "write projects/notes.txt first cut"),
+                (4.6, "append projects/notes.txt second line"),
+                (6.1, "sync"),
+                (7.3, "reboot"),
             ]
             action_index = 0
-            second_terminal = False
+            second_prompt_target = None
             persisted_read = False
             frames = round(args.seconds * args.fps)
             for index in range(frames):
@@ -243,16 +245,16 @@ def main():
                 elapsed = time.monotonic() - started
                 if action_index < len(actions) and elapsed >= actions[action_index][0]:
                     text = actions[action_index][1]
-                    if text is None:
-                        qmp.hmp("sendkey ret")
-                    else:
-                        send_line(qmp, text)
+                    send_line(qmp, text)
                     action_index += 1
                 serial_bytes = serial.read_bytes() if serial.exists() else b""
-                if serial_bytes.count(PROOF) >= 2 and not second_terminal:
+                if (serial_bytes.count(PROOF) >= 2 and
+                        second_prompt_target is None):
+                    second_prompt_target = serial_bytes.count(b"sap> ") + 1
                     qmp.hmp("sendkey ret")
-                    second_terminal = True
-                elif second_terminal and not persisted_read:
+                elif (second_prompt_target is not None and
+                        serial_bytes.count(b"sap> ") >= second_prompt_target and
+                        not persisted_read):
                     send_line(qmp, "read projects/notes.txt")
                     persisted_read = True
                 screendump(qmp, temp / f"frame-{index:04d}.ppm")

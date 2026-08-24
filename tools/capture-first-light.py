@@ -129,6 +129,18 @@ def wait_serial(path, marker, timeout=35.0):
     )
 
 
+def wait_serial_count(path, marker, count, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_bytes().count(marker) >= count:
+            return
+        time.sleep(0.05)
+    raise RuntimeError(
+        f"serial transcript omitted occurrence {count} of "
+        f"{marker.decode('ascii')}"
+    )
+
+
 def capture(qmp, directory, stem):
     ppm = directory / f"{stem}.ppm"
     png = directory / f"{stem}.png"
@@ -225,8 +237,9 @@ def main():
             time.sleep(0.08)
         focus = capture(qmp, output, "sapote-first-light-focus")
 
+        prompt_count = serial.read_bytes().count(b"sap> ")
         qmp.hmp("sendkey ret")
-        time.sleep(0.20)
+        wait_serial_count(serial, b"sap> ", prompt_count + 1)
         send_text(qmp, f"linux {args.interaction}")
         qmp.hmp("sendkey ret")
         if args.interaction == "cat":
