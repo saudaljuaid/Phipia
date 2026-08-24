@@ -5151,6 +5151,22 @@ static bool focus_first_light_terminal(void)
     if (ui_get_state()->active_panel == UI_PANEL_TERMINAL) {
         return true;
     }
+    for (size_t attempts = 0U;
+         attempts < UI_DOCK_ITEM_COUNT &&
+            ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL;
+         ++attempts) {
+        if (!inject_keyboard_byte(UINT8_C(0x0F))) {
+            return false;
+        }
+        shell_process_keyboard_events();
+        if (!inject_keyboard_byte(UINT8_C(0x8F))) {
+            return false;
+        }
+        shell_process_keyboard_events();
+    }
+    if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
+        return false;
+    }
     if (!inject_keyboard_byte(UINT8_C(0x1C))) {
         return false;
     }
