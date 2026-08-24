@@ -2547,6 +2547,48 @@ enum sapfs_status sapfs_truncate(
     return status != SAPFS_STATUS_OK ? status : close_status;
 }
 
+static enum sapfs_status destination_inside_directory(
+    struct sapfs_operation *operation,
+    uint32_t directory_cluster,
+    uint32_t destination_parent,
+    bool *inside
+)
+{
+    static const uint8_t dotdot[11] =
+        {'.', '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
+    uint32_t current = destination_parent;
+    struct fat32_name parent_name = {0};
+
+    if (operation == NULL || inside == NULL) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    *inside = false;
+    copy_bytes(parent_name.canonical, dotdot, sizeof(dotdot));
+    parent_name.kind = FAT32_NAME_ORDINARY;
+    for (uint32_t depth = 0U; depth <= SAPFS_MAX_DEPTH; ++depth) {
+        struct sapfs_location parent_entry;
+        enum sapfs_status status;
+
+        if (current == directory_cluster) {
+            *inside = true;
+            return SAPFS_STATUS_OK;
+        }
+        if (current == operation->mount->geometry.root_cluster) {
+            return SAPFS_STATUS_OK;
+        }
+        status = scan_directory(operation, current, &parent_name,
+            &parent_entry, NULL);
+        if (status != SAPFS_STATUS_OK ||
+            (parent_entry.entry.attributes & SAPFS_ATTR_DIRECTORY) == 0U ||
+            parent_entry.entry.first_cluster < 2U ||
+            parent_entry.entry.first_cluster == current) {
+            return SAPFS_STATUS_CORRUPT;
+        }
+        current = parent_entry.entry.first_cluster;
+    }
+    return SAPFS_STATUS_CORRUPT;
+}
+
 enum sapfs_status sapfs_rename(
     enum sapfs_volume volume,
     const char *source,
@@ -2559,6 +2601,7 @@ enum sapfs_status sapfs_rename(
     struct sapfs_location source_location;
     struct sapfs_parent destination_parent;
     struct sapfs_free_slot destination_slot;
+    bool inside = false;
     enum sapfs_status status = begin_operation(volume, true, &operation);
     enum sapfs_status close_status;
 
@@ -2575,6 +2618,15 @@ enum sapfs_status sapfs_rename(
     }
     if (status == SAPFS_STATUS_OK) {
         status = resolve_parent(&operation, destination, &destination_parent);
+    }
+    if (status == SAPFS_STATUS_OK &&
+        (source_location.entry.attributes & SAPFS_ATTR_DIRECTORY) != 0U) {
+        status = destination_inside_directory(&operation,
+            source_location.entry.first_cluster,
+            destination_parent.cluster, &inside);
+        if (status == SAPFS_STATUS_OK && inside) {
+            status = SAPFS_STATUS_PATH;
+        }
     }
     if (status == SAPFS_STATUS_OK) {
         status = find_or_grow_slot(&operation, destination_parent.cluster,

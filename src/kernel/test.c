@@ -5695,9 +5695,19 @@ static void fat32_rename_scenario(void)
     fat32_require_base(true);
     fat32_feed("mkdir a");
     fat32_feed("mkdir b");
+    fat32_feed("mkdir a/child");
+    if (sapfs_rename(SAPFS_VOLUME_DATA, "a", "a/child/a") !=
+            SAPFS_STATUS_PATH) {
+        kernel_test_fail("FAT32 accepted a directory move into itself");
+    }
     fat32_feed("write a/note.txt \"move me\"");
     fat32_feed("mv a/note.txt b/moved.txt");
     fat32_feed("mv b archive");
+    fat32_feed("touch conflict.txt");
+    if (sapfs_rename(SAPFS_VOLUME_DATA, "conflict.txt",
+            "archive/moved.txt") != SAPFS_STATUS_EXISTS) {
+        kernel_test_fail("FAT32 rename conflict was not rejected");
+    }
     fat32_feed("ls archive");
     if (sapfs_stat_path(SAPFS_VOLUME_DATA, "a/note.txt", &stat) !=
             SAPFS_STATUS_NOT_FOUND ||

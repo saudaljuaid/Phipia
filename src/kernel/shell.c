@@ -168,6 +168,7 @@ static void command_help(void)
     console_write("  truncate  set a file's byte length\n");
     console_write("  stat/mv/rm inspect, move, or remove a path\n");
     console_write("  sync      persist completed data operations\n");
+    console_write("  reboot    sync, unmount, and restart cleanly\n");
     console_write("  clear     clear the screen\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
@@ -779,6 +780,29 @@ static void command_sync(void)
     }
 }
 
+static void command_reboot(void)
+{
+    enum sapfs_status status = sapfs_unmount(SAPFS_VOLUME_DATA);
+
+    if (status != SAPFS_STATUS_OK && status != SAPFS_STATUS_NOT_MOUNTED) {
+        filesystem_error("reboot", status);
+        return;
+    }
+    status = sapfs_unmount(SAPFS_VOLUME_SYSTEM);
+    if (status != SAPFS_STATUS_OK && status != SAPFS_STATUS_NOT_MOUNTED) {
+        filesystem_error("reboot", status);
+        (void)sapfs_mount(SAPFS_VOLUME_DATA);
+        return;
+    }
+    console_write("restarting after clean synchronization\n");
+    cpu_interrupt_disable();
+    cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+    cpu_interrupt_enable();
+    console_write("reboot: platform reset failed\n");
+    (void)sapfs_mount(SAPFS_VOLUME_SYSTEM);
+    (void)sapfs_mount(SAPFS_VOLUME_DATA);
+}
+
 static void command_uptime(void)
 {
     const uint64_t now = clock_monotonic_ns();
@@ -970,6 +994,8 @@ enum shell_status shell_execute(const char *text)
         command_rm(arguments_of(text));
     } else if (matches(text, "sync")) {
         command_sync();
+    } else if (matches(text, "reboot")) {
+        command_reboot();
     } else if (matches(text, "clear")) {
         if (screen_is_active()) {
             (void)screen_clear();
