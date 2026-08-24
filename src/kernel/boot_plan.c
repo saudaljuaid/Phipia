@@ -1240,10 +1240,12 @@ static void execute_nvme_read_proof(
     }
 
     /* The filesystem, process, and Linux scenarios own other namespaces. */
-    if (context->test_scenario == KERNEL_TEST_FILESYSTEM ||
+    if (context->test_scenario == KERNEL_TEST_NONE ||
+        context->test_scenario == KERNEL_TEST_FILESYSTEM ||
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
-        context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME) {
+        context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
+        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
         console_write("Sapote: NVMe fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1360,10 +1362,12 @@ static void execute_filesystem_file_proof(
     }
 
     /* Preserve the raw, process-ELF, and BusyBox fixture namespaces. */
-    if (context->test_scenario == KERNEL_TEST_NVME ||
+    if (context->test_scenario == KERNEL_TEST_NONE ||
+        context->test_scenario == KERNEL_TEST_NVME ||
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
-        context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME) {
+        context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
+        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
         console_write("Sapote: FAT16 fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;

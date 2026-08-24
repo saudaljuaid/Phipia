@@ -98,6 +98,9 @@ bool linux_uname_image_uts_foundation_self_test(size_t *completed_tests);
 enum linux_uname_abi_status linux_uname_abi_installed_prove(
     struct linux_uname_abi_proof_result *result
 );
+enum linux_uname_abi_status linux_uname_abi_launch(
+    struct linux_uname_abi_proof_result *result
+);
 struct linux_uname_abi_proof_result linux_uname_abi_get_proof_result(void);
 bool linux_uname_abi_resources_released(void);
 const char *linux_uname_abi_status_string(enum linux_uname_abi_status status);

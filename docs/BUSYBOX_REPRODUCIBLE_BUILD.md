@@ -50,9 +50,18 @@ Both executables have five program headers, four load segments, no interpreter,
 dynamic section, runtime relocation, PIE, shared object, or RWX segment. Their
 exact syscall traces and allowlists are committed beside the configurations.
 
+Version 1.0.0 places those exact executables in one 16 MiB read-only FAT16
+volume. `tools/make-first-light-userland.py` rebuilds every byte, independently
+verifies both files and root entries, runs negative mutations, and pins the
+volume SHA-256 to
+`12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE`.
+
 ## Release requirement
 
 A release containing either executable must also provide the exact BusyBox and
-musl source archives, configuration, BusyBox license, musl copyright record,
-build script, checksum manifest, and profile-specific syscall evidence. A
-binary is not published unless those records match.
+musl source archives, configurations, BusyBox license, musl copyright record,
+build scripts, checksum manifest, volume builder, and profile-specific syscall
+evidence. The v1.0.0 bundle additionally carries the deterministic FAT16 image,
+production QEMU transcript, positive and negative results, screenshot, video,
+and verification summary generated from the release commit. A binary is not
+published unless those records match.

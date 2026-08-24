@@ -10,6 +10,7 @@
 #include <sapote/framebuffer.h>
 #include <sapote/heap.h>
 #include <sapote/keyboard.h>
+#include <sapote/linux_userland.h>
 #include <sapote/memory.h>
 #include <sapote/pci.h>
 #include <sapote/screen.h>
@@ -45,6 +46,7 @@ static bool is_separator(char character)
 
 static struct shell_state state;
 static char line[SHELL_LINE_LIMIT + 1U];
+static bool linux_prompt_evidence_pending;
 
 static bool matches(const char *text, const char *name)
 {
@@ -68,6 +70,25 @@ static bool matches(const char *text, const char *name)
     }
 
     return text[index] == '\0' || is_separator(text[index]);
+}
+
+static bool argument_equals(const char *argument, const char *name)
+{
+    size_t index = 0U;
+
+    while (argument[index] != '\0' && name[index] != '\0') {
+        if (argument[index] != name[index]) {
+            return false;
+        }
+        ++index;
+    }
+    if (name[index] != '\0') {
+        return false;
+    }
+    while (is_separator(argument[index])) {
+        ++index;
+    }
+    return argument[index] == '\0';
 }
 
 /* Everything after the command word, with leading separators removed. */
@@ -102,6 +123,7 @@ static void command_help(void)
 {
     console_write("  help      this list\n");
     console_write("  echo      print the rest of the line\n");
+    console_write("  linux     run measured echo or uname userspace\n");
     console_write("  clear     clear the screen\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
@@ -116,6 +138,32 @@ static void command_echo(const char *arguments)
 {
     console_write(arguments);
     console_putc('\n');
+}
+
+static void command_linux(const char *arguments)
+{
+    struct linux_userland_result result;
+    enum linux_userland_profile profile;
+    enum linux_userland_status status;
+
+    if (argument_equals(arguments, "echo")) {
+        profile = LINUX_USERLAND_PROFILE_ECHO;
+    } else if (argument_equals(arguments, "uname")) {
+        profile = LINUX_USERLAND_PROFILE_UNAME;
+    } else {
+        console_write("linux: use 'linux echo' or 'linux uname'\n");
+        console_serial_write("FL USERLAND unsupported profile refused\n");
+        return;
+    }
+    console_serial_write("FL USERLAND command accepted through First Light shell linux ");
+    console_serial_write(linux_userland_profile_name(profile));
+    console_serial_write("\n");
+    status = linux_userland_launch(profile, &result);
+    if (status != LINUX_USERLAND_STATUS_OK) {
+        console_write("linux: ");
+        console_write(linux_userland_status_string(status));
+        console_putc('\n');
+    }
 }
 
 static void command_uptime(void)
@@ -213,7 +261,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 0.9.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Sapote 1.0.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -263,6 +311,7 @@ enum shell_status shell_execute(const char *text)
 
     text = &text[start];
     state.lines += 1U;
+    linux_prompt_evidence_pending = false;
 
     /* An empty line is not a mistake and is not a command. */
     if (text[0] == '\0') {
@@ -273,6 +322,9 @@ enum shell_status shell_execute(const char *text)
         command_help();
     } else if (matches(text, "echo")) {
         command_echo(arguments_of(text));
+    } else if (matches(text, "linux")) {
+        linux_prompt_evidence_pending = true;
+        command_linux(arguments_of(text));
     } else if (matches(text, "clear")) {
         if (screen_is_active()) {
             (void)screen_clear();
@@ -317,6 +369,11 @@ enum shell_status shell_feed(char character)
         state.length = 0U;
         status = shell_execute(line);
         console_write(SHELL_PROMPT);
+        if (linux_prompt_evidence_pending) {
+            console_serial_write("\nFL USERLAND First Light prompt restored\n");
+            console_serial_write(SHELL_PROMPT);
+            linux_prompt_evidence_pending = false;
+        }
         return status;
     }
 

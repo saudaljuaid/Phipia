@@ -97,6 +97,7 @@ bool linux_abi_image_stack_foundation_self_test(size_t *completed_tests);
 enum linux_abi_status linux_abi_installed_prove(
     struct linux_abi_proof_result *result
 );
+enum linux_abi_status linux_abi_launch(struct linux_abi_proof_result *result);
 struct linux_abi_proof_result linux_abi_get_proof_result(void);
 bool linux_abi_resources_released(void);
 const char *linux_abi_status_string(enum linux_abi_status status);

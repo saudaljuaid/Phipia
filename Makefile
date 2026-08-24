@@ -11,10 +11,11 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
 	boot-ledger first-light device-substrate xhci nvme filesystem process \
-	linux-abi linux-abi-uname
+	linux-abi linux-abi-uname first-light-userland \
+	first-light-userland-absent
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 39
-EXPECTED_SHELL_ASSERTION_COUNT := 266
+EXPECTED_TEST_SCENARIO_COUNT := 41
+EXPECTED_SHELL_ASSERTION_COUNT := 284
 
 CC := gcc
 LD := ld
@@ -24,6 +25,9 @@ RUSTC := rustc
 PYTHON := python3
 FFMPEG ?= ffmpeg
 QEMU_ACCEL ?= tcg
+GRUB_MKRESCUE ?= grub-mkrescue
+GRUB_MODULE_DIR ?=
+GRUB_MKRESCUE_FLAGS := $(if $(GRUB_MODULE_DIR),-d $(GRUB_MODULE_DIR),)
 
 # The one target Rust is built for. It matches the C flags exactly - no MMX, no
 # SSE, soft float, no red zone - which is why the two halves can share a stack.
@@ -61,6 +65,7 @@ BUSYBOX_UNAME_OUTPUT_DIR := $(BUILD_DIR)/busybox-uname-contract
 BUSYBOX_UNAME_WORK_DIR := $(BUILD_DIR)/busybox-uname-work
 BUSYBOX_UNAME_BINARY := $(BUSYBOX_UNAME_OUTPUT_DIR)/busybox
 LINUX_UNAME_FIXTURE := $(BUILD_DIR)/fixtures/linux-uname-fat16.raw
+FIRST_LIGHT_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -168,6 +173,12 @@ $(LINUX_UNAME_FIXTURE): $(BUSYBOX_UNAME_BINARY) \
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/make-linux-uname-fixture.py $(BUSYBOX_UNAME_BINARY) $@
 
+$(FIRST_LIGHT_USERLAND_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
+		tools/make-first-light-userland.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/make-first-light-userland.py \
+		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) $@
+
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
 		rm -f $@; \
@@ -255,6 +266,9 @@ verify: toolchain lint
 		tools/linux-uname-elf64-host-test.rs \
 		-o $(RUST_LINUX_UNAME_ELF64_TEST)
 	$(RUST_LINUX_UNAME_ELF64_TEST)
+	$(MAKE) $(FIRST_LIGHT_USERLAND_IMAGE)
+	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE'
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
@@ -372,6 +386,14 @@ verify: toolchain lint
 		--exclude=linux_uname.c; then \
 		echo 'Linux uname ABI proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@test "$$(grep -ERh '\blinux_abi_launch[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=linux_abi.c | wc -l)" -eq 1 && \
+		test "$$(grep -ERh '\blinux_uname_abi_launch[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=linux_uname.c | wc -l)" -eq 1 || \
+		{ echo 'measured launch entry escaped its userspace owner'; exit 1; }
+	@! grep -Eq 'console_(write|putc)[[:space:]]*\([[:space:]]*"(SAPOTE|Linux)' \
+		src/kernel/shell.c || \
+		{ echo 'First Light shell contains prerecorded userspace output'; exit 1; }
 	@if grep -ERn '\bfilesystem_private_read_(open|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c \
 		--exclude=process.c; then \
@@ -516,6 +538,28 @@ verify: toolchain lint
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
 		test "$$((0x36 * 2 + 1))" -ne "$$host_exit" || \
 		{ echo 'Linux uname ABI guest and host exit contracts disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x38);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*first-light-userland) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'First Light userland guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x39);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*first-light-userland-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'First Light absent-volume guest and host exits disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -539,9 +583,10 @@ screenshot-proof:
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
 		--self-test $(FIRST_LIGHT_TERMINAL_IMAGE)
 
-capture-first-light: iso
+capture-first-light: iso $(FIRST_LIGHT_USERLAND_IMAGE)
 	rm -rf $(FIRST_LIGHT_CAPTURE_DIR)
 	$(PYTHON) tools/capture-first-light.py --iso $(ISO) \
+		--userspace $(FIRST_LIGHT_USERLAND_IMAGE) \
 		--output $(FIRST_LIGHT_CAPTURE_DIR)
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
 		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light.png
@@ -552,15 +597,16 @@ capture-first-light: iso
 		$(FIRST_LIGHT_TERMINAL_IMAGE) \
 		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
 
-capture-boot-video: iso
+capture-boot-video: iso $(FIRST_LIGHT_USERLAND_IMAGE)
 	$(PYTHON) tools/capture-boot-video.py --iso $(ISO) \
+		--userspace $(FIRST_LIGHT_USERLAND_IMAGE) \
 		--ffmpeg $(FFMPEG) --output $(FIRST_LIGHT_BOOT_VIDEO)
 
 $(ISO): $(KERNEL) grub/grub.cfg
 	mkdir -p $(ISO_ROOT)/boot/grub
 	cp $(KERNEL) $(ISO_ROOT)/boot/sapote.elf
 	cp grub/grub.cfg $(ISO_ROOT)/boot/grub/grub.cfg
-	grub-mkrescue -o $@ $(ISO_ROOT)
+	$(GRUB_MKRESCUE) $(GRUB_MKRESCUE_FLAGS) -o $@ $(ISO_ROOT)
 
 iso: $(ISO)
 
@@ -572,7 +618,7 @@ $(TEST_BUILD_DIR)/%/sapote.iso: $(KERNEL) Makefile
 		'menuentry "Sapote test" {' \
 		'    multiboot2 /boot/sapote.elf sapote.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
-	grub-mkrescue -o $@ $(TEST_BUILD_DIR)/$*/iso-root
+	$(GRUB_MKRESCUE) $(GRUB_MKRESCUE_FLAGS) -o $@ $(TEST_BUILD_DIR)/$*/iso-root
 
 qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \
@@ -620,6 +666,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		process) expected=105 ;; \
 		linux-abi) expected=109 ;; \
 		linux-abi-uname) expected=111 ;; \
+		first-light-userland) expected=113 ;; \
+		first-light-userland-absent) expected=115 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -661,6 +709,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				test -f '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(LINUX_UNAME_FIXTURE),node-name=linux-uname-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=linux-uname-file,node-name=linux-uname-raw,read-only=on -device nvme,serial=sapote-linux-uname,drive=linux-uname-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			first-light-userland) \
+				$(MAKE) '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
+				test -f '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=first-light-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=first-light-userland-file,node-name=first-light-userland-raw,read-only=on -device nvme,serial=sapote-userland,drive=first-light-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -900,6 +952,21 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: BusyBox uname image and UTS controls 50/50 passed' "$$log" && \
 			grep -Fqx 'Linux' "$$log" || \
 				diagnostics_ok=false ;; \
+		first-light-userland) \
+			grep -Fxq 'ST FIRST_LIGHT_USERLAND shell production echo 2 uname 2 invalid-profile recovered CPL3 SYSCALL stdout exact exit 0 teardown clean prompt restored' "$$log" && \
+			test "$$(grep -Fxc 'SAPOTE' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'Linux' "$$log")" -eq 2 && \
+			grep -Fxq 'FL USERLAND launch completed successfully echo ordinal 2' "$$log" && \
+			grep -Fxq 'FL USERLAND launch completed successfully uname ordinal 2' "$$log" && \
+			grep -Fxq 'FL USERLAND First Light prompt restored' "$$log" || \
+				diagnostics_ok=false ;; \
+		first-light-userland-absent) \
+			grep -Fxq 'linux: userspace volume unavailable' "$$log" && \
+			grep -Fxq 'still usable' "$$log" && \
+			grep -Fxq 'ST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable teardown clean' "$$log" && \
+			grep -Fxq 'FL USERLAND launch refused and teardown complete' "$$log" && \
+			grep -Fxq 'FL USERLAND First Light prompt restored' "$$log" || \
+				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
@@ -920,8 +987,12 @@ qemu-tests: $(TEST_TARGETS)
 smoke: qemu-test-normal
 	@echo "strict boot smoke test passed"
 
-run: iso
-	qemu-system-x86_64 -cdrom $(ISO) -serial stdio -no-reboot -no-shutdown
+run: iso $(FIRST_LIGHT_USERLAND_IMAGE)
+	qemu-system-x86_64 -m 128M -smp 1 -boot order=d -cdrom $(ISO) \
+		-blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=first-light-userland-file,read-only=on,auto-read-only=off \
+		-blockdev driver=raw,file=first-light-userland-file,node-name=first-light-userland-raw,read-only=on \
+		-device nvme,serial=sapote-userland,drive=first-light-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1 \
+		-serial stdio -no-reboot -no-shutdown
 
 hooks:
 	git config core.hooksPath .githooks

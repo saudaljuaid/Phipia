@@ -1605,6 +1605,23 @@ enum linux_abi_status linux_abi_installed_prove(
     }
 }
 
+enum linux_abi_status linux_abi_launch(struct linux_abi_proof_result *result)
+{
+    bool table_failure_observed = false;
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum linux_abi_status status;
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_disable();
+    }
+    status = linux_attempt(result, LINUX_FAILURE_NONE, 0U,
+        &table_failure_observed);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return status;
+}
+
 struct linux_abi_proof_result linux_abi_get_proof_result(void)
 {
     return installed_result;

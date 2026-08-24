@@ -30,6 +30,7 @@
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
 #include <sapote/linux_uname.h>
+#include <sapote/linux_userland.h>
 #include <sapote/screen.h>
 #include <sapote/shell.h>
 #include <sapote/pm_timer.h>
@@ -318,6 +319,14 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_LINUX_ABI_UNAME;
     }
 
+    if (token_equals(value, length, "first-light-userland")) {
+        return KERNEL_TEST_FIRST_LIGHT_USERLAND;
+    }
+
+    if (token_equals(value, length, "first-light-userland-absent")) {
+        return KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -411,6 +420,10 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x36);
     case KERNEL_TEST_LINUX_ABI_UNAME:
         return UINT8_C(0x37);
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
+        return UINT8_C(0x38);
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
+        return UINT8_C(0x39);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4082,6 +4095,10 @@ void kernel_test_run(
     case KERNEL_TEST_LINUX_ABI_UNAME:
         /* Deferred until the uname proof receipt is installed and published. */
         return;
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
+        /* Deferred until First Light and the Boot Ledger are published. */
+        return;
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -4990,6 +5007,118 @@ _Noreturn void kernel_test_complete_linux_uname(void)
     kernel_test_pass();
 }
 
+static bool feed_shell_line(const char *text)
+{
+    size_t index = 0U;
+
+    if (text == NULL) {
+        return false;
+    }
+    while (text[index] != '\0') {
+        if (shell_feed(text[index]) != SHELL_STATUS_OK) {
+            return false;
+        }
+        ++index;
+    }
+    return shell_feed('\n') == SHELL_STATUS_OK;
+}
+
+static bool installed_first_light_ready(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+
+    return ledger != NULL && ledger->validated && ledger->executed &&
+        ledger->status == BOOT_LEDGER_STATUS_OK && !ledger->degraded &&
+        boot_ledger_fingerprint_valid(ledger) &&
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE) &&
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE) &&
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE) &&
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE);
+}
+
+_Noreturn void kernel_test_complete_first_light_userland(void)
+{
+    const struct shell_state before = shell_get_state();
+    const uint32_t echo_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+    const uint32_t uname_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_UNAME);
+    struct linux_abi_proof_result echo;
+    struct linux_uname_abi_proof_result uname;
+
+    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND ||
+        !installed_first_light_ready() || !shell_is_active()) {
+        kernel_test_fail("First Light userspace prerequisites are incomplete");
+    }
+    cpu_interrupt_enable();
+    console_write("\n");
+    console_write("sap> ");
+    if (!feed_shell_line("linux unsupported") ||
+        !feed_shell_line("echo native") ||
+        !feed_shell_line("linux echo") ||
+        !feed_shell_line("linux uname") ||
+        !feed_shell_line("linux echo") ||
+        !feed_shell_line("linux uname")) {
+        kernel_test_fail("First Light shell input injection was refused");
+    }
+    echo = linux_abi_get_proof_result();
+    uname = linux_uname_abi_get_proof_result();
+    if (shell_get_state().commands != before.commands + 6U ||
+        shell_get_state().lines != before.lines + 6U ||
+        shell_get_state().unknown != before.unknown ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) !=
+            echo_before + 2U ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_UNAME) !=
+            uname_before + 2U ||
+        echo.file_bytes != LINUX_ABI_IMAGE_BYTES || echo.stdout_bytes != 7U ||
+        echo.syscall_count != 9U || !echo.ring_three ||
+        !echo.private_address_space || !echo.real_syscall_instruction ||
+        !echo.stdout_valid || !echo.exit_zero || !echo.teardown_complete ||
+        uname.file_bytes != LINUX_UNAME_ABI_IMAGE_BYTES ||
+        uname.stdout_bytes != 6U || uname.syscall_count != 6U ||
+        !uname.ring_three || !uname.private_address_space ||
+        !uname.real_syscall_instruction || !uname.uts_copy_valid ||
+        !uname.stdout_valid || !uname.exit_zero || !uname.teardown_complete ||
+        !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
+        kernel_test_fail("First Light userspace relaunch contract failed");
+    }
+    console_write("\nST FIRST_LIGHT_USERLAND shell production echo 2 uname 2 ");
+    console_write("invalid-profile recovered CPL3 SYSCALL stdout exact exit 0 ");
+    console_write("teardown clean prompt restored\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_first_light_userland_absent(void)
+{
+    const struct shell_state before = shell_get_state();
+    const uint32_t echo_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+
+    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT ||
+        !installed_first_light_ready() || !shell_is_active()) {
+        kernel_test_fail("absent-volume userspace prerequisites are incomplete");
+    }
+    cpu_interrupt_enable();
+    console_write("\n");
+    console_write("sap> ");
+    if (!feed_shell_line("linux echo") ||
+        !feed_shell_line("echo still usable") ||
+        shell_get_state().commands != before.commands + 2U ||
+        shell_get_state().lines != before.lines + 2U ||
+        shell_get_state().unknown != before.unknown ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) != echo_before ||
+        !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
+        kernel_test_fail("absent userspace volume did not recover cleanly");
+    }
+    console_write("\nST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable ");
+    console_write("teardown clean\n");
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -5130,6 +5259,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "linux-abi";
     case KERNEL_TEST_LINUX_ABI_UNAME:
         return "linux-abi-uname";
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
+        return "first-light-userland";
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
+        return "first-light-userland-absent";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

@@ -67,13 +67,20 @@ passthrough, or general USB class stack.
 ## Userspace boundaries
 
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
-private interrupt gate. Separately, the Linux compatibility proof programs the
-x86_64 `SYSCALL` MSRs and runs two checksum-pinned static BusyBox profiles:
-`echo SAPOTE` and `uname -s`.
+private interrupt gate. Separately, the Linux compatibility boundary programs
+the x86_64 `SYSCALL` MSRs and runs two checksum-pinned static BusyBox profiles:
+`echo SAPOTE` and `uname -s`. First Light's `linux` command selects one of the
+two exact root entries on a deterministic read-only FAT16 volume attached as an
+ordinary emulated NVMe namespace. Each launch validates CPU-owned bytes, builds
+a fresh private address space, enters CPL3, authenticates exact output, and
+tears the generation down before restoring the prompt.
 
-That surface is not POSIX and is not Sapote's native application ABI. It accepts
-only the measured calls, arguments, mappings, output, and lifecycle documented
-in [`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
+The v0.8.0 echo and v0.9.0 uname standalone fixtures remain independent proof
+scenarios. The v1.0.0 volume composes those frozen profiles without creating a
+VFS or path API. This surface is not POSIX and is not Sapote's native
+application ABI. It accepts only the measured calls, arguments, mappings,
+output, and lifecycle documented in
+[`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
 
 ## Rust boundary
 

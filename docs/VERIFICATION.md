@@ -12,7 +12,7 @@ untested hardware support or a broader ABI.
 make lint         # repository whitespace policy
 make verify       # clean build, host tests, ELF/link/layout checks
 make smoke        # normal QEMU boot and transcript
-make qemu-tests   # all 39 bounded QEMU scenarios
+make qemu-tests   # all 41 bounded QEMU scenarios
 ```
 
 Useful inspection targets:
@@ -29,13 +29,14 @@ kernel code, changed asset/fixture hashes, and failed Rust parser tests.
 
 ## QEMU scenarios
 
-The Makefile is the source of truth for the 39 names. They cover:
+The Makefile is the source of truth for the 41 names. They cover:
 
 - exception entry, IST handling, APIC/I/O APIC routing, and legacy retirement;
 - clock calibration, deadlines, paging, heap, and guarded threads;
 - PCI, framebuffer, surface, screen, keyboard, shell, device windows, and the
   Boot Ledger;
-- First Light rendering and interaction;
+- First Light rendering, interaction, measured userspace launch, and
+  missing-volume recovery;
 - MSI-X/DMA, xHCI, NVMe, FAT16, Ring 3 ELF64, and the two measured Linux
   profiles.
 
@@ -54,7 +55,9 @@ substitute for the installed path.
 The xHCI, NVMe, filesystem, process, and Linux-profile workflows add focused
 matrix checks. BusyBox workflows build twice from clean pinned sources, compare
 the binaries byte-for-byte, audit the ELF and exercised instructions, and check
-the exact syscall trace. See
+the exact syscall trace. The dedicated First Light userspace workflow also
+builds the dual-profile volume, runs every scenario, captures real QEMU media,
+and assembles the v1.0.0 release evidence. See
 [`BUSYBOX_REPRODUCIBLE_BUILD.md`](BUSYBOX_REPRODUCIBLE_BUILD.md).
 
 ## Negative controls

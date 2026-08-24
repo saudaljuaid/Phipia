@@ -178,6 +178,16 @@ fn make_query_for(contract: Contract) -> RootQuery {
     }
 }
 
+fn contract_for_name(name: &[u8]) -> Option<Contract> {
+    if name == ECHO_CONTRACT.name {
+        Some(ECHO_CONTRACT)
+    } else if name == UNAME_CONTRACT.name {
+        Some(UNAME_CONTRACT)
+    } else {
+        None
+    }
+}
+
 pub fn make_query() -> RootQuery {
     make_query_for(ECHO_CONTRACT)
 }
@@ -201,6 +211,7 @@ fn find_root_for(
     }
     let mut found = RootEntry::invalid();
     let mut found_target = false;
+    let mut found_peer = false;
     let mut saw_end = false;
     for index in 0..geometry.root_entries as usize {
         let offset = index
@@ -229,10 +240,9 @@ fn find_root_for(
         if !canonical_name(name) || attribute != ATTR_ARCHIVE {
             return Err(Status::UnsupportedEntry);
         }
-        if name != query.canonical_name {
-            return Err(Status::UnsupportedEntry);
-        }
-        if found_target {
+        let entry_contract = contract_for_name(name).ok_or(Status::UnsupportedEntry)?;
+        let target = name == query.canonical_name;
+        if (target && found_target) || (!target && found_peer) {
             return Err(Status::TargetDuplicate);
         }
         let cluster = read_u16(block, offset + 26)?;
@@ -248,20 +258,24 @@ fn find_root_for(
             .checked_add(cluster_bytes - 1)
             .ok_or(Status::FileSize)?
             / cluster_bytes;
-        if file_size != contract.file_bytes
-            || file_size > destination_bytes
-            || clusters != contract.file_clusters
+        if file_size != entry_contract.file_bytes
+            || (target && file_size > destination_bytes)
+            || clusters != entry_contract.file_clusters
             || clusters as usize > MAX_CLUSTERS
         {
             return Err(Status::FileSize);
         }
-        found = RootEntry {
-            canonical_name: contract.name,
-            attribute: ATTR_ARCHIVE,
-            first_cluster: cluster,
-            file_size,
-        };
-        found_target = true;
+        if target {
+            found = RootEntry {
+                canonical_name: contract.name,
+                attribute: ATTR_ARCHIVE,
+                first_cluster: cluster,
+                file_size,
+            };
+            found_target = true;
+        } else {
+            found_peer = true;
+        }
     }
     if !saw_end {
         return Err(Status::RootEndMissing);
