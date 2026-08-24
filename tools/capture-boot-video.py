@@ -23,6 +23,10 @@ USERLAND_LINES = {
     "uname": b"FL USERLAND launch completed successfully uname ordinal 1",
     "cat": b"FL USERLAND launch completed successfully cat ordinal 1",
 }
+CAT_FOREGROUND_LINE = (
+    b"FL USERLAND cat foreground launch yielded to First Light"
+)
+CAT_STDOUT_LINE = b"FL CAT userspace stdout accepted"
 COMMAND_SECONDS = 13.0
 CAT_INPUT_SECONDS = 15.0
 CAT_EOF_SECONDS = 17.0
@@ -86,6 +90,10 @@ def capture(qmp, destination):
     })
 
 
+def transcript_contains(path, marker):
+    return path.exists() and marker in path.read_bytes()
+
+
 def encode(ffmpeg, pattern, fps, seconds, output):
     command = [
         ffmpeg, "-hide_banner", "-loglevel", "warning", "-y",
@@ -116,6 +124,9 @@ def main():
         parser.error("--fps must be positive")
     if args.seconds < COMMAND_SECONDS + 1.0 / args.fps:
         parser.error("--seconds is too short to capture the scheduled command")
+    if (args.interaction == "cat" and
+            args.seconds < CAT_EOF_SECONDS + 1.0 / args.fps):
+        parser.error("--seconds is too short to capture cat input and EOF")
 
     if args.seconds <= 0.0 or args.fps <= 0:
         raise ValueError("seconds and fps must be positive")
@@ -173,17 +184,28 @@ def main():
                     command_entered = True
                 if (args.interaction == "cat" and
                         elapsed >= CAT_INPUT_SECONDS and
-                        not cat_input_entered):
+                        not cat_input_entered and
+                        transcript_contains(serial, CAT_FOREGROUND_LINE)):
                     for key in "pebble":
                         qmp.hmp(f"sendkey {key}")
                     qmp.hmp("sendkey ret")
                     cat_input_entered = True
                 if (args.interaction == "cat" and
                         elapsed >= CAT_EOF_SECONDS and
-                        not cat_eof_entered):
+                        cat_input_entered and not cat_eof_entered and
+                        transcript_contains(serial, CAT_STDOUT_LINE)):
                     qmp.hmp("sendkey ctrl-d")
                     cat_eof_entered = True
                 capture(qmp, work / f"frame-{index:04d}.ppm")
+            if (args.interaction == "cat" and
+                    (not cat_input_entered or not cat_eof_entered)):
+                transcript = serial.read_bytes() if serial.exists() else b""
+                tail = transcript[-4096:].decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "recording timed out waiting for the cat foreground "
+                    f"or stdout handoff (input={cat_input_entered}, "
+                    f"eof={cat_eof_entered})\n{tail}"
+                )
         finally:
             if qmp is not None:
                 try:

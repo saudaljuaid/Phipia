@@ -65,11 +65,11 @@ v1.1.0 missing-cat negative fixture with SHA-256
 
 ## Release requirement
 
-A release containing either executable must also provide the exact BusyBox and
-musl source archives, configurations, BusyBox license, musl copyright record,
-build scripts, checksum manifest, volume builder, and profile-specific syscall
-evidence. The v1.1.0 bundle additionally carries the deterministic FAT16 image,
-foreground lifecycle and input/output contracts, production positive and
-missing-cat QEMU transcripts, robustness results, screenshot, video, and
-verification summary generated from the release commit. A binary is not
-published unless those records match.
+A release containing any of these executables must also provide the exact
+BusyBox and musl source archives, configurations, BusyBox license, musl
+copyright record, build scripts, checksum manifest, volume builder, and
+profile-specific syscall evidence. The v1.1.0 bundle additionally carries the
+deterministic FAT16 image, foreground lifecycle and input/output contracts,
+production positive and missing-cat QEMU transcripts, robustness results,
+screenshot, video, and verification summary generated from the release commit.
+A binary is not published unless those records match.

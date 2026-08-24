@@ -8,6 +8,7 @@
 #include <sapote/console.h>
 #include <sapote/cpu.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_cat.h>
 #include <sapote/linux_uname.h>
 #include <sapote/memory.h>
 
@@ -35,11 +36,6 @@
 #define LINUX_ERRNO_ENOSYS 38
 #define LINUX_TIOCGWINSZ UINT64_C(0x5413)
 #define LINUX_KERNEL_STACK_BYTES (16U * 1024U)
-#define LINUX_CAT_EXECUTABLE_START UINT64_C(0x0000400001001000)
-#define LINUX_CAT_EXECUTABLE_END UINT64_C(0x0000400001008000)
-#define LINUX_CAT_FS_ADDRESS UINT64_C(0x000040000100B178)
-#define LINUX_CAT_TID_ADDRESS UINT64_C(0x000040000100B324)
-
 _Static_assert(sizeof(struct linux_syscall_frame) == 144U,
     "Linux syscall assembly frame size changed");
 _Static_assert(offsetof(struct linux_syscall_frame, rax) == 0U &&
@@ -200,7 +196,7 @@ static void zero_bytes(void *pointer, size_t length)
     }
 }
 
-static bool equal_bytes(const void *left, const void *right, size_t length)
+static bool bytes_equal(const void *left, const void *right, size_t length)
 {
     const uint8_t *left_bytes = left;
     const uint8_t *right_bytes = right;
@@ -588,12 +584,12 @@ static bool runtime_equal(
         left->uts_state != right->uts_state ||
         left->uname_stdout_state != right->uname_stdout_state ||
         left->provenance_state != right->provenance_state ||
-        !equal_bytes(&left->cat_saved_frame, &right->cat_saved_frame,
+        !bytes_equal(&left->cat_saved_frame, &right->cat_saved_frame,
             sizeof(left->cat_saved_frame)) ||
-        !equal_bytes(&left->cat_authenticated_frame,
+        !bytes_equal(&left->cat_authenticated_frame,
             &right->cat_authenticated_frame,
             sizeof(left->cat_authenticated_frame)) ||
-        !equal_bytes(left->cat_output, right->cat_output,
+        !bytes_equal(left->cat_output, right->cat_output,
             sizeof(left->cat_output)) ||
         left->cat_saved_generation != right->cat_saved_generation ||
         left->cat_saved_cr3 != right->cat_saved_cr3 ||
@@ -808,7 +804,7 @@ static bool cat_frame_authenticated(void)
     uint8_t instruction[2];
 
     return runtime.cat_saved_valid &&
-        equal_bytes(&runtime.cat_saved_frame,
+        bytes_equal(&runtime.cat_saved_frame,
             &runtime.cat_authenticated_frame,
             sizeof(runtime.cat_saved_frame)) &&
         runtime.cat_saved_generation == runtime.request_generation &&
@@ -971,7 +967,7 @@ static bool cat_resume_invariants(uint64_t process_generation)
         runtime.cat_saved_ordinal == runtime.request_ordinal &&
         runtime.cat_saved_frame.rax == runtime.cat_output_bytes &&
         (runtime.cat_eof_pending || runtime.cat_output_bytes != 0U) &&
-        equal_bytes(&runtime.cat_saved_frame,
+        bytes_equal(&runtime.cat_saved_frame,
             &runtime.cat_authenticated_frame,
             sizeof(runtime.cat_saved_frame)) &&
         frame_return_shape_valid(&runtime.context,
@@ -1214,10 +1210,10 @@ enum linux_syscall_status linux_syscall_arm(
                 context->fs_address != LINUX_UNAME_ABI_FS_ADDRESS ||
                 context->tid_address != LINUX_UNAME_ABI_TID_ADDRESS)) ||
         (context->profile == LINUX_SYSCALL_PROFILE_CAT &&
-            (context->executable_start != LINUX_CAT_EXECUTABLE_START ||
-                context->executable_end != LINUX_CAT_EXECUTABLE_END ||
-                context->fs_address != LINUX_CAT_FS_ADDRESS ||
-                context->tid_address != LINUX_CAT_TID_ADDRESS))) {
+            (context->executable_start != LINUX_CAT_ABI_EXECUTABLE_START ||
+                context->executable_end != LINUX_CAT_ABI_EXECUTABLE_END ||
+                context->fs_address != LINUX_CAT_ABI_FS_ADDRESS ||
+                context->tid_address != LINUX_CAT_ABI_TID_ADDRESS))) {
         return LINUX_SYSCALL_STATUS_BAD_PROCESS;
     }
     for (size_t index = 0U; index < PAGING_LINUX_HEAP_PAGES; ++index) {
@@ -1596,19 +1592,6 @@ bool linux_syscall_semantic_self_test(void)
         !user_range_shape_valid(UINT64_C(0x00007FFFFFFFFFFF), 2U);
 }
 
-static bool bytes_equal(const void *left, const void *right, size_t length)
-{
-    const uint8_t *left_bytes = left;
-    const uint8_t *right_bytes = right;
-
-    for (size_t index = 0U; index < length; ++index) {
-        if (left_bytes[index] != right_bytes[index]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool uts_field_valid(
     const char field[LINUX_UTS_FIELD_BYTES],
     const char *value,
@@ -1723,20 +1706,20 @@ bool linux_syscall_cat_semantic_self_test(void)
     frame.rdi = 0U;
     frame.rsi = LINUX_CAT_READ_BUFFER;
     frame.rdx = LINUX_CAT_READ_COUNT;
-    frame.rip = LINUX_CAT_EXECUTABLE_START + 2U;
+    frame.rip = LINUX_CAT_ABI_EXECUTABLE_START + 2U;
     frame.cs = CPU_GDT_USER_CODE_SELECTOR;
     frame.rflags = 2U;
     frame.rsp = PAGING_LINUX_STACK_END - 16U;
     frame.ss = CPU_GDT_USER_DATA_SELECTOR;
     authenticated = frame;
-    if (!equal_bytes(&frame, &authenticated, sizeof(frame))) {
+    if (!bytes_equal(&frame, &authenticated, sizeof(frame))) {
         return false;
     }
 #define CAT_FRAME_MUTATION(field) \
     do { \
         struct linux_syscall_frame changed = frame; \
         changed.field ^= UINT64_C(1); \
-        if (equal_bytes(&changed, &authenticated, sizeof(changed))) { \
+        if (bytes_equal(&changed, &authenticated, sizeof(changed))) { \
             return false; \
         } \
     } while (false)
@@ -1790,7 +1773,7 @@ bool linux_syscall_cat_read_negative_self_test(size_t *completed_tests)
     uint8_t long_line[LINUX_CAT_INPUT_LINE_BYTES + 2U];
     static const uint8_t line[] = {'x', '\n'};
     const uint64_t invalid_pointers[] = {
-        LINUX_CAT_EXECUTABLE_START,
+        LINUX_CAT_ABI_EXECUTABLE_START,
         PAGING_LINUX_HEAP_BASE,
         PAGING_LINUX_STACK_GUARD,
         UINT64_MAX - LINUX_CAT_READ_COUNT / 2U,
@@ -1838,7 +1821,7 @@ bool linux_syscall_cat_read_negative_self_test(size_t *completed_tests)
             line, sizeof(line), false) !=
             LINUX_SYSCALL_STATUS_BAD_GENERATION ||
         !copy_from_user(after, LINUX_CAT_READ_BUFFER, sizeof(after)) ||
-        !equal_bytes(before, after, sizeof(before))) {
+        !bytes_equal(before, after, sizeof(before))) {
         return false;
     }
     for (size_t index = 0U; index < sizeof(long_line) - 1U; ++index) {
@@ -2243,7 +2226,7 @@ static enum linux_syscall_status execute_cat_call(
             frame->rdx != runtime.cat_output_bytes ||
             !copy_from_user(output, frame->rsi,
                 runtime.cat_output_bytes) ||
-            !equal_bytes(output, runtime.cat_output,
+            !bytes_equal(output, runtime.cat_output,
                 runtime.cat_output_bytes)) {
             return LINUX_SYSCALL_STATUS_STDOUT;
         }

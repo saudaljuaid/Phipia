@@ -97,16 +97,10 @@ jobs:
                           build/userspace/sapote-userland-no-cat-fat16.raw \
                       --interaction uname \
                       --output build/release-captures
-                  if [[ "$GITHUB_REF" == refs/tags/v1.0.0 ]]; then
-                      python3 tools/compare-first-light-screenshot.py \
-                          --mode terminal \
-                          assets/sapote-first-light-terminal.png \
-                          build/release-captures/sapote-first-light-terminal.png
-                  else
-                      file \
-                          build/release-captures/sapote-first-light-terminal.png \
-                          | grep -Fq 'PNG image data, 1024 x 768'
-                  fi
+                  python3 tools/compare-first-light-screenshot.py \
+                      --mode terminal \
+                      assets/sapote-first-light-terminal.png \
+                      build/release-captures/sapote-first-light-terminal.png
                   python3 tools/capture-boot-video.py \
                       --iso build/sapote.iso \
                       --userspace \

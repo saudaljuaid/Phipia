@@ -81,6 +81,8 @@ linux_process_resume_user:
     movq 88(%rcx), %r14
     movq 96(%rcx), %r15
     movq 8(%rcx), %rdi
+    xorl %ecx, %ecx
+    xorl %r11d, %r11d
     iretq
     ud2
 .size linux_process_resume_user, . - linux_process_resume_user
