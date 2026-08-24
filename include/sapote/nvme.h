@@ -20,6 +20,8 @@
 #define NVME_NAMESPACE_IDENTIFIER UINT32_C(1)
 #define NVME_FIXTURE_LBA UINT64_C(8)
 #define NVME_BLOCK_BYTES 4096U
+#define NVME_MIN_BLOCK_BYTES 512U
+#define NVME_VOLUME_MAX_CONTROLLERS 2U
 #define NVME_FILESYSTEM_READ_LIMIT 13U
 #define NVME_FOUNDATION_ROBUSTNESS_TESTS 20U
 #define NVME_CONTROLLED_ROBUSTNESS_TESTS 22U
@@ -123,6 +125,9 @@ enum nvme_status {
     NVME_STATUS_TRANSITION_REPEATED,
     NVME_STATUS_TRANSITION_REVERSED,
     NVME_STATUS_TRANSITION_INVALID,
+    NVME_STATUS_VOLUME_INDEX,
+    NVME_STATUS_BUFFER_LENGTH,
+    NVME_STATUS_WRITE_VERIFY,
     NVME_STATUS_TEARDOWN_RACE,
     NVME_STATUS_TEARDOWN_FAILURE,
     NVME_STATUS_COUNT
@@ -249,6 +254,23 @@ struct nvme_read_proof {
 };
 
 /*
+ * A synchronous, generation-authenticated session over one selected ordinary
+ * NVMe controller. The controller owns the DMA buffer; callers only provide
+ * exact one-LBA CPU buffers to the read/write operations below.
+ */
+struct nvme_volume_session {
+    uint64_t generation;
+    uint64_t namespace_blocks;
+    uint64_t completion_count;
+    uint32_t logical_block_bytes;
+    uint32_t controller_index;
+    uint32_t command_ordinal;
+    enum nvme_filesystem_session_state state;
+    bool writable;
+    bool active;
+};
+
+/*
  * Private to src/kernel/filesystem.c. This token owns no exposed DMA pointer;
  * nvme_filesystem_session_view returns a CPU-owned view only for the current
  * synchronous block and Makefile rejects callers outside that one consumer.
@@ -289,6 +311,25 @@ enum nvme_status nvme_filesystem_session_close(
     struct nvme_filesystem_read_session *session
 );
 bool nvme_filesystem_session_resources_released(void);
+size_t nvme_volume_count(void);
+enum nvme_status nvme_volume_open(
+    struct nvme_volume_session *session,
+    uint32_t controller_index,
+    bool writable
+);
+enum nvme_status nvme_volume_read(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    uint8_t *destination,
+    size_t destination_bytes
+);
+enum nvme_status nvme_volume_write(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    const uint8_t *source,
+    size_t source_bytes
+);
+enum nvme_status nvme_volume_close(struct nvme_volume_session *session);
 const char *nvme_status_string(enum nvme_status status);
 
 #endif

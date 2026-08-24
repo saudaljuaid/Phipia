@@ -4,7 +4,8 @@
  * command encodings follow NVMe Base 2.4 sections 3.1.4, 3.5.1, 4.1.1,
  * 4.2.1, 4.2.3, 4.2.4, 4.3.1, 5.2.14, 5.3.1 and 5.3.2; NVM Command Set 1.3
  * sections 3.3.4 and 4.1.5.1; and NVMe over PCIe Transport 1.4 sections
- * 3.1.1, 3.1.2, 3.2 and 3.5. No command in this file changes media.
+ * 3.1.1, 3.1.2, 3.2 and 3.5. FAT32 sessions add one synchronous NVM write
+ * command with the same guarded PRP and completion ownership rules as reads.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -61,6 +62,7 @@
 #define NVME_ADMIN_CREATE_IO_SQ UINT8_C(0x01)
 #define NVME_ADMIN_CREATE_IO_CQ UINT8_C(0x05)
 #define NVME_NVM_READ UINT8_C(0x02)
+#define NVME_NVM_WRITE UINT8_C(0x01)
 #define NVME_IDENTIFY_NAMESPACE UINT32_C(0)
 #define NVME_IDENTIFY_CONTROLLER UINT32_C(1)
 #define NVME_IDENTIFY_ACTIVE_NAMESPACE_LIST UINT32_C(2)
@@ -173,6 +175,23 @@ static void fill_bytes(void *pointer, uint64_t length, uint8_t value)
     for (uint64_t index = 0U; index < length; ++index) {
         bytes[index] = value;
     }
+}
+
+static void copy_bytes(uint8_t *destination, const uint8_t *source, size_t length)
+{
+    for (size_t index = 0U; index < length; ++index) {
+        destination[index] = source[index];
+    }
+}
+
+static bool equal_bytes(const uint8_t *left, const uint8_t *right, size_t length)
+{
+    for (size_t index = 0U; index < length; ++index) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static uint32_t read_le32(const uint8_t *bytes)
@@ -328,11 +347,32 @@ static enum nvme_status transition(
     return NVME_STATUS_OK;
 }
 
-static const struct pci_function *discover_controller(
+static bool is_nvme_function(const struct pci_function *function)
+{
+    return function != NULL &&
+        function->class_code == PCI_CLASS_MASS_STORAGE &&
+        function->subclass == NVME_PCI_SUBCLASS_NON_VOLATILE_MEMORY &&
+        function->prog_if == NVME_PCI_PROGRAMMING_INTERFACE;
+}
+
+size_t nvme_volume_count(void)
+{
+    size_t count = 0U;
+
+    for (size_t index = 0U; index < pci_function_count(); ++index) {
+        if (is_nvme_function(pci_function_at(index))) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static const struct pci_function *discover_controller_at(
+    uint32_t ordinal,
     enum nvme_status *result
 )
 {
-    const struct pci_function *found = NULL;
+    uint32_t found = 0U;
 
     if (result == NULL) {
         return NULL;
@@ -341,20 +381,17 @@ static const struct pci_function *discover_controller(
     for (size_t index = 0U; index < pci_function_count(); ++index) {
         const struct pci_function *function = pci_function_at(index);
 
-        if (function != NULL &&
-            function->class_code == PCI_CLASS_MASS_STORAGE &&
-            function->subclass ==
-                NVME_PCI_SUBCLASS_NON_VOLATILE_MEMORY &&
-            function->prog_if == NVME_PCI_PROGRAMMING_INTERFACE) {
-            if (found != NULL) {
-                *result = NVME_STATUS_MULTIPLE_CONTROLLERS;
-                return NULL;
+        if (is_nvme_function(function)) {
+            if (found == ordinal) {
+                *result = NVME_STATUS_OK;
+                return function;
             }
-            found = function;
-            *result = NVME_STATUS_OK;
+            ++found;
         }
     }
-    return found;
+    *result = ordinal >= NVME_VOLUME_MAX_CONTROLLERS ?
+        NVME_STATUS_VOLUME_INDEX : NVME_STATUS_ABSENT;
+    return NULL;
 }
 
 static enum nvme_status doorbell_offset(
@@ -1447,7 +1484,7 @@ static enum nvme_status parse_namespace(
     if (metadata_bytes != 0U) {
         return NVME_STATUS_METADATA;
     }
-    if (lba_shift != 12U) {
+    if (lba_shift != 9U && lba_shift != 12U) {
         return NVME_STATUS_LBA_FORMAT;
     }
     selection->identifier = NVME_NAMESPACE_IDENTIFIER;
@@ -1478,7 +1515,10 @@ static enum nvme_status validate_block_range(
         return NVME_STATUS_BLOCK_RANGE;
     }
     if (range->count != 1U ||
-        selection->logical_block_bytes != NVME_BLOCK_BYTES) {
+        selection->logical_block_bytes < NVME_MIN_BLOCK_BYTES ||
+        selection->logical_block_bytes > NVME_BLOCK_BYTES ||
+        (selection->logical_block_bytes &
+            (selection->logical_block_bytes - 1U)) != 0U) {
         return NVME_STATUS_LBA_FORMAT;
     }
     return NVME_STATUS_OK;
@@ -1592,6 +1632,49 @@ static enum nvme_status submit_read_at(
         controller->read.data_length);
 }
 
+static enum nvme_status submit_write_at(
+    struct nvme_runtime *controller,
+    uint64_t lba,
+    uint16_t command_identifier
+)
+{
+    const struct nvme_logical_block_range range = {
+        .first = lba,
+        .count = 1U
+    };
+    struct nvme_submission_entry *entry;
+    uint64_t prp;
+    enum nvme_status status = validate_block_range(
+        &controller->namespace_data, &range);
+
+    if (status != NVME_STATUS_OK) {
+        return status;
+    }
+    status = validate_prp(&controller->read.dma,
+        controller->read.data_offset, controller->read.data_length);
+    if (status != NVME_STATUS_OK ||
+        controller->read.state != NVME_DMA_CONTROLLER_OWNED) {
+        return NVME_STATUS_PRP_INVALID;
+    }
+    status = prepare_submission_entry(&controller->io, &entry);
+    if (status != NVME_STATUS_OK) {
+        return status;
+    }
+    prp = physical_of(&controller->read.dma) +
+        controller->read.data_offset;
+    zero_bytes(entry, sizeof(*entry));
+    entry->dword[0] = NVME_NVM_WRITE |
+        (uint32_t)command_identifier << 16U;
+    entry->dword[1] = NVME_NAMESPACE_IDENTIFIER;
+    set_prp1(entry, prp);
+    entry->dword[10] = (uint32_t)range.first;
+    entry->dword[11] = (uint32_t)(range.first >> 32U);
+    entry->dword[12] = 0U;
+    return submit_entry(controller, &controller->io, command_identifier,
+        &controller->read.dma, controller->read.data_offset,
+        controller->read.data_length);
+}
+
 static enum nvme_status submit_read(struct nvme_runtime *controller)
 {
     return submit_read_at(controller, NVME_FIXTURE_LBA, 1U);
@@ -1624,6 +1707,41 @@ static enum nvme_status prepare_guarded_read(
     return NVME_STATUS_OK;
 }
 
+static enum nvme_status prepare_guarded_write(
+    struct nvme_runtime *controller,
+    const uint8_t *source,
+    size_t source_bytes
+)
+{
+    uint8_t *data;
+
+    if (controller == NULL || source == NULL ||
+        source_bytes != controller->read.data_length ||
+        !controller->read.dma.active) {
+        return NVME_STATUS_BUFFER_LENGTH;
+    }
+    if (controller->read.dma.owner == DMA_OWNER_DEVICE &&
+        dma_transfer_to_cpu(&controller->read.dma) != DMA_STATUS_OK) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    if (controller->read.dma.owner != DMA_OWNER_CPU) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    controller->read.state = NVME_DMA_CPU_OWNED;
+    fill_bytes(controller->read.dma.cpu_address,
+        controller->read.dma.byte_length, NVME_SENTINEL);
+    data = (uint8_t *)controller->read.dma.cpu_address +
+        controller->read.data_offset;
+    copy_bytes(data, source, source_bytes);
+    controller->read.changed_while_controller_owned = false;
+    cpu_store_fence();
+    if (dma_transfer_to_device(&controller->read.dma) != DMA_STATUS_OK) {
+        return NVME_STATUS_DMA_OWNERSHIP;
+    }
+    controller->read.state = NVME_DMA_CONTROLLER_OWNED;
+    return NVME_STATUS_OK;
+}
+
 static enum nvme_status inspect_guarded_read(
     struct nvme_runtime *controller,
     bool *changed
@@ -1642,7 +1760,7 @@ static enum nvme_status inspect_guarded_read(
     allocation = controller->read.dma.cpu_address;
     data = allocation + controller->read.data_offset;
     controller->read.state = NVME_DMA_CPU_OWNED;
-    for (size_t index = 0U; index < NVME_BLOCK_BYTES; ++index) {
+    for (size_t index = 0U; index < controller->read.data_length; ++index) {
         if (data[index] != NVME_SENTINEL) {
             *changed = true;
         }
@@ -1678,6 +1796,26 @@ static enum nvme_status validate_guarded_read(
     }
     controller->read.changed_while_controller_owned = true;
     return NVME_STATUS_OK;
+}
+
+static enum nvme_status validate_guarded_write(
+    struct nvme_runtime *controller,
+    const uint8_t *source,
+    size_t source_bytes
+)
+{
+    const uint8_t *data;
+    bool changed;
+    enum nvme_status result = inspect_guarded_read(controller, &changed);
+
+    (void)changed;
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    data = (const uint8_t *)controller->read.dma.cpu_address +
+        controller->read.data_offset;
+    return equal_bytes(data, source, source_bytes) ?
+        NVME_STATUS_OK : NVME_STATUS_WRITE_VERIFY;
 }
 
 static uint8_t fixture_byte(size_t index)
@@ -2119,13 +2257,13 @@ bool nvme_foundation_self_test(size_t *completed_tests)
             NVME_STATUS_NAMESPACE_INACTIVE, &completed)) {
         return false;
     }
-    /* 11: unsupported LBA, metadata and protection settings are distinct. */
+    /* 11: 512-byte LBAs work; metadata and protection remain distinct. */
     zero_bytes(identify_namespace_data, sizeof(identify_namespace_data));
     identify_namespace_data[0] = 16U;
     identify_namespace_data[8] = 16U;
     identify_namespace_data[NVME_IDENTIFY_NS_LBAF_OFFSET + 2U] = 9U;
     if (!test_record(parse_namespace(identify_namespace_data, &selection) ==
-            NVME_STATUS_LBA_FORMAT &&
+            NVME_STATUS_OK && selection.logical_block_bytes == 512U &&
         (identify_namespace_data[NVME_IDENTIFY_NS_LBAF_OFFSET] = 8U,
             parse_namespace(identify_namespace_data, &selection)) ==
                 NVME_STATUS_METADATA &&
@@ -2281,7 +2419,10 @@ bool nvme_foundation_self_test(size_t *completed_tests)
  * filesystem session. It owns the controller once, identifies namespace one,
  * validates the 4096-byte LBA format and creates the one I/O queue pair.
  */
-static enum nvme_status initialize_runtime(struct nvme_runtime *controller)
+static enum nvme_status initialize_runtime_at(
+    struct nvme_runtime *controller,
+    uint32_t controller_index
+)
 {
     const struct pci_function *function;
     enum nvme_status result;
@@ -2289,7 +2430,7 @@ static enum nvme_status initialize_runtime(struct nvme_runtime *controller)
     if (controller == NULL) {
         return NVME_STATUS_NULL_ARGUMENT;
     }
-    function = discover_controller(&result);
+    function = discover_controller_at(controller_index, &result);
     if (function == NULL) {
         return result;
     }
@@ -2397,7 +2538,14 @@ static enum nvme_status initialize_runtime(struct nvme_runtime *controller)
     if (result != NVME_STATUS_OK) {
         return result;
     }
+    controller->read.data_length =
+        controller->namespace_data.logical_block_bytes;
     return create_io_queues(controller);
+}
+
+static enum nvme_status initialize_runtime(struct nvme_runtime *controller)
+{
+    return initialize_runtime_at(controller, 0U);
 }
 
 enum nvme_status nvme_read_prove(struct nvme_read_proof *proof)
@@ -2685,6 +2833,219 @@ bool nvme_filesystem_session_resources_released(void)
     return !filesystem_runtime.active && filesystem_runtime.generation == 0U;
 }
 
+static bool volume_session_matches(const struct nvme_volume_session *session)
+{
+    return session != NULL && session->active && filesystem_runtime.active &&
+        session->generation != 0U &&
+        session->generation == filesystem_runtime.generation &&
+        session->generation ==
+            filesystem_runtime.controller.claim.discovery.generation;
+}
+
+static uint16_t volume_command_identifier(struct nvme_volume_session *session)
+{
+    ++session->command_ordinal;
+    if (session->command_ordinal == 0U ||
+        session->command_ordinal > NVME_MAX_COMMAND_IDENTIFIER) {
+        session->command_ordinal = 1U;
+    }
+    return (uint16_t)session->command_ordinal;
+}
+
+enum nvme_status nvme_volume_open(
+    struct nvme_volume_session *session,
+    uint32_t controller_index,
+    bool writable
+)
+{
+    enum nvme_status result;
+    enum nvme_status teardown_status;
+
+    if (session == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    if (controller_index >= NVME_VOLUME_MAX_CONTROLLERS) {
+        return NVME_STATUS_VOLUME_INDEX;
+    }
+    if (session->active || filesystem_runtime.active) {
+        return NVME_STATUS_TRANSITION_REPEATED;
+    }
+    zero_bytes(&filesystem_runtime, sizeof(filesystem_runtime));
+    filesystem_runtime.pci_before = pci_resource_get_state();
+    filesystem_runtime.dma_before = dma_get_state();
+    filesystem_runtime.vectors_before = interrupt_vector_get_state();
+    filesystem_runtime.msix_before = msix_get_state();
+    filesystem_runtime.frames_before = frame_allocator_get_stats();
+    filesystem_runtime.active = true;
+    result = initialize_runtime_at(&filesystem_runtime.controller,
+        controller_index);
+    if (result != NVME_STATUS_OK) {
+        teardown_status = teardown_controller(&filesystem_runtime.controller);
+        if (teardown_status != NVME_STATUS_OK ||
+            !resource_state_matches(filesystem_runtime.pci_before,
+                filesystem_runtime.dma_before,
+                filesystem_runtime.vectors_before,
+                filesystem_runtime.msix_before,
+                filesystem_runtime.frames_before)) {
+            result = teardown_status != NVME_STATUS_OK ? teardown_status :
+                NVME_STATUS_TEARDOWN_FAILURE;
+        }
+        zero_bytes(&filesystem_runtime, sizeof(filesystem_runtime));
+        return result;
+    }
+    filesystem_runtime.generation =
+        filesystem_runtime.controller.claim.discovery.generation;
+    zero_bytes(session, sizeof(*session));
+    session->generation = filesystem_runtime.generation;
+    session->namespace_blocks =
+        filesystem_runtime.controller.namespace_data.logical_blocks;
+    session->logical_block_bytes =
+        filesystem_runtime.controller.namespace_data.logical_block_bytes;
+    session->controller_index = controller_index;
+    session->state = NVME_FILESYSTEM_SESSION_READY;
+    session->writable = writable;
+    session->active = true;
+    return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_read(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    uint8_t *destination,
+    size_t destination_bytes
+)
+{
+    struct nvme_runtime *controller;
+    uint64_t interrupts_before;
+    enum nvme_status result;
+    const uint8_t *data;
+
+    if (session == NULL || destination == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    if (!volume_session_matches(session)) {
+        return NVME_STATUS_SESSION_INVALID;
+    }
+    if (destination_bytes != session->logical_block_bytes) {
+        return NVME_STATUS_BUFFER_LENGTH;
+    }
+    if (session->state != NVME_FILESYSTEM_SESSION_READY &&
+        session->state != NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED) {
+        return NVME_STATUS_TRANSITION_INVALID;
+    }
+    controller = &filesystem_runtime.controller;
+    result = prepare_guarded_read(controller);
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    session->state = NVME_FILESYSTEM_SESSION_BLOCK_CONTROLLER_OWNED;
+    interrupts_before = controller->interrupt_count;
+    result = submit_read_at(controller, lba,
+        volume_command_identifier(session));
+    if (result != NVME_STATUS_OK) {
+        session->state = NVME_FILESYSTEM_SESSION_READY;
+        return result;
+    }
+    if (controller->interrupt_count != interrupts_before + 1U) {
+        return NVME_STATUS_INTERRUPT_COUNT;
+    }
+    result = validate_guarded_read(controller);
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    data = (const uint8_t *)controller->read.dma.cpu_address +
+        controller->read.data_offset;
+    copy_bytes(destination, data, destination_bytes);
+    session->state = NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED;
+    ++session->completion_count;
+    return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_write(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    const uint8_t *source,
+    size_t source_bytes
+)
+{
+    struct nvme_runtime *controller;
+    uint64_t interrupts_before;
+    enum nvme_status result;
+
+    if (session == NULL || source == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    if (!volume_session_matches(session)) {
+        return NVME_STATUS_SESSION_INVALID;
+    }
+    if (!session->writable) {
+        return NVME_STATUS_WRITE_VERIFY;
+    }
+    if (source_bytes != session->logical_block_bytes) {
+        return NVME_STATUS_BUFFER_LENGTH;
+    }
+    if (session->state != NVME_FILESYSTEM_SESSION_READY &&
+        session->state != NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED) {
+        return NVME_STATUS_TRANSITION_INVALID;
+    }
+    controller = &filesystem_runtime.controller;
+    result = prepare_guarded_write(controller, source, source_bytes);
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    session->state = NVME_FILESYSTEM_SESSION_BLOCK_CONTROLLER_OWNED;
+    interrupts_before = controller->interrupt_count;
+    result = submit_write_at(controller, lba,
+        volume_command_identifier(session));
+    if (result != NVME_STATUS_OK) {
+        session->state = NVME_FILESYSTEM_SESSION_READY;
+        return result;
+    }
+    if (controller->interrupt_count != interrupts_before + 1U) {
+        return NVME_STATUS_INTERRUPT_COUNT;
+    }
+    result = validate_guarded_write(controller, source, source_bytes);
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    session->state = NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED;
+    ++session->completion_count;
+    return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
+{
+    enum nvme_status result;
+
+    if (session == NULL) {
+        return NVME_STATUS_NULL_ARGUMENT;
+    }
+    if (!volume_session_matches(session)) {
+        return session->state == NVME_FILESYSTEM_SESSION_RELEASED ?
+            NVME_STATUS_TRANSITION_REPEATED : NVME_STATUS_SESSION_INVALID;
+    }
+    session->state = NVME_FILESYSTEM_SESSION_STOPPING;
+    result = teardown_controller(&filesystem_runtime.controller);
+    if (result == NVME_STATUS_OK &&
+        !resource_state_matches(filesystem_runtime.pci_before,
+            filesystem_runtime.dma_before,
+            filesystem_runtime.vectors_before,
+            filesystem_runtime.msix_before,
+            filesystem_runtime.frames_before)) {
+        result = NVME_STATUS_TEARDOWN_FAILURE;
+    }
+    if (result != NVME_STATUS_OK) {
+        return result;
+    }
+    filesystem_runtime.active = false;
+    filesystem_runtime.generation = 0U;
+    session->generation = 0U;
+    session->active = false;
+    session->state = NVME_FILESYSTEM_SESSION_RELEASED;
+    zero_bytes(&filesystem_runtime, sizeof(filesystem_runtime));
+    return NVME_STATUS_OK;
+}
+
 const char *nvme_status_string(enum nvme_status status)
 {
     switch (status) {
@@ -2692,7 +3053,7 @@ const char *nvme_status_string(enum nvme_status status)
     case NVME_STATUS_ABSENT: return "NVMe proof fixture is absent";
     case NVME_STATUS_NULL_ARGUMENT: return "null NVMe argument";
     case NVME_STATUS_MULTIPLE_CONTROLLERS:
-        return "more than one NVMe controller is unsupported";
+        return "NVMe controller selection was ambiguous";
     case NVME_STATUS_BAD_PCI_CLASS:
         return "PCI function is not the NVMe class tuple";
     case NVME_STATUS_CLAIM_FAILURE: return "NVMe PCI claim failed";
@@ -2798,6 +3159,12 @@ const char *nvme_status_string(enum nvme_status status)
         return "NVMe lifecycle transition was reversed";
     case NVME_STATUS_TRANSITION_INVALID:
         return "NVMe lifecycle transition is invalid";
+    case NVME_STATUS_VOLUME_INDEX:
+        return "NVMe controller index is outside the volume bound";
+    case NVME_STATUS_BUFFER_LENGTH:
+        return "NVMe block buffer length is not exactly one LBA";
+    case NVME_STATUS_WRITE_VERIFY:
+        return "NVMe write was refused or its guarded buffer changed";
     case NVME_STATUS_TEARDOWN_RACE:
         return "NVMe teardown race observed freed state";
     case NVME_STATUS_TEARDOWN_FAILURE:
