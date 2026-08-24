@@ -1068,6 +1068,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 7' "$$log" && \
 			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 6' "$$log" && \
 			test "$$(grep -Fxc 'FL CAT destination validated and all-or-nothing copy-out complete' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT runtime negative controls 28/28 passed' "$$log")" -eq 2 && \
 			test "$$(grep -Fxc 'FL CAT authenticated process generation ready to resume' "$$log")" -eq 4 && \
 			test "$$(grep -Fxc 'FL CAT authentic write SYSCALL observed' "$$log")" -eq 2 && \
 			test "$$(grep -Fxc 'FL CAT userspace stdout accepted' "$$log")" -eq 2 && \

@@ -28,6 +28,8 @@
 #define LINUX_CAT_INPUT_LINES 4U
 #define LINUX_CAT_INPUT_TOTAL_BYTES 256U
 #define LINUX_CAT_SYSCALL_SEMANTIC_CONTROLS 24U
+#define LINUX_CAT_READ_NEGATIVE_CONTROLS 15U
+#define LINUX_CAT_RESUME_NEGATIVE_CONTROLS 10U
 #define LINUX_UTS_FIELD_BYTES 65U
 #define LINUX_UTS_FIELD_COUNT 6U
 #define LINUX_UTS_BYTES (LINUX_UTS_FIELD_BYTES * LINUX_UTS_FIELD_COUNT)
@@ -173,6 +175,11 @@ bool linux_syscall_semantic_self_test(void);
 bool linux_syscall_uname_semantic_self_test(void);
 bool linux_syscall_uname_copyout_self_test(size_t *completed_tests);
 bool linux_syscall_cat_semantic_self_test(void);
+bool linux_syscall_cat_read_negative_self_test(size_t *completed_tests);
+bool linux_syscall_cat_resume_negative_self_test(
+    uint64_t process_generation,
+    size_t *completed_tests
+);
 enum linux_syscall_status linux_syscall_arm(
     const struct linux_syscall_context *context
 );

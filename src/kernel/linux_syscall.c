@@ -843,6 +843,36 @@ static bool cat_line_valid(const uint8_t *bytes, size_t byte_count)
     return true;
 }
 
+static int64_t cat_read_validation(const struct linux_syscall_frame *frame)
+{
+    if (frame->rdi != 0U) {
+        return -LINUX_ERRNO_EBADF;
+    }
+    if (frame->rsi != LINUX_CAT_READ_BUFFER ||
+        frame->rdx != LINUX_CAT_READ_COUNT ||
+        !user_stack_writable(frame->rsi, (size_t)frame->rdx)) {
+        return -LINUX_ERRNO_EFAULT;
+    }
+    return 0;
+}
+
+static bool cat_delivery_valid(
+    uint32_t delivered_lines,
+    uint32_t delivered_bytes,
+    const uint8_t *bytes,
+    size_t byte_count,
+    bool eof
+)
+{
+    if (eof) {
+        return bytes == NULL && byte_count == 0U;
+    }
+    return cat_line_valid(bytes, byte_count) &&
+        delivered_lines < LINUX_CAT_INPUT_LINES &&
+        delivered_bytes <= LINUX_CAT_INPUT_TOTAL_BYTES &&
+        byte_count <= LINUX_CAT_INPUT_TOTAL_BYTES - delivered_bytes;
+}
+
 static bool cat_wait_invariants(uint64_t process_generation)
 {
     const uint64_t kernel_cr3 =
@@ -888,11 +918,8 @@ enum linux_syscall_status linux_syscall_cat_complete_read(
             LINUX_SYSCALL_STATUS_BAD_GENERATION :
             LINUX_SYSCALL_STATUS_BAD_STATE;
     }
-    if ((eof && (bytes != NULL || byte_count != 0U)) ||
-        (!eof && !cat_line_valid(bytes, byte_count)) ||
-        (!eof && (runtime.result.cat_input_lines >= LINUX_CAT_INPUT_LINES ||
-            byte_count > LINUX_CAT_INPUT_TOTAL_BYTES -
-                runtime.result.cat_input_bytes))) {
+    if (!cat_delivery_valid(runtime.result.cat_input_lines,
+            runtime.result.cat_input_bytes, bytes, byte_count, eof)) {
         return LINUX_SYSCALL_STATUS_BAD_ARGUMENT;
     }
     if (!eof && !copy_to_user_stack(LINUX_CAT_READ_BUFFER, bytes,
@@ -949,6 +976,8 @@ static bool cat_resume_invariants(uint64_t process_generation)
             sizeof(runtime.cat_saved_frame)) &&
         frame_return_shape_valid(&runtime.context,
             &runtime.cat_saved_frame) &&
+        user_stack_writable(LINUX_CAT_READ_BUFFER,
+            LINUX_CAT_READ_COUNT) &&
         !linux_process_boundary_active() && !cpu_interrupts_enabled() &&
         (cpu_read_cr3() & ~(PAGING_PAGE_SIZE - 1U)) == kernel_cr3;
 }
@@ -1753,6 +1782,150 @@ bool linux_syscall_cat_semantic_self_test(void)
             -LINUX_ERRNO_EFAULT;
 }
 
+bool linux_syscall_cat_read_negative_self_test(size_t *completed_tests)
+{
+    struct linux_syscall_frame frame;
+    uint8_t before[32];
+    uint8_t after[32];
+    uint8_t long_line[LINUX_CAT_INPUT_LINE_BYTES + 2U];
+    static const uint8_t line[] = {'x', '\n'};
+    const uint64_t invalid_pointers[] = {
+        LINUX_CAT_EXECUTABLE_START,
+        PAGING_LINUX_HEAP_BASE,
+        PAGING_LINUX_STACK_GUARD,
+        UINT64_MAX - LINUX_CAT_READ_COUNT / 2U,
+        PAGING_LINUX_STACK_END - LINUX_CAT_READ_COUNT / 2U
+    };
+
+    if (completed_tests == NULL) {
+        return false;
+    }
+    *completed_tests = 0U;
+    zero_bytes(&frame, sizeof(frame));
+    frame.rdi = 0U;
+    frame.rsi = LINUX_CAT_READ_BUFFER;
+    frame.rdx = LINUX_CAT_READ_COUNT;
+    if (!runtime.active ||
+        runtime.context.profile != LINUX_SYSCALL_PROFILE_CAT ||
+        runtime.state != LINUX_SYSCALL_CPU_ARMED ||
+        runtime.context.address_space == NULL ||
+        runtime.context.address_space->state !=
+            PAGING_PROCESS_SPACE_INSTALLED ||
+        cat_read_validation(&frame) != 0 ||
+        !copy_from_user(before, LINUX_CAT_READ_BUFFER, sizeof(before))) {
+        return false;
+    }
+    frame.rdi = 1U;
+    if (cat_read_validation(&frame) != -LINUX_ERRNO_EBADF) {
+        return false;
+    }
+    frame.rdi = 0U;
+    for (size_t index = 0U;
+         index < sizeof(invalid_pointers) / sizeof(invalid_pointers[0]);
+         ++index) {
+        frame.rsi = invalid_pointers[index];
+        if (cat_read_validation(&frame) != -LINUX_ERRNO_EFAULT ||
+            user_stack_writable(frame.rsi, LINUX_CAT_READ_COUNT)) {
+            return false;
+        }
+    }
+    frame.rsi = LINUX_CAT_READ_BUFFER;
+    if (linux_syscall_cat_complete_read(
+            runtime.context.process_generation, line, sizeof(line), false) !=
+            LINUX_SYSCALL_STATUS_BAD_STATE ||
+        linux_syscall_cat_complete_read(
+            runtime.context.process_generation ^ UINT64_C(1),
+            line, sizeof(line), false) !=
+            LINUX_SYSCALL_STATUS_BAD_GENERATION ||
+        !copy_from_user(after, LINUX_CAT_READ_BUFFER, sizeof(after)) ||
+        !equal_bytes(before, after, sizeof(before))) {
+        return false;
+    }
+    for (size_t index = 0U; index < sizeof(long_line) - 1U; ++index) {
+        long_line[index] = (uint8_t)'x';
+    }
+    long_line[sizeof(long_line) - 1U] = (uint8_t)'\n';
+    if (!cat_delivery_valid(0U, 0U, line, sizeof(line), false) ||
+        cat_delivery_valid(0U, 0U, long_line, sizeof(long_line), false) ||
+        cat_delivery_valid(LINUX_CAT_INPUT_LINES, 0U,
+            line, sizeof(line), false) ||
+        cat_delivery_valid(0U, LINUX_CAT_INPUT_TOTAL_BYTES - 1U,
+            line, sizeof(line), false) ||
+        !cat_delivery_valid(0U, 0U, NULL, 0U, true) ||
+        cat_delivery_valid(0U, 0U, line, sizeof(line), true)) {
+        return false;
+    }
+    *completed_tests = LINUX_CAT_READ_NEGATIVE_CONTROLS;
+    return true;
+}
+
+bool linux_syscall_cat_resume_negative_self_test(
+    uint64_t process_generation,
+    size_t *completed_tests
+)
+{
+    size_t page;
+    uint64_t saved_u64;
+    uintptr_t saved_frame;
+    uintptr_t saved_root;
+
+    if (completed_tests == NULL) {
+        return false;
+    }
+    *completed_tests = 0U;
+    if (!cat_resume_invariants(process_generation) ||
+        cat_resume_invariants(process_generation ^ UINT64_C(1))) {
+        return false;
+    }
+    page = (size_t)((LINUX_CAT_READ_BUFFER -
+        runtime.context.stack_start) / PAGING_PAGE_SIZE);
+#define CAT_RESUME_MUTATION(field) \
+    do { \
+        runtime.cat_saved_frame.field ^= UINT64_C(1); \
+        if (cat_resume_invariants(process_generation)) { \
+            runtime.cat_saved_frame.field ^= UINT64_C(1); \
+            return false; \
+        } \
+        runtime.cat_saved_frame.field ^= UINT64_C(1); \
+    } while (false)
+    CAT_RESUME_MUTATION(rip);
+    CAT_RESUME_MUTATION(rsp);
+    CAT_RESUME_MUTATION(cs);
+    CAT_RESUME_MUTATION(ss);
+    CAT_RESUME_MUTATION(rflags);
+#undef CAT_RESUME_MUTATION
+    saved_u64 = runtime.cat_saved_cr3;
+    runtime.cat_saved_cr3 ^= PAGING_PAGE_SIZE;
+    if (cat_resume_invariants(process_generation)) {
+        runtime.cat_saved_cr3 = saved_u64;
+        return false;
+    }
+    runtime.cat_saved_cr3 = saved_u64;
+    if (page >= PAGING_LINUX_STACK_PAGES) {
+        return false;
+    }
+    saved_frame = runtime.context.stack_frames[page];
+    runtime.context.stack_frames[page] = 0U;
+    if (cat_resume_invariants(process_generation)) {
+        runtime.context.stack_frames[page] = saved_frame;
+        return false;
+    }
+    runtime.context.stack_frames[page] = saved_frame;
+    saved_root = runtime.context.address_space->root_physical_address;
+    runtime.context.address_space->root_physical_address ^=
+        PAGING_PAGE_SIZE;
+    if (cat_resume_invariants(process_generation)) {
+        runtime.context.address_space->root_physical_address = saved_root;
+        return false;
+    }
+    runtime.context.address_space->root_physical_address = saved_root;
+    if (!cat_resume_invariants(process_generation)) {
+        return false;
+    }
+    *completed_tests = LINUX_CAT_RESUME_NEGATIVE_CONTROLS;
+    return true;
+}
+
 bool linux_syscall_uname_copyout_self_test(size_t *completed_tests)
 {
     uint8_t before[LINUX_UTS_BYTES];
@@ -2037,15 +2210,11 @@ static enum linux_syscall_status execute_cat_call(
         runtime.cat_phase = CAT_SYSCALL_READ;
         *return_value = 1U;
         return LINUX_SYSCALL_STATUS_OK;
-    case CAT_SYSCALL_READ:
-        if (frame->rdi != 0U) {
-            *return_value = (uint64_t)(int64_t)-LINUX_ERRNO_EBADF;
-            return LINUX_SYSCALL_STATUS_OK;
-        }
-        if (frame->rsi != LINUX_CAT_READ_BUFFER ||
-            frame->rdx != LINUX_CAT_READ_COUNT ||
-            !user_stack_writable(frame->rsi, (size_t)frame->rdx)) {
-            *return_value = (uint64_t)(int64_t)-LINUX_ERRNO_EFAULT;
+    case CAT_SYSCALL_READ: {
+        const int64_t read_result = cat_read_validation(frame);
+
+        if (read_result != 0) {
+            *return_value = (uint64_t)read_result;
             return LINUX_SYSCALL_STATUS_OK;
         }
         if (runtime.cat_read_state != LINUX_CAT_READ_IDLE ||
@@ -2064,6 +2233,7 @@ static enum linux_syscall_status execute_cat_call(
         console_serial_write("FL CAT authentic read SYSCALL observed\n");
         *return_value = 0U;
         return LINUX_SYSCALL_STATUS_OK;
+    }
     case CAT_SYSCALL_WRITE: {
         uint8_t output[LINUX_CAT_INPUT_LINE_BYTES + 1U];
 

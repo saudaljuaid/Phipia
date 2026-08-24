@@ -5262,6 +5262,7 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive(void)
         proof.stdout_bytes != 6U || proof.input_bytes != 6U ||
         proof.input_lines != 1U || proof.resume_count != 2U ||
         proof.syscall_count != 6U || proof.distinct_syscalls != 5U ||
+        proof.robustness_tests != LINUX_CAT_ABI_RUNTIME_NEGATIVE_CONTROLS ||
         proof.generation != second_generation || !proof.ring_three ||
         !proof.private_address_space || !proof.real_syscall_instruction ||
         !proof.stdout_valid || !proof.exit_zero || !proof.eof_delivered ||

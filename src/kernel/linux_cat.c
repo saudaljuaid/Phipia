@@ -109,6 +109,7 @@ struct linux_runtime {
     struct linux_resource_census before;
     uint32_t file_bytes;
     uint32_t file_clusters;
+    uint32_t robustness_tests;
     bool interrupts_were_enabled;
     bool active;
 };
@@ -1384,6 +1385,16 @@ static enum linux_cat_abi_status linux_attempt(
         status = failure_status(failure_point);
         goto cleanup;
     }
+    if (failure_point == LINUX_FAILURE_NONE && table_failure_ordinal == 0U) {
+        size_t completed = 0U;
+
+        if (!linux_syscall_cat_read_negative_self_test(&completed) ||
+            completed != LINUX_CAT_READ_NEGATIVE_CONTROLS) {
+            status = LINUX_CAT_ABI_STATUS_ROBUSTNESS;
+            goto cleanup;
+        }
+        runtime.robustness_tests = (uint32_t)completed;
+    }
     if (transition_process(&runtime.state, LINUX_CAT_PROCESS_INSTALLED) !=
             LINUX_CAT_ABI_STATUS_OK ||
         paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK ||
@@ -1522,7 +1533,7 @@ cleanup:
     result->syscall_count = runtime.syscall_result.syscall_count;
     result->distinct_syscalls = runtime.syscall_result.distinct_syscalls;
     result->exit_status = runtime.syscall_result.exit_status;
-    result->robustness_tests = 0U;
+    result->robustness_tests = runtime.robustness_tests;
     result->ring_three = true;
     result->private_address_space = true;
     result->real_syscall_instruction =
@@ -1598,6 +1609,7 @@ static void fill_result(
     result->syscall_count = syscall.syscall_count;
     result->distinct_syscalls = syscall.distinct_syscalls;
     result->exit_status = syscall.exit_status;
+    result->robustness_tests = runtime.robustness_tests;
     result->ring_three = true;
     result->private_address_space = true;
     result->real_syscall_instruction = syscall.real_syscall_instruction;
@@ -1648,17 +1660,57 @@ enum linux_cat_abi_status linux_cat_abi_deliver_input(
     if (interrupts_were_enabled) {
         cpu_interrupt_disable();
     }
+    if (runtime.robustness_tests == LINUX_CAT_READ_NEGATIVE_CONTROLS &&
+        linux_syscall_cat_complete_read(runtime.generation ^ UINT64_C(1),
+            bytes, byte_count, eof) !=
+            LINUX_SYSCALL_STATUS_BAD_GENERATION) {
+        status = LINUX_CAT_ABI_STATUS_ROBUSTNESS;
+        goto cleanup;
+    }
+    if (runtime.robustness_tests == LINUX_CAT_READ_NEGATIVE_CONTROLS) {
+        ++runtime.robustness_tests;
+    }
     if (linux_syscall_cat_complete_read(runtime.generation, bytes,
             byte_count, eof) != LINUX_SYSCALL_STATUS_OK) {
+        if (runtime.robustness_tests ==
+                LINUX_CAT_READ_NEGATIVE_CONTROLS + 1U) {
+            --runtime.robustness_tests;
+        }
         if (interrupts_were_enabled) {
             cpu_interrupt_enable();
         }
         return LINUX_CAT_ABI_STATUS_INPUT;
     }
+    if (runtime.robustness_tests == LINUX_CAT_READ_NEGATIVE_CONTROLS + 1U) {
+        size_t completed = 0U;
+
+        if (linux_syscall_cat_complete_read(runtime.generation, bytes,
+                byte_count, eof) != LINUX_SYSCALL_STATUS_BAD_STATE ||
+            !linux_syscall_cat_resume_negative_self_test(runtime.generation,
+                &completed) ||
+            completed != LINUX_CAT_RESUME_NEGATIVE_CONTROLS) {
+            status = LINUX_CAT_ABI_STATUS_ROBUSTNESS;
+            goto cleanup;
+        }
+        runtime.robustness_tests += 1U + (uint32_t)completed;
+    }
     if (transition_process(&runtime.state,
             LINUX_CAT_PROCESS_READY_TO_RESUME) != LINUX_CAT_ABI_STATUS_OK ||
-        (frame = linux_syscall_cat_resume_frame(runtime.generation)) == NULL ||
-        paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK ||
+        (frame = linux_syscall_cat_resume_frame(runtime.generation)) == NULL) {
+        status = LINUX_CAT_ABI_STATUS_ENTRY;
+        goto cleanup;
+    }
+    if (runtime.robustness_tests ==
+            LINUX_CAT_ABI_RUNTIME_NEGATIVE_CONTROLS - 1U) {
+        if (linux_syscall_cat_resume_frame(runtime.generation) != NULL) {
+            status = LINUX_CAT_ABI_STATUS_ROBUSTNESS;
+            goto cleanup;
+        }
+        ++runtime.robustness_tests;
+        console_serial_write(
+            "FL CAT runtime negative controls 28/28 passed\n");
+    }
+    if (paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK ||
         transition_process(&runtime.state, LINUX_CAT_PROCESS_RUNNING) !=
             LINUX_CAT_ABI_STATUS_OK) {
         status = LINUX_CAT_ABI_STATUS_ENTRY;
