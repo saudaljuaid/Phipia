@@ -5122,6 +5122,22 @@ static bool inject_keyboard_ctrl_d(void)
     return true;
 }
 
+static bool focus_first_light_terminal(void)
+{
+    if (ui_get_state()->active_panel == UI_PANEL_TERMINAL) {
+        return true;
+    }
+    if (!inject_keyboard_byte(UINT8_C(0x1C))) {
+        return false;
+    }
+    shell_process_keyboard_events();
+    if (!inject_keyboard_byte(UINT8_C(0x9C))) {
+        return false;
+    }
+    shell_process_keyboard_events();
+    return ui_get_state()->active_panel == UI_PANEL_TERMINAL;
+}
+
 static bool installed_first_light_ready(void)
 {
     const struct boot_ledger *ledger = boot_ledger_installed();
@@ -5236,6 +5252,9 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive(void)
     }
     cpu_interrupt_enable();
     shell_process_keyboard_events();
+    if (!focus_first_light_terminal()) {
+        kernel_test_fail("interactive scenario could not focus Terminal");
+    }
     console_write("\n");
     console_write("sap> ");
 
@@ -5307,6 +5326,9 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
     }
     cpu_interrupt_enable();
     shell_process_keyboard_events();
+    if (!focus_first_light_terminal()) {
+        kernel_test_fail("absent scenario could not focus Terminal");
+    }
     console_write("\n");
     console_write("sap> ");
     if (!inject_keyboard_text("linux cat\n") ||
