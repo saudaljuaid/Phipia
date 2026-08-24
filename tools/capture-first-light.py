@@ -19,7 +19,11 @@ from pathlib import Path
 
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
-USERLAND_LINE = b"FL USERLAND launch completed successfully uname ordinal 1"
+USERLAND_LINES = {
+    "uname": b"FL USERLAND launch completed successfully uname ordinal 1",
+    "cat": b"FL USERLAND launch completed successfully cat ordinal 1",
+}
+CAT_WAIT_LINE = b"FL USERLAND cat foreground launch yielded to First Light"
 
 
 def png_chunk(kind, body):
@@ -136,12 +140,21 @@ def capture(qmp, directory, stem):
     return png
 
 
+def send_text(qmp, text, delay=0.04):
+    for key in text:
+        qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
+        time.sleep(delay)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--iso", required=True)
     parser.add_argument("--userspace", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--interaction", choices=sorted(USERLAND_LINES), default="cat"
+    )
     args = parser.parse_args()
 
     output = Path(args.output).resolve()
@@ -185,11 +198,15 @@ def main():
 
         qmp.hmp("sendkey ret")
         time.sleep(0.20)
-        for key in "linux uname":
-            qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
-            time.sleep(0.04)
+        send_text(qmp, f"linux {args.interaction}")
         qmp.hmp("sendkey ret")
-        wait_serial(serial, USERLAND_LINE)
+        if args.interaction == "cat":
+            wait_serial(serial, CAT_WAIT_LINE)
+            send_text(qmp, "pebble")
+            qmp.hmp("sendkey ret")
+            wait_serial(serial, b"FL CAT userspace stdout accepted")
+            qmp.hmp("sendkey ctrl-d")
+        wait_serial(serial, USERLAND_LINES[args.interaction])
         time.sleep(0.20)
         terminal = capture(qmp, output, "sapote-first-light-terminal")
         print(clean)

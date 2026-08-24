@@ -94,6 +94,7 @@ jobs:
                   python3 tools/capture-first-light.py \
                       --iso build/sapote.iso \
                       --userspace build/userspace/sapote-userland-fat16.raw \
+                      --interaction uname \
                       --output build/release-captures
                   python3 tools/compare-first-light-screenshot.py \
                       --mode terminal assets/sapote-first-light-terminal.png \
@@ -102,6 +103,7 @@ jobs:
                       --iso build/sapote.iso \
                       --userspace build/userspace/sapote-userland-fat16.raw \
                       --ffmpeg ffmpeg \
+                      --interaction uname \
                       --output build/sapote-first-light-boot-20s.mp4
                   ffprobe -v error -show_entries format=duration \
                       -of default=noprint_wrappers=1:nokey=1 \
