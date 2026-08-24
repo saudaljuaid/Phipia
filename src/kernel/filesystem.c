@@ -14,6 +14,8 @@
 #define FILESYSTEM_LINUX_READ_FAILURE_MAX 13U
 #define FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN 14U
 #define FILESYSTEM_LINUX_UNAME_READ_FAILURE_MAX 14U
+#define FILESYSTEM_LINUX_CAT_READ_FAILURE_AFTER_OPEN 14U
+#define FILESYSTEM_LINUX_CAT_READ_FAILURE_MAX 14U
 
 _Static_assert(NVME_FILESYSTEM_READ_LIMIT ==
     3U + LINUX_UNAME_FAT16_FILE_CLUSTERS,
@@ -21,6 +23,9 @@ _Static_assert(NVME_FILESYSTEM_READ_LIMIT ==
 _Static_assert(FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN ==
     NVME_FILESYSTEM_READ_LIMIT + 1U,
     "uname after-open failure token must remain outside read ordinals");
+_Static_assert(NVME_FILESYSTEM_READ_LIMIT ==
+    3U + LINUX_CAT_FAT16_FILE_CLUSTERS,
+    "private NVMe read ceiling must cover the cat fixture exactly");
 
 struct filesystem_block_result {
     uint32_t ordinal;
@@ -48,7 +53,14 @@ enum private_read_kind {
     PRIVATE_READ_NONE = 0,
     PRIVATE_READ_PROCESS,
     PRIVATE_READ_LINUX,
-    PRIVATE_READ_LINUX_UNAME
+    PRIVATE_READ_LINUX_UNAME,
+    PRIVATE_READ_LINUX_CAT
+};
+
+enum linux_read_profile {
+    LINUX_READ_PROFILE_ECHO = 0,
+    LINUX_READ_PROFILE_UNAME,
+    LINUX_READ_PROFILE_CAT
 };
 
 static struct filesystem_private_read_runtime private_read_runtime;
@@ -1347,6 +1359,157 @@ static void zero_linux_file(struct filesystem_linux_file *file)
     zero_bytes(file, sizeof(*file));
 }
 
+static uint32_t linux_profile_file_bytes(enum linux_read_profile profile)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return LINUX_UNAME_FAT16_FILE_BYTES;
+    case LINUX_READ_PROFILE_CAT:
+        return LINUX_CAT_FAT16_FILE_BYTES;
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return LINUX_FAT16_FILE_BYTES;
+    }
+}
+
+static uint32_t linux_profile_file_clusters(enum linux_read_profile profile)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return LINUX_UNAME_FAT16_FILE_CLUSTERS;
+    case LINUX_READ_PROFILE_CAT:
+        return LINUX_CAT_FAT16_FILE_CLUSTERS;
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return LINUX_FAT16_FILE_CLUSTERS;
+    }
+}
+
+static uint32_t linux_profile_failure_after_open(
+    enum linux_read_profile profile
+)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN;
+    case LINUX_READ_PROFILE_CAT:
+        return FILESYSTEM_LINUX_CAT_READ_FAILURE_AFTER_OPEN;
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return FILESYSTEM_LINUX_READ_FAILURE_AFTER_OPEN;
+    }
+}
+
+static uint32_t linux_profile_failure_max(enum linux_read_profile profile)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return FILESYSTEM_LINUX_UNAME_READ_FAILURE_MAX;
+    case LINUX_READ_PROFILE_CAT:
+        return FILESYSTEM_LINUX_CAT_READ_FAILURE_MAX;
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return FILESYSTEM_LINUX_READ_FAILURE_MAX;
+    }
+}
+
+static uint32_t linux_profile_private_kind(enum linux_read_profile profile)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return PRIVATE_READ_LINUX_UNAME;
+    case LINUX_READ_PROFILE_CAT:
+        return PRIVATE_READ_LINUX_CAT;
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return PRIVATE_READ_LINUX;
+    }
+}
+
+static enum linux_fat16_status linux_profile_make_query(
+    enum linux_read_profile profile,
+    struct fat16_root_query *query
+)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return sapote_linux_uname_fat16_make_query(query);
+    case LINUX_READ_PROFILE_CAT:
+        return sapote_linux_cat_fat16_make_query(query);
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return sapote_linux_fat16_make_query(query);
+    }
+}
+
+static enum linux_fat16_status linux_profile_find_root(
+    enum linux_read_profile profile,
+    const uint8_t *block,
+    size_t block_length,
+    const struct fat16_geometry *geometry,
+    const struct fat16_root_query *query,
+    uint32_t destination_bytes,
+    struct fat16_root_entry *entry
+)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return sapote_linux_uname_fat16_find_root(block, block_length,
+            geometry, query, destination_bytes, entry);
+    case LINUX_READ_PROFILE_CAT:
+        return sapote_linux_cat_fat16_find_root(block, block_length,
+            geometry, query, destination_bytes, entry);
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return sapote_linux_fat16_find_root(block, block_length, geometry,
+            query, destination_bytes, entry);
+    }
+}
+
+static enum linux_fat16_status linux_profile_build_chain(
+    enum linux_read_profile profile,
+    const uint8_t *fat,
+    size_t fat_length,
+    const struct fat16_geometry *geometry,
+    const struct fat16_root_entry *entry,
+    struct linux_fat16_chain *chain
+)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return sapote_linux_uname_fat16_build_chain(fat, fat_length,
+            geometry, entry, chain);
+    case LINUX_READ_PROFILE_CAT:
+        return sapote_linux_cat_fat16_build_chain(fat, fat_length,
+            geometry, entry, chain);
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return sapote_linux_fat16_build_chain(fat, fat_length, geometry,
+            entry, chain);
+    }
+}
+
+static enum linux_fat16_status linux_profile_validate_payload(
+    enum linux_read_profile profile,
+    const uint8_t *destination,
+    size_t destination_bytes,
+    struct linux_fat16_payload *payload
+)
+{
+    switch (profile) {
+    case LINUX_READ_PROFILE_UNAME:
+        return sapote_linux_uname_fat16_validate_payload(destination,
+            destination_bytes, payload);
+    case LINUX_READ_PROFILE_CAT:
+        return sapote_linux_cat_fat16_validate_payload(destination,
+            destination_bytes, payload);
+    case LINUX_READ_PROFILE_ECHO:
+    default:
+        return sapote_linux_fat16_validate_payload(destination,
+            destination_bytes, payload);
+    }
+}
+
 static bool linux_read_failure_observed(
     uint32_t failure_boundary,
     uint32_t file_clusters
@@ -1362,7 +1525,7 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     uint8_t *destination,
     size_t destination_bytes,
     uint32_t failure_boundary,
-    bool uname
+    enum linux_read_profile profile
 )
 {
     struct fat16_geometry geometry;
@@ -1375,16 +1538,11 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     size_t copied = 0U;
     enum filesystem_status result;
     enum nvme_status nvme_status;
-    const uint32_t file_bytes = uname ? LINUX_UNAME_FAT16_FILE_BYTES :
-        LINUX_FAT16_FILE_BYTES;
-    const uint32_t file_clusters = uname ? LINUX_UNAME_FAT16_FILE_CLUSTERS :
-        LINUX_FAT16_FILE_CLUSTERS;
-    const uint32_t failure_after_open = uname ?
-        FILESYSTEM_LINUX_UNAME_READ_FAILURE_AFTER_OPEN :
-        FILESYSTEM_LINUX_READ_FAILURE_AFTER_OPEN;
-    const uint32_t failure_max = uname ?
-        FILESYSTEM_LINUX_UNAME_READ_FAILURE_MAX :
-        FILESYSTEM_LINUX_READ_FAILURE_MAX;
+    const uint32_t file_bytes = linux_profile_file_bytes(profile);
+    const uint32_t file_clusters = linux_profile_file_clusters(profile);
+    const uint32_t failure_after_open =
+        linux_profile_failure_after_open(profile);
+    const uint32_t failure_max = linux_profile_failure_max(profile);
 
     if (file == NULL || destination == NULL) {
         return FILESYSTEM_STATUS_NULL_ARGUMENT;
@@ -1403,9 +1561,7 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     zero_bytes(&entry, sizeof(entry));
     zero_bytes(&chain, sizeof(chain));
     zero_bytes(&payload, sizeof(payload));
-    if ((uname ? sapote_linux_uname_fat16_make_query(&query) :
-            sapote_linux_fat16_make_query(&query)) !=
-            LINUX_FAT16_STATUS_OK) {
+    if (linux_profile_make_query(profile, &query) != LINUX_FAT16_STATUS_OK) {
         return FILESYSTEM_STATUS_PARSER_FAILURE;
     }
     nvme_status = nvme_filesystem_session_open(&private_read_runtime.session);
@@ -1418,8 +1574,7 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     private_read_runtime.owned = true;
     private_read_runtime.state = FILESYSTEM_UNOPENED;
     private_read_runtime.generation = next_private_read_generation++;
-    private_read_runtime.kind = uname ? PRIVATE_READ_LINUX_UNAME :
-        PRIVATE_READ_LINUX;
+    private_read_runtime.kind = linux_profile_private_kind(profile);
     if (next_private_read_generation == 0U) {
         next_private_read_generation = 1U;
     }
@@ -1484,18 +1639,12 @@ static enum filesystem_status filesystem_linux_read_open_profile(
         result = FILESYSTEM_STATUS_CONTROLLED_FAILURE;
         goto fail;
     }
-    if ((uname ? sapote_linux_uname_fat16_find_root(block, block_length,
-            &geometry, &query, (uint32_t)destination_bytes, &entry) :
-            sapote_linux_fat16_find_root(block, block_length, &geometry,
-                &query, (uint32_t)destination_bytes, &entry)) !=
-                LINUX_FAT16_STATUS_OK ||
-        (uname ? sapote_linux_uname_fat16_build_chain(
-            private_read_runtime.fat_block,
+    if (linux_profile_find_root(profile, block, block_length, &geometry,
+            &query, (uint32_t)destination_bytes, &entry) !=
+            LINUX_FAT16_STATUS_OK ||
+        linux_profile_build_chain(profile, private_read_runtime.fat_block,
             sizeof(private_read_runtime.fat_block), &geometry, &entry,
-            &chain) : sapote_linux_fat16_build_chain(
-                private_read_runtime.fat_block,
-                sizeof(private_read_runtime.fat_block), &geometry, &entry,
-                &chain)) != LINUX_FAT16_STATUS_OK ||
+            &chain) != LINUX_FAT16_STATUS_OK ||
         chain.valid != 1U ||
         chain.cluster_count != file_clusters) {
         result = FILESYSTEM_STATUS_LINUX_CHAIN;
@@ -1542,10 +1691,8 @@ static enum filesystem_status filesystem_linux_read_open_profile(
         copied += bytes;
     }
     if (copied != destination_bytes ||
-        (uname ? sapote_linux_uname_fat16_validate_payload(destination,
-            destination_bytes, &payload) :
-            sapote_linux_fat16_validate_payload(destination,
-                destination_bytes, &payload)) != LINUX_FAT16_STATUS_OK ||
+        linux_profile_validate_payload(profile, destination,
+            destination_bytes, &payload) != LINUX_FAT16_STATUS_OK ||
         payload.deterministic != 1U ||
         payload.byte_count != file_bytes) {
         result = FILESYSTEM_STATUS_LINUX_PAYLOAD;
@@ -1591,7 +1738,7 @@ enum filesystem_status filesystem_linux_read_open(
 )
 {
     return filesystem_linux_read_open_profile(file, destination,
-        destination_bytes, failure_boundary, false);
+        destination_bytes, failure_boundary, LINUX_READ_PROFILE_ECHO);
 }
 
 enum filesystem_status filesystem_linux_uname_read_open(
@@ -1602,7 +1749,18 @@ enum filesystem_status filesystem_linux_uname_read_open(
 )
 {
     return filesystem_linux_read_open_profile(file, destination,
-        destination_bytes, failure_boundary, true);
+        destination_bytes, failure_boundary, LINUX_READ_PROFILE_UNAME);
+}
+
+enum filesystem_status filesystem_linux_cat_read_open(
+    struct filesystem_linux_file *file,
+    uint8_t *destination,
+    size_t destination_bytes,
+    uint32_t failure_boundary
+)
+{
+    return filesystem_linux_read_open_profile(file, destination,
+        destination_bytes, failure_boundary, LINUX_READ_PROFILE_CAT);
 }
 
 static enum filesystem_status filesystem_linux_read_close_profile(
@@ -1640,6 +1798,14 @@ enum filesystem_status filesystem_linux_uname_read_close(
 {
     return filesystem_linux_read_close_profile(file,
         PRIVATE_READ_LINUX_UNAME);
+}
+
+enum filesystem_status filesystem_linux_cat_read_close(
+    struct filesystem_linux_file *file
+)
+{
+    return filesystem_linux_read_close_profile(file,
+        PRIVATE_READ_LINUX_CAT);
 }
 
 struct filesystem_file_proof filesystem_get_file_proof(void)

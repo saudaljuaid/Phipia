@@ -12,11 +12,11 @@
 //! the condition the caller has to meet.
 
 use crate::elf64;
-use crate::font;
 use crate::fat16;
-use crate::logo::{self, Format, Status};
-use crate::linux_fat16;
+use crate::font;
 use crate::linux_elf64;
+use crate::linux_fat16;
+use crate::logo::{self, Format, Status};
 use crate::ui_font;
 
 const _: () = {
@@ -93,10 +93,7 @@ pub extern "C" fn sapote_logo_size() -> usize {
 ///
 /// `width` and `height` must both be non-null and point at writable `u32` values.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_logo_geometry(
-    width: *mut u32,
-    height: *mut u32,
-) -> i32 {
+pub unsafe extern "C" fn sapote_logo_geometry(width: *mut u32, height: *mut u32) -> i32 {
     if width.is_null() || height.is_null() {
         return status_code(Status::NullArgument);
     }
@@ -218,11 +215,7 @@ pub unsafe extern "C" fn sapote_font_geometry(
 /// `out` must point at `out_len` writable bytes and must not alias anything
 /// else live for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_font_glyph(
-    code: u32,
-    out: *mut u8,
-    out_len: usize,
-) -> i32 {
+pub unsafe extern "C" fn sapote_font_glyph(code: u32, out: *mut u8, out_len: usize) -> i32 {
     if out.is_null() {
         return font_status_code(font::Status::NullArgument);
     }
@@ -269,9 +262,7 @@ pub extern "C" fn sapote_ui_font_fingerprint() -> u64 {
 ///
 /// `metrics` must be non-null and point to one writable `ui_font::Geometry`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_ui_font_geometry(
-    metrics: *mut ui_font::Geometry,
-) -> i32 {
+pub unsafe extern "C" fn sapote_ui_font_geometry(metrics: *mut ui_font::Geometry) -> i32 {
     if metrics.is_null() {
         return ui_font_status_code(ui_font::Status::NullArgument);
     }
@@ -292,11 +283,7 @@ pub unsafe extern "C" fn sapote_ui_font_geometry(
 ///
 /// `out` must address `out_len` writable, non-aliased bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_ui_font_glyph(
-    code: u32,
-    out: *mut u8,
-    out_len: usize,
-) -> i32 {
+pub unsafe extern "C" fn sapote_ui_font_glyph(code: u32, out: *mut u8, out_len: usize) -> i32 {
     if out.is_null() {
         return ui_font_status_code(ui_font::Status::NullArgument);
     }
@@ -411,12 +398,7 @@ pub unsafe extern "C" fn sapote_fat16_find_root(
             *query,
         )
     };
-    match fat16::find_root(
-        bytes,
-        &checked_geometry,
-        &checked_query,
-        destination_bytes,
-    ) {
+    match fat16::find_root(bytes, &checked_geometry, &checked_query, destination_bytes) {
         Ok(value) => {
             // SAFETY: the validated non-null output still names one value.
             unsafe { *out = value };
@@ -450,12 +432,8 @@ pub unsafe extern "C" fn sapote_fat16_parse_fat(
     }
     // SAFETY: the caller promises this readable range and one readable value;
     // all null cases were refused and the output is non-aliased by contract.
-    let (bytes, checked_geometry) = unsafe {
-        (
-            core::slice::from_raw_parts(block, block_len),
-            *geometry,
-        )
-    };
+    let (bytes, checked_geometry) =
+        unsafe { (core::slice::from_raw_parts(block, block_len), *geometry) };
     match fat16::parse_fat(bytes, &checked_geometry) {
         Ok(value) => {
             // SAFETY: the validated non-null output still names one value.
@@ -489,14 +467,8 @@ pub unsafe extern "C" fn sapote_fat16_validate_extent(
     }
     // SAFETY: the caller promises three readable non-aliased values and every
     // null case was refused above.
-    let (checked_geometry, checked_entry, checked_fat) = unsafe {
-        (*geometry, *entry, *fat)
-    };
-    match fat16::validate_extent(
-        &checked_geometry,
-        &checked_entry,
-        &checked_fat,
-    ) {
+    let (checked_geometry, checked_entry, checked_fat) = unsafe { (*geometry, *entry, *fat) };
+    match fat16::validate_extent(&checked_geometry, &checked_entry, &checked_fat) {
         Ok(value) => {
             // SAFETY: the validated non-null output still names one value.
             unsafe { *out = value };
@@ -554,9 +526,7 @@ pub extern "C" fn sapote_linux_fat16_self_test() -> u32 {
 ///
 /// `out` must address one writable root query.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_linux_fat16_make_query(
-    out: *mut fat16::RootQuery,
-) -> i32 {
+pub unsafe extern "C" fn sapote_linux_fat16_make_query(out: *mut fat16::RootQuery) -> i32 {
     if out.is_null() {
         return linux_fat16_status_code(linux_fat16::Status::NullArgument);
     }
@@ -590,11 +560,13 @@ pub unsafe extern "C" fn sapote_linux_fat16_find_root(
     }
     // SAFETY: the caller promises the readable, non-aliased values above.
     let (bytes, checked_geometry, checked_query) = unsafe {
-        (core::slice::from_raw_parts(block, block_len), *geometry, *query)
+        (
+            core::slice::from_raw_parts(block, block_len),
+            *geometry,
+            *query,
+        )
     };
-    match linux_fat16::find_root(
-        bytes, &checked_geometry, &checked_query, destination_bytes,
-    ) {
+    match linux_fat16::find_root(bytes, &checked_geometry, &checked_query, destination_bytes) {
         Ok(value) => {
             // SAFETY: the non-null output still names one writable value.
             unsafe { *out = value };
@@ -629,7 +601,11 @@ pub unsafe extern "C" fn sapote_linux_fat16_build_chain(
     }
     // SAFETY: the caller promises the readable, non-aliased values above.
     let (bytes, checked_geometry, checked_entry) = unsafe {
-        (core::slice::from_raw_parts(fat_block, fat_len), *geometry, *entry)
+        (
+            core::slice::from_raw_parts(fat_block, fat_len),
+            *geometry,
+            *entry,
+        )
     };
     match linux_fat16::build_chain(bytes, &checked_geometry, &checked_entry) {
         Ok(value) => {
@@ -685,9 +661,7 @@ pub extern "C" fn sapote_linux_uname_fat16_self_test() -> u32 {
 ///
 /// `out` must address one writable root query.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sapote_linux_uname_fat16_make_query(
-    out: *mut fat16::RootQuery,
-) -> i32 {
+pub unsafe extern "C" fn sapote_linux_uname_fat16_make_query(out: *mut fat16::RootQuery) -> i32 {
     if out.is_null() {
         return linux_fat16_status_code(linux_fat16::Status::NullArgument);
     }
@@ -721,11 +695,14 @@ pub unsafe extern "C" fn sapote_linux_uname_fat16_find_root(
     }
     // SAFETY: the caller promises the readable, non-aliased values above.
     let (bytes, checked_geometry, checked_query) = unsafe {
-        (core::slice::from_raw_parts(block, block_len), *geometry, *query)
+        (
+            core::slice::from_raw_parts(block, block_len),
+            *geometry,
+            *query,
+        )
     };
-    match linux_fat16::find_uname_root(
-        bytes, &checked_geometry, &checked_query, destination_bytes,
-    ) {
+    match linux_fat16::find_uname_root(bytes, &checked_geometry, &checked_query, destination_bytes)
+    {
         Ok(value) => {
             // SAFETY: the non-null output still names one writable value.
             unsafe { *out = value };
@@ -759,7 +736,11 @@ pub unsafe extern "C" fn sapote_linux_uname_fat16_build_chain(
     }
     // SAFETY: the caller promises the readable, non-aliased values above.
     let (bytes, checked_geometry, checked_entry) = unsafe {
-        (core::slice::from_raw_parts(fat_block, fat_len), *geometry, *entry)
+        (
+            core::slice::from_raw_parts(fat_block, fat_len),
+            *geometry,
+            *entry,
+        )
     };
     match linux_fat16::build_uname_chain(bytes, &checked_geometry, &checked_entry) {
         Ok(value) => {
@@ -794,6 +775,128 @@ pub unsafe extern "C" fn sapote_linux_uname_fat16_validate_payload(
     // SAFETY: the caller promises this readable range; null was refused.
     let bytes = unsafe { core::slice::from_raw_parts(data, data_len) };
     match linux_fat16::validate_uname_payload(bytes) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+/// Run the pointer-free measured cat FAT16 controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_linux_cat_fat16_self_test() -> u32 {
+    linux_fat16::self_test_cat()
+}
+
+/// Build the exact CATBOX root query.
+///
+/// # Safety
+///
+/// `out` must point to one writable `fat16::RootQuery`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_cat_fat16_make_query(out: *mut fat16::RootQuery) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable query and null was refused.
+    unsafe { *out = linux_fat16::make_cat_query() };
+    linux_fat16_status_code(linux_fat16::Status::Ok)
+}
+
+/// Select only the exact measured CATBOX root entry.
+///
+/// # Safety
+///
+/// The input pointers must name their complete readable values and `out` one
+/// writable, non-overlapping root entry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_cat_fat16_find_root(
+    block: *const u8,
+    block_len: usize,
+    geometry: *const fat16::Geometry,
+    query: *const fat16::RootQuery,
+    destination_bytes: u32,
+    out: *mut fat16::RootEntry,
+) -> i32 {
+    if block.is_null() || geometry.is_null() || query.is_null() || out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises these complete non-overlapping values.
+    let (bytes, checked_geometry, checked_query) = unsafe {
+        (
+            core::slice::from_raw_parts(block, block_len),
+            *geometry,
+            *query,
+        )
+    };
+    match linux_fat16::find_cat_root(bytes, &checked_geometry, &checked_query, destination_bytes) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+/// Validate the exact CATBOX FAT chain.
+///
+/// # Safety
+///
+/// Inputs must name complete readable values and `out` one writable chain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_cat_fat16_build_chain(
+    fat_block: *const u8,
+    fat_len: usize,
+    geometry: *const fat16::Geometry,
+    entry: *const fat16::RootEntry,
+    out: *mut linux_fat16::Chain,
+) -> i32 {
+    if fat_block.is_null() || geometry.is_null() || entry.is_null() || out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises these complete readable values.
+    let (bytes, checked_geometry, checked_entry) = unsafe {
+        (
+            core::slice::from_raw_parts(fat_block, fat_len),
+            *geometry,
+            *entry,
+        )
+    };
+    match linux_fat16::build_cat_chain(bytes, &checked_geometry, &checked_entry) {
+        Ok(value) => {
+            // SAFETY: the non-null output still names one writable value.
+            unsafe { *out = value };
+            linux_fat16_status_code(linux_fat16::Status::Ok)
+        }
+        Err(status) => linux_fat16_status_code(status),
+    }
+}
+
+/// Validate the complete CPU-owned cat BusyBox bytes and SHA-256.
+///
+/// # Safety
+///
+/// `data` must name `data_len` readable bytes and `out` one writable payload.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_cat_fat16_validate_payload(
+    data: *const u8,
+    data_len: usize,
+    out: *mut linux_fat16::Payload,
+) -> i32 {
+    if out.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable payload and null was refused.
+    unsafe { *out = linux_fat16::Payload::invalid() };
+    if data.is_null() {
+        return linux_fat16_status_code(linux_fat16::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this complete readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(data, data_len) };
+    match linux_fat16::validate_cat_payload(bytes) {
         Ok(value) => {
             // SAFETY: the non-null output still names one writable value.
             unsafe { *out = value };
@@ -874,6 +977,44 @@ pub unsafe extern "C" fn sapote_linux_uname_elf64_parse(
     // SAFETY: the caller promises this complete readable range.
     let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
     match linux_elf64::parse_uname(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            linux_elf64_status_code(linux_elf64::Status::Ok)
+        }
+        Err(status) => linux_elf64_status_code(status),
+    }
+}
+
+/// Run the pointer-free measured cat BusyBox ELF conjunction controls.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_linux_cat_elf64_self_test() -> u32 {
+    linux_elf64::self_test_cat()
+}
+
+/// Parse the complete CPU-owned cat BusyBox ELF into segment facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable bytes and `out` one writable,
+/// non-overlapping validated image.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_linux_cat_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut linux_elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *out = linux_elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return linux_elf64_status_code(linux_elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this complete readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match linux_elf64::parse_cat(bytes) {
         Ok(value) => {
             // SAFETY: the validated output pointer still names one value.
             unsafe { *out = value };

@@ -5,6 +5,8 @@
 pub const FILE_BYTES: usize = 33_584;
 /// Exact pinned uname executable length.
 pub const UNAME_FILE_BYTES: usize = 38_368;
+/// Exact pinned cat executable length.
+pub const CAT_FILE_BYTES: usize = 38_632;
 /// Maximum admitted ELF program headers.
 pub const MAX_PROGRAM_HEADERS: usize = 8;
 /// Exact measured program-header count.
@@ -15,6 +17,8 @@ pub const MAX_LOAD_SEGMENTS: usize = 4;
 pub const IMAGE_PAGES: usize = 9;
 /// Exact installed uname image page count.
 pub const UNAME_IMAGE_PAGES: usize = 11;
+/// Exact installed cat image page count.
+pub const CAT_IMAGE_PAGES: usize = 12;
 /// Parser robustness controls represented by the frozen matrix.
 pub const ROBUSTNESS_CONTROLS: u32 = 24;
 
@@ -315,6 +319,59 @@ const UNAME_MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
     },
 ];
 
+const CAT_MEASURED: [ProgramHeader; PROGRAM_HEADERS] = [
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0,
+        virtual_address: 0x4000_0100_0000,
+        physical_address: 0x4000_0100_0000,
+        file_size: 0x158,
+        memory_size: 0x158,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_X,
+        offset: 0x1000,
+        virtual_address: 0x4000_0100_1000,
+        physical_address: 0x4000_0100_1000,
+        file_size: 0x6F72,
+        memory_size: 0x6F72,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R,
+        offset: 0x8000,
+        virtual_address: 0x4000_0100_8000,
+        physical_address: 0x4000_0100_8000,
+        file_size: 0x118E,
+        memory_size: 0x118E,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_LOAD,
+        flags: PF_R | PF_W,
+        offset: 0x91A0,
+        virtual_address: 0x4000_0100_A1A0,
+        physical_address: 0x4000_0100_A1A0,
+        file_size: 0x316,
+        memory_size: 0x1188,
+        alignment: 0x1000,
+    },
+    ProgramHeader {
+        kind: PT_GNU_STACK,
+        flags: PF_R | PF_W,
+        offset: 0,
+        virtual_address: 0,
+        physical_address: 0,
+        file_size: 0,
+        memory_size: 0,
+        alignment: 0x10,
+    },
+];
+
 #[derive(Clone, Copy)]
 struct Contract {
     file_bytes: usize,
@@ -335,6 +392,13 @@ const UNAME_CONTRACT: Contract = Contract {
     image_pages: UNAME_IMAGE_PAGES,
     entry: ENTRY,
     measured: UNAME_MEASURED,
+};
+
+const CAT_CONTRACT: Contract = Contract {
+    file_bytes: CAT_FILE_BYTES,
+    image_pages: CAT_IMAGE_PAGES,
+    entry: ENTRY,
+    measured: CAT_MEASURED,
 };
 
 fn byte(input: &[u8], offset: usize) -> Result<u8, Status> {
@@ -658,6 +722,11 @@ pub fn parse_uname(input: &[u8]) -> Result<ValidatedImage, Status> {
     parse_for(input, UNAME_CONTRACT)
 }
 
+/// Decode and validate the exact checksum-pinned cat BusyBox image.
+pub fn parse_cat(input: &[u8]) -> Result<ValidatedImage, Status> {
+    parse_for(input, CAT_CONTRACT)
+}
+
 /// Run pointer-free invariants for the measured header conjunction.
 fn self_test_for(contract: Contract) -> u32 {
     let Ok(segments) = validate_programs(contract, &contract.measured) else {
@@ -707,4 +776,9 @@ pub fn self_test() -> u32 {
 /// Run pointer-free invariants for the measured uname header conjunction.
 pub fn self_test_uname() -> u32 {
     self_test_for(UNAME_CONTRACT)
+}
+
+/// Run pointer-free invariants for the measured cat header conjunction.
+pub fn self_test_cat() -> u32 {
+    self_test_for(CAT_CONTRACT)
 }

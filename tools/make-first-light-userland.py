@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and independently verify the v1.0.0 two-profile FAT16 volume."""
+"""Build and independently verify the v1.1.0 three-profile FAT16 volume."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ FIRST_FAT_SECTOR = 1
 FIRST_ROOT_SECTOR = 3
 FIRST_DATA_SECTOR = 4
 MEDIA = 0xF8
-IMAGE_SHA256 = "12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE"
+IMAGE_SHA256 = "F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB"
+NO_CAT_IMAGE_SHA256 = "12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE"
 
 ECHO_NAME = b"BUSYBOX    "
 ECHO_BYTES = 33_584
@@ -36,10 +37,17 @@ UNAME_CLUSTERS = 10
 UNAME_FIRST_CLUSTER = ECHO_FIRST_CLUSTER + ECHO_CLUSTERS
 UNAME_SHA256 = "389AD6B13804EB7307BA589C8E8A7C702F91302005A7C5FC6E9E99124FCEAF43"
 
+CAT_NAME = b"CATBOX     "
+CAT_BYTES = 38_632
+CAT_CLUSTERS = 10
+CAT_FIRST_CLUSTER = UNAME_FIRST_CLUSTER + UNAME_CLUSTERS
+CAT_SHA256 = "8191596A22778B575942895071A2E50CCEEE0F82F4D88B6D986584CE0914FC3E"
+
 
 PROFILES = (
     ("echo", ECHO_NAME, ECHO_BYTES, ECHO_CLUSTERS, ECHO_FIRST_CLUSTER, ECHO_SHA256),
     ("uname", UNAME_NAME, UNAME_BYTES, UNAME_CLUSTERS, UNAME_FIRST_CLUSTER, UNAME_SHA256),
+    ("cat", CAT_NAME, CAT_BYTES, CAT_CLUSTERS, CAT_FIRST_CLUSTER, CAT_SHA256),
 )
 
 
@@ -60,8 +68,8 @@ def u32(image: bytes, offset: int) -> int:
 
 
 def verify_elf(binary: bytes, profile: str) -> None:
-    expected_bytes = ECHO_BYTES if profile == "echo" else UNAME_BYTES
-    expected_sha = ECHO_SHA256 if profile == "echo" else UNAME_SHA256
+    expected_bytes = {"echo": ECHO_BYTES, "uname": UNAME_BYTES, "cat": CAT_BYTES}[profile]
+    expected_sha = {"echo": ECHO_SHA256, "uname": UNAME_SHA256, "cat": CAT_SHA256}[profile]
     if len(binary) != expected_bytes:
         raise ValueError(f"{profile} BusyBox byte count changed")
     if hashlib.sha256(binary).hexdigest().upper() != expected_sha:
@@ -69,7 +77,7 @@ def verify_elf(binary: bytes, profile: str) -> None:
     if binary[:16] != b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8:
         raise ValueError(f"{profile} BusyBox ELF identification changed")
     header = struct.unpack_from("<HHIQQQIHHHHHH", binary, 16)
-    expected_shoff = 33_072 if profile == "echo" else 37_856
+    expected_shoff = {"echo": 33_072, "uname": 37_856, "cat": 38_120}[profile]
     if header != (
         2, 62, 1, 0x40000100107A, 64, expected_shoff, 0,
         64, 56, 5, 64, 8, 7,
@@ -87,7 +95,7 @@ def verify_elf(binary: bytes, profile: str) -> None:
             (1, 6, 0x8000, 0x400001008000, 0x400001008000, 0xFE, 0xB38, 0x1000),
             (0x6474E551, 6, 0, 0, 0, 0, 0, 0x10),
         ]
-    else:
+    elif profile == "uname":
         expected = [
             (1, 4, 0x0, 0x400001000000, 0x400001000000, 0x158, 0x158, 0x1000),
             (1, 5, 0x1000, 0x400001001000, 0x400001001000, 0x6D7F, 0x6D7F, 0x1000),
@@ -95,13 +103,23 @@ def verify_elf(binary: bytes, profile: str) -> None:
             (1, 6, 0x91A0, 0x40000100A1A0, 0x40000100A1A0, 0x20E, 0xC70, 0x1000),
             (0x6474E551, 6, 0, 0, 0, 0, 0, 0x10),
         ]
+    else:
+        expected = [
+            (1, 4, 0x0, 0x400001000000, 0x400001000000, 0x158, 0x158, 0x1000),
+            (1, 5, 0x1000, 0x400001001000, 0x400001001000, 0x6F72, 0x6F72, 0x1000),
+            (1, 4, 0x8000, 0x400001008000, 0x400001008000, 0x118E, 0x118E, 0x1000),
+            (1, 6, 0x91A0, 0x40000100A1A0, 0x40000100A1A0, 0x316, 0x1188, 0x1000),
+            (0x6474E551, 6, 0, 0, 0, 0, 0, 0x10),
+        ]
     if headers != expected:
         raise ValueError(f"{profile} BusyBox program headers changed")
 
 
-def build_image(echo: bytes, uname: bytes) -> bytes:
+def build_image(echo: bytes, uname: bytes, cat: bytes | None) -> bytes:
     verify_elf(echo, "echo")
     verify_elf(uname, "uname")
+    if cat is not None:
+        verify_elf(cat, "cat")
     image = bytearray(IMAGE_BYTES)
     image[0:3] = b"\xEB\x3C\x90"
     image[3:11] = b"SAPOTE  "
@@ -126,7 +144,9 @@ def build_image(echo: bytes, uname: bytes) -> bytes:
     put_u16(image, fat, 0xFFF8)
     put_u16(image, fat + 2, 0xFFFF)
     root = FIRST_ROOT_SECTOR * BLOCK_BYTES
-    for index, (profile, name, size, clusters, first, _) in enumerate(PROFILES):
+    included = PROFILES if cat is not None else PROFILES[:2]
+    binaries = {"echo": echo, "uname": uname, "cat": cat}
+    for index, (profile, name, size, clusters, first, _) in enumerate(included):
         for ordinal in range(clusters):
             cluster = first + ordinal
             value = cluster + 1 if ordinal + 1 < clusters else 0xFFFF
@@ -136,13 +156,21 @@ def build_image(echo: bytes, uname: bytes) -> bytes:
         image[entry + 11] = 0x20
         put_u16(image, entry + 26, first)
         put_u32(image, entry + 28, size)
-        binary = echo if profile == "echo" else uname
+        binary = binaries[profile]
+        if binary is None:
+            raise ValueError(f"{profile} payload is absent")
         data = (FIRST_DATA_SECTOR + first - 2) * BLOCK_BYTES
         image[data : data + size] = binary
     return bytes(image)
 
 
-def verify_image(image: bytes, echo: bytes, uname: bytes, check_digest: bool = True) -> str:
+def verify_image(
+    image: bytes,
+    echo: bytes,
+    uname: bytes,
+    cat: bytes | None,
+    check_digest: bool = True,
+) -> str:
     if len(image) != IMAGE_BYTES or image[510:512] != b"\x55\xAA":
         raise ValueError("userspace volume length or boot signature changed")
     geometry = (
@@ -155,8 +183,9 @@ def verify_image(image: bytes, echo: bytes, uname: bytes, check_digest: bool = T
     if (u16(image, fat), u16(image, fat + 2)) != (0xFFF8, 0xFFFF):
         raise ValueError("userspace volume FAT16 reserved entries changed")
     root = FIRST_ROOT_SECTOR * BLOCK_BYTES
-    binaries = {"echo": echo, "uname": uname}
-    for index, (profile, name, size, clusters, first, digest) in enumerate(PROFILES):
+    binaries = {"echo": echo, "uname": uname, "cat": cat}
+    included = PROFILES if cat is not None else PROFILES[:2]
+    for index, (profile, name, size, clusters, first, digest) in enumerate(included):
         entry = root + index * 32
         state = (
             image[entry : entry + 11], image[entry + 11],
@@ -174,27 +203,28 @@ def verify_image(image: bytes, echo: bytes, uname: bytes, check_digest: bool = T
             body.extend(image[lba * BLOCK_BYTES : (lba + 1) * BLOCK_BYTES])
             cluster = expected_next
         payload = bytes(body[:size])
-        if payload != binaries[profile] or hashlib.sha256(payload).hexdigest().upper() != digest:
+        if binaries[profile] is None or payload != binaries[profile] or hashlib.sha256(payload).hexdigest().upper() != digest:
             raise ValueError(f"{profile} payload checksum changed")
         if any(body[size:]):
             raise ValueError(f"{profile} final cluster padding changed")
-    if image[root + len(PROFILES) * 32] != 0:
+    if image[root + len(included) * 32] != 0:
         raise ValueError("userspace volume root terminator changed")
-    rebuilt = build_image(echo, uname)
+    rebuilt = build_image(echo, uname, cat)
     if image != rebuilt:
         raise ValueError("userspace volume contains an unexpected byte")
     digest = hashlib.sha256(image).hexdigest().upper()
-    if check_digest and digest != IMAGE_SHA256:
+    expected_digest = IMAGE_SHA256 if cat is not None else NO_CAT_IMAGE_SHA256
+    if check_digest and digest != expected_digest:
         raise ValueError("userspace volume SHA-256 changed")
     return digest
 
 
-def negative_self_test(image: bytes, echo: bytes, uname: bytes) -> None:
+def negative_self_test(image: bytes, echo: bytes, uname: bytes, cat: bytes) -> None:
     root = FIRST_ROOT_SECTOR * BLOCK_BYTES
     fat = FIRST_FAT_SECTOR * BLOCK_BYTES
     data = FIRST_DATA_SECTOR * BLOCK_BYTES
     mutations = (
-        ("missing profile", root, 0),
+        ("missing cat profile", root + 2 * 32, 0),
         ("FAT16 metadata", 12, 0),
         ("FAT16 chain", fat + ECHO_FIRST_CLUSTER * 2, 0),
         ("checksum", data + ECHO_BYTES // 2, image[data + ECHO_BYTES // 2] ^ 1),
@@ -204,7 +234,7 @@ def negative_self_test(image: bytes, echo: bytes, uname: bytes) -> None:
         changed = bytearray(image)
         changed[offset] = value
         try:
-            verify_image(bytes(changed), echo, uname, check_digest=False)
+            verify_image(bytes(changed), echo, uname, cat, check_digest=False)
         except ValueError:
             continue
         raise ValueError(f"negative {name} mutation was accepted")
@@ -231,23 +261,32 @@ def checked_file(argument: str, output: bool) -> Path:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
-        print(f"usage: {Path(sys.argv[0]).name} ECHO UNAME OUTPUT", file=sys.stderr)
+    if len(sys.argv) != 5:
+        print(
+            f"usage: {Path(sys.argv[0]).name} ECHO UNAME CAT|--without-cat OUTPUT",
+            file=sys.stderr,
+        )
         return 2
     output = None
     try:
         echo_path = checked_file(sys.argv[1], output=False)
         uname_path = checked_file(sys.argv[2], output=False)
-        output = checked_file(sys.argv[3], output=True)
+        cat_path = (
+            None if sys.argv[3] == "--without-cat"
+            else checked_file(sys.argv[3], output=False)
+        )
+        output = checked_file(sys.argv[4], output=True)
         echo = echo_path.read_bytes()
         uname = uname_path.read_bytes()
-        image = build_image(echo, uname)
-        negative_self_test(image, echo, uname)
+        cat = None if cat_path is None else cat_path.read_bytes()
+        image = build_image(echo, uname, cat)
+        if cat is not None:
+            negative_self_test(image, echo, uname, cat)
         with output.open("wb") as stream:
             stream.write(image)
             stream.flush()
             os.fsync(stream.fileno())
-        digest = verify_image(output.read_bytes(), echo, uname)
+        digest = verify_image(output.read_bytes(), echo, uname, cat)
     except (OSError, ValueError, struct.error) as error:
         if output is not None:
             try:
@@ -258,7 +297,8 @@ def main() -> int:
         return 1
     print(
         f"{output}: {TOTAL_SECTORS} sectors x {BLOCK_BYTES} bytes, "
-        f"echo {ECHO_BYTES} bytes, uname {UNAME_BYTES} bytes, SHA-256 {digest}"
+        f"echo {ECHO_BYTES} bytes, uname {UNAME_BYTES} bytes, "
+        f"cat {CAT_BYTES if cat is not None else 0} bytes, SHA-256 {digest}"
     )
     return 0
 

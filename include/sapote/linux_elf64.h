@@ -20,6 +20,12 @@
 #define LINUX_UNAME_ELF64_IMAGE_PAGES 11U
 #define LINUX_UNAME_ELF64_ENTRY UINT64_C(0x000040000100107A)
 #define LINUX_UNAME_ELF64_PARSER_ROBUSTNESS_CONTROLS 24U
+#define LINUX_CAT_ELF64_FILE_BYTES 38632U
+#define LINUX_CAT_ELF64_PROGRAM_HEADERS 5U
+#define LINUX_CAT_ELF64_LOAD_SEGMENTS 4U
+#define LINUX_CAT_ELF64_IMAGE_PAGES 12U
+#define LINUX_CAT_ELF64_ENTRY UINT64_C(0x000040000100107A)
+#define LINUX_CAT_ELF64_PARSER_ROBUSTNESS_CONTROLS 24U
 
 enum linux_elf64_status {
     LINUX_ELF64_STATUS_OK = 0,
@@ -83,6 +89,12 @@ enum linux_elf64_status sapote_linux_elf64_parse(
 );
 uint32_t sapote_linux_uname_elf64_self_test(void);
 enum linux_elf64_status sapote_linux_uname_elf64_parse(
+    const uint8_t *input,
+    size_t input_len,
+    struct linux_elf64_validated_image *out
+);
+uint32_t sapote_linux_cat_elf64_self_test(void);
+enum linux_elf64_status sapote_linux_cat_elf64_parse(
     const uint8_t *input,
     size_t input_len,
     struct linux_elf64_validated_image *out

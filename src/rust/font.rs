@@ -53,6 +53,11 @@ pub enum Status {
     BufferTooSmall = 7,
 }
 
+#[inline(never)]
+fn copy_byte(destination: &mut u8, source: &u8) {
+    *destination = *source;
+}
+
 /// What the table's header declares.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -153,7 +158,9 @@ pub fn glyph(blob: &[u8], code: u32, out: &mut [u8]) -> Result<usize, Status> {
         None => return Err(Status::Truncated),
     };
 
-    out[..height].copy_from_slice(rows);
+    for index in 0..height {
+        copy_byte(&mut out[index], &rows[index]);
+    }
     Ok(height)
 }
 

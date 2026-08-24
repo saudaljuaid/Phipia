@@ -64,13 +64,17 @@ or framebuffer shell instead of publishing a partial desktop success.
 ## Terminal commands
 
 The native `echo` command is unchanged. The separate `linux` command exposes
-only the two measured profiles:
+only three measured profiles:
 
 ```text
 sap> linux echo
 SAPOTE
 sap> linux uname
 Linux
+sap> linux cat
+pebble
+pebble
+^D
 sap>
 ```
 
@@ -78,6 +82,13 @@ sap>
 userspace volume or invalid profile produces one concise error and leaves the
 prompt usable. Successful output is accepted from the actual userspace `write`
 or `writev` buffers; the shell contains no substitute output strings.
+
+Only a waiting `linux cat` owns terminal input. Enter completes a line,
+Backspace edits its current uncommitted line, and left Ctrl-D on an empty line
+delivers EOF without passing a byte to userspace. Input is limited to four
+complete lines, 64 printable ASCII bytes plus newline per line, and 256 bytes
+per launch. While that foreground owner exists, input does not enter the shell
+parser; teardown restores ordinary shell ownership and the prompt.
 
 ## Captures
 
@@ -102,9 +113,16 @@ cursor damage, framebuffer pixels, and clean handoff. The production-path
 `first-light-userland` scenario drives the same shell dispatch as an interactive
 boot, launches both profiles twice, and requires prompt restoration and clean
 teardown. `first-light-userland-absent` proves a missing volume is recoverable.
+The `first-light-userland-interactive` scenario launches `cat` twice through
+keyboard IRQ events, supplies different lines and Ctrl-D, and proves fresh
+generations and prompt restoration. Its `-absent` companion omits only cat and
+then runs an existing measured Linux command successfully.
 
 ## Limits
 
 First Light has a fixed workspace and fixed tools. It does not provide movable
 arbitrary windows, user applications, compositing, themes, accessibility APIs,
 international text, or a persistent settings service.
+
+The foreground input path is a profile-specific bounded state machine. It is
+not a general stdin ABI, canonical mode, or a TTY subsystem.

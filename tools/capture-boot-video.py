@@ -5,8 +5,8 @@
 Frames come directly from QMP ``screendump`` calls. The guest is started in a
 paused state, continued on the first frame, and required to emit the installed
 Boot Ledger proof before the recording is accepted. At ten seconds the script
-opens Terminal; at thirteen seconds it enters ``linux uname`` so the finished
-clip demonstrates the measured userspace path.
+opens Terminal; at thirteen seconds it enters the selected measured command.
+The default cat interaction then supplies ``pebble`` and Ctrl-D.
 """
 
 import argparse
@@ -19,8 +19,17 @@ from pathlib import Path
 
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
-USERLAND_LINE = b"FL USERLAND launch completed successfully uname ordinal 1"
+USERLAND_LINES = {
+    "uname": b"FL USERLAND launch completed successfully uname ordinal 1",
+    "cat": b"FL USERLAND launch completed successfully cat ordinal 1",
+}
+CAT_FOREGROUND_LINE = (
+    b"FL USERLAND cat foreground launch yielded to First Light"
+)
+CAT_STDOUT_LINE = b"FL CAT userspace stdout accepted"
 COMMAND_SECONDS = 13.0
+CAT_INPUT_SECONDS = 15.0
+CAT_EOF_SECONDS = 17.0
 
 
 class Qmp:
@@ -81,6 +90,10 @@ def capture(qmp, destination):
     })
 
 
+def transcript_contains(path, marker):
+    return path.exists() and marker in path.read_bytes()
+
+
 def encode(ffmpeg, pattern, fps, seconds, output):
     command = [
         ffmpeg, "-hide_banner", "-loglevel", "warning", "-y",
@@ -103,11 +116,17 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--fps", type=int, default=10)
+    parser.add_argument(
+        "--interaction", choices=sorted(USERLAND_LINES), default="cat"
+    )
     args = parser.parse_args()
     if args.fps <= 0:
         parser.error("--fps must be positive")
     if args.seconds < COMMAND_SECONDS + 1.0 / args.fps:
         parser.error("--seconds is too short to capture the scheduled command")
+    if (args.interaction == "cat" and
+            args.seconds < CAT_EOF_SECONDS + 1.0 / args.fps):
+        parser.error("--seconds is too short to capture cat input and EOF")
 
     if args.seconds <= 0.0 or args.fps <= 0:
         raise ValueError("seconds and fps must be positive")
@@ -144,6 +163,8 @@ def main():
             pointer_parked = False
             terminal_opened = False
             command_entered = False
+            cat_input_entered = False
+            cat_eof_entered = False
             for index in range(frame_count):
                 deadline = started + index / args.fps
                 remaining = deadline - time.monotonic()
@@ -157,11 +178,34 @@ def main():
                     qmp.hmp("sendkey ret")
                     terminal_opened = True
                 if elapsed >= COMMAND_SECONDS and not command_entered:
-                    for key in "linux uname":
+                    for key in f"linux {args.interaction}":
                         qmp.hmp(f"sendkey {'spc' if key == ' ' else key}")
                     qmp.hmp("sendkey ret")
                     command_entered = True
+                if (args.interaction == "cat" and
+                        elapsed >= CAT_INPUT_SECONDS and
+                        not cat_input_entered and
+                        transcript_contains(serial, CAT_FOREGROUND_LINE)):
+                    for key in "pebble":
+                        qmp.hmp(f"sendkey {key}")
+                    qmp.hmp("sendkey ret")
+                    cat_input_entered = True
+                if (args.interaction == "cat" and
+                        elapsed >= CAT_EOF_SECONDS and
+                        cat_input_entered and not cat_eof_entered and
+                        transcript_contains(serial, CAT_STDOUT_LINE)):
+                    qmp.hmp("sendkey ctrl-d")
+                    cat_eof_entered = True
                 capture(qmp, work / f"frame-{index:04d}.ppm")
+            if (args.interaction == "cat" and
+                    (not cat_input_entered or not cat_eof_entered)):
+                transcript = serial.read_bytes() if serial.exists() else b""
+                tail = transcript[-4096:].decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "recording timed out waiting for the cat foreground "
+                    f"or stdout handoff (input={cat_input_entered}, "
+                    f"eof={cat_eof_entered})\n{tail}"
+                )
         finally:
             if qmp is not None:
                 try:
@@ -176,10 +220,12 @@ def main():
                 process.wait()
 
         transcript = serial.read_bytes() if serial.exists() else b""
-        if PROOF_LINE not in transcript or USERLAND_LINE not in transcript:
+        if (PROOF_LINE not in transcript or
+                USERLAND_LINES[args.interaction] not in transcript):
             tail = transcript[-4096:].decode("utf-8", errors="replace")
             raise RuntimeError(
-                "recording omitted the installed proof or uname launch\n" + tail
+                "recording omitted the installed proof or userspace launch\n" +
+                tail
             )
         encode(
             args.ffmpeg, work / "frame-%04d.ppm", args.fps,

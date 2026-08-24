@@ -14,6 +14,9 @@
 #define LINUX_UNAME_FAT16_FILE_BYTES 38368U
 #define LINUX_UNAME_FAT16_FILE_CLUSTERS 10U
 #define LINUX_UNAME_FAT16_ROBUSTNESS_CONTROLS 12U
+#define LINUX_CAT_FAT16_FILE_BYTES 38632U
+#define LINUX_CAT_FAT16_FILE_CLUSTERS 10U
+#define LINUX_CAT_FAT16_ROBUSTNESS_CONTROLS 12U
 
 enum linux_fat16_status {
     LINUX_FAT16_STATUS_OK = 0,
@@ -102,5 +105,29 @@ enum linux_fat16_status sapote_linux_uname_fat16_validate_payload(
     struct linux_fat16_payload *out
 );
 uint32_t sapote_linux_uname_fat16_self_test(void);
+enum linux_fat16_status sapote_linux_cat_fat16_find_root(
+    const uint8_t *block,
+    size_t block_len,
+    const struct fat16_geometry *geometry,
+    const struct fat16_root_query *query,
+    uint32_t destination_bytes,
+    struct fat16_root_entry *out
+);
+enum linux_fat16_status sapote_linux_cat_fat16_make_query(
+    struct fat16_root_query *out
+);
+enum linux_fat16_status sapote_linux_cat_fat16_build_chain(
+    const uint8_t *fat,
+    size_t fat_len,
+    const struct fat16_geometry *geometry,
+    const struct fat16_root_entry *entry,
+    struct linux_fat16_chain *out
+);
+enum linux_fat16_status sapote_linux_cat_fat16_validate_payload(
+    const uint8_t *data,
+    size_t data_len,
+    struct linux_fat16_payload *out
+);
+uint32_t sapote_linux_cat_fat16_self_test(void);
 
 #endif

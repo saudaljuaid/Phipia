@@ -1,0 +1,27 @@
+# Sapote v1.1.0 BusyBox cat syscall contract
+#
+# This is the normalized independent trace of the exact binary identified
+# below. The host execve that installs the image is not part of the in-kernel
+# allowlist. Repeated line delivery repeats entries 03 and 04 within the fixed
+# launch bounds before the final zero-length entry 05.
+#
+# BusyBox SHA-256:
+# 8191596A22778B575942895071A2E50CCEEE0F82F4D88B6D986584CE0914FC3E
+# argv: busybox cat
+# envp: empty
+# auxv: AT_PAGESZ=4096, AT_NULL
+
+01  158  arch_prctl(ARCH_SET_FS, 0x40000100b178) = 0
+02  218  set_tid_address(0x40000100b324) = positive-proof-tid
+03    0  read(0, 0x400001203f00, 4096) = delivered-line-bytes
+04    1  write(1, 0x400001203f00, delivered-line-bytes)
+          = delivered-line-bytes
+05    0  read(0, 0x400001203f00, 4096) = 0
+06  231  exit_group(0) = no-return
+
+# Allowlist: 0, 1, 158, 218, 231 (5 distinct numbers).
+# Only cat may invoke read. The fd, pointer, and count are exact; a wrong fd
+# returns -EBADF and an invalid complete destination returns -EFAULT without a
+# partial copy. Each write is the exact byte-for-byte line supplied by the
+# preceding successful read. Every other number returns -ENOSYS and leaves
+# process state unchanged.

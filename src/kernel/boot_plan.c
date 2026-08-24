@@ -33,6 +33,7 @@
 #include <sapote/ioapic.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_cat.h>
 #include <sapote/linux_syscall.h>
 #include <sapote/linux_uname.h>
 #include <sapote/memory.h>
@@ -55,6 +56,14 @@
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
+
+static bool test_uses_first_light_userland(enum kernel_test_scenario scenario)
+{
+    return scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
+}
 
 static void stage_failed(
     struct boot_context *context,
@@ -1245,7 +1254,7 @@ static void execute_nvme_read_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
+        test_uses_first_light_userland(context->test_scenario)) {
         console_write("Sapote: NVMe fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1367,7 +1376,7 @@ static void execute_filesystem_file_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
+        test_uses_first_light_userland(context->test_scenario)) {
         console_write("Sapote: FAT16 fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1609,6 +1618,7 @@ static void execute_linux_uname_image_uts_foundation(
 )
 {
     size_t completed = 0U;
+    size_t cat_completed = 0U;
 
     if (!linux_uname_image_uts_foundation_self_test(&completed) ||
         completed != LINUX_UNAME_ABI_IMAGE_UTS_FOUNDATION_CONTROLS) {
@@ -1619,10 +1629,24 @@ static void execute_linux_uname_image_uts_foundation(
             "BusyBox uname ELF, stack, and UTS controls failed");
         return;
     }
+    if (!linux_cat_image_stdin_foundation_self_test(&cat_completed) ||
+        cat_completed != LINUX_CAT_ABI_IMAGE_STDIN_FOUNDATION_CONTROLS) {
+        console_write("Sapote: BusyBox cat foundation stopped after ");
+        console_write_u64(cat_completed);
+        console_write(" counted controls\n");
+        stage_failed(context, result,
+            "BusyBox cat ELF, stack, and stdin controls failed");
+        return;
+    }
     console_write("Sapote: BusyBox uname image and UTS controls ");
     console_write_u64(completed);
     console_putc('/');
     console_write_u64(LINUX_UNAME_ABI_IMAGE_UTS_FOUNDATION_CONTROLS);
+    console_write(" passed\n");
+    console_write("Sapote: BusyBox cat image and stdin controls ");
+    console_write_u64(cat_completed);
+    console_putc('/');
+    console_write_u64(LINUX_CAT_ABI_IMAGE_STDIN_FOUNDATION_CONTROLS);
     console_write(" passed\n");
     boot_stage_result_succeed(descriptor, result);
 }
@@ -2770,7 +2794,9 @@ static bool declare_dependencies(
         descriptor->required_capability_count = 6U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE;
-        descriptor->provided_capability_count = 1U;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 2U;
         break;
     case BOOT_STAGE_PROCESS_INSTALLED_PROOF:
         for (size_t index = 0U;
@@ -2862,7 +2888,9 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE;
         descriptor->required_capabilities[12] =
             BOOT_CAPABILITY_LINUX_UNAME_OUTCOME_DECIDED;
-        descriptor->required_capability_count = 13U;
+        descriptor->required_capabilities[13] =
+            BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 14U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->provided_capability_count = 1U;

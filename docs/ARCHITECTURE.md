@@ -68,18 +68,29 @@ passthrough, or general USB class stack.
 
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
 private interrupt gate. Separately, the Linux compatibility boundary programs
-the x86_64 `SYSCALL` MSRs and runs two checksum-pinned static BusyBox profiles:
-`echo SAPOTE` and `uname -s`. First Light's `linux` command selects one of the
-two exact root entries on a deterministic read-only FAT16 volume attached as an
-ordinary emulated NVMe namespace. Each launch validates CPU-owned bytes, builds
-a fresh private address space, enters CPL3, authenticates exact output, and
-tears the generation down before restoring the prompt.
+the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
+profiles: `echo SAPOTE`, `uname -s`, and `cat`. First Light's `linux` command
+selects one of the three exact root entries on a deterministic read-only FAT16
+volume attached as an ordinary emulated NVMe namespace. Each launch validates
+CPU-owned bytes, builds a fresh private address space, enters CPL3,
+authenticates exact output, and tears the generation down before restoring the
+prompt.
+
+Echo and uname remain synchronous. Cat alone may suspend at its measured
+`read(0, 0x400001203f00, 4096)` entry. The syscall boundary saves an
+authenticated user frame, restores the kernel CR3 and safe launch stack, and
+returns to First Light without printing a prompt. Keyboard events then belong
+to the bounded foreground line state. A complete line or EOF is revalidated,
+copied all-or-nothing into the authenticated RW/NX mapping, and resumes the
+same generation immediately after the real `SYSCALL`. The cycle may repeat
+only inside the fixed line and byte limits; failure or exit releases the saved
+frame, input, output ownership, mappings, and generation.
 
 The v0.8.0 echo and v0.9.0 uname standalone fixtures remain independent proof
-scenarios. The v1.0.0 volume composes those frozen profiles without creating a
-VFS or path API. This surface is not POSIX and is not Sapote's native
-application ABI. It accepts only the measured calls, arguments, mappings,
-output, and lifecycle documented in
+scenarios. The v1.1.0 volume composes those frozen profiles with the new cat
+profile without creating a VFS or path API. This surface is not POSIX and is
+not Sapote's native application ABI. It accepts only the measured calls,
+arguments, mappings, input/output relationship, and lifecycle documented in
 [`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
 
 ## Rust boundary

@@ -1071,7 +1071,7 @@ static enum ui_status draw_system_panel(struct ui_rect damage)
 static enum ui_status draw_about_panel(struct ui_rect damage)
 {
     static const char *const lines[] = {
-        "Sapote 1.0.0",
+        "Sapote 1.1.0",
         "First Light / Pebble",
         "proof-driven operating system",
         "hello from the metal."
@@ -1319,7 +1319,7 @@ static enum ui_status draw_hero_details(struct ui_rect damage)
     if (status == UI_STATUS_OK) {
         status = draw_text(state.layout.version_label, damage,
             state.layout.version_label.x, state.layout.version_baseline,
-            "Version 1.0.0", state.theme.ink);
+            "Version 1.1.0", state.theme.ink);
     }
     return status;
 }

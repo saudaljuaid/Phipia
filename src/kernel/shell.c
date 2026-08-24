@@ -11,6 +11,7 @@
 #include <sapote/heap.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_userland.h>
+#include <sapote/linux_syscall.h>
 #include <sapote/memory.h>
 #include <sapote/pci.h>
 #include <sapote/screen.h>
@@ -47,6 +48,29 @@ static bool is_separator(char character)
 static struct shell_state state;
 static char line[SHELL_LINE_LIMIT + 1U];
 static bool linux_prompt_evidence_pending;
+static bool ui_keyboard_operational;
+static bool ui_keyboard_decided;
+
+struct foreground_input_state {
+    uint8_t line[LINUX_CAT_INPUT_LINE_BYTES + 1U];
+    uint64_t generation;
+    size_t length;
+    uint32_t delivered_lines;
+    uint32_t delivered_bytes;
+    bool active;
+    bool overflow_notified;
+};
+
+static struct foreground_input_state foreground;
+
+static void zero_bytes(void *pointer, size_t length)
+{
+    uint8_t *bytes = pointer;
+
+    for (size_t index = 0U; index < length; ++index) {
+        bytes[index] = 0U;
+    }
+}
 
 static bool matches(const char *text, const char *name)
 {
@@ -123,7 +147,7 @@ static void command_help(void)
 {
     console_write("  help      this list\n");
     console_write("  echo      print the rest of the line\n");
-    console_write("  linux     run measured echo or uname userspace\n");
+    console_write("  linux     run measured echo, uname, or bounded cat userspace\n");
     console_write("  clear     clear the screen\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
@@ -150,8 +174,11 @@ static void command_linux(const char *arguments)
         profile = LINUX_USERLAND_PROFILE_ECHO;
     } else if (argument_equals(arguments, "uname")) {
         profile = LINUX_USERLAND_PROFILE_UNAME;
+    } else if (argument_equals(arguments, "cat")) {
+        profile = LINUX_USERLAND_PROFILE_CAT;
     } else {
-        console_write("linux: use 'linux echo' or 'linux uname'\n");
+        console_write(
+            "linux: use 'linux echo', 'linux uname', or 'linux cat'\n");
         console_serial_write("FL USERLAND unsupported profile refused\n");
         return;
     }
@@ -159,6 +186,13 @@ static void command_linux(const char *arguments)
     console_serial_write(linux_userland_profile_name(profile));
     console_serial_write("\n");
     status = linux_userland_launch(profile, &result);
+    if (status == LINUX_USERLAND_STATUS_WAITING &&
+        profile == LINUX_USERLAND_PROFILE_CAT) {
+        zero_bytes(&foreground, sizeof(foreground));
+        foreground.generation = result.generation;
+        foreground.active = true;
+        return;
+    }
     if (status != LINUX_USERLAND_STATUS_OK) {
         console_write("linux: ");
         console_write(linux_userland_status_string(status));
@@ -261,7 +295,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 1.0.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Sapote 1.1.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -355,6 +389,149 @@ enum shell_status shell_execute(const char *text)
     return SHELL_STATUS_OK;
 }
 
+static void write_prompt_restored(void)
+{
+    console_write(SHELL_PROMPT);
+    if (linux_prompt_evidence_pending) {
+        console_serial_write("\nFL USERLAND First Light prompt restored\n");
+        console_serial_write(SHELL_PROMPT);
+        linux_prompt_evidence_pending = false;
+    }
+}
+
+static void foreground_release(void)
+{
+    zero_bytes(&foreground, sizeof(foreground));
+}
+
+static void foreground_refusal(const char *message)
+{
+    console_putc('\n');
+    console_write("linux cat: ");
+    console_write(message);
+    console_putc('\n');
+    if (foreground.length != 0U) {
+        console_write_n((const char *)foreground.line,
+            foreground.length);
+    }
+}
+
+static void foreground_fail(enum linux_userland_status status)
+{
+    console_write("linux cat: ");
+    console_write(linux_userland_status_string(status));
+    console_putc('\n');
+    (void)linux_userland_abort_foreground();
+    foreground_release();
+    write_prompt_restored();
+}
+
+static void foreground_deliver(bool eof)
+{
+    struct linux_userland_result result;
+    enum linux_userland_status status;
+    size_t byte_count = 0U;
+
+    if (!eof) {
+        foreground.line[foreground.length] = (uint8_t)'\n';
+        byte_count = foreground.length + 1U;
+        console_putc('\n');
+        console_serial_write(
+            "FL CAT terminal input accepted through keyboard events bytes ");
+        console_serial_write_u64(byte_count);
+        console_serial_write("\n");
+    } else {
+        console_write("^D\n");
+    }
+    status = linux_userland_deliver_cat_input(
+        eof ? NULL : foreground.line, byte_count, eof, &result);
+    if (status == LINUX_USERLAND_STATUS_WAITING) {
+        foreground.length = 0U;
+        foreground.line[0] = 0U;
+        foreground.delivered_lines = result.input_lines;
+        foreground.delivered_bytes = result.input_bytes;
+        foreground.overflow_notified = false;
+        return;
+    }
+    if (status == LINUX_USERLAND_STATUS_OK && result.teardown_complete &&
+        result.eof_delivered) {
+        foreground_release();
+        write_prompt_restored();
+        return;
+    }
+    foreground_fail(status);
+}
+
+static bool foreground_handle_event(const struct keyboard_event *event)
+{
+    if (!foreground.active || event == NULL) {
+        return false;
+    }
+    if (!linux_userland_foreground_waiting() ||
+        foreground.generation != linux_userland_active_generation()) {
+        foreground_fail(LINUX_USERLAND_STATUS_INPUT_REFUSED);
+        return true;
+    }
+    if (!event->pressed) {
+        return true;
+    }
+    if (event->control && event->scancode == UINT8_C(0x20)) {
+        if (foreground.length != 0U) {
+            foreground_refusal("Ctrl-D needs an empty current line");
+            return true;
+        }
+        foreground_deliver(true);
+        return true;
+    }
+    if (event->character == '\b') {
+        if (foreground.length != 0U) {
+            --foreground.length;
+            foreground.line[foreground.length] = 0U;
+            foreground.overflow_notified = false;
+            console_putc('\b');
+            console_putc(' ');
+            console_putc('\b');
+        }
+        return true;
+    }
+    if (event->character == '\n' || event->character == '\r') {
+        const size_t byte_count = foreground.length + 1U;
+
+        if (foreground.delivered_lines >= LINUX_CAT_INPUT_LINES) {
+            foreground_refusal("four complete lines is the launch bound");
+            return true;
+        }
+        if (byte_count > LINUX_CAT_INPUT_TOTAL_BYTES -
+                foreground.delivered_bytes) {
+            foreground_refusal("total input is limited to 256 bytes");
+            return true;
+        }
+        foreground_deliver(false);
+        return true;
+    }
+    if (event->character < ' ' || event->character > '~') {
+        return true;
+    }
+    if (foreground.delivered_lines >= LINUX_CAT_INPUT_LINES) {
+        if (!foreground.overflow_notified) {
+            foreground_refusal("four complete lines is the launch bound");
+            foreground.overflow_notified = true;
+        }
+        return true;
+    }
+    if (foreground.length >= LINUX_CAT_INPUT_LINE_BYTES) {
+        if (!foreground.overflow_notified) {
+            foreground_refusal("a line is limited to 64 printable bytes");
+            foreground.overflow_notified = true;
+        }
+        return true;
+    }
+    foreground.line[foreground.length] = (uint8_t)event->character;
+    ++foreground.length;
+    console_putc(event->character);
+    return true;
+}
+
 enum shell_status shell_feed(char character)
 {
     enum shell_status status;
@@ -368,12 +545,10 @@ enum shell_status shell_feed(char character)
         line[state.length] = '\0';
         state.length = 0U;
         status = shell_execute(line);
-        console_write(SHELL_PROMPT);
-        if (linux_prompt_evidence_pending) {
-            console_serial_write("\nFL USERLAND First Light prompt restored\n");
-            console_serial_write(SHELL_PROMPT);
-            linux_prompt_evidence_pending = false;
+        if (linux_userland_foreground_waiting()) {
+            return status;
         }
+        write_prompt_restored();
         return status;
     }
 
@@ -433,9 +608,50 @@ struct shell_state shell_get_state(void)
     return state;
 }
 
-_Noreturn void shell_run(void)
+void shell_process_keyboard_events(void)
 {
     struct keyboard_event event;
+
+    if (!ui_keyboard_decided) {
+        ui_keyboard_operational = ui_is_active();
+        ui_keyboard_decided = true;
+    }
+    while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
+        if (foreground_handle_event(&event)) {
+            continue;
+        }
+        if (!event.pressed) {
+            continue;
+        }
+        if (ui_keyboard_operational && event.scancode == 0x0FU) {
+            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                ui_keyboard_operational = false;
+            }
+            continue;
+        }
+        if (ui_keyboard_operational && event.scancode == 0x01U) {
+            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                ui_keyboard_operational = false;
+            }
+            continue;
+        }
+        if (ui_keyboard_operational && event.scancode == 0x1CU &&
+            ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
+            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                ui_keyboard_operational = false;
+            }
+            continue;
+        }
+        if (event.character != '\0' &&
+            (!ui_keyboard_operational ||
+                ui_get_state()->active_panel == UI_PANEL_TERMINAL)) {
+            (void)shell_feed(event.character);
+        }
+    }
+}
+
+_Noreturn void shell_run(void)
+{
     bool ui_operational = ui_is_active();
 
     if (!state.active) {
@@ -446,39 +662,10 @@ _Noreturn void shell_run(void)
     console_write(SHELL_PROMPT);
 
     for (;;) {
-        while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
-            if (!event.pressed) {
-                continue;
-            }
-
-            if (ui_operational && event.scancode == 0x0FU) {
-                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
-                    ui_operational = false;
-                }
-                continue;
-            }
-
-            if (ui_operational && event.scancode == 0x01U) {
-                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
-                    ui_operational = false;
-                }
-                continue;
-            }
-
-            if (ui_operational && event.scancode == 0x1CU &&
-                ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
-                if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
-                    ui_operational = false;
-                }
-                continue;
-            }
-
-            if (event.character != '\0' &&
-                (!ui_operational ||
-                    ui_get_state()->active_panel == UI_PANEL_TERMINAL)) {
-                (void)shell_feed(event.character);
-            }
-        }
+        ui_keyboard_operational = ui_operational;
+        ui_keyboard_decided = true;
+        shell_process_keyboard_events();
+        ui_operational = ui_keyboard_operational;
 
         if (ui_operational) {
             enum ui_status status = ui_process_events();

@@ -142,5 +142,15 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_first_light_userland_absent();
     }
 
+    if (installed_context.test_scenario ==
+            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE) {
+        kernel_test_complete_first_light_userland_interactive();
+    }
+
+    if (installed_context.test_scenario ==
+            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT) {
+        kernel_test_complete_first_light_userland_interactive_absent();
+    }
+
     shell_run();
 }
