@@ -57,6 +57,14 @@
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
 
+static bool test_uses_first_light_userland(enum kernel_test_scenario scenario)
+{
+    return scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE ||
+        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
+}
+
 static void stage_failed(
     struct boot_context *context,
     struct boot_stage_result *result,
@@ -1246,7 +1254,7 @@ static void execute_nvme_read_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
+        test_uses_first_light_userland(context->test_scenario)) {
         console_write("Sapote: NVMe fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
@@ -1368,7 +1376,7 @@ static void execute_filesystem_file_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        context->test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
+        test_uses_first_light_userland(context->test_scenario)) {
         console_write("Sapote: FAT16 fixture absent\n");
         boot_stage_result_skip(descriptor, result);
         return;
