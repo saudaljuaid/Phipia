@@ -19,6 +19,13 @@ pub const UNAME_SHA256: [u8; 32] = [
     0x38, 0x9A, 0xD6, 0xB1, 0x38, 0x04, 0xEB, 0x73, 0x07, 0xBA, 0x58, 0x9C, 0x8E, 0x8A, 0x7C, 0x70,
     0x2F, 0x91, 0x30, 0x20, 0x05, 0xA7, 0xC5, 0xFC, 0x6E, 0x9E, 0x99, 0x12, 0x4F, 0xCE, 0xAF, 0x43,
 ];
+pub const CAT_FILE_BYTES: u32 = 38_632;
+pub const CAT_FILE_CLUSTERS: u32 = 10;
+pub const CAT_NAME: [u8; 11] = *b"CATBOX     ";
+pub const CAT_SHA256: [u8; 32] = [
+    0x81, 0x91, 0x59, 0x6A, 0x22, 0x77, 0x8B, 0x57, 0x59, 0x42, 0x89, 0x50, 0x71, 0xA2, 0xE5, 0x0C,
+    0xCE, 0xEE, 0x0F, 0x82, 0xF4, 0xD8, 0x8B, 0x6D, 0x98, 0x65, 0x84, 0xCE, 0x09, 0x14, 0xFC, 0x3E,
+];
 
 #[derive(Clone, Copy)]
 struct Contract {
@@ -40,6 +47,13 @@ const UNAME_CONTRACT: Contract = Contract {
     file_clusters: UNAME_FILE_CLUSTERS,
     name: UNAME_NAME,
     sha256: UNAME_SHA256,
+};
+
+const CAT_CONTRACT: Contract = Contract {
+    file_bytes: CAT_FILE_BYTES,
+    file_clusters: CAT_FILE_CLUSTERS,
+    name: CAT_NAME,
+    sha256: CAT_SHA256,
 };
 
 const ATTR_ARCHIVE: u8 = 0x20;
@@ -183,6 +197,8 @@ fn contract_for_name(name: &[u8]) -> Option<Contract> {
         Some(ECHO_CONTRACT)
     } else if name == UNAME_CONTRACT.name {
         Some(UNAME_CONTRACT)
+    } else if name == CAT_CONTRACT.name {
+        Some(CAT_CONTRACT)
     } else {
         None
     }
@@ -194,6 +210,10 @@ pub fn make_query() -> RootQuery {
 
 pub fn make_uname_query() -> RootQuery {
     make_query_for(UNAME_CONTRACT)
+}
+
+pub fn make_cat_query() -> RootQuery {
+    make_query_for(CAT_CONTRACT)
 }
 
 fn find_root_for(
@@ -302,6 +322,15 @@ pub fn find_uname_root(
     destination_bytes: u32,
 ) -> Result<RootEntry, Status> {
     find_root_for(UNAME_CONTRACT, block, geometry, query, destination_bytes)
+}
+
+pub fn find_cat_root(
+    block: &[u8],
+    geometry: &Geometry,
+    query: &RootQuery,
+    destination_bytes: u32,
+) -> Result<RootEntry, Status> {
+    find_root_for(CAT_CONTRACT, block, geometry, query, destination_bytes)
 }
 
 fn cluster_lba(geometry: &Geometry, cluster: u16) -> Result<u64, Status> {
@@ -414,6 +443,14 @@ pub fn build_uname_chain(
     entry: &RootEntry,
 ) -> Result<Chain, Status> {
     build_chain_for(UNAME_CONTRACT, fat, geometry, entry)
+}
+
+pub fn build_cat_chain(
+    fat: &[u8],
+    geometry: &Geometry,
+    entry: &RootEntry,
+) -> Result<Chain, Status> {
+    build_chain_for(CAT_CONTRACT, fat, geometry, entry)
 }
 
 const SHA256_INITIAL: [u32; 8] = [
@@ -578,6 +615,10 @@ pub fn validate_uname_payload(data: &[u8]) -> Result<Payload, Status> {
     validate_payload_for(data, UNAME_CONTRACT)
 }
 
+pub fn validate_cat_payload(data: &[u8]) -> Result<Payload, Status> {
+    validate_payload_for(data, CAT_CONTRACT)
+}
+
 fn self_test_for(contract: Contract) -> u32 {
     if MAX_CLUSTERS != 512
         || contract.file_bytes.div_ceil(fat16::BLOCK_BYTES as u32) != contract.file_clusters
@@ -594,6 +635,10 @@ pub fn self_test() -> u32 {
 
 pub fn self_test_uname() -> u32 {
     self_test_for(UNAME_CONTRACT)
+}
+
+pub fn self_test_cat() -> u32 {
+    self_test_for(CAT_CONTRACT)
 }
 
 #[cfg(test)]
