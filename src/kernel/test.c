@@ -5159,10 +5159,14 @@ static bool focus_first_light_terminal(void)
             return false;
         }
         shell_process_keyboard_events();
+        first_light_process_ui(
+            "interactive terminal focus-next processing failed");
         if (!inject_keyboard_byte(UINT8_C(0x8F))) {
             return false;
         }
         shell_process_keyboard_events();
+        first_light_process_ui(
+            "interactive terminal focus release processing failed");
     }
     if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
         return false;
@@ -5171,10 +5175,14 @@ static bool focus_first_light_terminal(void)
         return false;
     }
     shell_process_keyboard_events();
+    first_light_process_ui(
+        "interactive terminal activation processing failed");
     if (!inject_keyboard_byte(UINT8_C(0x9C))) {
         return false;
     }
     shell_process_keyboard_events();
+    first_light_process_ui(
+        "interactive terminal activation release processing failed");
     return ui_get_state()->active_panel == UI_PANEL_TERMINAL;
 }
 
