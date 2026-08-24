@@ -201,6 +201,24 @@ fn multiply(left: u64, right: u64) -> Result<u64, Status> {
     left.checked_mul(right).ok_or(Status::SpanOverflow)
 }
 
+fn bytewise_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    for (left_byte, right_byte) in left.iter().zip(right.iter()) {
+        // SAFETY: `left_byte` is a live shared reference from `left`.
+        // Volatile reads preserve the explicit freestanding comparison;
+        // otherwise LLVM lowers this bounded walk to a GOT-backed memcmp.
+        let left_value = unsafe { core::ptr::read_volatile(left_byte) };
+        // SAFETY: `right_byte` is a live shared reference from `right`.
+        let right_value = unsafe { core::ptr::read_volatile(right_byte) };
+        if left_value != right_value {
+            return false;
+        }
+    }
+    true
+}
+
 fn power_of_two(value: u32) -> bool {
     value != 0 && value & (value - 1) == 0
 }
@@ -348,7 +366,7 @@ pub(crate) fn validate_fat_pair(
     {
         return Err(Status::Truncated);
     }
-    if first != second {
+    if !bytewise_equal(first, second) {
         return Err(Status::FatMismatch);
     }
     let media = le32(first, 0)? & FAT32_MASK;
