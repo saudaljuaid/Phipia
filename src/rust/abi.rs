@@ -13,6 +13,7 @@
 
 use crate::elf64;
 use crate::fat16;
+use crate::fat32;
 use crate::font;
 use crate::linux_elf64;
 use crate::linux_fat16;
@@ -20,6 +21,18 @@ use crate::logo::{self, Format, Status};
 use crate::ui_font;
 
 const _: () = {
+    assert!(fat32::Status::Count as i32 == 37);
+    assert!(core::mem::size_of::<fat32::Geometry>() == 96);
+    assert!(core::mem::align_of::<fat32::Geometry>() == 8);
+    assert!(core::mem::offset_of!(fat32::Geometry, total_sectors) == 16);
+    assert!(core::mem::offset_of!(fat32::Geometry, cluster_count) == 48);
+    assert!(core::mem::offset_of!(fat32::Geometry, volume_label) == 76);
+    assert!(core::mem::offset_of!(fat32::Geometry, valid) == 88);
+    assert!(core::mem::size_of::<fat32::FsInfo>() == 16);
+    assert!(core::mem::size_of::<fat32::DirectoryEntry>() == 28);
+    assert!(core::mem::offset_of!(fat32::DirectoryEntry, first_cluster) == 16);
+    assert!(core::mem::size_of::<fat32::Name>() == 16);
+
     assert!(core::mem::size_of::<linux_fat16::Chain>() == 5136);
     assert!(core::mem::align_of::<linux_fat16::Chain>() == 8);
     assert!(core::mem::offset_of!(linux_fat16::Chain, clusters) == 0);
@@ -292,6 +305,234 @@ pub unsafe extern "C" fn sapote_ui_font_glyph(code: u32, out: *mut u8, out_len: 
     match ui_font::glyph(UI_FONT, code, bytes) {
         Ok(_) => ui_font_status_code(ui_font::Status::Ok),
         Err(status) => ui_font_status_code(status),
+    }
+}
+
+fn fat32_status_code(status: fat32::Status) -> i32 {
+    status as i32
+}
+
+/// Parse and validate one CPU-owned FAT32 boot sector.
+///
+/// # Safety
+///
+/// `block` must address `block_len` readable bytes and `out` one writable
+/// geometry value. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_parse_bpb(
+    block: *const u8,
+    block_len: usize,
+    namespace_blocks: u64,
+    namespace_block_bytes: u32,
+    out: *mut fat32::Geometry,
+) -> i32 {
+    if out.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Geometry and null was refused.
+    unsafe { *out = fat32::Geometry::invalid() };
+    if block.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(block, block_len) };
+    match fat32::parse_bpb(bytes, namespace_blocks, namespace_block_bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Parse checked FSInfo hints without treating either hint as authoritative.
+///
+/// # Safety
+///
+/// `block` must address `block_len` readable bytes, `geometry` one readable
+/// value, and `out` one writable result. No input may overlap the output.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_parse_fsinfo(
+    block: *const u8,
+    block_len: usize,
+    geometry: *const fat32::Geometry,
+    out: *mut fat32::FsInfo,
+) -> i32 {
+    if out.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *out = fat32::FsInfo::invalid() };
+    if block.is_null() || geometry.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises both readable inputs and non-overlap.
+    let (bytes, checked_geometry) = unsafe {
+        (core::slice::from_raw_parts(block, block_len), *geometry)
+    };
+    match fat32::parse_fsinfo(bytes, &checked_geometry) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Compare mirrored FAT sectors and validate their reserved entries.
+///
+/// # Safety
+///
+/// Each block pointer must address its stated readable length and `geometry`
+/// must address one readable value.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_validate_fat_pair(
+    first: *const u8,
+    first_len: usize,
+    second: *const u8,
+    second_len: usize,
+    geometry: *const fat32::Geometry,
+) -> i32 {
+    if first.is_null() || second.is_null() || geometry.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises all three readable ranges.
+    let (first_bytes, second_bytes, checked_geometry) = unsafe {
+        (
+            core::slice::from_raw_parts(first, first_len),
+            core::slice::from_raw_parts(second, second_len),
+            *geometry,
+        )
+    };
+    match fat32::validate_fat_pair(first_bytes, second_bytes, &checked_geometry) {
+        Ok(()) => fat32_status_code(fat32::Status::Ok),
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Classify one masked FAT32 link value.
+///
+/// # Safety
+///
+/// `geometry` must address one readable value and `out` one writable `u32`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_classify_cluster(
+    value: u32,
+    geometry: *const fat32::Geometry,
+    out: *mut u32,
+) -> i32 {
+    if out.is_null() || geometry.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the output pointer was checked and the caller owns it.
+    unsafe { *out = 0 };
+    // SAFETY: the caller promises one readable Geometry.
+    let checked_geometry = unsafe { *geometry };
+    match fat32::classify_cluster(value, &checked_geometry) {
+        Ok(cluster) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = cluster };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Canonicalize one bounded ASCII 8.3 path component.
+///
+/// # Safety
+///
+/// `component` must address `component_len` readable bytes and `out` one
+/// writable result. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_parse_component(
+    component: *const u8,
+    component_len: usize,
+    out: *mut fat32::Name,
+) -> i32 {
+    if out.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable Name and null was refused.
+    unsafe { *out = fat32::Name::invalid() };
+    if component.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(component, component_len) };
+    match fat32::parse_component(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Validate a complete relative FAT32 path and return its component count.
+///
+/// # Safety
+///
+/// `path` must address `path_len` readable bytes and `component_count` one
+/// writable `u32`. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_validate_path(
+    path: *const u8,
+    path_len: usize,
+    component_count: *mut u32,
+) -> i32 {
+    if component_count.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable value and null was refused.
+    unsafe { *component_count = 0 };
+    if path.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(path, path_len) };
+    match fat32::validate_path(bytes) {
+        Ok(count) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *component_count = count };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
+    }
+}
+
+/// Parse one ordinary, deleted, end, or refused FAT32 directory entry.
+///
+/// # Safety
+///
+/// `entry` must address `entry_len` readable bytes and `out` one writable
+/// result. The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn sapote_fat32_parse_directory_entry(
+    entry: *const u8,
+    entry_len: usize,
+    out: *mut fat32::DirectoryEntry,
+) -> i32 {
+    if out.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable result and null was refused.
+    unsafe { *out = fat32::DirectoryEntry::invalid() };
+    if entry.is_null() {
+        return fat32_status_code(fat32::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this readable range.
+    let bytes = unsafe { core::slice::from_raw_parts(entry, entry_len) };
+    match fat32::parse_directory_entry(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated non-null output still names one value.
+            unsafe { *out = value };
+            fat32_status_code(fat32::Status::Ok)
+        }
+        Err(status) => fat32_status_code(status),
     }
 }
 
