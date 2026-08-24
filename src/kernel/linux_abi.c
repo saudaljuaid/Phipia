@@ -1258,16 +1258,16 @@ static enum linux_abi_status linux_attempt(
         status = LINUX_ABI_STATUS_ABSENT;
         goto cleanup;
     }
-    bool fat32_file = runtime.file.cluster_count ==
-        (LINUX_ELF64_FILE_BYTES + FAT32_BOOT_BYTES - 1U) /
-            FAT32_BOOT_BYTES;
+    bool fat32_file = runtime.file.fat32;
+    uint32_t fat32_clusters =
+        (LINUX_ELF64_FILE_BYTES + FAT32_CLUSTER_BYTES - 1U) /
+            FAT32_CLUSTER_BYTES;
     if (filesystem_status != FILESYSTEM_STATUS_OK ||
         !runtime.file.cpu_owned ||
         runtime.file.file_bytes != LINUX_ELF64_FILE_BYTES ||
-        (runtime.file.cluster_count != LINUX_FAT16_FILE_CLUSTERS &&
-            runtime.file.cluster_count !=
-                (LINUX_ELF64_FILE_BYTES + FAT32_BOOT_BYTES - 1U) /
-                    FAT32_BOOT_BYTES) ||
+        (fat32_file && runtime.file.cluster_count != fat32_clusters) ||
+        (!fat32_file &&
+            runtime.file.cluster_count != LINUX_FAT16_FILE_CLUSTERS) ||
         (!fat32_file &&
             (runtime.file.read_count != 3U + runtime.file.cluster_count ||
              runtime.file.msix_completion_count !=

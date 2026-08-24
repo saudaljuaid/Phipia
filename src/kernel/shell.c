@@ -159,14 +159,14 @@ static void command_help(void)
     console_write("  linux     run measured echo, uname, or bounded cat userspace\n");
     console_write("  drives    mounted FAT32 system and data volumes\n");
     console_write("  mount     retry a recoverable FAT32 mount\n");
-    console_write("  ls/cd/pwd browse the writable data volume\n");
-    console_write("  mkdir/touch/create files and directories\n");
+    console_write("  ls/cd/pwd  browse the writable data volume\n");
+    console_write("  mkdir/touch create files and directories\n");
     console_write("  read      print one file\n");
     console_write("  write     replace a file with one line\n");
     console_write("  append    append one line to a file\n");
     console_write("  writeat   overwrite from a byte offset\n");
     console_write("  truncate  set a file's byte length\n");
-    console_write("  stat/mv/rm inspect, move, or remove a path\n");
+    console_write("  stat/mv/rm  inspect, move, or remove a path\n");
     console_write("  sync      persist completed data operations\n");
     console_write("  reboot    sync, unmount, and restart cleanly\n");
     console_write("  clear     clear the screen\n");

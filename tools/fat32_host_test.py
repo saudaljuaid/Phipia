@@ -98,6 +98,54 @@ class Fat32HostTests(unittest.TestCase):
         with self.assertRaisesRegex(fat32.Fat32Error, "duplicate"):
             fat32.inspect_image(bytes(changed))
 
+    def test_identical_names_in_separate_directories_are_scoped(self) -> None:
+        geometry = fat32.parse_geometry(self.image)
+        changed = bytearray(self.image)
+        root = geometry.sector_offset(
+            geometry.cluster_sector(geometry.root_cluster)
+        )
+        changed[root + 32:root + 64] = fat32._directory_entry(
+            b"FIRST      ", 0x10, 3, 0
+        )
+        changed[root + 64:root + 96] = fat32._directory_entry(
+            b"SECOND     ", 0x10, 4, 0
+        )
+        for cluster in (3, 4):
+            offset = geometry.sector_offset(geometry.cluster_sector(cluster))
+            changed[offset:offset + 32] = fat32._directory_entry(
+                b".          ", 0x10, cluster, 0
+            )
+            changed[offset + 32:offset + 64] = fat32._directory_entry(
+                b"..         ", 0x10, geometry.root_cluster, 0
+            )
+            changed[offset + 64:offset + 96] = fat32._directory_entry(
+                b"NOTES   TXT", 0x20, 0, 0
+            )
+            for copy in range(geometry.fat_copies):
+                fat_offset = geometry.sector_offset(
+                    geometry.first_fat_sector +
+                    copy * geometry.fat_sectors
+                ) + cluster * 4
+                fat32.put_u32(changed, fat_offset, fat32.FAT32_EOC)
+        for sector in (
+            geometry.fsinfo_sector,
+            geometry.backup_boot_sector + geometry.fsinfo_sector,
+        ):
+            info = geometry.sector_offset(sector)
+            fat32.put_u32(
+                changed, info + 488, geometry.cluster_count - 3
+            )
+            fat32.put_u32(changed, info + 492, 5)
+        report = fat32.inspect_image(bytes(changed))
+        note_paths = [
+            item["path"] for item in report["files"]
+            if item["path"].endswith("/NOTES.TXT")
+        ]
+        self.assertEqual(
+            note_paths,
+            ["FIRST/NOTES.TXT", "SECOND/NOTES.TXT"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

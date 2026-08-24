@@ -1606,10 +1606,12 @@ static enum filesystem_status filesystem_linux_read_open_profile(
         file->generation = private_read_runtime.generation;
         file->file_bytes = file_bytes;
         file->cluster_count =
-            (file_bytes + FAT32_BOOT_BYTES - 1U) / FAT32_BOOT_BYTES;
+            (file_bytes + FAT32_CLUSTER_BYTES - 1U) /
+                FAT32_CLUSTER_BYTES;
         file->read_count = (uint32_t)(after - before);
         file->msix_completion_count = after - before;
         file->cpu_owned = true;
+        file->fat32 = true;
         file->active = true;
         return FILESYSTEM_STATUS_OK;
     }

@@ -512,6 +512,7 @@ def _parse_directory(
         raise Fat32Error("truncated directory has no end marker")
 
     folded: set[bytes] = set()
+    descendants: list[DirectoryRecord] = []
     for record in records:
         key = record.short_name.upper()
         if key in folded:
@@ -522,8 +523,10 @@ def _parse_directory(
         if record.is_directory:
             if record.first_cluster < 2:
                 raise Fat32Error("directory has no cluster")
-            records.extend(_parse_directory(image, geometry, record.first_cluster,
-                                            record.path, owners, directory_stack))
+            descendants.extend(_parse_directory(
+                image, geometry, record.first_cluster, record.path, owners,
+                directory_stack
+            ))
         else:
             chain = walk_chain(image, geometry, record.first_cluster)
             capacity = len(chain) * geometry.bytes_per_sector * geometry.sectors_per_cluster
@@ -539,7 +542,7 @@ def _parse_directory(
                     raise Fat32Error(f"cross-linked cluster {owned}")
                 owners[owned] = record.path
     directory_stack.remove(cluster)
-    return records
+    return records + descendants
 
 
 def inspect_image(image: bytes | bytearray | memoryview) -> dict[str, object]:

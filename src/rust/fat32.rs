@@ -11,7 +11,8 @@ const FAT32_MASK: u32 = 0x0fff_ffff;
 const MAX_COMPONENT_BYTES: usize = 12;
 
 #[repr(i32)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) enum Status {
     Ok = 0,
@@ -55,7 +56,8 @@ pub(crate) enum Status {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct Geometry {
     pub(crate) bytes_per_sector: u32,
     pub(crate) sectors_per_cluster: u32,
@@ -100,7 +102,8 @@ impl Geometry {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct FsInfo {
     pub(crate) free_hint: u32,
     pub(crate) next_hint: u32,
@@ -121,7 +124,8 @@ impl FsInfo {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct DirectoryEntry {
     pub(crate) short_name: [u8; 11],
     pub(crate) attributes: u8,
@@ -147,7 +151,8 @@ impl DirectoryEntry {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct Name {
     pub(crate) canonical: [u8; 11],
     pub(crate) kind: u8,
@@ -169,14 +174,23 @@ fn field(bytes: &[u8], offset: usize, length: usize) -> Result<&[u8], Status> {
     bytes.get(offset..end).ok_or(Status::Truncated)
 }
 
+fn byte(bytes: &[u8], offset: usize) -> Result<u8, Status> {
+    bytes.get(offset).copied().ok_or(Status::Truncated)
+}
+
 fn le16(bytes: &[u8], offset: usize) -> Result<u16, Status> {
     let value = field(bytes, offset, 2)?;
-    Ok(u16::from_le_bytes([value[0], value[1]]))
+    Ok(u16::from_le_bytes([byte(value, 0)?, byte(value, 1)?]))
 }
 
 fn le32(bytes: &[u8], offset: usize) -> Result<u32, Status> {
     let value = field(bytes, offset, 4)?;
-    Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
+    Ok(u32::from_le_bytes([
+        byte(value, 0)?,
+        byte(value, 1)?,
+        byte(value, 2)?,
+        byte(value, 3)?,
+    ]))
 }
 
 fn add(left: u64, right: u64) -> Result<u64, Status> {
@@ -199,7 +213,7 @@ pub(crate) fn parse_bpb(
     if bytes.len() < BOOT_BYTES {
         return Err(Status::Truncated);
     }
-    if bytes[510] != 0x55 || bytes[511] != 0xaa {
+    if byte(bytes, 510)? != 0x55 || byte(bytes, 511)? != 0xaa {
         return Err(Status::BootSignature);
     }
     let bytes_per_sector = u32::from(le16(bytes, 11)?);
@@ -208,7 +222,7 @@ pub(crate) fn parse_bpb(
     {
         return Err(Status::BytesPerSector);
     }
-    let sectors_per_cluster = u32::from(bytes[13]);
+    let sectors_per_cluster = u32::from(byte(bytes, 13)?);
     if !power_of_two(sectors_per_cluster) || sectors_per_cluster > 128 {
         return Err(Status::SectorsPerCluster);
     }
@@ -216,7 +230,7 @@ pub(crate) fn parse_bpb(
     if reserved_sectors < 2 {
         return Err(Status::ReservedCount);
     }
-    let fat_copies = u32::from(bytes[16]);
+    let fat_copies = u32::from(byte(bytes, 16)?);
     if fat_copies != 2 {
         return Err(Status::FatCount);
     }
@@ -265,7 +279,10 @@ pub(crate) fn parse_bpb(
         return Err(Status::BackupSector);
     }
     let mut volume_label = [0_u8; 11];
-    volume_label.copy_from_slice(&bytes[71..82]);
+    let label = field(bytes, 71, volume_label.len())?;
+    for (destination, source) in volume_label.iter_mut().zip(label.iter().copied()) {
+        *destination = source;
+    }
     if volume_label.iter().any(|byte| !(0x20..=0x7e).contains(byte)) {
         return Err(Status::NameMalformed);
     }
@@ -414,16 +431,21 @@ pub(crate) fn parse_component(bytes: &[u8]) -> Result<Name, Status> {
     if base_end == 0 || base_end > 8 || bytes.len() - extension_start > 3 {
         return Err(Status::NameMalformed);
     }
-    for (destination, source) in result.canonical[..base_end]
-        .iter_mut()
-        .zip(bytes[..base_end].iter().copied())
-    {
+    for index in 0..base_end {
+        let source = byte(bytes, index)?;
+        let destination = result.canonical.get_mut(index).ok_or(Status::SpanOverflow)?;
         *destination = uppercase(source);
     }
-    for (destination, source) in result.canonical[8..]
-        .iter_mut()
-        .zip(bytes[extension_start..].iter().copied())
-    {
+    for index in 0..bytes.len() - extension_start {
+        let source_index = extension_start
+            .checked_add(index)
+            .ok_or(Status::SpanOverflow)?;
+        let destination_index = 8_usize.checked_add(index).ok_or(Status::SpanOverflow)?;
+        let source = byte(bytes, source_index)?;
+        let destination = result
+            .canonical
+            .get_mut(destination_index)
+            .ok_or(Status::SpanOverflow)?;
         *destination = uppercase(source);
     }
     result.kind = 3;
@@ -434,7 +456,8 @@ pub(crate) fn validate_path(bytes: &[u8]) -> Result<u32, Status> {
     if bytes.is_empty() {
         return Err(Status::PathEmpty);
     }
-    if bytes[0] == b'/' || bytes[0] == b'\\' {
+    let first = bytes.first().copied().ok_or(Status::PathEmpty)?;
+    if first == b'/' || first == b'\\' {
         return Err(Status::PathAbsolute);
     }
     if bytes.len() > 127 {
@@ -467,20 +490,21 @@ pub(crate) fn parse_directory_entry(bytes: &[u8]) -> Result<DirectoryEntry, Stat
     if bytes.len() < ENTRY_BYTES {
         return Err(Status::Truncated);
     }
-    if bytes[0] == 0 {
+    let first = byte(bytes, 0)?;
+    if first == 0 {
         let mut result = DirectoryEntry::invalid();
         result.kind = 1;
         return Ok(result);
     }
-    if bytes[0] == 0xe5 {
+    if first == 0xe5 {
         let mut result = DirectoryEntry::invalid();
         result.kind = 2;
         return Ok(result);
     }
-    let attributes = bytes[11];
+    let attributes = byte(bytes, 11)?;
     if attributes == 0x0f {
-        let ordinal = bytes[0] & 0x1f;
-        if ordinal == 0 || ordinal > 20 || bytes[12] != 0 || le16(bytes, 26)? != 0 {
+        let ordinal = first & 0x1f;
+        if ordinal == 0 || ordinal > 20 || byte(bytes, 12)? != 0 || le16(bytes, 26)? != 0 {
             return Err(Status::LongNameMalformed);
         }
         for offset in [1_usize, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30] {
@@ -491,19 +515,27 @@ pub(crate) fn parse_directory_entry(bytes: &[u8]) -> Result<DirectoryEntry, Stat
         }
         return Err(Status::LongNameUnsupported);
     }
-    if attributes & 0xc0 != 0 || bytes[0] == 0x20 {
+    if attributes & 0xc0 != 0 || first == 0x20 {
         return Err(Status::DirectoryEntry);
     }
     let mut short_name = [0_u8; 11];
-    short_name.copy_from_slice(&bytes[..11]);
+    let encoded_name = field(bytes, 0, short_name.len())?;
+    for (destination, source) in short_name.iter_mut().zip(encoded_name.iter().copied()) {
+        *destination = source;
+    }
     if short_name != *b".          " && short_name != *b"..         " {
+        let mut base_space = false;
+        let mut extension_space = false;
         for (index, byte) in short_name.iter().copied().enumerate() {
             if byte == b' ' {
-                let field_end = if index < 8 { 8 } else { 11 };
-                if short_name[index..field_end].iter().any(|remaining| *remaining != b' ') {
-                    return Err(Status::NameMalformed);
+                if index < 8 {
+                    base_space = true;
+                } else {
+                    extension_space = true;
                 }
             } else if !canonical_character(byte) {
+                return Err(Status::NameMalformed);
+            } else if (index < 8 && base_space) || (index >= 8 && extension_space) {
                 return Err(Status::NameMalformed);
             }
         }

@@ -118,6 +118,8 @@ _Static_assert(FAT32_STATUS_COUNT == 37,
     "Rust/C FAT32 status ABI changed");
 _Static_assert(SAPFS_MAX_FILE_BYTES % SAPFS_SECTOR_BYTES == 0U,
     "file bound must contain whole clusters");
+_Static_assert(SAPFS_MAX_HANDLES <= UINT8_MAX,
+    "file handle index no longer fits its encoded byte");
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -549,7 +551,7 @@ static enum sapfs_status allocate_cluster(
 )
 {
     uint32_t start;
-    uint32_t cluster;
+    uint32_t cluster = 0U;
     uint64_t attempts;
 
     if (operation == NULL || allocated == NULL || !operation->writable) {
@@ -2167,7 +2169,9 @@ enum sapfs_status sapfs_list(
         (directory.entry.attributes & SAPFS_ATTR_DIRECTORY) == 0U) {
         status = SAPFS_STATUS_NOT_DIRECTORY;
     }
-    cluster = directory.entry.first_cluster;
+    if (status == SAPFS_STATUS_OK) {
+        cluster = directory.entry.first_cluster;
+    }
     for (uint32_t steps = 0U;
          status == SAPFS_STATUS_OK && steps < SAPFS_MAX_CHAIN_CLUSTERS;
          ++steps) {
