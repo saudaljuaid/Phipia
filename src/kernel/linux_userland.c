@@ -6,6 +6,7 @@
 #include <sapote/boot_ledger.h>
 #include <sapote/console.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_cat.h>
 #include <sapote/linux_uname.h>
 #include <sapote/linux_userland.h>
 
@@ -51,17 +52,26 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
             return false;
         }
     }
-    return profile != LINUX_USERLAND_PROFILE_UNAME ||
-        boot_ledger_has_capability(ledger,
+    if (profile == LINUX_USERLAND_PROFILE_UNAME) {
+        return boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE);
+    }
+    return profile != LINUX_USERLAND_PROFILE_CAT ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE);
 }
 
 static void evidence_selected(enum linux_userland_profile profile)
 {
     console_serial_write("FL USERLAND deterministic read-only NVMe/FAT16 profile selected ");
     console_serial_write(linux_userland_profile_name(profile));
-    console_serial_write(profile == LINUX_USERLAND_PROFILE_ECHO ?
-        " BUSYBOX\n" : " UNAMEBOX\n");
+    if (profile == LINUX_USERLAND_PROFILE_ECHO) {
+        console_serial_write(" BUSYBOX\n");
+    } else if (profile == LINUX_USERLAND_PROFILE_UNAME) {
+        console_serial_write(" UNAMEBOX\n");
+    } else {
+        console_serial_write(" CATBOX\n");
+    }
 }
 
 static void evidence_complete(const struct linux_userland_result *result)
@@ -98,8 +108,10 @@ static enum linux_userland_status finish_failure(
 )
 {
     active_generation = 0U;
+    (void)linux_cat_abi_abort();
     if (!linux_abi_resources_released() ||
-        !linux_uname_abi_resources_released()) {
+        !linux_uname_abi_resources_released() ||
+        !linux_cat_abi_resources_released()) {
         return LINUX_USERLAND_STATUS_TEARDOWN;
     }
     console_serial_write("FL USERLAND launch refused and teardown complete\n");
@@ -159,7 +171,7 @@ enum linux_userland_status linux_userland_launch(
         result->real_syscall_entry = proof.real_syscall_instruction;
         result->stdout_valid = proof.stdout_valid;
         result->teardown_complete = proof.teardown_complete;
-    } else {
+    } else if (profile == LINUX_USERLAND_PROFILE_UNAME) {
         struct linux_uname_abi_proof_result proof;
         const enum linux_uname_abi_status status =
             linux_uname_abi_launch(&proof);
@@ -187,6 +199,41 @@ enum linux_userland_status linux_userland_launch(
         result->real_syscall_entry = proof.real_syscall_instruction;
         result->stdout_valid = proof.stdout_valid;
         result->teardown_complete = proof.teardown_complete;
+    } else {
+        struct linux_cat_abi_proof_result proof;
+        const enum linux_cat_abi_status status = linux_cat_abi_launch(&proof);
+
+        if (status == LINUX_CAT_ABI_STATUS_ABSENT) {
+            return finish_failure(LINUX_USERLAND_STATUS_VOLUME_ABSENT);
+        }
+        if (status == LINUX_CAT_ABI_STATUS_FILESYSTEM ||
+            status == LINUX_CAT_ABI_STATUS_ELF) {
+            return finish_failure(LINUX_USERLAND_STATUS_PROFILE_REFUSED);
+        }
+        if (status != LINUX_CAT_ABI_STATUS_WAITING || !proof.ring_three ||
+            !proof.private_address_space ||
+            !proof.real_syscall_instruction || !proof.write_xor_execute ||
+            !proof.kernel_cr3_restored || !proof.waiting_for_input ||
+            proof.generation == 0U) {
+            return finish_failure(LINUX_USERLAND_STATUS_LAUNCH_REFUSED);
+        }
+        active_generation = proof.generation;
+        result->generation = proof.generation;
+        result->file_bytes = proof.file_bytes;
+        result->stdout_bytes = proof.stdout_bytes;
+        result->syscall_count = proof.syscall_count;
+        result->exit_status = proof.exit_status;
+        result->rust_validated = true;
+        result->ring_three = proof.ring_three;
+        result->real_syscall_entry = proof.real_syscall_instruction;
+        result->stdout_valid = proof.stdout_valid;
+        result->input_bytes = proof.input_bytes;
+        result->input_lines = proof.input_lines;
+        result->resume_count = proof.resume_count;
+        result->waiting_for_input = true;
+        console_serial_write(
+            "FL USERLAND cat foreground launch yielded to First Light\n");
+        return LINUX_USERLAND_STATUS_WAITING;
     }
 
     active_generation = 0U;
@@ -195,10 +242,85 @@ enum linux_userland_status linux_userland_launch(
     return LINUX_USERLAND_STATUS_OK;
 }
 
+enum linux_userland_status linux_userland_deliver_cat_input(
+    const uint8_t *bytes,
+    size_t byte_count,
+    bool eof,
+    struct linux_userland_result *result
+)
+{
+    struct linux_cat_abi_proof_result proof;
+    enum linux_cat_abi_status status;
+
+    if (result == NULL) {
+        return LINUX_USERLAND_STATUS_NULL_ARGUMENT;
+    }
+    zero_bytes(result, sizeof(*result));
+    result->profile = LINUX_USERLAND_PROFILE_CAT;
+    result->generation = active_generation;
+    if (active_generation == 0U || !linux_cat_abi_waiting() ||
+        active_generation != linux_cat_abi_generation()) {
+        return LINUX_USERLAND_STATUS_INPUT_REFUSED;
+    }
+    status = linux_cat_abi_deliver_input(bytes, byte_count, eof, &proof);
+    if (status == LINUX_CAT_ABI_STATUS_INPUT) {
+        return LINUX_USERLAND_STATUS_INPUT_REFUSED;
+    }
+    if (status != LINUX_CAT_ABI_STATUS_WAITING &&
+        status != LINUX_CAT_ABI_STATUS_OK) {
+        return finish_failure(status == LINUX_CAT_ABI_STATUS_TEARDOWN ?
+            LINUX_USERLAND_STATUS_TEARDOWN :
+            LINUX_USERLAND_STATUS_LAUNCH_REFUSED);
+    }
+    result->generation = active_generation;
+    result->file_bytes = proof.file_bytes;
+    result->stdout_bytes = proof.stdout_bytes;
+    result->syscall_count = proof.syscall_count;
+    result->exit_status = proof.exit_status;
+    result->rust_validated = true;
+    result->ring_three = proof.ring_three;
+    result->real_syscall_entry = proof.real_syscall_instruction;
+    result->stdout_valid = proof.stdout_valid;
+    result->teardown_complete = proof.teardown_complete;
+    result->input_bytes = proof.input_bytes;
+    result->input_lines = proof.input_lines;
+    result->resume_count = proof.resume_count;
+    result->waiting_for_input = proof.waiting_for_input;
+    result->eof_delivered = proof.eof_delivered;
+    if (status == LINUX_CAT_ABI_STATUS_WAITING) {
+        return LINUX_USERLAND_STATUS_WAITING;
+    }
+    active_generation = 0U;
+    ++completed[LINUX_USERLAND_PROFILE_CAT];
+    evidence_complete(result);
+    return LINUX_USERLAND_STATUS_OK;
+}
+
+bool linux_userland_foreground_waiting(void)
+{
+    return active_generation != 0U && linux_cat_abi_waiting() &&
+        active_generation == linux_cat_abi_generation();
+}
+
+uint64_t linux_userland_active_generation(void)
+{
+    return active_generation;
+}
+
+enum linux_userland_status linux_userland_abort_foreground(void)
+{
+    const enum linux_cat_abi_status status = linux_cat_abi_abort();
+
+    active_generation = 0U;
+    return status == LINUX_CAT_ABI_STATUS_OK ?
+        LINUX_USERLAND_STATUS_OK : LINUX_USERLAND_STATUS_TEARDOWN;
+}
+
 bool linux_userland_resources_released(void)
 {
     return active_generation == 0U && linux_abi_resources_released() &&
-        linux_uname_abi_resources_released();
+        linux_uname_abi_resources_released() &&
+        linux_cat_abi_resources_released();
 }
 
 uint32_t linux_userland_completed(enum linux_userland_profile profile)
@@ -209,7 +331,7 @@ uint32_t linux_userland_completed(enum linux_userland_profile profile)
 const char *linux_userland_profile_name(enum linux_userland_profile profile)
 {
     static const char *const names[LINUX_USERLAND_PROFILE_COUNT] = {
-        "echo", "uname"
+        "echo", "uname", "cat"
     };
 
     if (profile >= LINUX_USERLAND_PROFILE_COUNT) {
@@ -222,12 +344,14 @@ const char *linux_userland_status_string(enum linux_userland_status status)
 {
     static const char *const messages[LINUX_USERLAND_STATUS_COUNT] = {
         "ok",
+        "foreground userspace is waiting for input",
         "bad launch result",
         "unsupported measured profile",
         "launch boundary unavailable",
         "userspace volume unavailable",
         "measured profile refused",
         "userspace launch refused",
+        "foreground input refused",
         "userspace teardown failed"
     };
 

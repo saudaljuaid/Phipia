@@ -19,6 +19,15 @@
 #define LINUX_UNAME_SYSCALL_STDOUT_BYTES 6U
 #define LINUX_UNAME_SYSCALL_SEMANTIC_CONTROLS 18U
 #define LINUX_UNAME_COPYOUT_CONTROLS 18U
+#define LINUX_CAT_SYSCALL_ALLOWLIST_COUNT 5U
+#define LINUX_CAT_SYSCALL_MIN_CALLS 4U
+#define LINUX_CAT_SYSCALL_MAX_CALLS 12U
+#define LINUX_CAT_READ_BUFFER UINT64_C(0x0000400001203F00)
+#define LINUX_CAT_READ_COUNT 4096U
+#define LINUX_CAT_INPUT_LINE_BYTES 64U
+#define LINUX_CAT_INPUT_LINES 4U
+#define LINUX_CAT_INPUT_TOTAL_BYTES 256U
+#define LINUX_CAT_SYSCALL_SEMANTIC_CONTROLS 24U
 #define LINUX_UTS_FIELD_BYTES 65U
 #define LINUX_UTS_FIELD_COUNT 6U
 #define LINUX_UTS_BYTES (LINUX_UTS_FIELD_BYTES * LINUX_UTS_FIELD_COUNT)
@@ -26,7 +35,17 @@
 enum linux_syscall_profile {
     LINUX_SYSCALL_PROFILE_ECHO = 0,
     LINUX_SYSCALL_PROFILE_UNAME,
+    LINUX_SYSCALL_PROFILE_CAT,
     LINUX_SYSCALL_PROFILE_COUNT
+};
+
+enum linux_cat_read_state {
+    LINUX_CAT_READ_IDLE = 0,
+    LINUX_CAT_READ_WAITING,
+    LINUX_CAT_READ_READY,
+    LINUX_CAT_READ_RESUMED,
+    LINUX_CAT_READ_RELEASED,
+    LINUX_CAT_READ_STATE_COUNT
 };
 
 enum linux_uts_copy_state {
@@ -141,6 +160,11 @@ struct linux_syscall_result {
     bool cpu_disarmed;
     bool controlled_failure_observed;
     bool uts_copy_valid;
+    uint32_t cat_input_bytes;
+    uint32_t cat_input_lines;
+    uint32_t cat_resume_count;
+    bool cat_wait_observed;
+    bool cat_eof_delivered;
 };
 
 bool linux_syscall_cpu_foundation_self_test(size_t *completed_tests);
@@ -148,6 +172,7 @@ bool linux_syscall_enosys_self_test(void);
 bool linux_syscall_semantic_self_test(void);
 bool linux_syscall_uname_semantic_self_test(void);
 bool linux_syscall_uname_copyout_self_test(size_t *completed_tests);
+bool linux_syscall_cat_semantic_self_test(void);
 enum linux_syscall_status linux_syscall_arm(
     const struct linux_syscall_context *context
 );
@@ -155,9 +180,20 @@ enum linux_syscall_status linux_syscall_validate_armed(void);
 enum linux_syscall_status linux_syscall_disarm(void);
 struct linux_syscall_result linux_syscall_get_result(void);
 bool linux_syscall_resources_released(void);
+bool linux_syscall_cat_waiting(uint64_t process_generation);
+enum linux_syscall_status linux_syscall_cat_complete_read(
+    uint64_t process_generation,
+    const uint8_t *bytes,
+    size_t byte_count,
+    bool eof
+);
+const struct linux_syscall_frame *linux_syscall_cat_resume_frame(
+    uint64_t process_generation
+);
 uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame);
 
 void linux_process_enter_user(uint64_t entry, uint64_t stack_pointer);
+void linux_process_resume_user(const struct linux_syscall_frame *frame);
 uintptr_t linux_process_resume_stack(void);
 bool linux_process_boundary_active(void);
 extern const uint8_t linux_syscall_entry[];

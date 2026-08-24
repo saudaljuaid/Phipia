@@ -231,7 +231,7 @@ fn find_root_for(
     }
     let mut found = RootEntry::invalid();
     let mut found_target = false;
-    let mut found_peer = false;
+    let mut seen_profiles = 0u8;
     let mut saw_end = false;
     for index in 0..geometry.root_entries as usize {
         let offset = index
@@ -262,9 +262,17 @@ fn find_root_for(
         }
         let entry_contract = contract_for_name(name).ok_or(Status::UnsupportedEntry)?;
         let target = name == query.canonical_name;
-        if (target && found_target) || (!target && found_peer) {
+        let profile_bit = if name == ECHO_CONTRACT.name {
+            1u8
+        } else if name == UNAME_CONTRACT.name {
+            2u8
+        } else {
+            4u8
+        };
+        if seen_profiles & profile_bit != 0 {
             return Err(Status::TargetDuplicate);
         }
+        seen_profiles |= profile_bit;
         let cluster = read_u16(block, offset + 26)?;
         let file_size = read_u32(block, offset + 28)?;
         if cluster < 2 || u64::from(cluster - 2) >= geometry.cluster_count {
@@ -293,8 +301,6 @@ fn find_root_for(
                 file_size,
             };
             found_target = true;
-        } else {
-            found_peer = true;
         }
     }
     if !saw_end {

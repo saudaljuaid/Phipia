@@ -48,6 +48,43 @@ linux_process_enter_user:
     ud2
 .size linux_process_enter_user, . - linux_process_enter_user
 
+/* Resume one kernel-owned frame saved at an authentic read SYSCALL. */
+.global linux_process_resume_user
+.type linux_process_resume_user, @function
+linux_process_resume_user:
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    movq %rsp, linux_process_saved_resume(%rip)
+    movb $1, linux_process_active(%rip)
+
+    movq %rdi, %rcx
+    pushq 136(%rcx)
+    pushq 128(%rcx)
+    pushq 120(%rcx)
+    pushq 112(%rcx)
+    pushq 104(%rcx)
+
+    movq 0(%rcx), %rax
+    movq 16(%rcx), %rsi
+    movq 24(%rcx), %rdx
+    movq 32(%rcx), %r10
+    movq 40(%rcx), %r8
+    movq 48(%rcx), %r9
+    movq 56(%rcx), %rbx
+    movq 64(%rcx), %rbp
+    movq 72(%rcx), %r12
+    movq 80(%rcx), %r13
+    movq 88(%rcx), %r14
+    movq 96(%rcx), %r15
+    movq 8(%rcx), %rdi
+    iretq
+    ud2
+.size linux_process_resume_user, . - linux_process_resume_user
+
 /*
  * SYSCALL leaves the user RSP live and does not load a kernel stack.  The
  * first instruction saves it without a push; the second selects the already

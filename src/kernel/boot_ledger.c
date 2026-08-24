@@ -153,6 +153,7 @@ static const char *const capability_names[] = {
     "Linux fixture absent",
     "Linux outcome decided",
     "Linux uname image and UTS foundation available",
+    "Linux cat image and stdin foundation available",
     "Linux uname installed proof complete",
     "Linux uname fixture absent",
     "Linux uname outcome decided"
