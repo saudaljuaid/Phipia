@@ -13,9 +13,12 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	boot-ledger first-light device-substrate xhci nvme filesystem process \
 	linux-abi linux-abi-uname first-light-userland \
 	first-light-userland-absent first-light-userland-interactive \
-	first-light-userland-interactive-absent
+	first-light-userland-interactive-absent \
+	fat32-system fat32-data fat32-nested fat32-growth fat32-random \
+	fat32-truncate fat32-rename fat32-delete fat32-full fat32-corrupt \
+	fat32-missing fat32-persistence fat32-cache fat32-immutable fat32-handles
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 43
+EXPECTED_TEST_SCENARIO_COUNT := 58
 EXPECTED_SHELL_ASSERTION_COUNT := 325
 
 CC := gcc
@@ -35,6 +38,7 @@ GRUB_MKRESCUE_FLAGS := $(if $(GRUB_MODULE_DIR),-d $(GRUB_MODULE_DIR),)
 RUST_TARGET := x86_64-unknown-none
 RUST_LIB := $(BUILD_DIR)/libsapote.a
 RUST_FAT16_TEST := $(BUILD_DIR)/fat16-tests
+RUST_FAT32_TEST := $(BUILD_DIR)/fat32-tests
 RUST_LINUX_FAT16_TEST := $(BUILD_DIR)/linux-fat16-tests
 RUST_LINUX_ELF64_TEST := $(BUILD_DIR)/linux-elf64-tests
 RUST_LINUX_UNAME_FAT16_TEST := $(BUILD_DIR)/linux-uname-fat16-tests
@@ -74,6 +78,10 @@ BUSYBOX_CAT_BINARY := $(BUSYBOX_CAT_OUTPUT_DIR)/busybox
 FIRST_LIGHT_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
 FIRST_LIGHT_USERLAND_NO_CAT_IMAGE := \
 	$(BUILD_DIR)/userspace/sapote-userland-no-cat-fat16.raw
+FAT32_SYSTEM_IMAGE := $(BUILD_DIR)/userspace/sapote-system-fat32.raw
+FAT32_DATA_IMAGE := $(BUILD_DIR)/userspace/sapote-data-fat32.raw
+FAT32_FULL_IMAGE := $(BUILD_DIR)/userspace/sapote-data-full-fat32.raw
+FAT32_CORRUPT_IMAGE := $(BUILD_DIR)/userspace/sapote-data-corrupt-fat32.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -115,7 +123,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-first-light clean contract-counts contract-scenarios hooks \
+.PHONY: all capture-boot-video capture-first-light clean contract-counts contract-scenarios fat32-images hooks \
 	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
@@ -205,6 +213,28 @@ $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE): $(BUSYBOX_BINARY) \
 	$(PYTHON) tools/make-first-light-userland.py \
 		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) --without-cat $@
 
+$(FAT32_SYSTEM_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
+		$(BUSYBOX_CAT_BINARY) tools/fat32_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/fat32_image.py format system $@ \
+		--echo $(BUSYBOX_BINARY) --uname $(BUSYBOX_UNAME_BINARY) \
+		--cat $(BUSYBOX_CAT_BINARY)
+
+$(FAT32_DATA_IMAGE): tools/fat32_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/fat32_image.py format data $@
+
+$(FAT32_FULL_IMAGE): tools/fat32_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/fat32_image.py format data $@ --full
+
+$(FAT32_CORRUPT_IMAGE): $(FAT32_DATA_IMAGE) tools/fat32_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/fat32_image.py malform fat-mismatch \
+		$(FAT32_DATA_IMAGE) $@
+
+fat32-images: $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
 		rm -f $@; \
@@ -268,6 +298,10 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat16.rs \
 		-o $(RUST_FAT16_TEST)
 	$(RUST_FAT16_TEST)
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/fat32.rs \
+		-o $(RUST_FAT32_TEST)
+	$(RUST_FAT32_TEST)
+	$(PYTHON) -u tools/fat32_host_test.py
 	$(MAKE) $(LINUX_ABI_FIXTURE)
 	@test "$$(sha256sum $(LINUX_ABI_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F'
@@ -311,6 +345,31 @@ verify: toolchain lint
 	$(MAKE) $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)
 	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE) | awk '{ print toupper($$1) }')" = \
 		'12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE'
+	$(MAKE) $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE) \
+		$(FAT32_FULL_IMAGE) $(FAT32_CORRUPT_IMAGE)
+	@test "$$(sha256sum $(FAT32_SYSTEM_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'5C9463E3C62A7351E12F7B7832C8A97FF016A264F9C7F356A76201DF4E17317E'
+	@test "$$(sha256sum $(FAT32_DATA_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'890CDCC20ACB0FC1C09CC5977C5276F22682073C91A5E1DF0AD85483CC375288'
+	@test "$$(sha256sum $(FAT32_FULL_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'EEB712F939ED9A3EA8E446F890CF20D4B6CCD9CBBE3746C9BD4CBAD75301301F'
+	@test "$$(sha256sum $(FAT32_CORRUPT_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'10960E8383BBAA919B354BB1FEF42AECCEA7EE588AAB2734B79149AAC17460EC'
+	rm -rf $(BUILD_DIR)/fat32-reconstruction
+	mkdir -p $(BUILD_DIR)/fat32-reconstruction
+	$(PYTHON) tools/fat32_image.py format system \
+		$(BUILD_DIR)/fat32-reconstruction/system.raw \
+		--echo $(BUSYBOX_BINARY) --uname $(BUSYBOX_UNAME_BINARY) \
+		--cat $(BUSYBOX_CAT_BINARY)
+	$(PYTHON) tools/fat32_image.py format data \
+		$(BUILD_DIR)/fat32-reconstruction/data.raw
+	cmp $(FAT32_SYSTEM_IMAGE) $(BUILD_DIR)/fat32-reconstruction/system.raw
+	cmp $(FAT32_DATA_IMAGE) $(BUILD_DIR)/fat32-reconstruction/data.raw
+	$(PYTHON) tools/fat32_image.py verify system $(FAT32_SYSTEM_IMAGE) \
+		--echo $(BUSYBOX_BINARY) --uname $(BUSYBOX_UNAME_BINARY) \
+		--cat $(BUSYBOX_CAT_BINARY)
+	$(PYTHON) tools/fat32_image.py verify data $(FAT32_DATA_IMAGE)
+	$(PYTHON) tools/fat32_image.py verify data $(FAT32_FULL_IMAGE) --full
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
@@ -358,6 +417,10 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_parse_fat$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_extent$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat16_validate_payload$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat32_parse_bpb$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat32_parse_fsinfo$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat32_validate_fat_pair$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_fat32_parse_directory_entry$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_find_root$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_build_chain$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_fat16_validate_payload$$'
@@ -474,9 +537,12 @@ verify: toolchain lint
 		src/kernel --include='*.c' --exclude=filesystem.c --exclude=nvme.c; then \
 		echo 'private filesystem read session escaped its owner'; exit 1; \
 	fi
-	@! grep -Eq 'NVME_NVM_WRITE|NVM_WRITE|write[_ -]opcode' \
-		include/sapote/nvme.h src/kernel/nvme.c src/kernel/filesystem.c \
-		src/rust/fat16.rs src/rust/linux_fat16.rs
+	@grep -Fq '#define NVME_NVM_WRITE UINT8_C(0x01)' src/kernel/nvme.c
+	@test "$$(grep -ERh '\bnvme_volume_write[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=nvme.c | wc -l)" -eq 1 && \
+		grep -Fq 'nvme_volume_write(session, sector, data,' \
+			src/kernel/fat32_fs.c || \
+		{ echo 'NVMe write access escaped the FAT32 owner'; exit 1; }
 	@test "$$(grep -Ec 'process_return_interrupt[[:space:]]*[(]' \
 		src/kernel/process.c)" -eq 1 && \
 		grep -Fq 'interrupt_process_gate_arm(process_return_interrupt,' \
@@ -750,6 +816,21 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		first-light-userland-absent) expected=115 ;; \
 		first-light-userland-interactive) expected=117 ;; \
 		first-light-userland-interactive-absent) expected=119 ;; \
+		fat32-system) expected=121 ;; \
+		fat32-data) expected=123 ;; \
+		fat32-nested) expected=125 ;; \
+		fat32-growth) expected=127 ;; \
+		fat32-random) expected=129 ;; \
+		fat32-truncate) expected=131 ;; \
+		fat32-rename) expected=133 ;; \
+		fat32-delete) expected=135 ;; \
+		fat32-full) expected=137 ;; \
+		fat32-corrupt) expected=139 ;; \
+		fat32-missing) expected=141 ;; \
+		fat32-persistence) expected=143 ;; \
+		fat32-cache) expected=145 ;; \
+		fat32-immutable) expected=147 ;; \
+		fat32-handles) expected=149 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -803,20 +884,42 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
 				test -f '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE),node-name=interactive-absent-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-absent-file,node-name=interactive-absent-raw,read-only=on -device nvme,serial=sapote-interactive-absent,drive=interactive-absent-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			fat32-missing) \
+				$(MAKE) '$(FAT32_SYSTEM_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=fat32-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=fat32-system-file,node-name=fat32-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=fat32-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			fat32-full) \
+				$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_FULL_IMAGE)' || exit 1; \
+				cp '$(FAT32_FULL_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=fat32-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=fat32-system-file,node-name=fat32-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=fat32-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=fat32-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=fat32-data-file,node-name=fat32-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=fat32-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			fat32-corrupt) \
+				$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_CORRUPT_IMAGE)' || exit 1; \
+				cp '$(FAT32_CORRUPT_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=fat32-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=fat32-system-file,node-name=fat32-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=fat32-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=fat32-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=fat32-data-file,node-name=fat32-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=fat32-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			fat32-*) \
+				$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_DATA_IMAGE)' || exit 1; \
+				cp '$(FAT32_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=fat32-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=fat32-system-file,node-name=fat32-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=fat32-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=fat32-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=fat32-data-file,node-name=fat32-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=fat32-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
 	rm -f "$$log"; \
+	timeout_seconds=15; reboot_control='-no-reboot'; \
+	case '$*' in \
+		fat32-*) timeout_seconds=45 ;; \
+	esac; \
+	if test '$*' = fat32-persistence; then reboot_control=''; fi; \
 	set +e; \
-	timeout 15s qemu-system-x86_64 \
+	timeout "$${timeout_seconds}s" qemu-system-x86_64 \
 		-machine accel=$(QEMU_ACCEL) -m 128M -smp 1 $$hardware \
 		-cdrom '$<' -display none -monitor none -serial stdio \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-		-no-reboot >"$$log" 2>&1; result=$$?; \
+		$$reboot_control >"$$log" 2>&1; result=$$?; \
 	set -e; \
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
-	if test $$result -ne $$expected -o "$$begin_count" -ne 1 -o "$$pass_count" -ne 1 || \
+	expected_begin=1; \
+	if test '$*' = fat32-persistence; then expected_begin=2; fi; \
+	if test $$result -ne $$expected -o "$$begin_count" -ne "$$expected_begin" -o "$$pass_count" -ne 1 || \
 		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Sapote PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
@@ -1090,6 +1193,51 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'FL USERLAND launch completed successfully echo ordinal 1' "$$log" && \
 			test "$$(grep -Fxc 'FL USERLAND First Light prompt restored' "$$log")" -eq 2 || \
 				diagnostics_ok=false ;; \
+		fat32-system) \
+			grep -Fxq 'ST FAT32 SYSTEM authenticated echo uname FAT32 immutable' "$$log" && \
+			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT32 profile selected echo BUSYBOX' "$$log" && \
+			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT32 profile selected uname UNAMEBOX' "$$log" && \
+			grep -Fxq 'FL USERLAND Rust FAT32 SHA-256 ELF64 validation passed echo bytes 33584' "$$log" && \
+			grep -Fxq 'FL USERLAND Rust FAT32 SHA-256 ELF64 validation passed uname bytes 38368' "$$log" || \
+				diagnostics_ok=false ;; \
+		fat32-data) \
+			grep -Fxq 'ST FAT32 DATA create read write append sync exact' "$$log" && \
+			grep -Fxq 'data synchronized' "$$log" || diagnostics_ok=false ;; \
+		fat32-nested) \
+			grep -Fxq 'ST FAT32 NESTED dot dotdot traversal enumeration exact' "$$log" || diagnostics_ok=false ;; \
+		fat32-growth) \
+			grep -Fxq 'ST FAT32 GROWTH bytes 568 clusters 2 contents readable' "$$log" || diagnostics_ok=false ;; \
+		fat32-random) \
+			grep -Fxq 'ST FAT32 RANDOM seek overwrite preserved surrounding bytes' "$$log" || diagnostics_ok=false ;; \
+		fat32-truncate) \
+			grep -Fxq 'ST FAT32 TRUNCATE release regrow zero tail exact' "$$log" || diagnostics_ok=false ;; \
+		fat32-rename) \
+			grep -Fxq 'ST FAT32 RENAME file move directory parent updated' "$$log" || diagnostics_ok=false ;; \
+		fat32-delete) \
+			grep -Fxq 'ST FAT32 DELETE cluster reused nonempty directory refused' "$$log" || diagnostics_ok=false ;; \
+		fat32-full) \
+			grep -Fxq 'ST FAT32 FULL refusal no leak deletion recovered' "$$log" && \
+			grep -Fxq 'write: volume has no free cluster' "$$log" || diagnostics_ok=false ;; \
+		fat32-corrupt) \
+			grep -Fxq 'ST FAT32 CORRUPT refused session usable system executable valid' "$$log" && \
+			grep -Fxq 'data    fat32  unavailable' "$$log" && \
+			grep -Fqx 'SAPOTE' "$$log" || diagnostics_ok=false ;; \
+		fat32-missing) \
+			grep -Fxq 'ST FAT32 MISSING session usable system executable valid' "$$log" && \
+			grep -Fxq 'data    fat32  absent' "$$log" && \
+			grep -Fqx 'SAPOTE' "$$log" || diagnostics_ok=false ;; \
+		fat32-persistence) \
+			grep -Fxq 'ST FAT32 PERSISTENCE synchronized reboot phase' "$$log" && \
+			grep -Fxq 'ST FAT32 PERSISTENCE clean reboot retained exact contents' "$$log" && \
+			grep -Fqx 'first cut' "$$log" && grep -Fqx 'second line' "$$log" || \
+				diagnostics_ok=false ;; \
+		fat32-cache) \
+			grep -Fxq 'ST FAT32 CACHE six clusters eviction sync readback exact' "$$log" || diagnostics_ok=false ;; \
+		fat32-immutable) \
+			grep -Fxq 'ST FAT32 IMMUTABLE write refused below shell executable valid' "$$log" && \
+			grep -Fqx 'SAPOTE' "$$log" || diagnostics_ok=false ;; \
+		fat32-handles) \
+			grep -Fxq 'ST FAT32 HANDLES generation stale double-close access bound clean' "$$log" || diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \
 			grep -Fq '  vector=14 name=page fault' "$$log" && \

@@ -8,6 +8,7 @@
 #include <sapote/console.h>
 #include <sapote/cpu.h>
 #include <sapote/framebuffer.h>
+#include <sapote/fat32_fs.h>
 #include <sapote/heap.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_userland.h>
@@ -50,6 +51,7 @@ static char line[SHELL_LINE_LIMIT + 1U];
 static bool linux_prompt_evidence_pending;
 static bool ui_keyboard_operational;
 static bool ui_keyboard_decided;
+static char filesystem_cwd[SAPFS_MAX_PATH + 1U] = ".";
 
 struct foreground_input_state {
     uint8_t line[LINUX_CAT_INPUT_LINE_BYTES + 1U];
@@ -69,6 +71,13 @@ static void zero_bytes(void *pointer, size_t length)
 
     for (size_t index = 0U; index < length; ++index) {
         bytes[index] = 0U;
+    }
+}
+
+static void copy_bytes(uint8_t *destination, const uint8_t *source, size_t length)
+{
+    for (size_t index = 0U; index < length; ++index) {
+        destination[index] = source[index];
     }
 }
 
@@ -148,6 +157,17 @@ static void command_help(void)
     console_write("  help      this list\n");
     console_write("  echo      print the rest of the line\n");
     console_write("  linux     run measured echo, uname, or bounded cat userspace\n");
+    console_write("  drives    mounted FAT32 system and data volumes\n");
+    console_write("  mount     retry a recoverable FAT32 mount\n");
+    console_write("  ls/cd/pwd browse the writable data volume\n");
+    console_write("  mkdir/touch/create files and directories\n");
+    console_write("  read      print one file\n");
+    console_write("  write     replace a file with one line\n");
+    console_write("  append    append one line to a file\n");
+    console_write("  writeat   overwrite from a byte offset\n");
+    console_write("  truncate  set a file's byte length\n");
+    console_write("  stat/mv/rm inspect, move, or remove a path\n");
+    console_write("  sync      persist completed data operations\n");
     console_write("  clear     clear the screen\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
@@ -197,6 +217,565 @@ static void command_linux(const char *arguments)
         console_write("linux: ");
         console_write(linux_userland_status_string(status));
         console_putc('\n');
+    }
+}
+
+static void filesystem_error(const char *command, enum sapfs_status status)
+{
+    console_write(command);
+    console_write(": ");
+    console_write(sapfs_status_string(status));
+    console_putc('\n');
+}
+
+static bool filesystem_path(const char *argument, char *output)
+{
+    char combined[SAPFS_MAX_PATH + 1U];
+    size_t used = 0U;
+    size_t index = 0U;
+    size_t output_used = 0U;
+    size_t component_starts[SAPFS_MAX_DEPTH];
+    size_t depth = 0U;
+
+    if (argument == NULL || output == NULL || argument[0] == '/') {
+        return false;
+    }
+    if (filesystem_cwd[0] != '.' || filesystem_cwd[1] != '\0') {
+        while (filesystem_cwd[used] != '\0' && used < SAPFS_MAX_PATH) {
+            combined[used] = filesystem_cwd[used];
+            ++used;
+        }
+        if (argument[0] != '\0' && used < SAPFS_MAX_PATH) {
+            combined[used++] = '/';
+        }
+    }
+    while (argument[index] != '\0' && used < SAPFS_MAX_PATH) {
+        combined[used++] = argument[index++];
+    }
+    if (argument[index] != '\0' || used == 0U) {
+        return false;
+    }
+    combined[used] = '\0';
+    index = 0U;
+    while (index < used) {
+        size_t end = index;
+
+        while (end < used && combined[end] != '/') {
+            ++end;
+        }
+        if (end == index) {
+            return false;
+        }
+        if (end - index == 1U && combined[index] == '.') {
+            /* Current directory is a no-op. */
+        } else if (end - index == 2U && combined[index] == '.' &&
+                combined[index + 1U] == '.') {
+            if (depth == 0U) {
+                return false;
+            }
+            output_used = component_starts[--depth];
+            if (output_used != 0U && output[output_used - 1U] == '/') {
+                --output_used;
+            }
+        } else {
+            if (depth >= SAPFS_MAX_DEPTH) {
+                return false;
+            }
+            if (output_used != 0U) {
+                if (output_used >= SAPFS_MAX_PATH) {
+                    return false;
+                }
+                output[output_used++] = '/';
+            }
+            component_starts[depth++] = output_used;
+            for (size_t source = index; source < end; ++source) {
+                if (output_used >= SAPFS_MAX_PATH) {
+                    return false;
+                }
+                output[output_used++] = combined[source];
+            }
+        }
+        index = end + 1U;
+    }
+    if (output_used == 0U) {
+        output[0] = '.';
+        output[1] = '\0';
+    } else {
+        output[output_used] = '\0';
+    }
+    return true;
+}
+
+static bool first_argument(
+    const char *arguments,
+    char *first,
+    const char **remainder
+)
+{
+    size_t length = 0U;
+    size_t index = 0U;
+
+    if (arguments == NULL || first == NULL || remainder == NULL) {
+        return false;
+    }
+    while (is_separator(arguments[index])) {
+        ++index;
+    }
+    while (arguments[index] != '\0' &&
+        !is_separator(arguments[index])) {
+        if (length >= SAPFS_MAX_PATH) {
+            return false;
+        }
+        first[length++] = arguments[index++];
+    }
+    if (length == 0U) {
+        return false;
+    }
+    first[length] = '\0';
+    while (is_separator(arguments[index])) {
+        ++index;
+    }
+    *remainder = &arguments[index];
+    return true;
+}
+
+static bool decimal_u32(const char *text, uint32_t *value)
+{
+    uint32_t result = 0U;
+    size_t index = 0U;
+
+    if (text == NULL || value == NULL || text[0] == '\0') {
+        return false;
+    }
+    while (text[index] != '\0') {
+        uint32_t digit;
+
+        if (text[index] < '0' || text[index] > '9') {
+            return false;
+        }
+        digit = (uint32_t)(text[index] - '0');
+        if (result > (UINT32_MAX - digit) / 10U) {
+            return false;
+        }
+        result = result * 10U + digit;
+        ++index;
+    }
+    *value = result;
+    return true;
+}
+
+static bool line_content(
+    const char *text,
+    uint8_t *content,
+    size_t capacity,
+    size_t *length
+)
+{
+    size_t start = 0U;
+    size_t end;
+
+    if (text == NULL || content == NULL || length == NULL) {
+        return false;
+    }
+    end = 0U;
+    while (text[end] != '\0') {
+        ++end;
+    }
+    if (end >= 2U && text[0] == '"' && text[end - 1U] == '"') {
+        start = 1U;
+        --end;
+    } else if ((end != 0U && text[0] == '"') ||
+            (end != 0U && text[end - 1U] == '"')) {
+        return false;
+    }
+    if (end - start + 1U > capacity) {
+        return false;
+    }
+    copy_bytes(content, (const uint8_t *)&text[start], end - start);
+    content[end - start] = (uint8_t)'\n';
+    *length = end - start + 1U;
+    return true;
+}
+
+static void print_drive(const char *name, struct sapfs_drive_info drive)
+{
+    console_write(name);
+    console_write("  fat32  ");
+    if (!drive.present) {
+        console_write("absent\n");
+    } else if (!drive.healthy || !drive.mounted) {
+        console_write("unavailable\n");
+    } else {
+        console_write(drive.read_only ? "read-only" : "read-write");
+        console_write("  ");
+        print_size(drive.free_bytes);
+        console_write(" free\n");
+    }
+}
+
+static void command_drives(void)
+{
+    print_drive("system", sapfs_drive(SAPFS_VOLUME_SYSTEM));
+    print_drive("data  ", sapfs_drive(SAPFS_VOLUME_DATA));
+}
+
+static void command_mount(const char *arguments)
+{
+    enum sapfs_volume first = SAPFS_VOLUME_SYSTEM;
+    enum sapfs_volume last = SAPFS_VOLUME_DATA;
+
+    if (argument_equals(arguments, "system")) {
+        last = SAPFS_VOLUME_SYSTEM;
+    } else if (argument_equals(arguments, "data")) {
+        first = SAPFS_VOLUME_DATA;
+    } else if (arguments[0] != '\0') {
+        console_write("mount: use 'mount system' or 'mount data'\n");
+        return;
+    }
+    for (enum sapfs_volume volume = first; volume <= last;
+         volume = (enum sapfs_volume)(volume + 1)) {
+        struct sapfs_drive_info drive = sapfs_drive(volume);
+        enum sapfs_status status;
+
+        if (drive.mounted) {
+            continue;
+        }
+        status = sapfs_mount(volume);
+        if (status != SAPFS_STATUS_OK) {
+            filesystem_error(volume == SAPFS_VOLUME_SYSTEM ?
+                "mount system" : "mount data", status);
+        }
+    }
+    command_drives();
+}
+
+static void command_pwd(void)
+{
+    console_putc('/');
+    if (filesystem_cwd[0] != '.' || filesystem_cwd[1] != '\0') {
+        console_write(filesystem_cwd);
+    }
+    console_putc('\n');
+}
+
+static void command_cd(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    if (!filesystem_path(arguments[0] == '\0' ? "." : arguments, path)) {
+        console_write("cd: malformed path\n");
+        return;
+    }
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("cd", status);
+        return;
+    }
+    if (!stat.directory) {
+        filesystem_error("cd", SAPFS_STATUS_NOT_DIRECTORY);
+        return;
+    }
+    size_t index = 0U;
+    do {
+        filesystem_cwd[index] = path[index];
+    } while (path[index++] != '\0');
+}
+
+static void command_ls(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    struct sapfs_list_entry entries[SAPFS_MAX_LIST_ENTRIES];
+    size_t count = 0U;
+    enum sapfs_status status;
+
+    if (!filesystem_path(arguments[0] == '\0' ? "." : arguments, path)) {
+        console_write("ls: malformed path\n");
+        return;
+    }
+    status = sapfs_list(SAPFS_VOLUME_DATA, path, entries,
+        SAPFS_MAX_LIST_ENTRIES, &count);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("ls", status);
+        return;
+    }
+    for (size_t index = 0U; index < count; ++index) {
+        console_write(entries[index].directory ? "d  " : "-  ");
+        console_write(entries[index].name);
+        if (!entries[index].directory) {
+            console_write("  ");
+            console_write_u64(entries[index].size);
+        }
+        console_putc('\n');
+    }
+}
+
+static void command_mkdir(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    enum sapfs_status status;
+
+    if (arguments[0] == '\0' || !filesystem_path(arguments, path)) {
+        console_write("mkdir: provide one relative 8.3 path\n");
+        return;
+    }
+    status = sapfs_mkdir(SAPFS_VOLUME_DATA, path);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("mkdir", status);
+    }
+}
+
+static void command_touch(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    if (arguments[0] == '\0' || !filesystem_path(arguments, path)) {
+        console_write("touch: provide one relative 8.3 path\n");
+        return;
+    }
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status == SAPFS_STATUS_OK) {
+        if (stat.directory) {
+            filesystem_error("touch", SAPFS_STATUS_IS_DIRECTORY);
+        }
+        return;
+    }
+    if (status != SAPFS_STATUS_NOT_FOUND) {
+        filesystem_error("touch", status);
+        return;
+    }
+    status = sapfs_create(SAPFS_VOLUME_DATA, path);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("touch", status);
+    }
+}
+
+static void command_read(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    uint8_t buffer[128];
+    sapfs_handle handle;
+    enum sapfs_status status;
+
+    if (arguments[0] == '\0' || !filesystem_path(arguments, path)) {
+        console_write("read: provide one relative 8.3 path\n");
+        return;
+    }
+    status = sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_READ, &handle);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("read", status);
+        return;
+    }
+    for (;;) {
+        size_t read_bytes = 0U;
+
+        status = sapfs_read(handle, buffer, sizeof(buffer), &read_bytes);
+        if (read_bytes != 0U) {
+            console_write_n((const char *)buffer, read_bytes);
+        }
+        if (status != SAPFS_STATUS_OK || read_bytes == 0U) {
+            break;
+        }
+    }
+    if (sapfs_close(handle) != SAPFS_STATUS_OK && status == SAPFS_STATUS_OK) {
+        status = SAPFS_STATUS_STALE_HANDLE;
+    }
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("read", status);
+    }
+}
+
+static void command_write_line(const char *arguments, bool append)
+{
+    char argument_path[SAPFS_MAX_PATH + 1U];
+    char path[SAPFS_MAX_PATH + 1U];
+    const char *text;
+    uint8_t content[SHELL_LINE_LIMIT + 1U];
+    size_t content_bytes;
+    size_t written = 0U;
+    sapfs_handle handle;
+    bool opened = false;
+    enum sapfs_status status;
+
+    if (!first_argument(arguments, argument_path, &text) ||
+        !filesystem_path(argument_path, path) ||
+        !line_content(text, content, sizeof(content), &content_bytes)) {
+        console_write(append ?
+            "append: use append PATH \"text\"\n" :
+            "write: use write PATH \"text\"\n");
+        return;
+    }
+    struct sapfs_stat stat;
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        status = sapfs_create(SAPFS_VOLUME_DATA, path);
+    }
+    if (status == SAPFS_STATUS_OK && !append) {
+        status = sapfs_truncate(SAPFS_VOLUME_DATA, path, 0U);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, path,
+            SAPFS_ACCESS_WRITE, &handle);
+        opened = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && append) {
+        uint32_t position;
+
+        status = sapfs_seek(handle, 0, SAPFS_SEEK_END, &position);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_write(handle, content, content_bytes, &written);
+    }
+    if (opened && sapfs_close(handle) != SAPFS_STATUS_OK &&
+        status == SAPFS_STATUS_OK) {
+        status = SAPFS_STATUS_STALE_HANDLE;
+    }
+    if (status != SAPFS_STATUS_OK || written != content_bytes) {
+        filesystem_error(append ? "append" : "write",
+            status != SAPFS_STATUS_OK ? status : SAPFS_STATUS_WRITEBACK);
+    }
+}
+
+static void command_write_at(const char *arguments)
+{
+    char argument_path[SAPFS_MAX_PATH + 1U];
+    char argument_offset[SAPFS_MAX_PATH + 1U];
+    char path[SAPFS_MAX_PATH + 1U];
+    const char *after_path;
+    const char *text;
+    uint8_t content[SHELL_LINE_LIMIT + 1U];
+    size_t content_bytes;
+    size_t written = 0U;
+    uint32_t offset;
+    uint32_t position = 0U;
+    sapfs_handle handle;
+    bool opened = false;
+    enum sapfs_status status;
+
+    if (!first_argument(arguments, argument_path, &after_path) ||
+        !first_argument(after_path, argument_offset, &text) ||
+        !filesystem_path(argument_path, path) ||
+        !decimal_u32(argument_offset, &offset) ||
+        !line_content(text, content, sizeof(content), &content_bytes)) {
+        console_write("writeat: use writeat PATH OFFSET \"text\"\n");
+        return;
+    }
+    status = sapfs_open(SAPFS_VOLUME_DATA, path,
+        SAPFS_ACCESS_WRITE, &handle);
+    opened = status == SAPFS_STATUS_OK;
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_seek(handle, (int64_t)offset,
+            SAPFS_SEEK_START, &position);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_write(handle, content, content_bytes, &written);
+    }
+    if (opened && sapfs_close(handle) != SAPFS_STATUS_OK &&
+        status == SAPFS_STATUS_OK) {
+        status = SAPFS_STATUS_STALE_HANDLE;
+    }
+    if (status != SAPFS_STATUS_OK || position != offset ||
+        written != content_bytes) {
+        filesystem_error("writeat", status != SAPFS_STATUS_OK ? status :
+            SAPFS_STATUS_WRITEBACK);
+    }
+}
+
+static void command_truncate(const char *arguments)
+{
+    char argument_path[SAPFS_MAX_PATH + 1U];
+    char path[SAPFS_MAX_PATH + 1U];
+    const char *size_text;
+    uint32_t size;
+    enum sapfs_status status;
+
+    if (!first_argument(arguments, argument_path, &size_text) ||
+        !filesystem_path(argument_path, path) ||
+        !decimal_u32(size_text, &size)) {
+        console_write("truncate: use truncate PATH BYTES\n");
+        return;
+    }
+    status = sapfs_truncate(SAPFS_VOLUME_DATA, path, size);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("truncate", status);
+    }
+}
+
+static void command_stat(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    if (arguments[0] == '\0' || !filesystem_path(arguments, path)) {
+        console_write("stat: provide one relative 8.3 path\n");
+        return;
+    }
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("stat", status);
+        return;
+    }
+    console_write(stat.directory ? "directory  " : "file       ");
+    console_write_u64(stat.size);
+    console_write(" bytes  cluster ");
+    console_write_u64(stat.first_cluster);
+    console_write("  chain ");
+    console_write_u64(stat.cluster_count);
+    console_write(stat.read_only ? "  read-only\n" : "  read-write\n");
+}
+
+static void command_mv(const char *arguments)
+{
+    char first[SAPFS_MAX_PATH + 1U];
+    char source[SAPFS_MAX_PATH + 1U];
+    char destination[SAPFS_MAX_PATH + 1U];
+    const char *second;
+    enum sapfs_status status;
+
+    if (!first_argument(arguments, first, &second) || second[0] == '\0' ||
+        !filesystem_path(first, source) ||
+        !filesystem_path(second, destination)) {
+        console_write("mv: use mv SOURCE DESTINATION\n");
+        return;
+    }
+    status = sapfs_rename(SAPFS_VOLUME_DATA, source, destination);
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("mv", status);
+    }
+}
+
+static void command_rm(const char *arguments)
+{
+    char path[SAPFS_MAX_PATH + 1U];
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    if (arguments[0] == '\0' || !filesystem_path(arguments, path)) {
+        console_write("rm: provide one relative 8.3 path\n");
+        return;
+    }
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status == SAPFS_STATUS_OK) {
+        status = stat.directory ? sapfs_rmdir(SAPFS_VOLUME_DATA, path) :
+            sapfs_unlink(SAPFS_VOLUME_DATA, path);
+    }
+    if (status != SAPFS_STATUS_OK) {
+        filesystem_error("rm", status);
+    }
+}
+
+static void command_sync(void)
+{
+    enum sapfs_status status = sapfs_sync(SAPFS_VOLUME_DATA);
+
+    if (status == SAPFS_STATUS_OK) {
+        console_write("data synchronized\n");
+    } else {
+        filesystem_error("sync", status);
     }
 }
 
@@ -295,7 +874,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 1.1.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Sapote 2.0.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -359,6 +938,38 @@ enum shell_status shell_execute(const char *text)
     } else if (matches(text, "linux")) {
         linux_prompt_evidence_pending = true;
         command_linux(arguments_of(text));
+    } else if (matches(text, "drives")) {
+        command_drives();
+    } else if (matches(text, "mount")) {
+        command_mount(arguments_of(text));
+    } else if (matches(text, "ls")) {
+        command_ls(arguments_of(text));
+    } else if (matches(text, "cd")) {
+        command_cd(arguments_of(text));
+    } else if (matches(text, "pwd")) {
+        command_pwd();
+    } else if (matches(text, "mkdir")) {
+        command_mkdir(arguments_of(text));
+    } else if (matches(text, "touch")) {
+        command_touch(arguments_of(text));
+    } else if (matches(text, "read")) {
+        command_read(arguments_of(text));
+    } else if (matches(text, "write")) {
+        command_write_line(arguments_of(text), false);
+    } else if (matches(text, "append")) {
+        command_write_line(arguments_of(text), true);
+    } else if (matches(text, "writeat")) {
+        command_write_at(arguments_of(text));
+    } else if (matches(text, "truncate")) {
+        command_truncate(arguments_of(text));
+    } else if (matches(text, "stat")) {
+        command_stat(arguments_of(text));
+    } else if (matches(text, "mv")) {
+        command_mv(arguments_of(text));
+    } else if (matches(text, "rm")) {
+        command_rm(arguments_of(text));
+    } else if (matches(text, "sync")) {
+        command_sync();
     } else if (matches(text, "clear")) {
         if (screen_is_active()) {
             (void)screen_clear();
@@ -595,6 +1206,8 @@ enum shell_status shell_initialize(void)
     state.active = true;
     state.length = 0U;
     line[0] = '\0';
+    filesystem_cwd[0] = '.';
+    filesystem_cwd[1] = '\0';
     return SHELL_STATUS_OK;
 }
 

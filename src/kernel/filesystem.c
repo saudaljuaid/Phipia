@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <sapote/filesystem.h>
+#include <sapote/fat32_fs.h>
 
 #define FILESYSTEM_LINUX_READ_FAILURE_AFTER_OPEN 13U
 #define FILESYSTEM_LINUX_READ_FAILURE_MAX 13U
@@ -47,6 +48,7 @@ struct filesystem_private_read_runtime {
     uint8_t fat_block[FAT16_BLOCK_BYTES];
     uint32_t kind;
     bool owned;
+    bool fat32_owned;
 };
 
 enum private_read_kind {
@@ -1169,6 +1171,10 @@ static enum filesystem_status private_read_cleanup(void)
     if (!private_read_runtime.owned) {
         return FILESYSTEM_STATUS_OK;
     }
+    if (private_read_runtime.fat32_owned) {
+        zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
+        return FILESYSTEM_STATUS_OK;
+    }
     if (private_read_runtime.state != FILESYSTEM_STOPPING &&
         transition(&private_read_runtime.state, FILESYSTEM_STOPPING) !=
             FILESYSTEM_STATUS_OK) {
@@ -1543,6 +1549,9 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     const uint32_t failure_after_open =
         linux_profile_failure_after_open(profile);
     const uint32_t failure_max = linux_profile_failure_max(profile);
+    const char *fat32_path = profile == LINUX_READ_PROFILE_UNAME ?
+        "UNAMEBOX" : (profile == LINUX_READ_PROFILE_CAT ?
+            "CATBOX" : "BUSYBOX");
 
     if (file == NULL || destination == NULL) {
         return FILESYSTEM_STATUS_NULL_ARGUMENT;
@@ -1554,6 +1563,55 @@ static enum filesystem_status filesystem_linux_read_open_profile(
     zero_bytes(destination, destination_bytes);
     if (private_read_runtime.owned) {
         return FILESYSTEM_STATUS_PRIVATE_BUSY;
+    }
+    if (failure_boundary == 0U &&
+        sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted) {
+        sapfs_handle handle;
+        size_t read_bytes = 0U;
+        uint64_t before = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+        uint64_t after;
+        enum sapfs_status open_status = sapfs_open(SAPFS_VOLUME_SYSTEM,
+            fat32_path, SAPFS_ACCESS_READ, &handle);
+
+        if (open_status != SAPFS_STATUS_OK) {
+            return open_status == SAPFS_STATUS_NOT_FOUND ?
+                FILESYSTEM_STATUS_ABSENT : FILESYSTEM_STATUS_NVME_FAILURE;
+        }
+        open_status = sapfs_read(handle, destination, destination_bytes,
+            &read_bytes);
+        if (sapfs_close(handle) != SAPFS_STATUS_OK &&
+            open_status == SAPFS_STATUS_OK) {
+            open_status = SAPFS_STATUS_STALE_HANDLE;
+        }
+        if (open_status != SAPFS_STATUS_OK || read_bytes != destination_bytes ||
+            linux_profile_validate_payload(profile, destination,
+                destination_bytes, &payload) != LINUX_FAT16_STATUS_OK ||
+            payload.deterministic != 1U || payload.byte_count != file_bytes) {
+            zero_bytes(destination, destination_bytes);
+            return FILESYSTEM_STATUS_LINUX_PAYLOAD;
+        }
+        after = sapfs_completion_count(SAPFS_VOLUME_SYSTEM);
+        if (after <= before || after - before > UINT32_MAX) {
+            zero_bytes(destination, destination_bytes);
+            return FILESYSTEM_STATUS_OWNERSHIP;
+        }
+        zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
+        private_read_runtime.generation = next_private_read_generation++;
+        if (next_private_read_generation == 0U) {
+            next_private_read_generation = 1U;
+        }
+        private_read_runtime.kind = linux_profile_private_kind(profile);
+        private_read_runtime.owned = true;
+        private_read_runtime.fat32_owned = true;
+        file->generation = private_read_runtime.generation;
+        file->file_bytes = file_bytes;
+        file->cluster_count =
+            (file_bytes + FAT32_BOOT_BYTES - 1U) / FAT32_BOOT_BYTES;
+        file->read_count = (uint32_t)(after - before);
+        file->msix_completion_count = after - before;
+        file->cpu_owned = true;
+        file->active = true;
+        return FILESYSTEM_STATUS_OK;
     }
     zero_bytes(&private_read_runtime, sizeof(private_read_runtime));
     zero_bytes(&geometry, sizeof(geometry));
