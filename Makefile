@@ -16,7 +16,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	first-light-userland-interactive-absent
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 43
-EXPECTED_SHELL_ASSERTION_COUNT := 284
+EXPECTED_SHELL_ASSERTION_COUNT := 325
 
 CC := gcc
 LD := ld
