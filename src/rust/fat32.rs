@@ -201,18 +201,19 @@ fn multiply(left: u64, right: u64) -> Result<u64, Status> {
     left.checked_mul(right).ok_or(Status::SpanOverflow)
 }
 
+#[inline(never)]
+fn bytes_differ(left: u8, right: u8) -> bool {
+    left != right
+}
+
 fn bytewise_equal(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }
     for (left_byte, right_byte) in left.iter().zip(right.iter()) {
-        // SAFETY: `left_byte` is a live shared reference from `left`.
-        // Volatile reads preserve the explicit freestanding comparison;
-        // otherwise LLVM lowers this bounded walk to a GOT-backed memcmp.
-        let left_value = unsafe { core::ptr::read_volatile(left_byte) };
-        // SAFETY: `right_byte` is a live shared reference from `right`.
-        let right_value = unsafe { core::ptr::read_volatile(right_byte) };
-        if left_value != right_value {
+        // The non-inlined predicate keeps this bounded walk explicit;
+        // otherwise LLVM lowers slice equality to a GOT-backed memcmp.
+        if bytes_differ(*left_byte, *right_byte) {
             return false;
         }
     }
