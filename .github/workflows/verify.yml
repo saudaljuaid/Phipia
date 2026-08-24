@@ -35,11 +35,14 @@ jobs:
                   qemu-system-x86_64 -device qemu-xhci,help
                   qemu-system-x86_64 -device usb-kbd,help
                   qemu-system-x86_64 -device nvme,help
+            - name: Verify the kernel artifact
+              run: make verify
             - name: Capture Sapote First Light from QEMU
               run: |
                   make iso
                   python3 tools/capture-first-light.py \
                       --iso build/sapote.iso \
+                      --userspace build/userspace/sapote-userland-fat16.raw \
                       --output build/first-light-captures
             - name: Upload Sapote First Light captures
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -47,7 +50,5 @@ jobs:
                   name: sapote-first-light-captures
                   path: build/first-light-captures
                   if-no-files-found: error
-            - name: Verify the kernel artifact
-              run: make verify
             - name: Prove faults and interrupts in QEMU
               run: make qemu-tests

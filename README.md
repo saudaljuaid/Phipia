@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
-  <img src="https://img.shields.io/badge/version-0.9.0-18181C" alt="version 0.9.0">
+  <img src="https://img.shields.io/badge/version-1.0.0-18181C" alt="version 1.0.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-595976" alt="GPL-3.0-only"></a>
 </p>
 
@@ -32,8 +32,9 @@ workspace.
 
 First Light is Sapote's compact desktop shell. It combines the canonical pebble
 with a classic workstation interface, a terminal, keyboard and pointer input,
-and four focused tools. The v0.9.0 milestone adds a checked Linux `uname`
-boundary for measured BusyBox programs.
+and four focused tools. In v1.0.0 its terminal can deliberately launch the two
+measured BusyBox profiles with `linux echo` and `linux uname`, then return to
+the same usable prompt.
 
 ## Current capabilities
 
@@ -42,7 +43,7 @@ boundary for measured BusyBox programs.
 - Bounded xHCI, NVMe, and read-only FAT16 controller/file proofs.
 - Ring 3 execution with private address spaces and checked ELF64 loading.
 - Linux `SYSCALL` support for measured BusyBox `echo` and `uname` programs.
-- First Light, a framebuffer console, the `sap>` shell, and 39 QEMU scenarios.
+- First Light, a framebuffer console, the `sap>` shell, and 41 QEMU scenarios.
 
 ## Build and boot
 
@@ -58,7 +59,8 @@ make qemu-tests   # run all QEMU scenarios
 make run          # boot First Light
 ```
 
-Build products are written to `build/sapote.elf` and `build/sapote.iso`.
+Build products are written to `build/sapote.elf`, `build/sapote.iso`, and the
+deterministic read-only userspace volume under `build/userspace/`.
 
 ## Engineering approach
 
@@ -78,6 +80,9 @@ Sapote is still a foundation-stage, single-core system. First Light is a fixed
 kernel workspace rather than a general window manager. Storage and executable
 support are read-only and deliberately bounded; networking, general process
 services, an IOMMU, and broad physical-hardware coverage remain future work.
+Version 1.0.0 stabilizes only this two-profile milestone contract. It is not a
+claim of POSIX compliance, production readiness, general Linux binary
+compatibility, or a broad stable userspace ABI.
 
 ## Documentation
 

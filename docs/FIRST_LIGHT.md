@@ -61,6 +61,24 @@ Ledger stages. Activation is impossible without:
 If an optional graphical prerequisite is unavailable, Sapote retains its serial
 or framebuffer shell instead of publishing a partial desktop success.
 
+## Terminal commands
+
+The native `echo` command is unchanged. The separate `linux` command exposes
+only the two measured profiles:
+
+```text
+sap> linux echo
+SAPOTE
+sap> linux uname
+Linux
+sap>
+```
+
+`help` lists the command and unsupported profile names are refused. A missing
+userspace volume or invalid profile produces one concise error and leaves the
+prompt usable. Successful output is accepted from the actual userspace `write`
+or `writev` buffers; the shell contains no substitute output strings.
+
 ## Captures
 
 The committed image and video come from QEMU, not a mockup:
@@ -80,7 +98,10 @@ The source captures are:
 
 `screenshot-proof` compares stable pixels and refuses a one-pixel mutation.
 The `first-light` QEMU scenario checks installed state, event handling, redraw,
-cursor damage, framebuffer pixels, and clean handoff.
+cursor damage, framebuffer pixels, and clean handoff. The production-path
+`first-light-userland` scenario drives the same shell dispatch as an interactive
+boot, launches both profiles twice, and requires prompt restoration and clean
+teardown. `first-light-userland-absent` proves a missing volume is recoverable.
 
 ## Limits
 
