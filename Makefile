@@ -102,12 +102,14 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # FAT chain is the largest Rust aggregate; allowing 1,024 direct stores keeps
 # its bounded copies and zeroing inline instead of introducing a GOT-backed
 # compiler memory call into the fixed-address kernel. One codegen unit also
-# keeps calls between Rust boundary functions direct and therefore GOT-free.
+# keeps calls between Rust boundary functions direct, while variable bounded
+# copies lower to scalar REP MOVSB instead of a GOT-backed runtime call.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
 	--crate-name sapote -C panic=abort -C opt-level=2 \
 	-C relocation-model=static -C codegen-units=1 \
 	-C llvm-args=-max-store-memcpy=1024 \
-	-C llvm-args=-max-store-memset=1024 -D warnings
+	-C llvm-args=-max-store-memset=1024 \
+	-C llvm-args=-x86-use-fsrm-for-memcpy -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
 # The qemu-test-% scenarios are deliberately absent from .PHONY. GNU Make skips
