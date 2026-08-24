@@ -1766,18 +1766,27 @@ cleanup:
         !linux_cat_abi_resources_released() ||
         paging_verify() != PAGING_STATUS_OK) {
         zero_bytes(result, sizeof(*result));
+        if (interrupts_were_enabled) {
+            cpu_interrupt_enable();
+        }
         return status == LINUX_CAT_ABI_STATUS_OK ?
             LINUX_CAT_ABI_STATUS_TEARDOWN : status;
     }
     capture_census(&after);
     if (!census_equal(&runtime.before, &after)) {
         zero_bytes(result, sizeof(*result));
+        if (interrupts_were_enabled) {
+            cpu_interrupt_enable();
+        }
         return LINUX_CAT_ABI_STATUS_RESOURCE_CENSUS;
     }
     result->teardown_complete = true;
     result->resource_census_equal = true;
     installed_result = *result;
     console_serial_write("FL CAT address-space teardown complete\n");
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
     return LINUX_CAT_ABI_STATUS_OK;
 }
 
