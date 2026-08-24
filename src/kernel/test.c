@@ -5583,7 +5583,7 @@ static void fat32_system_scenario(void)
             uname_before + 1U || !linux_userland_resources_released()) {
         kernel_test_fail("FAT32 system executables did not complete");
     }
-    console_write("ST FAT32 SYSTEM authenticated echo uname FAT32 immutable\n");
+    console_write("\nST FAT32 SYSTEM authenticated echo uname FAT32 immutable\n");
 }
 
 static void fat32_data_scenario(void)
@@ -5599,7 +5599,7 @@ static void fat32_data_scenario(void)
     if (!fat32_file_equals("notes.txt", expected, sizeof(expected) - 1U)) {
         kernel_test_fail("FAT32 create/read/write contents changed");
     }
-    console_write("ST FAT32 DATA create read write append sync exact\n");
+    console_write("\nST FAT32 DATA create read write append sync exact\n");
 }
 
 static void fat32_nested_scenario(void)
@@ -5621,7 +5621,7 @@ static void fat32_nested_scenario(void)
             SAPFS_STATUS_OK || !stat.directory) {
         kernel_test_fail("nested FAT32 traversal changed");
     }
-    console_write("ST FAT32 NESTED dot dotdot traversal enumeration exact\n");
+    console_write("\nST FAT32 NESTED dot dotdot traversal enumeration exact\n");
 }
 
 static void fat32_growth_scenario(void)
@@ -5642,7 +5642,7 @@ static void fat32_growth_scenario(void)
         bytes != stat.size) {
         kernel_test_fail("multi-cluster FAT32 growth changed");
     }
-    console_write("ST FAT32 GROWTH bytes 568 clusters 2 contents readable\n");
+    console_write("\nST FAT32 GROWTH bytes 568 clusters 2 contents readable\n");
 }
 
 static void fat32_random_scenario(void)
@@ -5656,7 +5656,7 @@ static void fat32_random_scenario(void)
     if (!fat32_file_equals("random.txt", expected, sizeof(expected) - 1U)) {
         kernel_test_fail("random-access FAT32 overwrite changed");
     }
-    console_write("ST FAT32 RANDOM seek overwrite preserved surrounding bytes\n");
+    console_write("\nST FAT32 RANDOM seek overwrite preserved surrounding bytes\n");
 }
 
 static void fat32_truncate_scenario(void)
@@ -5684,7 +5684,7 @@ static void fat32_truncate_scenario(void)
             kernel_test_fail("truncated FAT32 bytes reappeared after growth");
         }
     }
-    console_write("ST FAT32 TRUNCATE release regrow zero tail exact\n");
+    console_write("\nST FAT32 TRUNCATE release regrow zero tail exact\n");
 }
 
 static void fat32_rename_scenario(void)
@@ -5715,7 +5715,7 @@ static void fat32_rename_scenario(void)
             sizeof(expected) - 1U)) {
         kernel_test_fail("FAT32 rename or move changed ownership");
     }
-    console_write("ST FAT32 RENAME file move directory parent updated\n");
+    console_write("\nST FAT32 RENAME file move directory parent updated\n");
 }
 
 static void fat32_delete_scenario(void)
@@ -5740,7 +5740,7 @@ static void fat32_delete_scenario(void)
     }
     fat32_feed("rm kept/live.txt");
     fat32_feed("rm kept");
-    console_write("ST FAT32 DELETE cluster reused nonempty directory refused\n");
+    console_write("\nST FAT32 DELETE cluster reused nonempty directory refused\n");
 }
 
 static void fat32_full_scenario(void)
@@ -5763,7 +5763,7 @@ static void fat32_full_scenario(void)
             SAPFS_STATUS_OK || stat.size != 10U) {
         kernel_test_fail("full FAT32 volume did not recover after deletion");
     }
-    console_write("ST FAT32 FULL refusal no leak deletion recovered\n");
+    console_write("\nST FAT32 FULL refusal no leak deletion recovered\n");
 }
 
 static void fat32_unavailable_scenario(bool corrupt)
@@ -5783,8 +5783,8 @@ static void fat32_unavailable_scenario(bool corrupt)
         kernel_test_fail("unavailable data volume blocked authenticated echo");
     }
     console_write(corrupt ?
-        "ST FAT32 CORRUPT refused session usable system executable valid\n" :
-        "ST FAT32 MISSING session usable system executable valid\n");
+        "\nST FAT32 CORRUPT refused session usable system executable valid\n" :
+        "\nST FAT32 MISSING session usable system executable valid\n");
 }
 
 static void fat32_persistence_scenario(void)
@@ -5805,7 +5805,7 @@ static void fat32_persistence_scenario(void)
             sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
             kernel_test_fail("clean persistence write phase failed");
         }
-        console_write("ST FAT32 PERSISTENCE synchronized reboot phase\n");
+        console_write("\nST FAT32 PERSISTENCE synchronized reboot phase\n");
         cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
         kernel_test_fail("platform reset did not restart QEMU");
     }
@@ -5815,7 +5815,7 @@ static void fat32_persistence_scenario(void)
         kernel_test_fail("clean reboot did not retain FAT32 contents");
     }
     fat32_feed("read projects/notes.txt");
-    console_write("ST FAT32 PERSISTENCE clean reboot retained exact contents\n");
+    console_write("\nST FAT32 PERSISTENCE clean reboot retained exact contents\n");
 }
 
 static void fat32_cache_scenario(void)
@@ -5845,7 +5845,7 @@ static void fat32_cache_scenario(void)
             kernel_test_fail("FAT32 cache eviction lost a write");
         }
     }
-    console_write("ST FAT32 CACHE six clusters eviction sync readback exact\n");
+    console_write("\nST FAT32 CACHE six clusters eviction sync readback exact\n");
 }
 
 static void fat32_immutable_scenario(void)
@@ -5863,7 +5863,7 @@ static void fat32_immutable_scenario(void)
         linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) != before + 1U) {
         kernel_test_fail("immutable FAT32 system volume accepted a write");
     }
-    console_write("ST FAT32 IMMUTABLE write refused below shell executable valid\n");
+    console_write("\nST FAT32 IMMUTABLE write refused below shell executable valid\n");
 }
 
 static void fat32_handles_scenario(void)
@@ -5902,7 +5902,7 @@ static void fat32_handles_scenario(void)
             kernel_test_fail("FAT32 handle teardown leaked ownership");
         }
     }
-    console_write("ST FAT32 HANDLES generation stale double-close access bound clean\n");
+    console_write("\nST FAT32 HANDLES generation stale double-close access bound clean\n");
 }
 
 _Noreturn void kernel_test_complete_fat32(void)
