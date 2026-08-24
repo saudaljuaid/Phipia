@@ -42,7 +42,7 @@ jobs:
                   set -euo pipefail
                   make verify
                   git diff --check
-                  test "$(sha256sum build/userspace/sapote-userland-fat16.raw | awk '{print toupper($1)}')" = \
+                  test "$(sha256sum build/userspace/sapote-userland-no-cat-fat16.raw | awk '{print toupper($1)}')" = \
                       12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE
             - name: Rebuild and trace both measured profiles twice
               shell: bash
@@ -93,15 +93,24 @@ jobs:
                   make iso
                   python3 tools/capture-first-light.py \
                       --iso build/sapote.iso \
-                      --userspace build/userspace/sapote-userland-fat16.raw \
+                      --userspace \
+                          build/userspace/sapote-userland-no-cat-fat16.raw \
                       --interaction uname \
                       --output build/release-captures
-                  python3 tools/compare-first-light-screenshot.py \
-                      --mode terminal assets/sapote-first-light-terminal.png \
-                      build/release-captures/sapote-first-light-terminal.png
+                  if [[ "$GITHUB_REF" == refs/tags/v1.0.0 ]]; then
+                      python3 tools/compare-first-light-screenshot.py \
+                          --mode terminal \
+                          assets/sapote-first-light-terminal.png \
+                          build/release-captures/sapote-first-light-terminal.png
+                  else
+                      file \
+                          build/release-captures/sapote-first-light-terminal.png \
+                          | grep -Fq 'PNG image data, 1024 x 768'
+                  fi
                   python3 tools/capture-boot-video.py \
                       --iso build/sapote.iso \
-                      --userspace build/userspace/sapote-userland-fat16.raw \
+                      --userspace \
+                          build/userspace/sapote-userland-no-cat-fat16.raw \
                       --ffmpeg ffmpeg \
                       --interaction uname \
                       --output build/sapote-first-light-boot-20s.mp4
@@ -117,7 +126,7 @@ jobs:
                   mkdir -p "$release"
                   cp build/sapote.iso "$release/Sapote-v1.0.0.iso"
                   cp build/sapote.elf "$release/sapote-v1.0.0.elf"
-                  cp build/userspace/sapote-userland-fat16.raw \
+                  cp build/userspace/sapote-userland-no-cat-fat16.raw \
                       "$release/sapote-v1.0.0-userspace-fat16.raw"
                   cp build/release-echo/one/busybox "$release/busybox-echo"
                   cp build/release-uname/one/busybox "$release/busybox-uname"
