@@ -44,10 +44,30 @@ jobs:
                       build/cat-measure/two/busybox
                   cmp build/cat-measure/one/syscall-sequence.txt \
                       build/cat-measure/two/syscall-sequence.txt
+                  (
+                      cd build/cat-measure/one
+                      ld -r -b binary busybox -o busybox-blob.o
+                      gcc -std=c11 -O2 -fPIE -pie -Wall -Wextra -Werror \
+                          -Wpedantic -Wshadow -Wconversion \
+                          -Wl,-z,noexecstack \
+                          ../../../tools/linux-cat-stack-launcher.c \
+                          ../../../tools/linux-abi-stack-launcher.S \
+                          busybox-blob.o -o minimal-stack-launcher
+                      printf 'pebble\n' | strace --quiet=all \
+                          --raw=read,write \
+                          --output=minimal-stack-syscall-trace.txt \
+                          ./minimal-stack-launcher \
+                          >minimal-stack-stdout.txt \
+                          2>minimal-stack-stderr.txt
+                      printf 'pebble\n' | cmp --silent - \
+                          minimal-stack-stdout.txt
+                      test ! -s minimal-stack-stderr.txt
+                  )
                   cat build/cat-measure/one/build-record.txt
                   cat build/cat-measure/one/elf-program-headers.txt
                   cat build/cat-measure/one/syscall-trace.txt
                   cat build/cat-measure/one/raw-read-write-trace.txt
+                  cat build/cat-measure/one/minimal-stack-syscall-trace.txt
             - name: Upload measured cat evidence
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
