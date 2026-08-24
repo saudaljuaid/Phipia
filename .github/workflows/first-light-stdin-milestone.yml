@@ -42,8 +42,8 @@ jobs:
                       build/cat-measure/two build/cat-measure/work-two
                   cmp build/cat-measure/one/busybox \
                       build/cat-measure/two/busybox
-                  cmp build/cat-measure/one/syscall-trace.txt \
-                      build/cat-measure/two/syscall-trace.txt
+                  cmp build/cat-measure/one/syscall-sequence.txt \
+                      build/cat-measure/two/syscall-sequence.txt
                   cat build/cat-measure/one/build-record.txt
                   cat build/cat-measure/one/elf-program-headers.txt
                   cat build/cat-measure/one/syscall-trace.txt
