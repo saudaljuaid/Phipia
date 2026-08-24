@@ -29,6 +29,7 @@
 #include <sapote/process.h>
 #include <sapote/keyboard.h>
 #include <sapote/linux_abi.h>
+#include <sapote/linux_cat.h>
 #include <sapote/linux_uname.h>
 #include <sapote/linux_userland.h>
 #include <sapote/screen.h>
@@ -327,6 +328,15 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT;
     }
 
+    if (token_equals(value, length, "first-light-userland-interactive")) {
+        return KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE;
+    }
+
+    if (token_equals(
+            value, length, "first-light-userland-interactive-absent")) {
+        return KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -424,6 +434,10 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x38);
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
         return UINT8_C(0x39);
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
+        return UINT8_C(0x3A);
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
+        return UINT8_C(0x3B);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4097,6 +4111,8 @@ void kernel_test_run(
         return;
     case KERNEL_TEST_FIRST_LIGHT_USERLAND:
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_DOUBLE_FAULT:
@@ -5023,6 +5039,78 @@ static bool feed_shell_line(const char *text)
     return shell_feed('\n') == SHELL_STATUS_OK;
 }
 
+static uint8_t keyboard_scancode_for_ascii(char character)
+{
+    static const uint8_t letters[26] = {
+        0x1EU, 0x30U, 0x2EU, 0x20U, 0x12U, 0x21U, 0x22U,
+        0x23U, 0x17U, 0x24U, 0x25U, 0x26U, 0x32U, 0x31U,
+        0x18U, 0x19U, 0x10U, 0x13U, 0x1FU, 0x14U, 0x16U,
+        0x2FU, 0x11U, 0x2DU, 0x15U, 0x2CU
+    };
+
+    if (character >= 'a' && character <= 'z') {
+        return letters[(size_t)(character - 'a')];
+    }
+    if (character == ' ') {
+        return UINT8_C(0x39);
+    }
+    if (character == '\n') {
+        return UINT8_C(0x1C);
+    }
+    return 0U;
+}
+
+static bool inject_keyboard_byte(uint8_t byte)
+{
+    const struct keyboard_state before = keyboard_get_state();
+
+    if (!cpu_interrupts_enabled() ||
+        keyboard_inject_scancode(byte) != KEYBOARD_STATUS_OK) {
+        return false;
+    }
+    for (uint64_t spins = 0U; spins < UINT64_C(200000000); ++spins) {
+        const struct keyboard_state now = keyboard_get_state();
+
+        if (now.events > before.events || now.dropped > before.dropped) {
+            return now.events == before.events + 1U &&
+                now.dropped == before.dropped;
+        }
+    }
+    return false;
+}
+
+static bool inject_keyboard_text(const char *text)
+{
+    size_t index = 0U;
+
+    if (text == NULL) {
+        return false;
+    }
+    while (text[index] != '\0') {
+        const uint8_t scancode = keyboard_scancode_for_ascii(text[index]);
+
+        if (scancode == 0U || !inject_keyboard_byte(scancode) ||
+            !inject_keyboard_byte((uint8_t)(scancode | UINT8_C(0x80)))) {
+            return false;
+        }
+        ++index;
+    }
+    shell_process_keyboard_events();
+    return true;
+}
+
+static bool inject_keyboard_ctrl_d(void)
+{
+    if (!inject_keyboard_byte(UINT8_C(0x1D)) ||
+        !inject_keyboard_byte(UINT8_C(0x20)) ||
+        !inject_keyboard_byte(UINT8_C(0xA0)) ||
+        !inject_keyboard_byte(UINT8_C(0x9D))) {
+        return false;
+    }
+    shell_process_keyboard_events();
+    return !keyboard_get_state().control;
+}
+
 static bool installed_first_light_ready(void)
 {
     const struct boot_ledger *ledger = boot_ledger_installed();
@@ -5037,7 +5125,9 @@ static bool installed_first_light_ready(void)
         boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE) &&
         boot_ledger_has_capability(ledger,
-            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE);
+            BOOT_CAPABILITY_LINUX_UNAME_IMAGE_UTS_FOUNDATION_AVAILABLE) &&
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE);
 }
 
 _Noreturn void kernel_test_complete_first_light_userland(void)
@@ -5116,6 +5206,119 @@ _Noreturn void kernel_test_complete_first_light_userland_absent(void)
     }
     console_write("\nST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable ");
     console_write("teardown clean\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_first_light_userland_interactive(void)
+{
+    const struct shell_state before = shell_get_state();
+    const uint32_t cat_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_CAT);
+    uint64_t first_generation;
+    uint64_t second_generation;
+    struct linux_cat_abi_proof_result proof;
+
+    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE ||
+        !installed_first_light_ready() || !shell_is_active() ||
+        !keyboard_is_initialized()) {
+        kernel_test_fail("interactive userspace prerequisites are incomplete");
+    }
+    cpu_interrupt_enable();
+    shell_process_keyboard_events();
+    console_write("\n");
+    console_write("sap> ");
+
+    if (!inject_keyboard_text("linux cat\n") ||
+        !linux_userland_foreground_waiting()) {
+        kernel_test_fail("first cat launch did not wait for keyboard input");
+    }
+    first_generation = linux_userland_active_generation();
+    if (first_generation == 0U || !inject_keyboard_text("pebble\n") ||
+        !linux_userland_foreground_waiting() ||
+        !inject_keyboard_ctrl_d() || linux_userland_foreground_waiting() ||
+        !linux_userland_resources_released()) {
+        kernel_test_fail("first interactive cat launch did not complete");
+    }
+
+    if (!inject_keyboard_text("linux cat\n") ||
+        !linux_userland_foreground_waiting()) {
+        kernel_test_fail("second cat launch did not wait for keyboard input");
+    }
+    second_generation = linux_userland_active_generation();
+    if (second_generation == 0U || second_generation == first_generation ||
+        !inject_keyboard_text("again\n") ||
+        !linux_userland_foreground_waiting() ||
+        !inject_keyboard_ctrl_d() || linux_userland_foreground_waiting()) {
+        kernel_test_fail("second interactive cat launch did not complete");
+    }
+
+    proof = linux_cat_abi_get_proof_result();
+    if (shell_get_state().commands != before.commands + 2U ||
+        shell_get_state().lines != before.lines + 2U ||
+        shell_get_state().unknown != before.unknown ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_CAT) !=
+            cat_before + 2U ||
+        proof.file_bytes != LINUX_CAT_ABI_IMAGE_BYTES ||
+        proof.stdout_bytes != 6U || proof.input_bytes != 6U ||
+        proof.input_lines != 1U || proof.resume_count != 2U ||
+        proof.syscall_count != 6U || proof.distinct_syscalls != 5U ||
+        proof.generation != second_generation || !proof.ring_three ||
+        !proof.private_address_space || !proof.real_syscall_instruction ||
+        !proof.stdout_valid || !proof.exit_zero || !proof.eof_delivered ||
+        !proof.kernel_cr3_restored || !proof.teardown_complete ||
+        !proof.resource_census_equal || !linux_userland_resources_released() ||
+        !cpu_interrupts_enabled()) {
+        kernel_test_fail("interactive cat proof is inconsistent");
+    }
+    console_write("\nST FIRST_LIGHT_USERLAND_INTERACTIVE cat 2 keyboard IRQ ");
+    console_write("read SYSCALL copy-out resume write SYSCALL stdout exact ");
+    console_write("EOF exit 0 teardown clean fresh generation prompt restored\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
+    void
+)
+{
+    const struct shell_state before = shell_get_state();
+    const uint32_t echo_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+    const uint32_t cat_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_CAT);
+    struct linux_abi_proof_result echo;
+
+    if (active_scenario !=
+            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT ||
+        !installed_first_light_ready() || !shell_is_active() ||
+        !keyboard_is_initialized()) {
+        kernel_test_fail("interactive absent-profile prerequisites incomplete");
+    }
+    cpu_interrupt_enable();
+    shell_process_keyboard_events();
+    console_write("\n");
+    console_write("sap> ");
+    if (!inject_keyboard_text("linux cat\n") ||
+        linux_userland_foreground_waiting() ||
+        !linux_userland_resources_released() ||
+        !inject_keyboard_text("linux echo\n")) {
+        kernel_test_fail("missing cat profile did not recover through keyboard");
+    }
+    echo = linux_abi_get_proof_result();
+    if (shell_get_state().commands != before.commands + 2U ||
+        shell_get_state().lines != before.lines + 2U ||
+        shell_get_state().unknown != before.unknown ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_CAT) != cat_before ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) !=
+            echo_before + 1U ||
+        echo.file_bytes != LINUX_ABI_IMAGE_BYTES || echo.stdout_bytes != 7U ||
+        !echo.ring_three || !echo.real_syscall_instruction ||
+        !echo.stdout_valid || !echo.exit_zero || !echo.teardown_complete ||
+        !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
+        kernel_test_fail("missing cat profile recovery proof is inconsistent");
+    }
+    console_write("\nST FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT cat missing ");
+    console_write("echo valid keyboard IRQ refusal recoverable teardown clean ");
+    console_write("prompt usable\n");
     kernel_test_pass();
 }
 
@@ -5263,6 +5466,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "first-light-userland";
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
         return "first-light-userland-absent";
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
+        return "first-light-userland-interactive";
+    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
+        return "first-light-userland-interactive-absent";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

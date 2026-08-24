@@ -21,7 +21,7 @@ busybox_archive="busybox-${busybox_version}.tar.bz2"
 busybox_url="https://busybox.net/downloads/${busybox_archive}"
 busybox_sha256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 busybox_config_sha256=acc38083863385286ff2bb2d8d594e6df629ccae2d84beb8b838afed8d7ce669
-busybox_binary_sha256=measure
+busybox_binary_sha256=8191596a22778b575942895071a2e50cceee0f82f4d88b6d986584ce0914fc3e
 musl_version=1.2.6
 musl_archive="musl-${musl_version}.tar.gz"
 musl_upstream_url="https://musl.libc.org/releases/${musl_archive}"
@@ -108,13 +108,8 @@ printf '%s  %s\n' "$busybox_config_sha256" \
 busybox_binary="$busybox_source/busybox"
 cp "$busybox_binary" "$output_dir/busybox"
 cp "$busybox_source/.config" "$output_dir/busybox.config"
-if [ "$busybox_binary_sha256" != measure ]; then
-    printf '%s  %s\n' "$busybox_binary_sha256" \
-        "$output_dir/busybox" | sha256sum --check --strict
-else
-    printf 'warning: BusyBox binary SHA-256 pin bypassed for measurement only\n' \
-        >&2
-fi
+printf '%s  %s\n' "$busybox_binary_sha256" \
+    "$output_dir/busybox" | sha256sum --check --strict
 printf '%s  %s\n' "$busybox_config_sha256" \
     "$output_dir/busybox.config" | sha256sum --check --strict
 cp "$busybox_source/LICENSE" "$output_dir/BUSYBOX-LICENSE"

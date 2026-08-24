@@ -12,9 +12,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	screen keyboard shell surface write-combining device-windows \
 	boot-ledger first-light device-substrate xhci nvme filesystem process \
 	linux-abi linux-abi-uname first-light-userland \
-	first-light-userland-absent
+	first-light-userland-absent first-light-userland-interactive \
+	first-light-userland-interactive-absent
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 41
+EXPECTED_TEST_SCENARIO_COUNT := 43
 EXPECTED_SHELL_ASSERTION_COUNT := 284
 
 CC := gcc
@@ -38,6 +39,8 @@ RUST_LINUX_FAT16_TEST := $(BUILD_DIR)/linux-fat16-tests
 RUST_LINUX_ELF64_TEST := $(BUILD_DIR)/linux-elf64-tests
 RUST_LINUX_UNAME_FAT16_TEST := $(BUILD_DIR)/linux-uname-fat16-tests
 RUST_LINUX_UNAME_ELF64_TEST := $(BUILD_DIR)/linux-uname-elf64-tests
+RUST_LINUX_CAT_FAT16_TEST := $(BUILD_DIR)/linux-cat-fat16-tests
+RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
@@ -65,7 +68,12 @@ BUSYBOX_UNAME_OUTPUT_DIR := $(BUILD_DIR)/busybox-uname-contract
 BUSYBOX_UNAME_WORK_DIR := $(BUILD_DIR)/busybox-uname-work
 BUSYBOX_UNAME_BINARY := $(BUSYBOX_UNAME_OUTPUT_DIR)/busybox
 LINUX_UNAME_FIXTURE := $(BUILD_DIR)/fixtures/linux-uname-fat16.raw
+BUSYBOX_CAT_OUTPUT_DIR := $(BUILD_DIR)/busybox-cat-contract
+BUSYBOX_CAT_WORK_DIR := $(BUILD_DIR)/busybox-cat-work
+BUSYBOX_CAT_BINARY := $(BUSYBOX_CAT_OUTPUT_DIR)/busybox
 FIRST_LIGHT_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
+FIRST_LIGHT_USERLAND_NO_CAT_IMAGE := \
+	$(BUILD_DIR)/userspace/sapote-userland-no-cat-fat16.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -93,10 +101,12 @@ OBJECTS := $(ASM_OBJECTS) $(C_OBJECTS)
 # needs its own unsafe block naming why it is sound. The measured 5,136-byte
 # FAT chain is the largest Rust aggregate; allowing 1,024 direct stores keeps
 # its bounded copies and zeroing inline instead of introducing a GOT-backed
-# compiler memory call into the fixed-address kernel.
+# compiler memory call into the fixed-address kernel. One codegen unit also
+# keeps calls between Rust boundary functions direct and therefore GOT-free.
 RUSTFLAGS := --edition 2024 --target $(RUST_TARGET) --crate-type staticlib \
 	--crate-name sapote -C panic=abort -C opt-level=2 \
-	-C relocation-model=static -C llvm-args=-max-store-memcpy=1024 \
+	-C relocation-model=static -C codegen-units=1 \
+	-C llvm-args=-max-store-memcpy=1024 \
 	-C llvm-args=-max-store-memset=1024 -D warnings
 DEPENDENCIES := $(C_OBJECTS:.o=.d)
 
@@ -173,11 +183,26 @@ $(LINUX_UNAME_FIXTURE): $(BUSYBOX_UNAME_BINARY) \
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/make-linux-uname-fixture.py $(BUSYBOX_UNAME_BINARY) $@
 
+$(BUSYBOX_CAT_BINARY): tools/build-busybox-cat-proof.sh \
+		tools/check-exercised-instructions.py \
+		userspace/busybox/busybox-cat.config \
+		userspace/busybox/source/busybox-1.38.0.tar.bz2 \
+		userspace/busybox/source/musl-1.2.6.tar.gz
+	SAPOTE_BUSYBOX_BUILD_ONLY=1 bash tools/build-busybox-cat-proof.sh \
+		$(BUSYBOX_CAT_OUTPUT_DIR) $(BUSYBOX_CAT_WORK_DIR)
+
 $(FIRST_LIGHT_USERLAND_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
+		$(BUSYBOX_CAT_BINARY) \
 		tools/make-first-light-userland.py
 	mkdir -p $(dir $@)
 	$(PYTHON) tools/make-first-light-userland.py \
-		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) $@
+		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) $(BUSYBOX_CAT_BINARY) $@
+
+$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE): $(BUSYBOX_BINARY) \
+		$(BUSYBOX_UNAME_BINARY) tools/make-first-light-userland.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/make-first-light-userland.py \
+		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) --without-cat $@
 
 $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
@@ -266,8 +291,24 @@ verify: toolchain lint
 		tools/linux-uname-elf64-host-test.rs \
 		-o $(RUST_LINUX_UNAME_ELF64_TEST)
 	$(RUST_LINUX_UNAME_ELF64_TEST)
+	$(MAKE) $(BUSYBOX_CAT_BINARY)
+	@test "$$(sha256sum $(BUSYBOX_CAT_BINARY) | awk '{ print toupper($$1) }')" = \
+		'8191596A22778B575942895071A2E50CCEEE0F82F4D88B6D986584CE0914FC3E'
+	SAPOTE_CAT_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_CAT_BINARY)' \
+		$(RUSTC) --edition 2024 --test -D warnings \
+		tools/linux-cat-fat16-host-test.rs \
+		-o $(RUST_LINUX_CAT_FAT16_TEST)
+	$(RUST_LINUX_CAT_FAT16_TEST)
+	SAPOTE_CAT_BUSYBOX_BINARY='$(CURDIR)/$(BUSYBOX_CAT_BINARY)' \
+		$(RUSTC) --edition 2024 --test -D warnings \
+		tools/linux-cat-elf64-host-test.rs \
+		-o $(RUST_LINUX_CAT_ELF64_TEST)
+	$(RUST_LINUX_CAT_ELF64_TEST)
 	$(MAKE) $(FIRST_LIGHT_USERLAND_IMAGE)
 	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_IMAGE) | awk '{ print toupper($$1) }')" = \
+		'F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB'
+	$(MAKE) $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)
+	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE) | awk '{ print toupper($$1) }')" = \
 		'12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE'
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
@@ -326,6 +367,11 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_uname_fat16_validate_payload$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_uname_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_uname_elf64_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_fat16_find_root$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_fat16_build_chain$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_fat16_validate_payload$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_elf64_parse$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_elf64_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
@@ -389,7 +435,9 @@ verify: toolchain lint
 	@test "$$(grep -ERh '\blinux_abi_launch[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=linux_abi.c | wc -l)" -eq 1 && \
 		test "$$(grep -ERh '\blinux_uname_abi_launch[[:space:]]*[(]' \
-		src/kernel --include='*.c' --exclude=linux_uname.c | wc -l)" -eq 1 || \
+		src/kernel --include='*.c' --exclude=linux_uname.c | wc -l)" -eq 1 && \
+		test "$$(grep -ERh '\blinux_cat_abi_launch[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=linux_cat.c | wc -l)" -eq 1 || \
 		{ echo 'measured launch entry escaped its userspace owner'; exit 1; }
 	@! grep -Eq 'console_(write|putc)[[:space:]]*\([[:space:]]*"(SAPOTE|Linux)' \
 		src/kernel/shell.c || \
@@ -409,9 +457,15 @@ verify: toolchain lint
 		--exclude=linux_uname.c; then \
 		echo 'private uname BusyBox read seam escaped its process owner'; exit 1; \
 	fi
+	@if grep -ERn '\bfilesystem_linux_cat_read_(open|close)[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=filesystem.c \
+		--exclude=linux_cat.c; then \
+		echo 'private cat BusyBox read seam escaped its process owner'; exit 1; \
+	fi
 	@if grep -ERn '\bpaging_process_table_failure_(arm|result|disarm|armed)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=paging.c \
-		--exclude=linux_abi.c --exclude=linux_uname.c; then \
+		--exclude=linux_abi.c --exclude=linux_uname.c \
+		--exclude=linux_cat.c; then \
 		echo 'private paging failure control escaped the Linux process owner'; \
 		exit 1; \
 	fi
@@ -435,6 +489,9 @@ verify: toolchain lint
 	@$(OBJDUMP) -d --no-show-raw-insn $(BUSYBOX_UNAME_BINARY) \
 		| grep -Eq '[[:space:]]syscall[[:space:]]*$$' || \
 		{ echo 'pinned uname BusyBox has no x86-64 syscall instruction'; exit 1; }
+	@$(OBJDUMP) -d --no-show-raw-insn $(BUSYBOX_CAT_BINARY) \
+		| grep -Eq '[[:space:]]syscall[[:space:]]*$$' || \
+		{ echo 'pinned cat BusyBox has no x86-64 syscall instruction'; exit 1; }
 	@if grep -ERn '(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|extern|trait|impl)|#\[unsafe' \
 		src/rust --include='*.rs' --exclude=abi.rs; then \
 		echo 'unsafe Rust escaped the reviewed FFI boundary'; exit 1; \
@@ -560,6 +617,28 @@ verify: toolchain lint
 		test -n "$$guest_exit" && test -n "$$host_exit" && \
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
 		{ echo 'First Light absent-volume guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x3A);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*first-light-userland-interactive) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'Interactive First Light guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:' src/kernel/test.c
+	@grep -Fq '        return UINT8_C(0x3B);' src/kernel/test.c
+	@guest_exit=$$(sed -n \
+		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		src/kernel/test.c); \
+		host_exit=$$(sed -n \
+		's/^[[:space:]]*first-light-userland-interactive-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		Makefile | head -n 1); \
+		test -n "$$guest_exit" && test -n "$$host_exit" && \
+		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
+		{ echo 'Interactive absent-profile guest and host exits disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
 		echo 'First Light bypasses the cached surface'; exit 1; \
@@ -668,6 +747,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		linux-abi-uname) expected=111 ;; \
 		first-light-userland) expected=113 ;; \
 		first-light-userland-absent) expected=115 ;; \
+		first-light-userland-interactive) expected=117 ;; \
+		first-light-userland-interactive-absent) expected=119 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -713,6 +794,14 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
 				test -f '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=first-light-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=first-light-userland-file,node-name=first-light-userland-raw,read-only=on -device nvme,serial=sapote-userland,drive=first-light-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			first-light-userland-interactive) \
+				$(MAKE) '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
+				test -f '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=interactive-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-userland-file,node-name=interactive-userland-raw,read-only=on -device nvme,serial=sapote-interactive,drive=interactive-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			first-light-userland-interactive-absent) \
+				$(MAKE) '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
+				test -f '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE),node-name=interactive-absent-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-absent-file,node-name=interactive-absent-raw,read-only=on -device nvme,serial=sapote-interactive-absent,drive=interactive-absent-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			*) hardware='' ;; \
 	esac; \
 	log='$(TEST_BUILD_DIR)/$*/serial.log'; \
@@ -966,6 +1055,38 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'ST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable teardown clean' "$$log" && \
 			grep -Fxq 'FL USERLAND launch refused and teardown complete' "$$log" && \
 			grep -Fxq 'FL USERLAND First Light prompt restored' "$$log" || \
+				diagnostics_ok=false ;; \
+		first-light-userland-interactive) \
+			grep -Fxq 'ST FIRST_LIGHT_USERLAND_INTERACTIVE cat 2 keyboard IRQ read SYSCALL copy-out resume write SYSCALL stdout exact EOF exit 0 teardown clean fresh generation prompt restored' "$$log" && \
+			test "$$(grep -Fxc 'FL USERLAND command accepted through First Light shell linux cat' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL USERLAND Rust FAT16 SHA-256 ELF64 validation passed cat bytes 38632' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL USERLAND private CPL3 address space entered cat' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT authentic read SYSCALL observed' "$$log")" -eq 4 && \
+			test "$$(grep -Fxc 'FL CAT suspended with kernel CR3 and safe stack restored' "$$log")" -eq 4 && \
+			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 7' "$$log" && \
+			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 6' "$$log" && \
+			test "$$(grep -Fxc 'FL CAT destination validated and all-or-nothing copy-out complete' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT authenticated process generation ready to resume' "$$log")" -eq 4 && \
+			test "$$(grep -Fxc 'FL CAT authentic write SYSCALL observed' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT userspace stdout accepted' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT EOF converted to zero-length read result' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT exit status zero observed' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL CAT address-space teardown complete' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'FL USERLAND First Light prompt restored' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'pebble' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'again' "$$log")" -eq 2 && \
+			grep -Fxq 'FL USERLAND launch completed successfully cat ordinal 2' "$$log" || \
+				diagnostics_ok=false ;; \
+		first-light-userland-interactive-absent) \
+			grep -Fxq 'ST FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT cat missing echo valid keyboard IRQ refusal recoverable teardown clean prompt usable' "$$log" && \
+			grep -Fxq 'linux: measured profile refused' "$$log" && \
+			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log" && \
+			grep -Fxq 'FL USERLAND launch refused and teardown complete' "$$log" && \
+			grep -Fxq 'FL USERLAND command accepted through First Light shell linux echo' "$$log" && \
+			grep -Fqx 'SAPOTE' "$$log" && \
+			grep -Fxq 'FL USERLAND launch completed successfully echo ordinal 1' "$$log" && \
+			test "$$(grep -Fxc 'FL USERLAND First Light prompt restored' "$$log")" -eq 2 || \
 				diagnostics_ok=false ;; \
 		thread-guard) \
 			grep -Fq 'ST THREAD guard 0x0000000800005000' "$$log" && \

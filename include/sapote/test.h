@@ -53,6 +53,8 @@ enum kernel_test_scenario {
     KERNEL_TEST_LINUX_ABI_UNAME,
     KERNEL_TEST_FIRST_LIGHT_USERLAND,
     KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT,
+    KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE,
+    KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT,
     KERNEL_TEST_INVALID
 };
 
@@ -97,6 +99,10 @@ _Noreturn void kernel_test_complete_linux_uname(void);
 bool kernel_test_linux_uname_exit_self_test(void);
 _Noreturn void kernel_test_complete_first_light_userland(void);
 _Noreturn void kernel_test_complete_first_light_userland_absent(void);
+_Noreturn void kernel_test_complete_first_light_userland_interactive(void);
+_Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
+    void
+);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);
