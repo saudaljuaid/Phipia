@@ -37,6 +37,11 @@ pub enum Status {
     DestinationClippingFailure = 9,
 }
 
+#[inline(never)]
+fn copy_byte(destination: &mut u8, source: &u8) {
+    *destination = *source;
+}
+
 /// Validated SUF1 metrics, copied across the C boundary by value.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -174,7 +179,7 @@ pub fn glyph(blob: &[u8], code: u32, out: &mut [u8]) -> Result<usize, Status> {
         .ok_or(Status::SizeOverflow)?;
     let bitmap = blob.get(start..end).ok_or(Status::TruncatedBitmap)?;
     for index in 0..glyph_bytes {
-        out[index] = bitmap[index];
+        copy_byte(&mut out[index], &bitmap[index]);
     }
     Ok(glyph_bytes)
 }
