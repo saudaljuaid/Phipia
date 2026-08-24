@@ -203,6 +203,11 @@ grep -Fq 'read(0, "pebble\n",' "$trace_file"
 grep -Fq 'write(1, "pebble\n", 7)' "$trace_file"
 grep -Fq 'exit_group(0)' "$trace_file"
 
+raw_trace_file="$output_dir/raw-read-write-trace.txt"
+printf 'pebble\n' | env -i strace --argv0=busybox --quiet=all \
+    --raw=read,write --trace=read,write --output="$raw_trace_file" \
+    "$output_dir/busybox" cat >/dev/null
+
 qemu_stdout="$output_dir/qemu-stdout.txt"
 qemu_stderr="$output_dir/qemu-stderr.txt"
 qemu_trace="$output_dir/exercised-instructions.txt"

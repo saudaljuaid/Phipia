@@ -47,6 +47,7 @@ jobs:
                   cat build/cat-measure/one/build-record.txt
                   cat build/cat-measure/one/elf-program-headers.txt
                   cat build/cat-measure/one/syscall-trace.txt
+                  cat build/cat-measure/one/raw-read-write-trace.txt
             - name: Upload measured cat evidence
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
