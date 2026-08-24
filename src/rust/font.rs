@@ -154,15 +154,7 @@ pub fn glyph(blob: &[u8], code: u32, out: &mut [u8]) -> Result<usize, Status> {
     };
 
     for index in 0..height {
-        // SAFETY: both slices were bounded above. Volatile byte operations
-        // keep this freestanding boundary independent of a compiler-provided
-        // variable-length memcpy while preserving the exact copy semantics.
-        unsafe {
-            core::ptr::write_volatile(
-                out.as_mut_ptr().add(index),
-                core::ptr::read_volatile(rows.as_ptr().add(index)),
-            );
-        }
+        out[index] = rows[index];
     }
     Ok(height)
 }

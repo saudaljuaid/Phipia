@@ -174,15 +174,7 @@ pub fn glyph(blob: &[u8], code: u32, out: &mut [u8]) -> Result<usize, Status> {
         .ok_or(Status::SizeOverflow)?;
     let bitmap = blob.get(start..end).ok_or(Status::TruncatedBitmap)?;
     for index in 0..glyph_bytes {
-        // SAFETY: both slices were bounded above. Volatile byte operations
-        // retain the exact copy while avoiding a hosted variable-length
-        // memcpy dependency at this freestanding ABI boundary.
-        unsafe {
-            core::ptr::write_volatile(
-                out.as_mut_ptr().add(index),
-                core::ptr::read_volatile(bitmap.as_ptr().add(index)),
-            );
-        }
+        out[index] = bitmap[index];
     }
     Ok(glyph_bytes)
 }
