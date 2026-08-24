@@ -1,0 +1,56 @@
+name: First Light interactive userspace milestone evidence
+
+on:
+    workflow_dispatch:
+    pull_request:
+        branches: [main]
+    push:
+        tags: [v1.1.0]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: first-light-stdin-milestone-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    measure-cat:
+        name: measure-bounded-busybox-cat
+        runs-on: ubuntu-24.04
+        timeout-minutes: 60
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install build and trace tools
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils build-essential bzip2 file qemu-user strace
+            - name: Build, trace, and reproduce cat
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  bash tools/build-busybox-cat-proof.sh \
+                      build/cat-measure/one build/cat-measure/work-one
+                  bash tools/build-busybox-cat-proof.sh \
+                      build/cat-measure/two build/cat-measure/work-two
+                  cmp build/cat-measure/one/busybox \
+                      build/cat-measure/two/busybox
+                  cmp build/cat-measure/one/syscall-trace.txt \
+                      build/cat-measure/two/syscall-trace.txt
+                  cat build/cat-measure/one/build-record.txt
+                  cat build/cat-measure/one/elf-program-headers.txt
+                  cat build/cat-measure/one/syscall-trace.txt
+            - name: Upload measured cat evidence
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: sapote-busybox-cat-measurement-${{ github.sha }}
+                  path: build/cat-measure/one
+                  if-no-files-found: error
+                  retention-days: 30
