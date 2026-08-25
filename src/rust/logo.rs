@@ -168,10 +168,14 @@ pub fn decode(blob: &[u8], out: &mut [u32], format: &Format)
 }
 
 #[inline(never)]
-fn write_alpha_byte(slot: &mut u8, value: u8) {
+fn write_alpha_byte(out: &mut [u8], index: usize, value: u8) -> Result<(), Status> {
     // Keeping this one-byte operation out of line stops LLVM from replacing
     // the bounded caller loop with a freestanding memset call.
+    let Some(slot) = out.get_mut(index) else {
+        return Err(Status::BufferTooSmall);
+    };
     *slot = value;
+    Ok(())
 }
 
 /// Decode only the source alpha channel, preserving transparent logo edges for
@@ -200,7 +204,7 @@ pub fn decode_alpha(blob: &[u8], out: &mut [u8]) -> Result<Geometry, Status> {
         }
         let mut index = 0usize;
         while index < count {
-            write_alpha_byte(&mut out[written + index], run[4]);
+            write_alpha_byte(out, written + index, run[4])?;
             index += 1;
         }
         written += count;
