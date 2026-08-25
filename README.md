@@ -21,7 +21,7 @@
 
 <p align="center"><sub>First Light, captured from a real 1024×768 QEMU boot.</sub></p>
 
-<p align="center"><a href="assets/sapote-first-light-boot-20s.mp4">Watch the QEMU persistence demonstration</a></p>
+<p align="center"><a href="assets/sapote-first-light-boot-20s.mp4">Watch the QEMU First Light boot capture</a></p>
 
 ## Overview
 
