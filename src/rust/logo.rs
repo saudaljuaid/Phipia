@@ -167,6 +167,14 @@ pub fn decode(blob: &[u8], out: &mut [u32], format: &Format)
     Ok(geometry)
 }
 
+#[inline(never)]
+unsafe fn write_alpha_byte(out: *mut u8, index: usize, value: u8) {
+    // SAFETY: decode_alpha proves the complete destination extent and each
+    // run before calling this byte store. Keeping it out of line also stops
+    // LLVM from replacing the bounded loop with a freestanding memset call.
+    unsafe { out.add(index).write(value) };
+}
+
 /// Decode only the source alpha channel, preserving transparent logo edges for
 /// callers that composite the mark over more than one background.
 pub fn decode_alpha(blob: &[u8], out: &mut [u8]) -> Result<Geometry, Status> {
@@ -191,8 +199,12 @@ pub fn decode_alpha(blob: &[u8], out: &mut [u8]) -> Result<Geometry, Status> {
         if count > pixels - written {
             return Err(Status::TooManyPixels);
         }
-        for slot in &mut out[written..written + count] {
-            *slot = run[4];
+        let mut index = 0usize;
+        while index < count {
+            // SAFETY: count was checked against the remaining decoded image,
+            // whose complete extent was checked against out above.
+            unsafe { write_alpha_byte(out.as_mut_ptr(), written + index, run[4]) };
+            index += 1;
         }
         written += count;
         offset += RUN_SIZE;
