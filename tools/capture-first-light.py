@@ -129,17 +129,20 @@ def wait_serial(path, marker, timeout=35.0):
     )
 
 
-def wait_serial_count(path, marker, count, timeout=35.0):
+def wait_serial_after(path, anchor, marker, timeout=35.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if path.exists() and path.read_bytes().count(marker) >= count:
-            return
+        if path.exists():
+            transcript = path.read_bytes()
+            position = transcript.find(anchor)
+            if position >= 0 and marker in transcript[position + len(anchor):]:
+                return
         time.sleep(0.05)
     transcript = path.read_bytes() if path.exists() else b""
     tail = transcript[-8192:].decode("utf-8", errors="replace")
     raise RuntimeError(
-        f"serial transcript omitted occurrence {count} of "
-        f"{marker.decode('ascii')}\n"
+        f"serial transcript omitted {marker.decode('ascii')} after "
+        f"{anchor.decode('ascii')}\n"
         f"--- serial transcript tail ({len(transcript)} bytes total) ---\n"
         f"{tail}\n--- end serial transcript tail ---"
     )
@@ -227,6 +230,7 @@ def main():
     try:
         qmp = Qmp(port)
         wait_serial(serial, PROOF_LINE)
+        wait_serial_after(serial, PROOF_LINE, b"sap> ")
         time.sleep(0.25)
         # Park the real PS/2 cursor on empty desktop space so the clean frame
         # keeps every status label unobscured.
@@ -241,9 +245,8 @@ def main():
             time.sleep(0.08)
         focus = capture(qmp, output, "sapote-first-light-focus")
 
-        prompt_count = serial.read_bytes().count(b"sap> ")
         qmp.hmp("sendkey ret")
-        wait_serial_count(serial, b"sap> ", prompt_count + 1)
+        time.sleep(0.20)
         send_text(qmp, f"linux {args.interaction}")
         qmp.hmp("sendkey ret")
         if args.interaction == "cat":
