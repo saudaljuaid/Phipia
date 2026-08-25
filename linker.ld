@@ -116,6 +116,7 @@ SECTIONS
      * and losing line numbers to keep the linker honest is a bad trade.
      */
     .debug_abbrev 0 : { *(.debug_abbrev) }
+    .debug_addr 0 : { *(.debug_addr) }
     .debug_aranges 0 : { *(.debug_aranges) }
     .debug_frame 0 : { *(.debug_frame) }
     .debug_info 0 : { *(.debug_info) }
@@ -130,6 +131,15 @@ SECTIONS
     .debug_str_offsets 0 : { *(.debug_str_offsets) }
     .debug_pubnames 0 : { *(.debug_pubnames) }
     .debug_pubtypes 0 : { *(.debug_pubtypes) }
+
+    /*
+     * LLVM's ELF linker models these non-loadable tables as synthetic input
+     * sections.  Name them explicitly so the same strict orphan policy works
+     * with both GNU ld and lld without putting link metadata in a PT_LOAD.
+     */
+    .symtab 0 : { *(.symtab) }
+    .shstrtab 0 : { *(.shstrtab) }
+    .strtab 0 : { *(.strtab) }
 
     ASSERT(__multiboot_header_end - __multiboot_header_start >= 24,
            "Multiboot2 header is incomplete")

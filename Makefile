@@ -50,6 +50,8 @@ RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
 LOGO_MAX_DIMENSION := 280
+WALLPAPER_SOURCE := assets/sapote-first-environment-wallpaper.png
+WALLPAPER_BLOB := $(BUILD_DIR)/wallpaper.spw
 FONT_SOURCE := tools/font8x16.txt
 FONT_BLOB := $(BUILD_DIR)/font.snf
 UI_FONT_SOURCE := assets/fonts/spleen-8x16.bdf
@@ -60,6 +62,14 @@ FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-v2-first-light-focus.png
 FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-v2-first-light-terminal.png
 FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
 FIRST_LIGHT_BOOT_VIDEO := assets/sapote-first-light-boot-20s.mp4
+FIRST_ENVIRONMENT_CAPTURE_DIR := $(BUILD_DIR)/first-environment-captures
+FIRST_ENVIRONMENT_IMAGE := assets/sapote-first-environment.png
+FIRST_ENVIRONMENT_DOCK_IMAGE := assets/sapote-first-environment-dock.png
+FIRST_ENVIRONMENT_TERMINAL_IMAGE := \
+	assets/sapote-first-environment-terminal.png
+FIRST_ENVIRONMENT_FILES_IMAGE := assets/sapote-first-environment-files.png
+FIRST_ENVIRONMENT_NOTES_IMAGE := assets/sapote-first-environment-notes.png
+FIRST_ENVIRONMENT_VIDEO := assets/sapote-first-environment-20s.mp4
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
 PROCESS_ELF := $(TEST_BUILD_DIR)/process/SAPOTE.BIN
@@ -124,7 +134,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-first-light clean contract-counts contract-scenarios fat32-images hooks \
+.PHONY: all capture-boot-video capture-first-environment capture-first-light clean contract-counts contract-scenarios fat32-images hooks \
 	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
@@ -152,6 +162,9 @@ $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_MAX_DIMENSION) $@
 
+$(WALLPAPER_BLOB): $(WALLPAPER_SOURCE) tools/make-wallpaper-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-wallpaper-asset.py $(WALLPAPER_SOURCE) $@
+
 # Regenerated only when the glyph art changes. Also a build artifact; the
 # committed source is the ASCII art in $(FONT_SOURCE), so a clone needs nothing
 # but Python to build the kernel.
@@ -161,8 +174,9 @@ $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 $(UI_FONT_BLOB): $(UI_FONT_SOURCE) tools/make-ui-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) $@
 
-$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
+$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
 		$(RUSTC) $(RUSTFLAGS) -o $@ src/rust/lib.rs
@@ -279,7 +293,13 @@ verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
 	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'15C13E740D26BED1019E99C7FE5CE1B9E293F2A1712BFFFF51EAD3ED2C37A4FE'
+		'16EC9B0CB3DCB098EB52EF6FB27A2EBF6BBB615B1A0F9EB0B67D21D1D1F77317'
+	@test "$$(sha256sum assets/sapote-logo-source.jpeg | awk '{ print toupper($$1) }')" = \
+		'0743231ED884F16A8D973A5E7C6D51F2EF97D2F1E386D59FF8A35024AC2EDE3C'
+	@test "$$(sha256sum $(WALLPAPER_SOURCE) | awk '{ print toupper($$1) }')" = \
+		'3984C670E9788B3E9858834FD1696D9213630A19F64D6691B7AF5D511CE099C4'
+	@test "$$(sha256sum $(WALLPAPER_BLOB) | awk '{ print toupper($$1) }')" = \
+		'3D09707C534D24D834210345CDB61CAA10E31F4C706FD389C2F1B6374AA486D0'
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
 	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
@@ -743,6 +763,24 @@ capture-first-light: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
 		$(FIRST_LIGHT_TERMINAL_IMAGE) \
 		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
+
+capture-first-environment: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	rm -rf $(FIRST_ENVIRONMENT_CAPTURE_DIR)
+	$(PYTHON) tools/capture-first-environment.py --iso $(ISO) \
+		--system $(FAT32_SYSTEM_IMAGE) --data $(FAT32_DATA_IMAGE) \
+		--output $(FIRST_ENVIRONMENT_CAPTURE_DIR) --ffmpeg $(FFMPEG)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment.png \
+		$(FIRST_ENVIRONMENT_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-dock.png \
+		$(FIRST_ENVIRONMENT_DOCK_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-terminal.png \
+		$(FIRST_ENVIRONMENT_TERMINAL_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-files.png \
+		$(FIRST_ENVIRONMENT_FILES_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-notes.png \
+		$(FIRST_ENVIRONMENT_NOTES_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-20s.mp4 \
+		$(FIRST_ENVIRONMENT_VIDEO)
 
 capture-boot-video: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	cp $(FAT32_DATA_IMAGE) $(BUILD_DIR)/capture-video-data-fat32.raw

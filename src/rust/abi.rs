@@ -18,6 +18,7 @@ use crate::font;
 use crate::linux_elf64;
 use crate::linux_fat16;
 use crate::logo::{self, Format, Status};
+use crate::wallpaper;
 use crate::ui_font;
 
 const _: () = {
@@ -83,6 +84,70 @@ pub(crate) fn panic() -> ! {
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
 /// The Makefile points `SAPOTE_LOGO_BLOB` at it; there is no committed copy.
 static LOGO: &[u8] = include_bytes!(env!("SAPOTE_LOGO_BLOB"));
+
+/// The deterministic indexed desktop wallpaper built from the committed PNG.
+static WALLPAPER: &[u8] = include_bytes!(env!("SAPOTE_WALLPAPER_BLOB"));
+
+/// Run the SPW1 decoder's production-asset and bounded refusal checks.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_wallpaper_self_test() -> i32 {
+    i32::from(wallpaper::self_test(WALLPAPER))
+}
+
+/// Return the exact byte length of the built-in SPW1 image.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_wallpaper_size() -> usize {
+    WALLPAPER.len()
+}
+
+/// Copy the checked dimensions out through the C ABI.
+///
+/// # Safety
+/// Both pointers must address writable `u32` values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_wallpaper_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    if width.is_null() || height.is_null() {
+        return wallpaper::Status::NullArgument as i32;
+    }
+    match wallpaper::geometry(WALLPAPER) {
+        Ok(geometry) => {
+            // SAFETY: non-null writable pointers are the function contract.
+            unsafe {
+                *width = geometry.width;
+                *height = geometry.height;
+            }
+            wallpaper::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
+/// Decode the wallpaper into packed pixels owned by the caller.
+///
+/// # Safety
+/// `out` must point to `out_pixels` writable, aligned, non-aliased `u32`s.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_wallpaper_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+) -> i32 {
+    if out.is_null() {
+        return wallpaper::Status::NullArgument as i32;
+    }
+    // SAFETY: the checked C contract above is exactly this slice's contract.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    let format = wallpaper::Format { red_shift, green_shift, blue_shift };
+    match wallpaper::decode(WALLPAPER, pixels, &format) {
+        Ok(_) => wallpaper::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
 
 fn status_code(status: Status) -> i32 {
     status as i32
