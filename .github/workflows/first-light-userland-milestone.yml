@@ -99,7 +99,7 @@ jobs:
                       --output build/release-captures
                   python3 tools/compare-first-light-screenshot.py \
                       --mode terminal \
-                      assets/sapote-first-light-terminal.png \
+                      assets/sapote-v2-first-light-terminal.png \
                       build/release-captures/sapote-first-light-terminal.png
                   python3 tools/capture-boot-video.py \
                       --iso build/sapote.iso \

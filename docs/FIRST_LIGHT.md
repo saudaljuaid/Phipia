@@ -126,11 +126,15 @@ make capture-boot-video
 
 The source captures are:
 
-- `assets/sapote-first-light.png`;
-- `assets/sapote-first-light-focus.png`;
-- `assets/sapote-first-light-terminal.png`;
+- `assets/sapote-v2-first-light.png`;
+- `assets/sapote-v2-first-light-focus.png`;
+- `assets/sapote-v2-first-light-terminal.png`;
 - `assets/sapote-first-light-boot-20s.mp4` (an approximately 20-second
-  create/sync/reboot/read persistence demonstration).
+  First Light boot capture).
+
+The unprefixed v1 First Light PNGs remain unchanged as historical references.
+The release workflow generates the separate approximately 22-second v2
+create/sync/reboot/read persistence capture from the exact release commit.
 
 `screenshot-proof` compares stable pixels and refuses a one-pixel mutation.
 The `first-light` QEMU scenario checks installed state, event handling, redraw,

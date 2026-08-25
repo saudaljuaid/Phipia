@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/sapote-first-light.png" alt="Sapote First Light desktop" width="820">
+  <img src="assets/sapote-v2-first-light.png" alt="Sapote First Light desktop" width="820">
 </p>
 
 <p align="center"><sub>First Light, captured from a real 1024×768 QEMU boot.</sub></p>
