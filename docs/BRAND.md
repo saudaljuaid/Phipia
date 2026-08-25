@@ -5,64 +5,63 @@ Sapote is the only current public name of this project. Public prose uses
 `sapote`; preprocessor guards and build environment variables use `SAPOTE`.
 The interactive prompt is `sap>`.
 
-`Sapote First Light` names the graphical milestone. It is part of Sapote, not a
-separate product.
+`Sapote First Environment` names the current graphical shell. `First Light`
+remains the historical v1/v2.0 milestone name; neither is a separate product.
 
 ## Canonical mark
 
-[`assets/sapote-logo.png`](../assets/sapote-logo.png) is the source of truth. It
-is the exact supplied 1024×943 transparent RGBA image. Its SHA-256 is:
+[`assets/sapote-logo-source.jpeg`](../assets/sapote-logo-source.jpeg) is the
+unaltered supplied 1024×892 source of truth. Its SHA-256 is:
 
-    15C13E740D26BED1019E99C7FE5CE1B9E293F2A1712BFFFF51EAD3ED2C37A4FE
+    0743231ED884F16A8D973A5E7C6D51F2EF97D2F1E386D59FF8A35024AC2EDE3C
 
-The 37,400-byte file contains the black pebble and its supplied transparent
-field. Do not redraw, trace, recolour, crop, mirror, flatten its transparency,
-add type to it, or substitute a visually similar mark. Public uses preserve
-its aspect ratio.
+Do not redraw, trace, recolour, crop, mirror, add type to it, or substitute a
+visually similar mark. Public uses preserve its aspect ratio. The transparent
+runtime derivative is [`assets/sapote-logo.png`](../assets/sapote-logo.png),
+SHA-256
+`16EC9B0CB3DCB098EB52EF6FB27A2EBF6BBB615B1A0F9EB0B67D21D1D1F77317`.
+It exists so the exact green pebble can sit cleanly inside code-native UI icons;
+it does not replace the supplied source.
 
 The kernel does not parse PNG. `tools/make-logo-asset.py` deterministically
 fits the source within a 280-pixel ceiling using a bounded premultiplied box
-filter. The resulting 280×258 image is encoded as an 8,693-byte `SRL1` stream
-with 1,737 runs and embedded by Rust. This is a runtime presentation size, not
-a replacement source asset. The boot proof decodes it into guest memory and
-compares every drawn pixel with the decoded stream before reporting success.
+filter. The resulting 280×258 image is encoded as a 43,838-byte `SRL1` stream
+and embedded by Rust. This is a runtime presentation size, not a replacement
+source asset. The boot proof decodes it into guest memory and compares every
+drawn pixel with the decoded stream before reporting success.
 
 ## Palette
 
-The logo supplies no interface palette. First Light uses a separate palette
+The logo supplies no interface palette. First Environment uses a separate palette
 around the unchanged asset:
 
 | Role | Value |
 | --- | --- |
-| Ink and outlines | `#101012` |
-| Desktop | `#595976` |
-| Desktop rule | `#666684` |
-| Active title and selected tools | `#18181C` |
-| Inactive title rule | `#7A7A82` |
-| Teal accent | `#4F837F` |
-| Gold accent | `#C4A44E` |
-| Green accent | `#598561` |
-| Red accent | `#A55050` |
-| Violet accent | `#705984` |
-| Shadow | `#353542` |
-| Window face | `#D7D6CE` |
-| Warm white | `#F7F6F0` |
+| Ink and outlines | `#182124` |
+| Deep desktop fallback | `#071622` |
+| Active title | `#1C292D` |
+| Inactive title | `#919DA2` |
+| Teal accent | `#68A9C5` |
+| Gold accent | `#E6C462` |
+| Green accent | `#8EAD89` |
+| Red close control | `#D9554F` |
+| Violet accent | `#947BB4` |
+| Shadow | `#050C12` |
+| Window face | `#D9DFE0` |
+| Warm white | `#F8FAF8` |
 
 Accent colors belong to tool icons, not readiness indicators or the logo.
-First Light displays the exact decoded shape once, at its intended presentation
-size, as a one-pixel two-color bitmap with ordered edge dithering directly on
-the warm window face. The menu bar is type-only: it does not put the pebble in
-a miniature tile or frame. This display-only
-treatment leaves the canonical PNG unchanged. The framebuffer console uses
-black on white; early VGA
-text uses bright white on black. The kernel has no alpha compositor, gradients,
-or runtime theme selection.
+First Environment displays the decoded green pebble in the menu and Files icon.
+The framebuffer console uses pale green on near-black; early VGA text remains
+bright white on black. The kernel has no general alpha compositor or runtime
+theme selection.
 
-First Light uses one-pixel outlines, platinum bevels, striped title regions,
-bitmap type, a compact menu strip, a slate-violet pinstriped desktop, a left
-Workspace palette, and a vertical tool dock. Its interaction grammar is
-informed by classic Macintosh and NeXT workstation interfaces; the pebble,
-composition, labels, and code-native icons are Sapote's own.
+First Environment uses one-pixel outlines, platinum bevels, bitmap type, a
+compact menu strip, a photographic blue-hour desktop, and a centered reflective
+3D Dock. Files uses a compact source list and icon grid; Terminal and Notes keep
+the same bounded chrome. Its interaction grammar is informed by late-classic
+desktop interfaces; the pebble, composition, labels, and code-native icons are
+Sapote's own.
 
 ## Voice
 
