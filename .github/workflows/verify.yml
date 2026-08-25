@@ -54,4 +54,5 @@ jobs:
             - name: Prove faults and interrupts in QEMU
               run: |
                   make qemu-test-first-light-userland-interactive
+                  make qemu-test-fat32-data
                   make qemu-tests

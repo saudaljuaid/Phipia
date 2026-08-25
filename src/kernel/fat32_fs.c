@@ -225,6 +225,15 @@ static enum sapfs_status nvme_result(enum nvme_status status)
     return SAPFS_STATUS_IO;
 }
 
+static void report_nvme_failure(const char *operation, enum nvme_status status)
+{
+    console_write("Sapote: FAT32 NVMe ");
+    console_write(operation);
+    console_write(" failed: ");
+    console_write(nvme_status_string(status));
+    console_write("\n");
+}
+
 static void invalidate_cache(enum sapfs_volume volume)
 {
     for (size_t index = 0U; index < SAPFS_CACHE_ENTRIES; ++index) {
@@ -240,8 +249,13 @@ static enum sapfs_status direct_read(
     uint8_t *data
 )
 {
-    return nvme_result(nvme_volume_read(session, sector, data,
-        SAPFS_SECTOR_BYTES));
+    enum nvme_status status = nvme_volume_read(session, sector, data,
+        SAPFS_SECTOR_BYTES);
+
+    if (status != NVME_STATUS_OK) {
+        report_nvme_failure("read", status);
+    }
+    return nvme_result(status);
 }
 
 static enum sapfs_status direct_write(
@@ -254,9 +268,7 @@ static enum sapfs_status direct_write(
         SAPFS_SECTOR_BYTES);
 
     if (status != NVME_STATUS_OK) {
-        console_write("Sapote: FAT32 NVMe write failed: ");
-        console_write(nvme_status_string(status));
-        console_write("\n");
+        report_nvme_failure("write", status);
     }
     return nvme_result(status);
 }
@@ -384,6 +396,7 @@ static enum sapfs_status begin_operation(
     status = nvme_volume_open(&operation->nvme, mount->controller_index,
         writable);
     if (status != NVME_STATUS_OK) {
+        report_nvme_failure("open", status);
         invalidate_cache(volume);
         return nvme_result(status);
     }
@@ -426,6 +439,7 @@ static enum sapfs_status end_operation(
     close_status = nvme_volume_close(&operation->nvme);
     operation->active = false;
     if (result == SAPFS_STATUS_OK && close_status != NVME_STATUS_OK) {
+        report_nvme_failure("close", close_status);
         result = nvme_result(close_status);
     }
     return result;
