@@ -2852,7 +2852,7 @@ static uint16_t volume_command_identifier(struct nvme_volume_session *session)
     return (uint16_t)session->command_ordinal;
 }
 
-enum nvme_status nvme_volume_open(
+static enum nvme_status volume_open_interrupts_disabled(
     struct nvme_volume_session *session,
     uint32_t controller_index,
     bool writable
@@ -2908,7 +2908,27 @@ enum nvme_status nvme_volume_open(
     return NVME_STATUS_OK;
 }
 
-enum nvme_status nvme_volume_read(
+enum nvme_status nvme_volume_open(
+    struct nvme_volume_session *session,
+    uint32_t controller_index,
+    bool writable
+)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum nvme_status result;
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_disable();
+    }
+    result = volume_open_interrupts_disabled(session, controller_index,
+        writable);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return result;
+}
+
+static enum nvme_status volume_read_interrupts_disabled(
     struct nvme_volume_session *session,
     uint64_t lba,
     uint8_t *destination,
@@ -2961,7 +2981,28 @@ enum nvme_status nvme_volume_read(
     return NVME_STATUS_OK;
 }
 
-enum nvme_status nvme_volume_write(
+enum nvme_status nvme_volume_read(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    uint8_t *destination,
+    size_t destination_bytes
+)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum nvme_status result;
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_disable();
+    }
+    result = volume_read_interrupts_disabled(session, lba, destination,
+        destination_bytes);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return result;
+}
+
+static enum nvme_status volume_write_interrupts_disabled(
     struct nvme_volume_session *session,
     uint64_t lba,
     const uint8_t *source,
@@ -3011,6 +3052,27 @@ enum nvme_status nvme_volume_write(
     session->state = NVME_FILESYSTEM_SESSION_BLOCK_CPU_OWNED;
     ++session->completion_count;
     return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_write(
+    struct nvme_volume_session *session,
+    uint64_t lba,
+    const uint8_t *source,
+    size_t source_bytes
+)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    enum nvme_status result;
+
+    if (interrupts_were_enabled) {
+        cpu_interrupt_disable();
+    }
+    result = volume_write_interrupts_disabled(session, lba, source,
+        source_bytes);
+    if (interrupts_were_enabled) {
+        cpu_interrupt_enable();
+    }
+    return result;
 }
 
 enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
