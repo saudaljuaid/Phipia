@@ -4553,16 +4553,16 @@ _Noreturn void kernel_test_complete_first_light(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
-        UI_ELEMENT_DOCK_NOTES
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
-        UI_ACTION_OPEN_NOTES
+        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO
     };
-    static const char initials[UI_DOCK_ITEM_COUNT] = { 'F', 'T', 'N' };
+    static const char initials[UI_DOCK_ITEM_COUNT] = { 'F', 'T', 'N', 'S' };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
     const struct boot_stage_receipt *layout;
