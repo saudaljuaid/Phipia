@@ -4642,8 +4642,8 @@ _Noreturn void kernel_test_complete_first_light(void)
             ui->layout.menu_bar.y) == wallpaper_probe) {
         kernel_test_fail("First Environment menu bar is not integrated");
     }
-    if (first_light_pixel(ui->layout.dock.x + 28U,
-            ui->layout.dock.y + 71U) != ui->theme.white) {
+    if (first_light_pixel(ui->layout.dock.x + 126U,
+            ui->layout.dock.y + 80U) != ui->theme.white) {
         kernel_test_fail("First Environment dock rim is not integrated");
     }
 
