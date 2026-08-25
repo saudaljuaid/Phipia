@@ -40,8 +40,10 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
+                  verify_log="$(mktemp)"
+                  make verify | tee "$verify_log"
                   mkdir -p build/evidence-logs
-                  make verify | tee build/evidence-logs/make-verify.log
+                  cp "$verify_log" build/evidence-logs/make-verify.log
                   python3 -u tools/fat32_host_test.py \
                       | tee build/evidence-logs/fat32-host-positive-negative.log
                   git diff --check

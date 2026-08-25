@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <sapote/console.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/nvme.h>
 
@@ -249,8 +250,15 @@ static enum sapfs_status direct_write(
     const uint8_t *data
 )
 {
-    return nvme_result(nvme_volume_write(session, sector, data,
-        SAPFS_SECTOR_BYTES));
+    enum nvme_status status = nvme_volume_write(session, sector, data,
+        SAPFS_SECTOR_BYTES);
+
+    if (status != NVME_STATUS_OK) {
+        console_write("Sapote: FAT32 NVMe write failed: ");
+        console_write(nvme_status_string(status));
+        console_write("\n");
+    }
+    return nvme_result(status);
 }
 
 static enum sapfs_status flush_cache_entry(
