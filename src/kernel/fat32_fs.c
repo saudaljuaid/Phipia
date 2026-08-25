@@ -1187,6 +1187,7 @@ static enum sapfs_status ensure_chain(
         } else {
             status = set_fat(operation, last_new, allocated);
             if (status != SAPFS_STATUS_OK) {
+                (void)release_chain(operation, allocated);
                 (void)release_chain(operation, first_new);
                 return status;
             }

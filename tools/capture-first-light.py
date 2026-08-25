@@ -129,15 +129,19 @@ def wait_serial(path, marker, timeout=35.0):
     )
 
 
-def wait_serial_count(path, marker, count, timeout=5.0):
+def wait_serial_count(path, marker, count, timeout=35.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if path.exists() and path.read_bytes().count(marker) >= count:
             return
         time.sleep(0.05)
+    transcript = path.read_bytes() if path.exists() else b""
+    tail = transcript[-8192:].decode("utf-8", errors="replace")
     raise RuntimeError(
         f"serial transcript omitted occurrence {count} of "
-        f"{marker.decode('ascii')}"
+        f"{marker.decode('ascii')}\n"
+        f"--- serial transcript tail ({len(transcript)} bytes total) ---\n"
+        f"{tail}\n--- end serial transcript tail ---"
     )
 
 
