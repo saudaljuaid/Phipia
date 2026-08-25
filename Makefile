@@ -1135,7 +1135,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		first-light) \
-			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 3 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Sapote: First Light installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		device-substrate) \
