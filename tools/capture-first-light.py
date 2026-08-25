@@ -129,6 +129,25 @@ def wait_serial(path, marker, timeout=35.0):
     )
 
 
+def wait_serial_after(path, anchor, marker, timeout=35.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            transcript = path.read_bytes()
+            position = transcript.find(anchor)
+            if position >= 0 and marker in transcript[position + len(anchor):]:
+                return
+        time.sleep(0.05)
+    transcript = path.read_bytes() if path.exists() else b""
+    tail = transcript[-8192:].decode("utf-8", errors="replace")
+    raise RuntimeError(
+        f"serial transcript omitted {marker.decode('ascii')} after "
+        f"{anchor.decode('ascii')}\n"
+        f"--- serial transcript tail ({len(transcript)} bytes total) ---\n"
+        f"{tail}\n--- end serial transcript tail ---"
+    )
+
+
 def capture(qmp, directory, stem):
     ppm = directory / f"{stem}.ppm"
     png = directory / f"{stem}.png"
@@ -146,16 +165,50 @@ def send_text(qmp, text, delay=0.04):
         time.sleep(delay)
 
 
+def storage_arguments(userspace, system, data):
+    if userspace is not None:
+        return [
+            "-blockdev",
+            f"driver=file,filename={Path(userspace).resolve()},node-name=userland-file,read-only=on,auto-read-only=off",
+            "-blockdev",
+            "driver=raw,file=userland-file,node-name=userland-raw,read-only=on",
+            "-device",
+            "nvme,serial=sapote-userland,drive=userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
+        ]
+    return [
+        "-blockdev",
+        f"driver=file,filename={Path(system).resolve()},node-name=system-file,read-only=on,auto-read-only=off",
+        "-blockdev",
+        "driver=raw,file=system-file,node-name=system-raw,read-only=on",
+        "-device",
+        "nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+        "-blockdev",
+        f"driver=file,filename={Path(data).resolve()},node-name=data-file,read-only=off,auto-read-only=off",
+        "-blockdev",
+        "driver=raw,file=data-file,node-name=data-raw,read-only=off",
+        "-device",
+        "nvme,serial=sapote-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1",
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--iso", required=True)
-    parser.add_argument("--userspace", required=True)
+    parser.add_argument("--userspace")
+    parser.add_argument("--system")
+    parser.add_argument("--data")
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--interaction", choices=sorted(USERLAND_LINES), default="cat"
     )
     args = parser.parse_args()
+    if (args.userspace is None) == (args.system is None):
+        parser.error("provide --userspace or the --system/--data pair")
+    if args.userspace is None and args.data is None:
+        parser.error("--system requires --data")
+    if args.userspace is not None and args.data is not None:
+        parser.error("--userspace cannot be combined with --data")
 
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -167,12 +220,7 @@ def main():
         args.qemu, "-machine", "accel=tcg", "-m", "128M", "-smp", "1",
         "-boot", "order=d", "-cdrom", str(Path(args.iso).resolve()),
         "-display", "none",
-        "-blockdev",
-        f"driver=file,filename={Path(args.userspace).resolve()},node-name=userland-file,read-only=on,auto-read-only=off",
-        "-blockdev",
-        "driver=raw,file=userland-file,node-name=userland-raw,read-only=on",
-        "-device",
-        "nvme,serial=sapote-userland,drive=userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1",
+        *storage_arguments(args.userspace, args.system, args.data),
         "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
         "-serial", f"file:{serial}", "-no-reboot"
     ]
@@ -182,6 +230,7 @@ def main():
     try:
         qmp = Qmp(port)
         wait_serial(serial, PROOF_LINE)
+        wait_serial_after(serial, PROOF_LINE, b"sap> ")
         time.sleep(0.25)
         # Park the real PS/2 cursor on empty desktop space so the clean frame
         # keeps every status label unobscured.

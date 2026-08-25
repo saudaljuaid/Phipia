@@ -15,6 +15,7 @@
 #include <sapote/device_substrate.h>
 #include <sapote/framebuffer.h>
 #include <sapote/filesystem.h>
+#include <sapote/fat32_fs.h>
 #include <sapote/font.h>
 #include <sapote/heap.h>
 #include <sapote/interrupts.h>
@@ -337,6 +338,52 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
     }
 
+    if (token_equals(value, length, "fat32-system")) {
+        return KERNEL_TEST_FAT32_SYSTEM;
+    }
+    if (token_equals(value, length, "fat32-data")) {
+        return KERNEL_TEST_FAT32_DATA;
+    }
+    if (token_equals(value, length, "fat32-nested")) {
+        return KERNEL_TEST_FAT32_NESTED;
+    }
+    if (token_equals(value, length, "fat32-growth")) {
+        return KERNEL_TEST_FAT32_GROWTH;
+    }
+    if (token_equals(value, length, "fat32-random")) {
+        return KERNEL_TEST_FAT32_RANDOM;
+    }
+    if (token_equals(value, length, "fat32-truncate")) {
+        return KERNEL_TEST_FAT32_TRUNCATE;
+    }
+    if (token_equals(value, length, "fat32-rename")) {
+        return KERNEL_TEST_FAT32_RENAME;
+    }
+    if (token_equals(value, length, "fat32-delete")) {
+        return KERNEL_TEST_FAT32_DELETE;
+    }
+    if (token_equals(value, length, "fat32-full")) {
+        return KERNEL_TEST_FAT32_FULL;
+    }
+    if (token_equals(value, length, "fat32-corrupt")) {
+        return KERNEL_TEST_FAT32_CORRUPT;
+    }
+    if (token_equals(value, length, "fat32-missing")) {
+        return KERNEL_TEST_FAT32_MISSING;
+    }
+    if (token_equals(value, length, "fat32-persistence")) {
+        return KERNEL_TEST_FAT32_PERSISTENCE;
+    }
+    if (token_equals(value, length, "fat32-cache")) {
+        return KERNEL_TEST_FAT32_CACHE;
+    }
+    if (token_equals(value, length, "fat32-immutable")) {
+        return KERNEL_TEST_FAT32_IMMUTABLE;
+    }
+    if (token_equals(value, length, "fat32-handles")) {
+        return KERNEL_TEST_FAT32_HANDLES;
+    }
+
     return KERNEL_TEST_INVALID;
 }
 
@@ -438,6 +485,36 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x3A);
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
         return UINT8_C(0x3B);
+    case KERNEL_TEST_FAT32_SYSTEM:
+        return UINT8_C(0x3C);
+    case KERNEL_TEST_FAT32_DATA:
+        return UINT8_C(0x3D);
+    case KERNEL_TEST_FAT32_NESTED:
+        return UINT8_C(0x3E);
+    case KERNEL_TEST_FAT32_GROWTH:
+        return UINT8_C(0x3F);
+    case KERNEL_TEST_FAT32_RANDOM:
+        return UINT8_C(0x40);
+    case KERNEL_TEST_FAT32_TRUNCATE:
+        return UINT8_C(0x41);
+    case KERNEL_TEST_FAT32_RENAME:
+        return UINT8_C(0x42);
+    case KERNEL_TEST_FAT32_DELETE:
+        return UINT8_C(0x43);
+    case KERNEL_TEST_FAT32_FULL:
+        return UINT8_C(0x44);
+    case KERNEL_TEST_FAT32_CORRUPT:
+        return UINT8_C(0x45);
+    case KERNEL_TEST_FAT32_MISSING:
+        return UINT8_C(0x46);
+    case KERNEL_TEST_FAT32_PERSISTENCE:
+        return UINT8_C(0x47);
+    case KERNEL_TEST_FAT32_CACHE:
+        return UINT8_C(0x48);
+    case KERNEL_TEST_FAT32_IMMUTABLE:
+        return UINT8_C(0x49);
+    case KERNEL_TEST_FAT32_HANDLES:
+        return UINT8_C(0x4A);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4113,6 +4190,21 @@ void kernel_test_run(
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
+    case KERNEL_TEST_FAT32_SYSTEM:
+    case KERNEL_TEST_FAT32_DATA:
+    case KERNEL_TEST_FAT32_NESTED:
+    case KERNEL_TEST_FAT32_GROWTH:
+    case KERNEL_TEST_FAT32_RANDOM:
+    case KERNEL_TEST_FAT32_TRUNCATE:
+    case KERNEL_TEST_FAT32_RENAME:
+    case KERNEL_TEST_FAT32_DELETE:
+    case KERNEL_TEST_FAT32_FULL:
+    case KERNEL_TEST_FAT32_CORRUPT:
+    case KERNEL_TEST_FAT32_MISSING:
+    case KERNEL_TEST_FAT32_PERSISTENCE:
+    case KERNEL_TEST_FAT32_CACHE:
+    case KERNEL_TEST_FAT32_IMMUTABLE:
+    case KERNEL_TEST_FAT32_HANDLES:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_DOUBLE_FAULT:
@@ -5404,6 +5496,444 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
     kernel_test_pass();
 }
 
+static bool fat32_read_file(
+    const char *path,
+    uint8_t *buffer,
+    size_t capacity,
+    size_t *file_bytes
+)
+{
+    sapfs_handle handle;
+    struct sapfs_stat stat;
+    size_t read_bytes = 0U;
+    enum sapfs_status status;
+
+    if (path == NULL || buffer == NULL || file_bytes == NULL ||
+        sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat) != SAPFS_STATUS_OK ||
+        stat.directory || stat.size > capacity ||
+        sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_READ, &handle) !=
+            SAPFS_STATUS_OK) {
+        return false;
+    }
+    status = sapfs_read(handle, buffer, capacity, &read_bytes);
+    if (sapfs_close(handle) != SAPFS_STATUS_OK) {
+        return false;
+    }
+    *file_bytes = read_bytes;
+    return status == SAPFS_STATUS_OK && read_bytes == stat.size;
+}
+
+static bool fat32_file_equals(
+    const char *path,
+    const uint8_t *expected,
+    size_t expected_bytes
+)
+{
+    uint8_t buffer[4096];
+    size_t file_bytes = 0U;
+
+    if (expected == NULL || expected_bytes > sizeof(buffer) ||
+        !fat32_read_file(path, buffer, sizeof(buffer), &file_bytes) ||
+        file_bytes != expected_bytes) {
+        return false;
+    }
+    for (size_t index = 0U; index < expected_bytes; ++index) {
+        if (buffer[index] != expected[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void fat32_feed(const char *line)
+{
+    if (!feed_shell_line(line)) {
+        kernel_test_fail("First Light refused a FAT32 command line");
+    }
+}
+
+static void fat32_require_base(bool data_required)
+{
+    struct sapfs_drive_info system = sapfs_drive(SAPFS_VOLUME_SYSTEM);
+    struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+
+    if (!installed_first_light_ready() || !shell_is_active() ||
+        !system.present || !system.healthy || !system.mounted ||
+        !system.read_only || system.volume_id != FAT32_SYSTEM_VOLUME_ID ||
+        (data_required && (!data.present || !data.healthy || !data.mounted ||
+            data.read_only || data.volume_id != FAT32_DATA_VOLUME_ID))) {
+        kernel_test_fail("FAT32 scenario mount prerequisites are incomplete");
+    }
+}
+
+static void fat32_system_scenario(void)
+{
+    const uint32_t echo_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+    const uint32_t uname_before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_UNAME);
+
+    fat32_require_base(true);
+    fat32_feed("drives");
+    fat32_feed("linux echo");
+    fat32_feed("linux uname");
+    if (linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) !=
+            echo_before + 1U ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_UNAME) !=
+            uname_before + 1U || !linux_userland_resources_released()) {
+        kernel_test_fail("FAT32 system executables did not complete");
+    }
+    console_write("\nST FAT32 SYSTEM authenticated echo uname FAT32 immutable\n");
+}
+
+static void fat32_data_scenario(void)
+{
+    static const uint8_t expected[] = "first cut\nsecond line\n";
+
+    fat32_require_base(true);
+    fat32_feed("write notes.txt \"first cut\"");
+    fat32_feed("append notes.txt \"second line\"");
+    fat32_feed("read notes.txt");
+    fat32_feed("stat notes.txt");
+    fat32_feed("sync");
+    if (!fat32_file_equals("notes.txt", expected, sizeof(expected) - 1U)) {
+        kernel_test_fail("FAT32 create/read/write contents changed");
+    }
+    console_write("\nST FAT32 DATA create read write append sync exact\n");
+}
+
+static void fat32_nested_scenario(void)
+{
+    static const uint8_t expected[] = "nested\n";
+    struct sapfs_stat stat;
+
+    fat32_require_base(true);
+    fat32_feed("mkdir projects");
+    fat32_feed("cd projects");
+    fat32_feed("mkdir cuts");
+    fat32_feed("write cuts/notes.txt \"nested\"");
+    fat32_feed("ls cuts");
+    fat32_feed("pwd");
+    fat32_feed("cd ..");
+    if (!fat32_file_equals("projects/cuts/notes.txt", expected,
+            sizeof(expected) - 1U) ||
+        sapfs_stat_path(SAPFS_VOLUME_DATA, "projects/cuts", &stat) !=
+            SAPFS_STATUS_OK || !stat.directory) {
+        kernel_test_fail("nested FAT32 traversal changed");
+    }
+    console_write("\nST FAT32 NESTED dot dotdot traversal enumeration exact\n");
+}
+
+static void fat32_growth_scenario(void)
+{
+    struct sapfs_stat stat;
+    uint8_t buffer[1024];
+    size_t bytes = 0U;
+
+    fat32_require_base(true);
+    fat32_feed("write growth.bin \"0123456789012345678901234567890123456789012345678901234567890123456789\"");
+    for (size_t index = 1U; index < 8U; ++index) {
+        fat32_feed("append growth.bin \"0123456789012345678901234567890123456789012345678901234567890123456789\"");
+    }
+    fat32_feed("stat growth.bin");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "growth.bin", &stat) !=
+            SAPFS_STATUS_OK || stat.size != 568U || stat.cluster_count != 2U ||
+        !fat32_read_file("growth.bin", buffer, sizeof(buffer), &bytes) ||
+        bytes != stat.size) {
+        kernel_test_fail("multi-cluster FAT32 growth changed");
+    }
+    console_write("\nST FAT32 GROWTH bytes 568 clusters 2 contents readable\n");
+}
+
+static void fat32_random_scenario(void)
+{
+    static const uint8_t expected[] = "abcXYZ\nhi\n";
+
+    fat32_require_base(true);
+    fat32_feed("write random.txt \"abcdefghi\"");
+    fat32_feed("writeat random.txt 3 \"XYZ\"");
+    fat32_feed("read random.txt");
+    if (!fat32_file_equals("random.txt", expected, sizeof(expected) - 1U)) {
+        kernel_test_fail("random-access FAT32 overwrite changed");
+    }
+    console_write("\nST FAT32 RANDOM seek overwrite preserved surrounding bytes\n");
+}
+
+static void fat32_truncate_scenario(void)
+{
+    struct sapfs_stat stat;
+    uint8_t buffer[800];
+    size_t bytes = 0U;
+
+    fat32_require_base(true);
+    fat32_feed("touch trim.bin");
+    fat32_feed("truncate trim.bin 648");
+    fat32_feed("writeat trim.bin 0 \"prefix\"");
+    fat32_feed("truncate trim.bin 100");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "trim.bin", &stat) !=
+            SAPFS_STATUS_OK || stat.size != 100U || stat.cluster_count != 1U) {
+        kernel_test_fail("FAT32 truncation did not release its tail");
+    }
+    fat32_feed("truncate trim.bin 700");
+    if (!fat32_read_file("trim.bin", buffer, sizeof(buffer), &bytes) ||
+        bytes != 700U || buffer[0] != 'p' || buffer[6] != '\n') {
+        kernel_test_fail("FAT32 truncation regrowth changed live data");
+    }
+    for (size_t index = 100U; index < bytes; ++index) {
+        if (buffer[index] != 0U) {
+            kernel_test_fail("truncated FAT32 bytes reappeared after growth");
+        }
+    }
+    console_write("\nST FAT32 TRUNCATE release regrow zero tail exact\n");
+}
+
+static void fat32_rename_scenario(void)
+{
+    static const uint8_t expected[] = "move me\n";
+    struct sapfs_stat stat;
+
+    fat32_require_base(true);
+    fat32_feed("mkdir a");
+    fat32_feed("mkdir b");
+    fat32_feed("mkdir a/child");
+    if (sapfs_rename(SAPFS_VOLUME_DATA, "a", "a/child/a") !=
+            SAPFS_STATUS_PATH) {
+        kernel_test_fail("FAT32 accepted a directory move into itself");
+    }
+    fat32_feed("write a/note.txt \"move me\"");
+    fat32_feed("mv a/note.txt b/moved.txt");
+    fat32_feed("mv b archive");
+    fat32_feed("touch conflict.txt");
+    if (sapfs_rename(SAPFS_VOLUME_DATA, "conflict.txt",
+            "archive/moved.txt") != SAPFS_STATUS_EXISTS) {
+        kernel_test_fail("FAT32 rename conflict was not rejected");
+    }
+    fat32_feed("ls archive");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "a/note.txt", &stat) !=
+            SAPFS_STATUS_NOT_FOUND ||
+        !fat32_file_equals("archive/moved.txt", expected,
+            sizeof(expected) - 1U)) {
+        kernel_test_fail("FAT32 rename or move changed ownership");
+    }
+    console_write("\nST FAT32 RENAME file move directory parent updated\n");
+}
+
+static void fat32_delete_scenario(void)
+{
+    struct sapfs_stat first;
+    struct sapfs_stat second;
+
+    fat32_require_base(true);
+    fat32_feed("write first.bin \"one\"");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "first.bin", &first) !=
+            SAPFS_STATUS_OK) {
+        kernel_test_fail("FAT32 deletion setup failed");
+    }
+    fat32_feed("rm first.bin");
+    fat32_feed("write second.bin \"two\"");
+    fat32_feed("mkdir kept");
+    fat32_feed("write kept/live.txt \"live\"");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "second.bin", &second) !=
+            SAPFS_STATUS_OK || first.first_cluster != second.first_cluster ||
+        sapfs_rmdir(SAPFS_VOLUME_DATA, "kept") != SAPFS_STATUS_NOT_EMPTY) {
+        kernel_test_fail("FAT32 deletion did not reuse or protect ownership");
+    }
+    fat32_feed("rm kept/live.txt");
+    fat32_feed("rm kept");
+    console_write("\nST FAT32 DELETE cluster reused nonempty directory refused\n");
+}
+
+static void fat32_full_scenario(void)
+{
+    struct sapfs_stat stat;
+
+    fat32_require_base(true);
+    if (sapfs_drive(SAPFS_VOLUME_DATA).free_bytes != 0U) {
+        kernel_test_fail("full FAT32 fixture retained free clusters");
+    }
+    fat32_feed("write recovery.txt \"blocked\"");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "recovery.txt", &stat) !=
+            SAPFS_STATUS_OK || stat.size != 0U) {
+        kernel_test_fail("full-volume refusal exposed partial contents");
+    }
+    fat32_feed("rm tiny.bin");
+    fat32_feed("write recovery.txt \"recovered\"");
+    fat32_feed("sync");
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "recovery.txt", &stat) !=
+            SAPFS_STATUS_OK || stat.size != 10U) {
+        kernel_test_fail("full FAT32 volume did not recover after deletion");
+    }
+    console_write("\nST FAT32 FULL refusal no leak deletion recovered\n");
+}
+
+static void fat32_unavailable_scenario(bool corrupt)
+{
+    struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+    const uint32_t before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+
+    fat32_require_base(false);
+    if (data.mounted || (corrupt ? (!data.present || data.healthy) :
+            data.present)) {
+        kernel_test_fail("unavailable FAT32 data volume state changed");
+    }
+    fat32_feed("drives");
+    fat32_feed("linux echo");
+    if (linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) != before + 1U) {
+        kernel_test_fail("unavailable data volume blocked authenticated echo");
+    }
+    console_write(corrupt ?
+        "\nST FAT32 CORRUPT refused session usable system executable valid\n" :
+        "\nST FAT32 MISSING session usable system executable valid\n");
+}
+
+static void fat32_persistence_scenario(void)
+{
+    static const uint8_t expected[] = "first cut\nsecond line\n";
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    fat32_require_base(true);
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, "projects/notes.txt", &stat);
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        fat32_feed("mkdir projects");
+        fat32_feed("write projects/notes.txt \"first cut\"");
+        fat32_feed("append projects/notes.txt \"second line\"");
+        fat32_feed("sync");
+        if (!fat32_file_equals("projects/notes.txt", expected,
+                sizeof(expected) - 1U) ||
+            sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+            kernel_test_fail("clean persistence write phase failed");
+        }
+        console_write("\nST FAT32 PERSISTENCE synchronized reboot phase\n");
+        cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+        kernel_test_fail("platform reset did not restart QEMU");
+    }
+    if (status != SAPFS_STATUS_OK ||
+        !fat32_file_equals("projects/notes.txt", expected,
+            sizeof(expected) - 1U)) {
+        kernel_test_fail("clean reboot did not retain FAT32 contents");
+    }
+    fat32_feed("read projects/notes.txt");
+    console_write("\nST FAT32 PERSISTENCE clean reboot retained exact contents\n");
+}
+
+static void fat32_cache_scenario(void)
+{
+    uint8_t buffer[4096];
+    size_t bytes = 0U;
+    static const uint32_t offsets[] = {0U, 600U, 1200U, 1800U, 2400U, 3000U};
+
+    fat32_require_base(true);
+    fat32_feed("touch cache.bin");
+    fat32_feed("truncate cache.bin 3072");
+    fat32_feed("writeat cache.bin 0 \"A\"");
+    fat32_feed("writeat cache.bin 600 \"B\"");
+    fat32_feed("writeat cache.bin 1200 \"C\"");
+    fat32_feed("writeat cache.bin 1800 \"D\"");
+    fat32_feed("writeat cache.bin 2400 \"E\"");
+    fat32_feed("writeat cache.bin 3000 \"F\"");
+    fat32_feed("sync");
+    if (!fat32_read_file("cache.bin", buffer, sizeof(buffer), &bytes) ||
+        bytes != 3072U) {
+        kernel_test_fail("FAT32 cache readback length changed");
+    }
+    for (size_t index = 0U; index < sizeof(offsets) / sizeof(offsets[0]);
+         ++index) {
+        if (buffer[offsets[index]] != (uint8_t)('A' + index) ||
+            buffer[offsets[index] + 1U] != '\n') {
+            kernel_test_fail("FAT32 cache eviction lost a write");
+        }
+    }
+    console_write("\nST FAT32 CACHE six clusters eviction sync readback exact\n");
+}
+
+static void fat32_immutable_scenario(void)
+{
+    sapfs_handle handle;
+    const uint32_t before =
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
+
+    fat32_require_base(true);
+    fat32_feed("linux echo");
+    if (sapfs_create(SAPFS_VOLUME_SYSTEM, "ATTACK.TXT") !=
+            SAPFS_STATUS_READ_ONLY ||
+        sapfs_open(SAPFS_VOLUME_SYSTEM, "BUSYBOX", SAPFS_ACCESS_WRITE,
+            &handle) != SAPFS_STATUS_READ_ONLY ||
+        linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO) != before + 1U) {
+        kernel_test_fail("immutable FAT32 system volume accepted a write");
+    }
+    console_write("\nST FAT32 IMMUTABLE write refused below shell executable valid\n");
+}
+
+static void fat32_handles_scenario(void)
+{
+    sapfs_handle handles[SAPFS_MAX_HANDLES];
+    sapfs_handle extra;
+    size_t bytes = 0U;
+    uint8_t byte = 0U;
+
+    fat32_require_base(true);
+    fat32_feed("write handle.txt \"generation\"");
+    if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
+            &handles[0]) != SAPFS_STATUS_OK ||
+        sapfs_write(handles[0], &byte, 1U, &bytes) != SAPFS_STATUS_ACCESS ||
+        sapfs_read(handles[0], NULL, 1U, &bytes) !=
+            SAPFS_STATUS_INVALID_ARGUMENT ||
+        sapfs_unlink(SAPFS_VOLUME_DATA, "handle.txt") != SAPFS_STATUS_BUSY ||
+        sapfs_close(handles[0]) != SAPFS_STATUS_OK ||
+        sapfs_close(handles[0]) != SAPFS_STATUS_STALE_HANDLE ||
+        sapfs_read(handles[0], &byte, 1U, &bytes) !=
+            SAPFS_STATUS_STALE_HANDLE) {
+        kernel_test_fail("FAT32 handle generation controls changed");
+    }
+    for (size_t index = 0U; index < SAPFS_MAX_HANDLES; ++index) {
+        if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
+                &handles[index]) != SAPFS_STATUS_OK) {
+            kernel_test_fail("FAT32 handle table filled early");
+        }
+    }
+    if (sapfs_open(SAPFS_VOLUME_DATA, "handle.txt", SAPFS_ACCESS_READ,
+            &extra) != SAPFS_STATUS_NO_HANDLES) {
+        kernel_test_fail("FAT32 handle table exceeded its fixed bound");
+    }
+    for (size_t index = 0U; index < SAPFS_MAX_HANDLES; ++index) {
+        if (sapfs_close(handles[index]) != SAPFS_STATUS_OK) {
+            kernel_test_fail("FAT32 handle teardown leaked ownership");
+        }
+    }
+    console_write("\nST FAT32 HANDLES generation stale double-close access bound clean\n");
+}
+
+_Noreturn void kernel_test_complete_fat32(void)
+{
+    if (active_scenario < KERNEL_TEST_FAT32_SYSTEM ||
+        active_scenario > KERNEL_TEST_FAT32_HANDLES) {
+        kernel_test_fail("FAT32 completion used outside its scenario");
+    }
+    cpu_interrupt_enable();
+    console_write("\nsap> ");
+    switch (active_scenario) {
+    case KERNEL_TEST_FAT32_SYSTEM: fat32_system_scenario(); break;
+    case KERNEL_TEST_FAT32_DATA: fat32_data_scenario(); break;
+    case KERNEL_TEST_FAT32_NESTED: fat32_nested_scenario(); break;
+    case KERNEL_TEST_FAT32_GROWTH: fat32_growth_scenario(); break;
+    case KERNEL_TEST_FAT32_RANDOM: fat32_random_scenario(); break;
+    case KERNEL_TEST_FAT32_TRUNCATE: fat32_truncate_scenario(); break;
+    case KERNEL_TEST_FAT32_RENAME: fat32_rename_scenario(); break;
+    case KERNEL_TEST_FAT32_DELETE: fat32_delete_scenario(); break;
+    case KERNEL_TEST_FAT32_FULL: fat32_full_scenario(); break;
+    case KERNEL_TEST_FAT32_CORRUPT: fat32_unavailable_scenario(true); break;
+    case KERNEL_TEST_FAT32_MISSING: fat32_unavailable_scenario(false); break;
+    case KERNEL_TEST_FAT32_PERSISTENCE: fat32_persistence_scenario(); break;
+    case KERNEL_TEST_FAT32_CACHE: fat32_cache_scenario(); break;
+    case KERNEL_TEST_FAT32_IMMUTABLE: fat32_immutable_scenario(); break;
+    case KERNEL_TEST_FAT32_HANDLES: fat32_handles_scenario(); break;
+    default: kernel_test_fail("unreachable FAT32 scenario");
+    }
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -5552,6 +6082,36 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "first-light-userland-interactive";
     case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
         return "first-light-userland-interactive-absent";
+    case KERNEL_TEST_FAT32_SYSTEM:
+        return "fat32-system";
+    case KERNEL_TEST_FAT32_DATA:
+        return "fat32-data";
+    case KERNEL_TEST_FAT32_NESTED:
+        return "fat32-nested";
+    case KERNEL_TEST_FAT32_GROWTH:
+        return "fat32-growth";
+    case KERNEL_TEST_FAT32_RANDOM:
+        return "fat32-random";
+    case KERNEL_TEST_FAT32_TRUNCATE:
+        return "fat32-truncate";
+    case KERNEL_TEST_FAT32_RENAME:
+        return "fat32-rename";
+    case KERNEL_TEST_FAT32_DELETE:
+        return "fat32-delete";
+    case KERNEL_TEST_FAT32_FULL:
+        return "fat32-full";
+    case KERNEL_TEST_FAT32_CORRUPT:
+        return "fat32-corrupt";
+    case KERNEL_TEST_FAT32_MISSING:
+        return "fat32-missing";
+    case KERNEL_TEST_FAT32_PERSISTENCE:
+        return "fat32-persistence";
+    case KERNEL_TEST_FAT32_CACHE:
+        return "fat32-cache";
+    case KERNEL_TEST_FAT32_IMMUTABLE:
+        return "fat32-immutable";
+    case KERNEL_TEST_FAT32_HANDLES:
+        return "fat32-handles";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

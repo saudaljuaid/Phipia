@@ -7,6 +7,7 @@
 #include <sapote/cpu.h>
 #include <sapote/dma.h>
 #include <sapote/filesystem.h>
+#include <sapote/fat32.h>
 #include <sapote/interrupt_vector.h>
 #include <sapote/linux_elf64.h>
 #include <sapote/linux_syscall.h>
@@ -1227,13 +1228,22 @@ static enum linux_cat_abi_status linux_attempt(
         status = LINUX_CAT_ABI_STATUS_ABSENT;
         goto cleanup;
     }
+    bool fat32_file = runtime.file.fat32;
+    uint32_t fat32_clusters =
+        (LINUX_CAT_ELF64_FILE_BYTES + FAT32_CLUSTER_BYTES - 1U) /
+            FAT32_CLUSTER_BYTES;
     if (filesystem_status != FILESYSTEM_STATUS_OK ||
         !runtime.file.cpu_owned ||
         runtime.file.file_bytes != LINUX_CAT_ELF64_FILE_BYTES ||
-        runtime.file.cluster_count != LINUX_CAT_FAT16_FILE_CLUSTERS ||
-        runtime.file.read_count != 3U + LINUX_CAT_FAT16_FILE_CLUSTERS ||
-        runtime.file.msix_completion_count !=
-            3U + LINUX_CAT_FAT16_FILE_CLUSTERS) {
+        (fat32_file && runtime.file.cluster_count != fat32_clusters) ||
+        (!fat32_file &&
+            runtime.file.cluster_count != LINUX_CAT_FAT16_FILE_CLUSTERS) ||
+        (!fat32_file &&
+            (runtime.file.read_count != 3U + runtime.file.cluster_count ||
+             runtime.file.msix_completion_count !=
+                3U + runtime.file.cluster_count)) ||
+        (fat32_file && (runtime.file.read_count == 0U ||
+            runtime.file.msix_completion_count != runtime.file.read_count))) {
         if (filesystem_status != FILESYSTEM_STATUS_CONTROLLED_FAILURE) {
             console_write("Sapote: Linux cat filesystem unexpected ");
             console_write(filesystem_status_string(filesystem_status));

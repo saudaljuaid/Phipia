@@ -55,6 +55,21 @@ enum kernel_test_scenario {
     KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT,
     KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE,
     KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT,
+    KERNEL_TEST_FAT32_SYSTEM,
+    KERNEL_TEST_FAT32_DATA,
+    KERNEL_TEST_FAT32_NESTED,
+    KERNEL_TEST_FAT32_GROWTH,
+    KERNEL_TEST_FAT32_RANDOM,
+    KERNEL_TEST_FAT32_TRUNCATE,
+    KERNEL_TEST_FAT32_RENAME,
+    KERNEL_TEST_FAT32_DELETE,
+    KERNEL_TEST_FAT32_FULL,
+    KERNEL_TEST_FAT32_CORRUPT,
+    KERNEL_TEST_FAT32_MISSING,
+    KERNEL_TEST_FAT32_PERSISTENCE,
+    KERNEL_TEST_FAT32_CACHE,
+    KERNEL_TEST_FAT32_IMMUTABLE,
+    KERNEL_TEST_FAT32_HANDLES,
     KERNEL_TEST_INVALID
 };
 
@@ -103,6 +118,7 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive(void);
 _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
     void
 );
+_Noreturn void kernel_test_complete_fat32(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

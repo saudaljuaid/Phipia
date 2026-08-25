@@ -105,6 +105,7 @@ struct filesystem_linux_file {
     uint32_t read_count;
     uint32_t cluster_count;
     bool cpu_owned;
+    bool fat32;
     bool active;
 };
 

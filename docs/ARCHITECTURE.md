@@ -54,15 +54,19 @@ before a driver can claim resources. BAR mappings, MSI-X vectors, and DMA
 buffers are typed and generation-checked. Without an IOMMU, a bus-mastering
 device is still treated as capable of reaching all physical memory.
 
-The current device proofs are deliberately small:
+The current device boundaries are deliberately small:
 
 - xHCI: one emulated controller and one endpoint-zero descriptor transfer;
-- NVMe: one controller, namespace, queue pair, and bounded read session;
-- FAT16: one read-only superfloppy and one canonical root file;
+- NVMe: at most two controllers, one namespace and queue pair each, with
+  generation-authenticated 512- or 4096-byte synchronous read/write sessions;
+- FAT32: separate immutable-system and writable-data mounts with bounded
+  handles, a four-sector cache, and clean-sync persistence;
+- FAT16: retained read-only compatibility proofs for historical releases;
 - PS/2: keyboard and three-byte pointer input for the shell and First Light.
 
-There is no storage write path, VFS, hotplug framework, physical-device
-passthrough, or general USB class stack.
+There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
+or general USB class stack. The exact FAT32 design and limits are in
+[`FAT32.md`](FAT32.md).
 
 ## Userspace boundaries
 
@@ -70,8 +74,9 @@ The native Ring 3 proof loads one exact ELF64 fixture and returns through a
 private interrupt gate. Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
 profiles: `echo SAPOTE`, `uname -s`, and `cat`. First Light's `linux` command
-selects one of the three exact root entries on a deterministic read-only FAT16
-volume attached as an ordinary emulated NVMe namespace. Each launch validates
+selects one of the three exact root entries on the deterministic read-only
+FAT32 system volume attached as an ordinary emulated NVMe namespace. Each
+launch validates
 CPU-owned bytes, builds a fresh private address space, enters CPL3,
 authenticates exact output, and tears the generation down before restoring the
 prompt.
@@ -86,17 +91,17 @@ same generation immediately after the real `SYSCALL`. The cycle may repeat
 only inside the fixed line and byte limits; failure or exit releases the saved
 frame, input, output ownership, mappings, and generation.
 
-The v0.8.0 echo and v0.9.0 uname standalone fixtures remain independent proof
-scenarios. The v1.1.0 volume composes those frozen profiles with the new cat
-profile without creating a VFS or path API. This surface is not POSIX and is
-not Sapote's native application ABI. It accepts only the measured calls,
-arguments, mappings, input/output relationship, and lifecycle documented in
-[`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
+The v0.8.0 echo, v0.9.0 uname, and v1.1.0 FAT16 fixtures remain independent
+historical proof scenarios. v2.0.0 repackages the same exact executable bytes
+on the immutable FAT32 system volume without changing their measured ABI. This
+surface is not POSIX and is not Sapote's native application ABI. It accepts
+only the measured calls, arguments, mappings, input/output relationship, and
+lifecycle documented in [`LINUX_SYSCALL_ABI.md`](LINUX_SYSCALL_ABI.md).
 
 ## Rust boundary
 
 C and assembly control the machine. Freestanding Rust parses selected byte
-streams that the kernel did not create: packed fonts and logo data, FAT16
+streams that the kernel did not create: packed fonts and logo data, FAT16/FAT32
 metadata, and ELF64 program records. Only validated, pointer-free results cross
 back to C. See [`RUST.md`](RUST.md).
 
@@ -130,6 +135,6 @@ keeping milestone diaries in the active documentation set.
 
 ## Current limits
 
-Sapote has no SMP, networking, IOMMU, writable filesystem, dynamic linker,
-signals, general descriptor table, broad hardware support, or stable native
-userspace ABI. These are boundaries, not implied features.
+Sapote has no SMP, networking, IOMMU, general VFS, journaled crash recovery,
+dynamic linker, signals, general descriptor table, broad hardware support, or
+stable native userspace ABI. These are boundaries, not implied features.

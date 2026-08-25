@@ -5,6 +5,7 @@
 
 #include <sapote/boot_ledger.h>
 #include <sapote/console.h>
+#include <sapote/fat32_fs.h>
 #include <sapote/linux_abi.h>
 #include <sapote/linux_cat.h>
 #include <sapote/linux_uname.h>
@@ -63,7 +64,10 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
 
 static void evidence_selected(enum linux_userland_profile profile)
 {
-    console_serial_write("FL USERLAND deterministic read-only NVMe/FAT16 profile selected ");
+    console_serial_write("FL USERLAND deterministic read-only NVMe/");
+    console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
+        "FAT32" : "FAT16");
+    console_serial_write(" profile selected ");
     console_serial_write(linux_userland_profile_name(profile));
     if (profile == LINUX_USERLAND_PROFILE_ECHO) {
         console_serial_write(" BUSYBOX\n");
@@ -78,7 +82,10 @@ static void evidence_complete(const struct linux_userland_result *result)
 {
     const char *profile = linux_userland_profile_name(result->profile);
 
-    console_serial_write("FL USERLAND Rust FAT16 SHA-256 ELF64 validation passed ");
+    console_serial_write("FL USERLAND Rust ");
+    console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
+        "FAT32" : "FAT16");
+    console_serial_write(" SHA-256 ELF64 validation passed ");
     console_serial_write(profile);
     console_serial_write(" bytes ");
     console_serial_write_u64(result->file_bytes);

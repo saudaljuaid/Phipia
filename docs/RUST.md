@@ -16,6 +16,7 @@ and encodings dominate the risk. Today it validates:
 | `font.rs`, `ui_font.rs` | packed bitmap-font headers and glyph data |
 | `logo.rs` | the deterministic runtime pebble stream |
 | `fat16.rs`, `linux_fat16.rs` | FAT16 geometry, chains, root entries, and payload digests |
+| `fat32.rs` | FAT32 BPB/FSInfo geometry, cluster classes, paths, names, and directory entries |
 | `elf64.rs`, `linux_elf64.rs` | bounded native and static BusyBox ELF64 records |
 | `abi.rs` | the explicit C/Rust calling boundary and embedded assets |
 
@@ -31,6 +32,13 @@ or reusable file API. The profile-specific ELF parser then validates the whole
 static image before C allocates or maps process pages. The checked C/Rust
 copy-out boundary validates the complete cat read destination before any byte
 is copied, so invalid or cross-boundary ranges cannot produce partial input.
+
+For v2.0.0, `fat32.rs` validates pointer-free metadata before C publishes it.
+The C filesystem remains responsible for NVMe sessions, mount and handle
+generations, FAT and directory mutation, cache ownership, allocation, and
+teardown. The kernel accepts only the deterministic geometry and the documented
+ASCII 8.3 subset; malformed or unsupported long-name records are named
+refusals. See [`FAT32.md`](FAT32.md).
 
 ## Freestanding build
 

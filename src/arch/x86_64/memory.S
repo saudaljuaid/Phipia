@@ -28,4 +28,27 @@ memset:
     ret
 .size memset, . - memset
 
+.global memcmp
+.hidden memcmp
+.type memcmp, @function
+memcmp:
+    testq %rdx, %rdx
+    jz .Lmemcmp_equal
+.Lmemcmp_next:
+    movzbl (%rdi), %eax
+    movzbl (%rsi), %ecx
+    cmpl %ecx, %eax
+    jne .Lmemcmp_different
+    incq %rdi
+    incq %rsi
+    decq %rdx
+    jnz .Lmemcmp_next
+.Lmemcmp_equal:
+    xorl %eax, %eax
+    ret
+.Lmemcmp_different:
+    subl %ecx, %eax
+    ret
+.size memcmp, . - memcmp
+
 .section .note.GNU-stack, "", @progbits

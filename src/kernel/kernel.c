@@ -9,6 +9,7 @@
 #include <sapote/boot_ledger.h>
 #include <sapote/boot_plan.h>
 #include <sapote/console.h>
+#include <sapote/fat32_fs.h>
 #include <sapote/shell.h>
 #include <sapote/test.h>
 #include <sapote/ui.h>
@@ -52,6 +53,7 @@ static void report_ledger_refusal(
 _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
     enum boot_ledger_status status;
+    size_t filesystem_tests;
 
     /* Reversible bootstrap: named planner refusals need somewhere to speak. */
     console_initialize();
@@ -89,6 +91,13 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 
     boot_ledger_publish(&installed_ledger);
     console_write("Sapote: Boot Ledger installed proof passed\n");
+    if (!sapfs_self_test(&filesystem_tests)) {
+        console_panic("FAT32 store self-test failed");
+    }
+    console_write("Sapote: FAT32 store controls ");
+    console_write_u64(filesystem_tests);
+    console_write("/6 passed\n");
+    sapfs_initialize();
     if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
         console_write("Sapote: First Light ledger status redraw failed\n");
     }
@@ -150,6 +159,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     if (installed_context.test_scenario ==
             KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT) {
         kernel_test_complete_first_light_userland_interactive_absent();
+    }
+
+    if (installed_context.test_scenario >= KERNEL_TEST_FAT32_SYSTEM &&
+        installed_context.test_scenario <= KERNEL_TEST_FAT32_HANDLES) {
+        kernel_test_complete_fat32();
     }
 
     shell_run();

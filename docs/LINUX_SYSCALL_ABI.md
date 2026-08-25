@@ -9,12 +9,12 @@ proofs:
 - v0.9.0: `busybox uname -s`;
 - v1.1.0: `busybox cat`.
 
-Version 1.1.0 preserves those unchanged profiles in ordinary First Light and
-adds only the bounded interactive `linux cat` profile. This does not establish
-a broad userspace ABI.
+Version 2.0.0 preserves those executables and the bounded interactive
+`linux cat` lifecycle unchanged while moving the current system-volume path to
+immutable FAT32. This does not establish a broad userspace ABI.
 
 This is not POSIX, a native Sapote ABI, or a general Linux personality. Each
-profile has a distinct executable, configuration, FAT16 fixture, initial stack,
+profile has a distinct executable, configuration, storage contract, initial stack,
 syscall allowlist, output sink, lifecycle, and checksum.
 
 ## Entry and return
@@ -138,11 +138,12 @@ executable-stack, and W+X shapes are refused.
 
 Each profile receives its exact measured argument vector, an empty environment,
 and the measured `AT_PAGESZ`/`AT_NULL` auxiliary vector in a guarded RW/NX stack. The
-historical scenarios keep their separate read-only 16 MiB FAT16 fixtures. The
-v1.1.0 First Light path uses one deterministic read-only FAT16 image with the
-exact `BUSYBOX`, `UNAMEBOX`, and `CATBOX` entries. It is attached through ordinary
-emulated NVMe; DMA ownership returns to the CPU before Rust inspects metadata or
-complete file bytes.
+historical scenarios keep their separate read-only 16 MiB FAT16 fixtures.
+The v2.0.0 First Light path uses one deterministic read-only 64 MiB FAT32 system
+image with the exact `BUSYBOX`, `UNAMEBOX`, and `CATBOX` entries. It is attached
+through ordinary emulated NVMe; DMA ownership returns to the CPU before Rust
+inspects metadata or complete file bytes. Filesystem writes are rejected below
+the shell for this mount.
 
 The First Light owner assigns a fresh generation, invokes only the selected
 profile's measured launcher, and accepts success only after private CPL3 entry,
