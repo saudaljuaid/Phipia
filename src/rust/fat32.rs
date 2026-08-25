@@ -505,6 +505,11 @@ pub(crate) fn validate_path(bytes: &[u8]) -> Result<u32, Status> {
     Ok(components)
 }
 
+/// Parse one entry in Sapote's bounded directory subset.
+///
+/// The root contains no dot entries. Subdirectory `.` and `..` entries must
+/// name explicit clusters at or above 2; the optional FAT encoding of a root
+/// parent as cluster zero is outside this deterministic subset.
 pub(crate) fn parse_directory_entry(bytes: &[u8]) -> Result<DirectoryEntry, Status> {
     if bytes.len() < ENTRY_BYTES {
         return Err(Status::Truncated);

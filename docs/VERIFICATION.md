@@ -101,5 +101,5 @@ make capture-boot-video
 ```
 
 These targets produce QEMU evidence for the committed First Light images and
-approximately 20-second FAT32 persistence video. Visual output supplements the
+approximately 22-second FAT32 persistence video. Visual output supplements the
 installed framebuffer and transcript checks; it does not replace them.

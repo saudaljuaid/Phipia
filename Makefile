@@ -80,6 +80,7 @@ FIRST_LIGHT_USERLAND_NO_CAT_IMAGE := \
 	$(BUILD_DIR)/userspace/sapote-userland-no-cat-fat16.raw
 FAT32_SYSTEM_IMAGE := $(BUILD_DIR)/userspace/sapote-system-fat32.raw
 FAT32_DATA_IMAGE := $(BUILD_DIR)/userspace/sapote-data-fat32.raw
+FAT32_RUN_DATA_IMAGE := $(BUILD_DIR)/run-data-fat32.raw
 FAT32_FULL_IMAGE := $(BUILD_DIR)/userspace/sapote-data-full-fat32.raw
 FAT32_CORRUPT_IMAGE := $(BUILD_DIR)/userspace/sapote-data-corrupt-fat32.raw
 
@@ -1264,11 +1265,12 @@ smoke: qemu-test-normal
 	@echo "strict boot smoke test passed"
 
 run: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	cp $(FAT32_DATA_IMAGE) $(FAT32_RUN_DATA_IMAGE)
 	qemu-system-x86_64 -m 128M -smp 1 -boot order=d -cdrom $(ISO) \
 		-blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=system-file,read-only=on,auto-read-only=off \
 		-blockdev driver=raw,file=system-file,node-name=system-raw,read-only=on \
 		-device nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 \
-		-blockdev driver=file,filename=$(FAT32_DATA_IMAGE),node-name=data-file,read-only=off,auto-read-only=off \
+		-blockdev driver=file,filename=$(FAT32_RUN_DATA_IMAGE),node-name=data-file,read-only=off,auto-read-only=off \
 		-blockdev driver=raw,file=data-file,node-name=data-raw,read-only=off \
 		-device nvme,serial=sapote-data-fat32,drive=data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 \
 		-serial stdio -no-reboot -no-shutdown

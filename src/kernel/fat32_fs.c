@@ -218,6 +218,9 @@ static enum sapfs_status nvme_result(enum nvme_status status)
         status == NVME_STATUS_WRITE_VERIFY) {
         return SAPFS_STATUS_WRITEBACK;
     }
+    if (status == NVME_STATUS_VOLUME_READ_ONLY) {
+        return SAPFS_STATUS_READ_ONLY;
+    }
     if (status == NVME_STATUS_SESSION_INVALID ||
         status == NVME_STATUS_TEARDOWN_RACE) {
         return SAPFS_STATUS_RESET;

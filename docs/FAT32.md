@@ -48,6 +48,12 @@ cross-links, leaked clusters, bad/reserved/out-of-range values, exact file
 size-to-chain length, and directory depth/count bounds. Irreconcilable media is
 refused without exposing a partial mount.
 
+The root directory contains no `.` or `..` entries. Every subdirectory created
+by Sapote contains both, and this bounded subset records explicit cluster
+numbers of at least 2 for each—including `..` when the parent is the root.
+Images using FAT's optional zero-cluster encoding for a root parent are refused
+rather than interpreted ambiguously.
+
 ## Names, paths, and resources
 
 v2.0.0 deliberately accepts a case-insensitive ASCII 8.3 subset. Names are

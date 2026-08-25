@@ -3020,7 +3020,7 @@ static enum nvme_status volume_write_interrupts_disabled(
         return NVME_STATUS_SESSION_INVALID;
     }
     if (!session->writable) {
-        return NVME_STATUS_WRITE_VERIFY;
+        return NVME_STATUS_VOLUME_READ_ONLY;
     }
     if (source_bytes != session->logical_block_bytes) {
         return NVME_STATUS_BUFFER_LENGTH;
@@ -3225,8 +3225,10 @@ const char *nvme_status_string(enum nvme_status status)
         return "NVMe controller index is outside the volume bound";
     case NVME_STATUS_BUFFER_LENGTH:
         return "NVMe block buffer length is not exactly one LBA";
+    case NVME_STATUS_VOLUME_READ_ONLY:
+        return "NVMe volume session is read-only";
     case NVME_STATUS_WRITE_VERIFY:
-        return "NVMe write was refused or its guarded buffer changed";
+        return "NVMe guarded write buffer changed";
     case NVME_STATUS_TEARDOWN_RACE:
         return "NVMe teardown race observed freed state";
     case NVME_STATUS_TEARDOWN_FAILURE:
