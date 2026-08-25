@@ -1097,7 +1097,12 @@ static void files_create(bool directory)
         size_t at = append_text(name, sizeof(name), 0U,
             directory ? "FOLDER" : "NEW");
 
-        name[at++] = (char)('0' + number);
+        if (at + 1U >= sizeof(name)) {
+            status = SAPFS_STATUS_PATH;
+            break;
+        }
+        name[at] = (char)('0' + number);
+        ++at;
         name[at] = '\0';
         if (!directory) {
             (void)append_text(name, sizeof(name), at, ".TXT");
