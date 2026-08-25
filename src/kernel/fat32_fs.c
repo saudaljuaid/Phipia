@@ -1525,7 +1525,9 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
     struct nvme_volume_session session;
     struct sapfs_mount_state candidate;
     enum nvme_status open_status;
+    enum nvme_status close_status;
     enum sapfs_status status;
+    const char *validation_stage = "boot sector";
     uint32_t controller;
 
     if (!valid_volume(volume)) {
@@ -1542,6 +1544,7 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
     if (open_status != NVME_STATUS_OK) {
         mounts[volume].present = false;
         mounts[volume].healthy = false;
+        report_nvme_failure("mount open", open_status);
         return nvme_result(open_status);
     }
     candidate.present = true;
@@ -1555,6 +1558,7 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
         status = SAPFS_STATUS_CORRUPT;
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "volume identity";
         status = validate_volume_identity(volume, &candidate.geometry);
     }
     if (status == SAPFS_STATUS_OK &&
@@ -1562,6 +1566,7 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
         status = SAPFS_STATUS_CORRUPT;
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "backup boot sector";
         status = direct_read(&session, candidate.geometry.backup_boot_sector,
             backup);
         if (status == SAPFS_STATUS_OK &&
@@ -1570,6 +1575,7 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
         }
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "FSInfo";
         status = direct_read(&session, candidate.geometry.fsinfo_sector,
             info);
         if (status == SAPFS_STATUS_OK &&
@@ -1579,6 +1585,7 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
         }
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "backup FSInfo";
         status = direct_read(&session,
             (uint64_t)candidate.geometry.backup_boot_sector +
                 candidate.geometry.fsinfo_sector, backup_info);
@@ -1588,19 +1595,29 @@ enum sapfs_status sapfs_mount(enum sapfs_volume volume)
         }
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "FAT copies";
         status = validate_fats(&session, &candidate.geometry,
             &candidate.free_clusters, &candidate.next_free);
     }
     if (status == SAPFS_STATUS_OK) {
+        validation_stage = "live tree";
         candidate.generation = UINT64_C(1);
         status = validate_live_tree(&session, &candidate, volume);
     }
-    if (nvme_volume_close(&session) != NVME_STATUS_OK &&
-        status == SAPFS_STATUS_OK) {
+    close_status = nvme_volume_close(&session);
+    if (close_status != NVME_STATUS_OK && status == SAPFS_STATUS_OK) {
+        validation_stage = "controller close";
         status = SAPFS_STATUS_IO;
     }
     invalidate_cache(volume);
     if (status != SAPFS_STATUS_OK) {
+        console_write("Sapote: FAT32 ");
+        console_write(volume == SAPFS_VOLUME_SYSTEM ? "system" : "data");
+        console_write(" mount refused at ");
+        console_write(validation_stage);
+        console_write(": ");
+        console_write(sapfs_status_string(status));
+        console_write("\n");
         mounts[volume].present = candidate.present;
         mounts[volume].healthy = false;
         return status;

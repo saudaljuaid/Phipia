@@ -55,4 +55,11 @@ jobs:
               run: |
                   make qemu-test-first-light-userland-interactive
                   make qemu-test-fat32-data
+                  make qemu-test-fat32-nested qemu-test-fat32-growth \
+                      qemu-test-fat32-random qemu-test-fat32-truncate \
+                      qemu-test-fat32-rename qemu-test-fat32-delete \
+                      qemu-test-fat32-full qemu-test-fat32-corrupt \
+                      qemu-test-fat32-missing qemu-test-fat32-persistence \
+                      qemu-test-fat32-cache qemu-test-fat32-immutable \
+                      qemu-test-fat32-handles
                   make qemu-tests
