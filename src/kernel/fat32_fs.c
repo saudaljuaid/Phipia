@@ -1976,8 +1976,13 @@ static enum sapfs_status handle_location(
 {
     struct sapfs_cache_entry *sector;
     enum fat32_status parsed;
-    enum sapfs_status status = cache_sector(operation, state->entry_sector,
-        &sector);
+    enum sapfs_status status;
+
+    if (operation == NULL || state == NULL || location == NULL) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    zero_bytes(location, sizeof(*location));
+    status = cache_sector(operation, state->entry_sector, &sector);
 
     if (status != SAPFS_STATUS_OK) {
         return status;
