@@ -1372,6 +1372,7 @@ static enum sapfs_status validate_directory_tree(
         {'.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
     static const uint8_t dotdot[11] =
         {'.', '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
+    uint8_t directory_bytes[SAPFS_SECTOR_BYTES];
     uint8_t names[SAPFS_MAX_LIST_ENTRIES][FAT32_SHORT_NAME_BYTES];
     uint32_t cluster = directory->cluster;
     size_t name_count = 0U;
@@ -1397,11 +1398,12 @@ static enum sapfs_status validate_directory_tree(
         if (status != SAPFS_STATUS_OK) {
             return status;
         }
+        copy_bytes(directory_bytes, sector->data, sizeof(directory_bytes));
         for (uint32_t offset = 0U; offset < SAPFS_SECTOR_BYTES;
              offset += FAT32_DIRECTORY_ENTRY_BYTES) {
             struct fat32_directory_entry entry;
 
-            if (sapote_fat32_parse_directory_entry(&sector->data[offset],
+            if (sapote_fat32_parse_directory_entry(&directory_bytes[offset],
                     FAT32_DIRECTORY_ENTRY_BYTES, &entry) != FAT32_STATUS_OK) {
                 return SAPFS_STATUS_CORRUPT;
             }
