@@ -129,6 +129,8 @@ The source captures are:
 - `assets/sapote-v2-first-light.png`;
 - `assets/sapote-v2-first-light-focus.png`;
 - `assets/sapote-v2-first-light-terminal.png`;
+- `assets/sapote-v2-first-light-legacy-uname.png` (the retained FAT16
+  compatibility launch on the v2 desktop);
 - `assets/sapote-first-light-boot-20s.mp4` (an approximately 20-second
   First Light boot capture).
 
