@@ -101,14 +101,10 @@ def send_line(qmp, text):
 
 
 def open_terminal(qmp):
-    """Open Terminal through the ordinary relative PS/2 pointer path."""
-    qmp.hmp("mouse_move -260 320")
-    time.sleep(0.45)
-    qmp.hmp("mouse_move 4 120")
-    time.sleep(0.55)
-    qmp.hmp("mouse_button 1")
+    """Open Terminal through ordinary First Environment keyboard focus."""
+    qmp.hmp("sendkey tab")
     time.sleep(0.10)
-    qmp.hmp("mouse_button 0")
+    qmp.hmp("sendkey ret")
 
 
 def screendump(qmp, destination):
