@@ -581,6 +581,25 @@ enum screen_status screen_set_deferred_present(bool deferred)
     return SCREEN_STATUS_OK;
 }
 
+enum screen_status screen_set_palette(
+    uint8_t background_red,
+    uint8_t background_green,
+    uint8_t background_blue,
+    uint8_t foreground_red,
+    uint8_t foreground_green,
+    uint8_t foreground_blue
+)
+{
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    background_pixel = framebuffer_pack(background_red, background_green,
+        background_blue);
+    foreground_pixel = framebuffer_pack(foreground_red, foreground_green,
+        foreground_blue);
+    return SCREEN_STATUS_OK;
+}
+
 enum screen_status screen_putc(char character)
 {
     if (!state.active) {

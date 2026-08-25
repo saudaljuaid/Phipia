@@ -170,6 +170,7 @@ static void command_help(void)
     console_write("  sync      persist completed data operations\n");
     console_write("  reboot    sync, unmount, and restart cleanly\n");
     console_write("  clear     clear the screen\n");
+    console_write("  fetch     Sapote identity and live system summary\n");
     console_write("  uptime    nanoseconds since the clock started\n");
     console_write("  mem       physical frames and kernel heap\n");
     console_write("  pci       every function enumeration found\n");
@@ -906,6 +907,45 @@ static void command_version(void)
     console_write(" characters\n");
 }
 
+static void command_fetch(void)
+{
+    const struct screen_state screen = screen_get_state();
+    const struct heap_state heap = heap_get_state();
+    const struct sapfs_drive_info system = sapfs_drive(SAPFS_VOLUME_SYSTEM);
+    const struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+
+    console_write("\n");
+    console_write("                 ________\n");
+    console_write("           _..--'        `--.._\n");
+    console_write("       _.-'                    `-._\n");
+    console_write("     .'                            `.\n");
+    console_write("    /                                \\\n");
+    console_write("   /                                  \\\n");
+    console_write("  /                                    \\\n");
+    console_write(" |                                      |\n");
+    console_write(" |                                      |\n");
+    console_write("  \\                                    /\n");
+    console_write("   `.                                .'\n");
+    console_write("     `-._                        _.-'\n");
+    console_write("         `---..____________..---'\n");
+    console_write("\n");
+    console_write("  Sapote First Environment\n");
+    console_write("  kernel      Sapote 2.0.0 / x86_64\n");
+    console_write("  terminal    ");
+    console_write_u64(screen.columns);
+    console_putc('x');
+    console_write_u64(screen.rows);
+    console_write(" cells\n");
+    console_write("  filesystem  system ");
+    console_write(system.mounted ? "fat32 ro" : "unavailable");
+    console_write(" / data ");
+    console_write(data.mounted ? "fat32 rw" : "unavailable");
+    console_putc('\n');
+    console_write("  heap        ");
+    print_size(heap.allocated_bytes);
+    console_write(" allocated\n\n");
+}
+
 static void command_ledger(void)
 {
     const struct boot_ledger *ledger = boot_ledger_installed();
@@ -1000,6 +1040,8 @@ enum shell_status shell_execute(const char *text)
         if (screen_is_active()) {
             (void)screen_clear();
         }
+    } else if (matches(text, "fetch")) {
+        command_fetch();
     } else if (matches(text, "uptime")) {
         command_uptime();
     } else if (matches(text, "mem")) {
@@ -1262,20 +1304,15 @@ void shell_process_keyboard_events(void)
         if (!event.pressed) {
             continue;
         }
-        if (ui_keyboard_operational && event.scancode == 0x0FU) {
-            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
-                ui_keyboard_operational = false;
-            }
-            continue;
-        }
-        if (ui_keyboard_operational && event.scancode == 0x01U) {
-            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
-                ui_keyboard_operational = false;
-            }
-            continue;
-        }
-        if (ui_keyboard_operational && event.scancode == 0x1CU &&
+        if (ui_keyboard_operational &&
             ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
+            if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+                ui_keyboard_operational = false;
+            }
+            continue;
+        }
+        if (ui_keyboard_operational &&
+            (event.scancode == 0x0FU || event.scancode == 0x01U)) {
             if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
                 ui_keyboard_operational = false;
             }

@@ -91,6 +91,14 @@ enum screen_status screen_set_viewport(
 enum screen_status screen_set_visible(bool visible);
 enum screen_status screen_set_deferred_present(bool deferred);
 enum screen_status screen_redraw_region(struct surface_rect clip);
+enum screen_status screen_set_palette(
+    uint8_t background_red,
+    uint8_t background_green,
+    uint8_t background_blue,
+    uint8_t foreground_red,
+    uint8_t foreground_green,
+    uint8_t foreground_blue
+);
 
 struct screen_state screen_get_state(void);
 
