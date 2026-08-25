@@ -19,7 +19,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	fat32-missing fat32-persistence fat32-cache fat32-immutable fat32-handles
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 58
-EXPECTED_SHELL_ASSERTION_COUNT := 325
+EXPECTED_SHELL_ASSERTION_COUNT := 359
 
 CC := gcc
 LD := ld
