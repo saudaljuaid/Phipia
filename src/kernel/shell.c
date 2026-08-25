@@ -907,6 +907,15 @@ static void command_version(void)
     console_write(" characters\n");
 }
 
+static void print_fetch_drive(struct sapfs_drive_info drive)
+{
+    if (!drive.present || !drive.healthy || !drive.mounted) {
+        console_write("unavailable");
+    } else {
+        console_write(drive.read_only ? "fat32 ro" : "fat32 rw");
+    }
+}
+
 static void command_fetch(void)
 {
     const struct screen_state screen = screen_get_state();
@@ -915,19 +924,9 @@ static void command_fetch(void)
     const struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
 
     console_write("\n");
-    console_write("                 ________\n");
-    console_write("           _..--'        `--.._\n");
-    console_write("       _.-'                    `-._\n");
-    console_write("     .'                            `.\n");
-    console_write("    /                                \\\n");
-    console_write("   /                                  \\\n");
-    console_write("  /                                    \\\n");
-    console_write(" |                                      |\n");
-    console_write(" |                                      |\n");
-    console_write("  \\                                    /\n");
-    console_write("   `.                                .'\n");
-    console_write("     `-._                        _.-'\n");
-    console_write("         `---..____________..---'\n");
+    if (ui_terminal_draw_logo() != UI_STATUS_OK) {
+        console_write("  [ Sapote ]\n");
+    }
     console_write("\n");
     console_write("  Sapote First Environment\n");
     console_write("  kernel      Sapote 2.0.0 / x86_64\n");
@@ -937,9 +936,9 @@ static void command_fetch(void)
     console_write_u64(screen.rows);
     console_write(" cells\n");
     console_write("  filesystem  system ");
-    console_write(system.mounted ? "fat32 ro" : "unavailable");
+    print_fetch_drive(system);
     console_write(" / data ");
-    console_write(data.mounted ? "fat32 rw" : "unavailable");
+    print_fetch_drive(data);
     console_putc('\n');
     console_write("  heap        ");
     print_size(heap.allocated_bytes);

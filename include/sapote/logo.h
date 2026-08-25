@@ -56,6 +56,9 @@ int32_t sapote_logo_decode(
     uint32_t background
 );
 
+/* Decode the unmodified source alpha channel for runtime compositing. */
+int32_t sapote_logo_decode_alpha(uint8_t *out, size_t out_pixels);
+
 const char *logo_status_string(int32_t status);
 
 #endif

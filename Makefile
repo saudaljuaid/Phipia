@@ -50,6 +50,9 @@ RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
 LOGO_MAX_DIMENSION := 280
+STUDIO_ICON_SOURCE := assets/sapstudio-icon.png
+STUDIO_ICON_BLOB := $(BUILD_DIR)/sapstudio-icon.srl
+STUDIO_ICON_MAX_DIMENSION := 80
 WALLPAPER_SOURCE := assets/sapote-first-environment-wallpaper.png
 WALLPAPER_BLOB := $(BUILD_DIR)/wallpaper.spw
 FONT_SOURCE := tools/font8x16.txt
@@ -69,6 +72,7 @@ FIRST_ENVIRONMENT_TERMINAL_IMAGE := \
 	assets/sapote-first-environment-terminal.png
 FIRST_ENVIRONMENT_FILES_IMAGE := assets/sapote-first-environment-files.png
 FIRST_ENVIRONMENT_NOTES_IMAGE := assets/sapote-first-environment-notes.png
+FIRST_ENVIRONMENT_STUDIO_IMAGE := assets/sapote-first-environment-studio.png
 FIRST_ENVIRONMENT_VIDEO := assets/sapote-first-environment-20s.mp4
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
@@ -162,6 +166,10 @@ $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_MAX_DIMENSION) $@
 
+$(STUDIO_ICON_BLOB): $(STUDIO_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(STUDIO_ICON_SOURCE) \
+		$(STUDIO_ICON_MAX_DIMENSION) $@
+
 $(WALLPAPER_BLOB): $(WALLPAPER_SOURCE) tools/make-wallpaper-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-wallpaper-asset.py $(WALLPAPER_SOURCE) $@
 
@@ -174,8 +182,10 @@ $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 $(UI_FONT_BLOB): $(UI_FONT_SOURCE) tools/make-ui-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) $@
 
-$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
+$(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
+		$(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
+	SAPOTE_STUDIO_ICON_BLOB='$(CURDIR)/$(STUDIO_ICON_BLOB)' \
 	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
@@ -301,6 +311,11 @@ verify: toolchain lint
 	@test "$$(sha256sum $(WALLPAPER_BLOB) | awk '{ print toupper($$1) }')" = \
 		'3D09707C534D24D834210345CDB61CAA10E31F4C706FD389C2F1B6374AA486D0'
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
+	@test "$$(sha256sum $(STUDIO_ICON_SOURCE) | awk '{ print toupper($$1) }')" = \
+		'C5D706B274132B5FCAF0BB016D0DA56DDD1DC54B417709364874AD1A58611EB5'
+	@test "$$(sha256sum $(STUDIO_ICON_BLOB) | awk '{ print toupper($$1) }')" = \
+		'0E30BA0BFD43EE19ECBEF903AE2BF05CAB4C0F1E9E28E0C9233907FF6F3BCDDD'
+	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
 	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
 		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
 	@test "$$(sha256sum $(UI_FONT_LICENSE) | awk '{ print toupper($$1) }')" = \
@@ -779,6 +794,8 @@ capture-first-environment: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 		$(FIRST_ENVIRONMENT_FILES_IMAGE)
 	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-notes.png \
 		$(FIRST_ENVIRONMENT_NOTES_IMAGE)
+	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-studio.png \
+		$(FIRST_ENVIRONMENT_STUDIO_IMAGE)
 	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-20s.mp4 \
 		$(FIRST_ENVIRONMENT_VIDEO)
 
@@ -1135,7 +1152,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		first-light) \
-			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 3 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Sapote: First Light installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		device-substrate) \

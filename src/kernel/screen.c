@@ -51,6 +51,20 @@ static uint32_t foreground_pixel;
 static struct surface back_buffer;
 static char cells[SCREEN_MAX_CELLS];
 
+struct screen_image_overlay {
+    const uint32_t *pixels;
+    const uint8_t *alpha;
+    uint32_t source_width;
+    uint32_t source_height;
+    uint32_t x;
+    uint32_t row;
+    uint32_t width;
+    uint32_t height;
+    bool active;
+};
+
+static struct screen_image_overlay image_overlay;
+
 /*
  * The row buffer and pixel tile a glyph is copied into are local, never
  * file-scope scratch. Their combined maximum is 1,056 bytes on a 16 KiB stack,
@@ -156,6 +170,7 @@ static enum screen_status scroll_one_line(void)
     struct surface_rect source;
     struct surface_rect exposed;
 
+    image_overlay.active = false;
     for (uint32_t row = 1U; row < state.rows; ++row) {
         for (uint32_t column = 0U; column < state.columns; ++column) {
             cells[(row - 1U) * SCREEN_MAX_COLUMNS + column] =
@@ -347,6 +362,7 @@ enum screen_status screen_release(void)
      * storage has already been returned.
      */
     state = (struct screen_state){ 0 };
+    image_overlay = (struct screen_image_overlay){ 0 };
     background_pixel = 0U;
     foreground_pixel = 0U;
     font_first = 0U;
@@ -368,6 +384,7 @@ enum screen_status screen_clear(void)
         return SCREEN_STATUS_NOT_INITIALIZED;
     }
 
+    image_overlay.active = false;
     for (uint32_t row = 0U; row < state.rows; ++row) {
         for (uint32_t column = 0U; column < state.columns; ++column) {
             cells[row * SCREEN_MAX_COLUMNS + column] = ' ';
@@ -445,6 +462,77 @@ static struct surface_rect rectangle_intersection(
     return result;
 }
 
+static enum screen_status paint_image_overlay(struct surface_rect clip)
+{
+    const struct framebuffer_state framebuffer = framebuffer_get_state();
+    struct surface_rect bounds;
+    struct surface_rect clipped;
+
+    if (!image_overlay.active || !state.visible) {
+        return SCREEN_STATUS_OK;
+    }
+    bounds = (struct surface_rect){
+        state.viewport.x + image_overlay.x,
+        state.viewport.y + image_overlay.row * state.cell_height,
+        image_overlay.width,
+        image_overlay.height
+    };
+    if (!rectangles_intersect(bounds, clip)) {
+        return SCREEN_STATUS_OK;
+    }
+    clipped = rectangle_intersection(bounds, clip);
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t source_x = (uint32_t)(
+                (uint64_t)(clipped.x - bounds.x + x) *
+                    image_overlay.source_width / bounds.width
+            );
+            const uint32_t source_y = (uint32_t)(
+                (uint64_t)(clipped.y - bounds.y + y) *
+                    image_overlay.source_height / bounds.height
+            );
+            const size_t source = (size_t)source_y *
+                image_overlay.source_width + source_x;
+            const uint8_t opacity = image_overlay.alpha[source];
+            uint32_t pixel = image_overlay.pixels[source];
+
+            if (opacity == 0U) {
+                continue;
+            }
+            if (opacity != UINT8_MAX) {
+                const uint8_t shifts[3U] = { framebuffer.red_position,
+                    framebuffer.green_position, framebuffer.blue_position };
+                uint32_t under;
+
+                if (surface_read_pixel(&back_buffer, clipped.x + x,
+                        clipped.y + y, &under) != SURFACE_STATUS_OK) {
+                    return SCREEN_STATUS_DRAW_FAILURE;
+                }
+                pixel = 0U;
+                for (size_t channel = 0U; channel < 3U; ++channel) {
+                    const uint8_t shift = shifts[channel];
+                    const uint32_t foreground =
+                        (image_overlay.pixels[source] >> shift) & 0xFFU;
+                    const uint32_t background = (under >> shift) & 0xFFU;
+                    uint32_t value = foreground +
+                        (background * (UINT8_MAX - opacity) + 127U) /
+                            UINT8_MAX;
+
+                    if (value > UINT8_MAX) {
+                        value = UINT8_MAX;
+                    }
+                    pixel |= value << shift;
+                }
+            }
+            if (surface_pixel(&back_buffer, clipped.x + x, clipped.y + y,
+                    pixel) != SURFACE_STATUS_OK) {
+                return SCREEN_STATUS_DRAW_FAILURE;
+            }
+        }
+    }
+    return SCREEN_STATUS_OK;
+}
+
 struct surface *screen_surface(void)
 {
     return state.active ? &back_buffer : NULL;
@@ -491,6 +579,10 @@ enum screen_status screen_redraw_region(struct surface_rect clip)
         }
     }
 
+    if (paint_image_overlay(redraw) != SCREEN_STATUS_OK) {
+        return SCREEN_STATUS_DRAW_FAILURE;
+    }
+
     if (!state.deferred_present &&
         surface_present(&back_buffer) != SURFACE_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
@@ -525,6 +617,7 @@ enum screen_status screen_set_viewport(
     }
 
     if (columns != old_columns || rows != old_rows) {
+        image_overlay.active = false;
         const uint32_t active_rows = old_row + 1U < old_rows ?
             old_row + 1U : old_rows;
         const uint32_t first_row = active_rows > rows ? active_rows - rows : 0U;
@@ -597,6 +690,59 @@ enum screen_status screen_set_palette(
         background_blue);
     foreground_pixel = framebuffer_pack(foreground_red, foreground_green,
         foreground_blue);
+    return SCREEN_STATUS_OK;
+}
+
+enum screen_status screen_draw_image(
+    const uint32_t *pixels,
+    const uint8_t *alpha,
+    uint32_t source_width,
+    uint32_t source_height,
+    uint32_t width,
+    uint32_t height,
+    uint32_t reserved_rows
+)
+{
+    const uint32_t inset = state.cell_width * 2U;
+
+    if (!state.active) {
+        return SCREEN_STATUS_NOT_INITIALIZED;
+    }
+    if (pixels == NULL || alpha == NULL || source_width == 0U ||
+        source_height == 0U || width == 0U || height == 0U ||
+        reserved_rows == 0U ||
+        (size_t)source_width > SIZE_MAX / source_height ||
+        inset > state.viewport.width || width > state.viewport.width - inset ||
+        reserved_rows >= state.rows ||
+        state.row > state.rows - 1U - reserved_rows ||
+        reserved_rows > UINT32_MAX / state.cell_height ||
+        height > reserved_rows * state.cell_height) {
+        return SCREEN_STATUS_BAD_IMAGE;
+    }
+    image_overlay = (struct screen_image_overlay){
+        .pixels = pixels,
+        .alpha = alpha,
+        .source_width = source_width,
+        .source_height = source_height,
+        .x = inset,
+        .row = state.row,
+        .width = width,
+        .height = height,
+        .active = true
+    };
+    for (uint32_t row = state.row; row < state.row + reserved_rows; ++row) {
+        for (uint32_t column = 0U; column < state.columns; ++column) {
+            cells[row * SCREEN_MAX_COLUMNS + column] = ' ';
+        }
+    }
+    state.column = 0U;
+    state.row += reserved_rows;
+    if (paint_image_overlay(state.viewport) != SCREEN_STATUS_OK ||
+        (!state.deferred_present &&
+            surface_present(&back_buffer) != SURFACE_STATUS_OK)) {
+        image_overlay.active = false;
+        return SCREEN_STATUS_DRAW_FAILURE;
+    }
     return SCREEN_STATUS_OK;
 }
 
@@ -748,12 +894,13 @@ const char *screen_status_string(enum screen_status status)
         "screen console could not create its back buffer",
         "screen console failed to draw",
         "screen console viewport is invalid",
-        "screen console cell capacity is exceeded"
+        "screen console cell capacity is exceeded",
+        "screen console image is invalid"
     };
 
     _Static_assert(
         sizeof(messages) / sizeof(messages[0]) ==
-            (size_t)SCREEN_STATUS_CELL_CAPACITY + 1U,
+            (size_t)SCREEN_STATUS_BAD_IMAGE + 1U,
         "screen status messages are out of sync with enum screen_status"
     );
 
@@ -841,7 +988,8 @@ static bool refusals_are_named(void)
         SCREEN_STATUS_SURFACE_FAILURE,
         SCREEN_STATUS_DRAW_FAILURE,
         SCREEN_STATUS_BAD_VIEWPORT,
-        SCREEN_STATUS_CELL_CAPACITY
+        SCREEN_STATUS_CELL_CAPACITY,
+        SCREEN_STATUS_BAD_IMAGE
     };
 
     for (size_t index = 0; index < sizeof(every) / sizeof(every[0]); ++index) {
@@ -872,6 +1020,9 @@ bool screen_self_test(void)
      * one - which also means it can only be checked once, and only here.
      */
     if (!state.active) {
+        const uint32_t pixel = 0U;
+        const uint8_t alpha = 0U;
+
         if (screen_putc('x') != SCREEN_STATUS_NOT_INITIALIZED) {
             return false;
         }
@@ -881,6 +1032,11 @@ bool screen_self_test(void)
         }
 
         if (screen_verify_cell(0U, 0U, 'x') != SCREEN_STATUS_NOT_INITIALIZED) {
+            return false;
+        }
+
+        if (screen_draw_image(&pixel, &alpha, 1U, 1U, 1U, 1U, 1U) !=
+            SCREEN_STATUS_NOT_INITIALIZED) {
             return false;
         }
     }

@@ -84,6 +84,7 @@ pub(crate) fn panic() -> ! {
 /// The run-length image, produced by `tools/make-logo-asset.py` at build time.
 /// The Makefile points `SAPOTE_LOGO_BLOB` at it; there is no committed copy.
 static LOGO: &[u8] = include_bytes!(env!("SAPOTE_LOGO_BLOB"));
+static STUDIO_ICON: &[u8] = include_bytes!(env!("SAPOTE_STUDIO_ICON_BLOB"));
 
 /// The deterministic indexed desktop wallpaper built from the committed PNG.
 static WALLPAPER: &[u8] = include_bytes!(env!("SAPOTE_WALLPAPER_BLOB"));
@@ -227,6 +228,95 @@ pub unsafe extern "C" fn sapote_logo_decode(
     };
 
     match logo::decode(LOGO, pixels, &format) {
+        Ok(_) => status_code(Status::Ok),
+        Err(status) => status_code(status),
+    }
+}
+
+/// Decode the built-in image's alpha channel without flattening it.
+///
+/// # Safety
+///
+/// `out` must point at `out_pixels` writable, non-aliased bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_logo_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    if out.is_null() {
+        return status_code(Status::NullArgument);
+    }
+
+    // SAFETY: the caller supplies the writable extent and the null case was
+    // refused above. The decoder performs all subsequent bounds checks.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    match logo::decode_alpha(LOGO, pixels) {
+        Ok(_) => status_code(Status::Ok),
+        Err(status) => status_code(status),
+    }
+}
+
+/// Read the built-in SapStudio icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_studio_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    if width.is_null() || height.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    match logo::geometry(STUDIO_ICON) {
+        Ok(geometry) => {
+            // SAFETY: both writable pointers were checked above.
+            unsafe {
+                *width = geometry.width;
+                *height = geometry.height;
+            }
+            status_code(Status::Ok)
+        }
+        Err(status) => status_code(status),
+    }
+}
+
+/// Decode the built-in SapStudio icon over the supplied background.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_studio_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    if out.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    // SAFETY: the caller supplies the writable extent and null was refused.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    let format = Format {
+        red_shift,
+        green_shift,
+        blue_shift,
+        background,
+    };
+    match logo::decode(STUDIO_ICON, pixels, &format) {
+        Ok(_) => status_code(Status::Ok),
+        Err(status) => status_code(status),
+    }
+}
+
+/// Decode the built-in SapStudio icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_studio_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    if out.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    // SAFETY: the caller supplies the writable extent and null was refused.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    match logo::decode_alpha(STUDIO_ICON, pixels) {
         Ok(_) => status_code(Status::Ok),
         Err(status) => status_code(status),
     }

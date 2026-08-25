@@ -9,10 +9,10 @@
 #include <sapote/keyboard.h>
 #include <sapote/surface.h>
 
-#define UI_DOCK_ITEM_COUNT 3U
+#define UI_DOCK_ITEM_COUNT 4U
 #define UI_EVENT_QUEUE_CAPACITY 64U
-#define UI_CURSOR_WIDTH 27U
-#define UI_CURSOR_HEIGHT 37U
+#define UI_CURSOR_WIDTH 18U
+#define UI_CURSOR_HEIGHT 25U
 #define UI_CURSOR_HOTSPOT_X 0U
 #define UI_CURSOR_HOTSPOT_Y 0U
 
@@ -38,6 +38,7 @@ enum ui_status {
     UI_STATUS_FONT_FAILURE,
     UI_STATUS_SURFACE_FAILURE,
     UI_STATUS_LOGO_FAILURE,
+    UI_STATUS_STUDIO_ICON_FAILURE,
     UI_STATUS_WALLPAPER_FAILURE,
     UI_STATUS_FILESYSTEM_FAILURE,
     UI_STATUS_SCREEN_FAILURE,
@@ -63,12 +64,14 @@ enum ui_element_id {
     UI_ELEMENT_DOCK_FILES,
     UI_ELEMENT_DOCK_TERMINAL,
     UI_ELEMENT_DOCK_NOTES,
+    UI_ELEMENT_DOCK_STUDIO,
     UI_ELEMENT_WINDOW_CLOSE,
     UI_ELEMENT_FILES_UP,
     UI_ELEMENT_FILES_NEW_FILE,
     UI_ELEMENT_FILES_NEW_FOLDER,
     UI_ELEMENT_FILES_REFRESH,
     UI_ELEMENT_FILES_SYNC,
+    UI_ELEMENT_FILES_ROOT,
     UI_ELEMENT_FILES_ENTRY_0,
     UI_ELEMENT_FILES_ENTRY_1,
     UI_ELEMENT_FILES_ENTRY_2,
@@ -82,6 +85,12 @@ enum ui_element_id {
     UI_ELEMENT_FILES_ENTRY_10,
     UI_ELEMENT_FILES_ENTRY_11,
     UI_ELEMENT_NOTES_SAVE,
+    UI_ELEMENT_STUDIO_NEW,
+    UI_ELEMENT_STUDIO_IMPORT,
+    UI_ELEMENT_STUDIO_TRIM,
+    UI_ELEMENT_STUDIO_SAVE,
+    UI_ELEMENT_STUDIO_EXPORT,
+    UI_ELEMENT_STUDIO_TIMELINE,
     UI_ELEMENT_COUNT
 };
 
@@ -90,6 +99,7 @@ enum ui_panel_id {
     UI_PANEL_FILES,
     UI_PANEL_TERMINAL,
     UI_PANEL_NOTES,
+    UI_PANEL_STUDIO,
     UI_PANEL_COUNT
 };
 
@@ -98,6 +108,7 @@ enum ui_action {
     UI_ACTION_OPEN_FILES,
     UI_ACTION_OPEN_TERMINAL,
     UI_ACTION_OPEN_NOTES,
+    UI_ACTION_OPEN_STUDIO,
     UI_ACTION_COUNT
 };
 
@@ -240,6 +251,7 @@ enum ui_status ui_hit_test(
 
 enum ui_status ui_construct(bool pointer_present);
 enum ui_status ui_activate(void);
+enum ui_status ui_terminal_draw_logo(void);
 bool ui_is_active(void);
 const struct ui_state *ui_get_state(void);
 

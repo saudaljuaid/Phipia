@@ -32,7 +32,8 @@ workspace.
 
 Sapote First Environment is the current compact graphical shell. It combines
 the canonical green pebble, a photographic desktop, a reflective 3D Dock, a
-real FAT32 Files app, a persistent Notes editor, and a dark green Terminal.
+real FAT32 Files app, a persistent Notes editor, a dark green Terminal, and the
+native SapStudio editing workspace.
 Separate immutable-system and writable-data FAT32 volumes remain attached
 through emulated NVMe. The measured `linux echo`, `linux uname`, and bounded
 interactive `linux cat` profiles remain available.
@@ -49,6 +50,9 @@ interactive `linux cat` profiles remain available.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
 - First Environment, a framebuffer console, filesystem commands, and 58 QEMU scenarios.
+- SapStudio's deterministic editor foundation, mirrored at upstream commit
+  `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
+  timeline trim/save, and bounded BMP frame export.
 
 ## Build and boot
 
@@ -82,7 +86,7 @@ unapproved boot-path shortcuts.
 ## Project status
 
 Sapote is still a foundation-stage, single-core system. First Environment is a
-fixed three-application shell rather than a general window manager. FAT32 support is one
+fixed four-application shell rather than a general window manager. FAT32 support is one
 bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files, no
 journal, and a clean-sync persistence contract. Networking, general process
 services, an IOMMU, and broad physical-hardware coverage remain future work.

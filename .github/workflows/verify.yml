@@ -14,6 +14,18 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    sapstudio-foundation:
+        name: sapstudio-foundation
+        runs-on: ubuntu-24.04
+        timeout-minutes: 25
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install the bare-metal Rust target
+              run: rustup target add x86_64-unknown-none
+            - name: Verify the mirrored SapStudio foundation
+              run: make -C userspace/sapstudio verify
+
     build-and-boot:
         name: build-and-boot
         runs-on: ubuntu-24.04

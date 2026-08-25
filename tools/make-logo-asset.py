@@ -83,6 +83,66 @@ def fit_within(width, height, maximum):
     return max(1, (width * maximum + height // 2) // height), maximum
 
 
+def crop_to_primary_mark(pixels, width, height, threshold=8, padding=8):
+    """Crop to the largest connected non-transparent component.
+
+    Background removal can leave isolated opaque crumbs around an otherwise
+    transparent canvas. Selecting the primary component keeps the supplied
+    mark exact while preventing those crumbs from expanding its runtime box.
+    """
+    occupied = bytearray(
+        pixels[index * 4 + 3] >= threshold for index in range(width * height)
+    )
+    largest = None
+    for seed in range(width * height):
+        if not occupied[seed]:
+            continue
+        occupied[seed] = 0
+        stack = [seed]
+        count = 0
+        minimum_x = maximum_x = seed % width
+        minimum_y = maximum_y = seed // width
+        while stack:
+            index = stack.pop()
+            x, y = index % width, index // width
+            count += 1
+            minimum_x, maximum_x = min(minimum_x, x), max(maximum_x, x)
+            minimum_y, maximum_y = min(minimum_y, y), max(maximum_y, y)
+            neighbours = []
+            if x:
+                neighbours.append(index - 1)
+            if x + 1 < width:
+                neighbours.append(index + 1)
+            if y:
+                neighbours.append(index - width)
+            if y + 1 < height:
+                neighbours.append(index + width)
+            for neighbour in neighbours:
+                if occupied[neighbour]:
+                    occupied[neighbour] = 0
+                    stack.append(neighbour)
+        candidate = (count, minimum_x, minimum_y, maximum_x, maximum_y)
+        if largest is None or candidate[0] > largest[0]:
+            largest = candidate
+
+    if largest is None:
+        raise SystemExit('logo has no visible primary mark')
+    _, minimum_x, minimum_y, maximum_x, maximum_y = largest
+    minimum_x = max(0, minimum_x - padding)
+    minimum_y = max(0, minimum_y - padding)
+    maximum_x = min(width - 1, maximum_x + padding)
+    maximum_y = min(height - 1, maximum_y + padding)
+    cropped_width = maximum_x - minimum_x + 1
+    cropped_height = maximum_y - minimum_y + 1
+    cropped = bytearray(cropped_width * cropped_height * 4)
+    for y in range(cropped_height):
+        source = ((minimum_y + y) * width + minimum_x) * 4
+        destination = y * cropped_width * 4
+        cropped[destination:destination + cropped_width * 4] = \
+            pixels[source:source + cropped_width * 4]
+    return cropped_width, cropped_height, cropped
+
+
 def downscale(pixels, width, height, out_width, out_height):
     """Box filter, averaging in premultiplied space so edges do not halo."""
     if out_width == width and out_height == height:
@@ -137,7 +197,10 @@ def encode(pixels, width, height):
 def main():
     source = sys.argv[1] if len(sys.argv) > 1 else 'assets/sapote-logo.png'
     maximum = int(sys.argv[2]) if len(sys.argv) > 2 else 280
-    width, height, pixels = read_png(source)
+    source_width, source_height, pixels = read_png(source)
+    width, height, pixels = crop_to_primary_mark(
+        pixels, source_width, source_height
+    )
     out_width, out_height = fit_within(width, height, maximum)
     scaled = downscale(pixels, width, height, out_width, out_height)
     body = encode(scaled, out_width, out_height)
@@ -149,7 +212,8 @@ def main():
     with open(destination, 'wb') as handle:
         handle.write(blob)
 
-    print(f'{source}: {width}x{height} -> {out_width}x{out_height}, '
+    print(f'{source}: {source_width}x{source_height} -> crop {width}x{height} '
+          f'-> {out_width}x{out_height}, '
           f'{len(body) // 5} runs, {len(blob)} bytes -> {destination}',
           file=sys.stderr)
 

@@ -13,6 +13,7 @@
 #include <sapote/pci.h>
 #include <sapote/pointer.h>
 #include <sapote/screen.h>
+#include <sapote/studio_icon.h>
 #include <sapote/thread.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
@@ -26,6 +27,8 @@
 #define UI_LOGO_HEIGHT 258U
 #define UI_LOGO_PIXELS (UI_LOGO_WIDTH * UI_LOGO_HEIGHT)
 #define UI_LOGO_BITMAP_SCALE 1U
+#define UI_CURSOR_SOURCE_WIDTH 27U
+#define UI_CURSOR_SOURCE_HEIGHT 37U
 #define UI_MENU_HEIGHT 24U
 #define UI_WORKSPACE_MENU_WIDTH 132U
 #define UI_WORKSPACE_MENU_HEIGHT 202U
@@ -33,25 +36,42 @@
 #define UI_HERO_HEIGHT 388U
 #define UI_HERO_TITLE_HEIGHT 24U
 #define UI_DOCK_WIDTH 444U
-#define UI_DOCK_ITEM_WIDTH 104U
+#define UI_DOCK_ITEM_WIDTH 88U
 #define UI_DOCK_ITEM_HEIGHT 116U
-#define UI_DOCK_GAP 14U
-#define UI_DOCK_PADDING 52U
+#define UI_DOCK_GAP 8U
+#define UI_DOCK_PADDING 34U
 #define UI_DOCK_HEIGHT 126U
 #define UI_FONT_ASCENT 12U
 #define UI_FONT_DESCENT 4U
 #define UI_FONT_ADVANCE 8U
 #define UI_PANEL_TITLE_HEIGHT 26U
+#define UI_STUDIO_MAX_CLIPS 6U
+#define UI_STUDIO_PATH_BYTES 64U
+#define UI_STUDIO_PROJECT_BYTES 424U
+#define UI_STUDIO_PREVIEW_WIDTH 320U
+#define UI_STUDIO_PREVIEW_HEIGHT 180U
+#define UI_STUDIO_BMP_HEADER_BYTES 54U
+#define UI_STUDIO_BMP_MAX_WIDTH 1920U
+#define UI_STUDIO_BMP_MAX_HEIGHT 1080U
 
 static const char label_files[] = "Files";
 static const char label_terminal[] = "Terminal";
 static const char label_notes[] = "Notes";
+static const char label_studio[] = "SapStudio";
 
 static struct ui_state state;
 static struct surface *canvas;
 static struct ui_event event_queue[UI_EVENT_QUEUE_CAPACITY];
 static size_t event_count;
 static uint32_t logo_pixels[UI_LOGO_PIXELS];
+static uint8_t logo_alpha[UI_LOGO_PIXELS];
+static uint8_t logo_red_shift;
+static uint8_t logo_green_shift;
+static uint8_t logo_blue_shift;
+static uint32_t studio_icon_pixels[80U * 80U];
+static uint8_t studio_icon_alpha[80U * 80U];
+static uint32_t studio_icon_width;
+static uint32_t studio_icon_height;
 static uint32_t wallpaper_pixels[1024U * 768U];
 static struct sapfs_list_entry file_entries[12U];
 static size_t file_entry_count;
@@ -60,12 +80,27 @@ static char note_path[SAPFS_MAX_PATH + 1U] = "NOTES.TXT";
 static char note_buffer[1536U];
 static size_t note_length;
 static bool note_dirty;
+static bool note_savable = true;
 static bool terminal_welcomed;
 static char app_status[80U] = "data volume ready";
+static uint32_t studio_clip_durations[UI_STUDIO_MAX_CLIPS];
+static char studio_clip_paths[UI_STUDIO_MAX_CLIPS][UI_STUDIO_PATH_BYTES + 1U];
+static uint32_t studio_preview_pixels[
+    UI_STUDIO_PREVIEW_WIDTH * UI_STUDIO_PREVIEW_HEIGHT
+];
+static uint8_t studio_bmp_row[UI_STUDIO_BMP_MAX_WIDTH * 3U + 4U];
+static uint32_t studio_preview_width;
+static uint32_t studio_preview_height;
+static bool studio_preview_loaded;
+static uint32_t studio_playhead;
+static uint8_t studio_clip_count;
+static uint8_t studio_selected_clip = UINT8_MAX;
+static bool studio_dirty;
+static char studio_status[64U] = "Project ready";
 static const char *self_test_failure = "First Environment UI self-test not run";
 static const char *event_queue_failure = "UI event queue self-test not run";
 
-static const uint32_t cursor_outer[UI_CURSOR_HEIGHT] = {
+static const uint32_t cursor_outer[UI_CURSOR_SOURCE_HEIGHT] = {
     UINT32_C(0xE0000000), UINT32_C(0xF0000000), UINT32_C(0xFC000000),
     UINT32_C(0xFE000000), UINT32_C(0xFF000000), UINT32_C(0xFF800000),
     UINT32_C(0xFFE00000), UINT32_C(0xFFF00000), UINT32_C(0xFFF80000),
@@ -80,7 +115,7 @@ static const uint32_t cursor_outer[UI_CURSOR_HEIGHT] = {
     UINT32_C(0x001FF800), UINT32_C(0x000FF000), UINT32_C(0x000FC000),
     UINT32_C(0x00070000)
 };
-static const uint32_t cursor_inner[UI_CURSOR_HEIGHT] = {
+static const uint32_t cursor_inner[UI_CURSOR_SOURCE_HEIGHT] = {
     UINT32_C(0x80000000), UINT32_C(0xC0000000), UINT32_C(0xE0000000),
     UINT32_C(0xF8000000), UINT32_C(0xFC000000), UINT32_C(0xFE000000),
     UINT32_C(0xFF000000), UINT32_C(0xFFC00000), UINT32_C(0xFFE00000),
@@ -225,21 +260,29 @@ static struct ui_rect dock_bounds_for(
 )
 {
     if (layout == NULL || element < UI_ELEMENT_DOCK_FILES ||
-        element > UI_ELEMENT_DOCK_NOTES) {
+        element > UI_ELEMENT_DOCK_STUDIO) {
         return (struct ui_rect){ 0U, 0U, 0U, 0U };
     }
     const struct ui_rect item =
         layout->dock_items[(size_t)element - 1U].bounds;
+    const uint32_t left = item.x >= 8U ? item.x - 8U : 0U;
     const uint32_t top = item.y >= 26U ? item.y - 26U : 0U;
+    uint32_t right = item.x + item.width + 8U;
+    const uint32_t bottom = layout->dock.y + layout->dock.height;
 
-    return (struct ui_rect){ item.x, top, item.width,
-        item.height + item.y - top + 16U };
+    if (right > layout->surface.width) {
+        right = layout->surface.width;
+    }
+    /* Eight pixels cover the largest hover expansion.  On the two outer
+     * items that also reaches the corresponding tapered shelf edge, avoiding
+     * stale strips without redrawing all four icons for every hover packet. */
+    return (struct ui_rect){ left, top, right - left, bottom - top };
 }
 
 static enum ui_panel_id panel_for_element(enum ui_element_id element)
 {
     if (element < UI_ELEMENT_DOCK_FILES ||
-        element > UI_ELEMENT_DOCK_NOTES) {
+        element > UI_ELEMENT_DOCK_STUDIO) {
         return UI_PANEL_NONE;
     }
     return state.layout.dock_items[(size_t)element - 1U].panel;
@@ -289,16 +332,17 @@ enum ui_status ui_layout_build(
 
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
-        UI_ELEMENT_DOCK_NOTES
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO
     };
     static const char *const labels[UI_DOCK_ITEM_COUNT] = {
-        label_files, label_terminal, label_notes
+        label_files, label_terminal, label_notes, label_studio
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
-        UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL, UI_ACTION_OPEN_NOTES
+        UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL, UI_ACTION_OPEN_NOTES,
+        UI_ACTION_OPEN_STUDIO
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO
     };
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -310,7 +354,7 @@ enum ui_status ui_layout_build(
             .label = labels[index],
             .bounds = { x, layout->dock.y + 1U,
                 UI_DOCK_ITEM_WIDTH, UI_DOCK_ITEM_HEIGHT },
-            .icon_bounds = { x + 12U, layout->dock.y + 2U, 80U, 80U },
+            .icon_bounds = { x + 4U, layout->dock.y + 18U, 80U, 80U },
             .action = actions[index],
             .panel = panels[index]
         };
@@ -411,7 +455,7 @@ enum ui_status ui_layout_validate(const struct ui_layout *layout)
         }
     }
     for (enum ui_element_id id = UI_ELEMENT_DOCK_FILES;
-         id <= UI_ELEMENT_DOCK_NOTES; id = (enum ui_element_id)(id + 1)) {
+         id <= UI_ELEMENT_DOCK_STUDIO; id = (enum ui_element_id)(id + 1)) {
         if (!seen[id]) {
             return UI_STATUS_BAD_ELEMENT;
         }
@@ -651,28 +695,81 @@ static enum ui_status draw_text(
     return UI_STATUS_OK;
 }
 
-static enum ui_status draw_logo_color(
+static enum ui_status draw_alpha_image(
     struct ui_rect bounds,
-    struct ui_rect damage
+    struct ui_rect damage,
+    const uint32_t *pixels,
+    const uint8_t *alpha_pixels,
+    uint32_t source_width,
+    uint32_t source_height
 )
 {
     const struct ui_rect clipped = rect_intersection(bounds, damage);
 
+    if (pixels == NULL || alpha_pixels == NULL || source_width == 0U ||
+        source_height == 0U || bounds.width == 0U || bounds.height == 0U) {
+        return UI_STATUS_NULL_ARGUMENT;
+    }
     for (uint32_t y = 0U; y < clipped.height; ++y) {
         for (uint32_t x = 0U; x < clipped.width; ++x) {
-            const uint32_t source_x =
-                (clipped.x - bounds.x + x) * UI_LOGO_WIDTH / bounds.width;
-            const uint32_t source_y =
-                (clipped.y - bounds.y + y) * UI_LOGO_HEIGHT / bounds.height;
+            const uint32_t source_x = (uint32_t)(
+                (uint64_t)(clipped.x - bounds.x + x) * source_width /
+                    bounds.width
+            );
+            const uint32_t source_y = (uint32_t)(
+                (uint64_t)(clipped.y - bounds.y + y) * source_height /
+                    bounds.height
+            );
+            const size_t source = (size_t)source_y * source_width + source_x;
+            const uint8_t alpha = alpha_pixels[source];
+            uint32_t pixel = pixels[source];
 
-            if (surface_pixel(canvas, clipped.x + x, clipped.y + y,
-                    logo_pixels[source_y * UI_LOGO_WIDTH + source_x]) !=
-                SURFACE_STATUS_OK) {
+            if (alpha == 0U) {
+                continue;
+            }
+            if (alpha != UINT8_MAX) {
+                static const uint8_t channels = 3U;
+                const uint8_t shifts[3U] = { logo_red_shift,
+                    logo_green_shift, logo_blue_shift };
+                uint32_t background;
+
+                if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                        &background) != SURFACE_STATUS_OK) {
+                    return UI_STATUS_SURFACE_FAILURE;
+                }
+                pixel = 0U;
+                for (uint8_t channel = 0U; channel < channels; ++channel) {
+                    const uint8_t shift = shifts[channel];
+                    const uint32_t foreground_value =
+                        (pixels[source] >> shift) & UINT32_C(0xFF);
+                    const uint32_t background_value =
+                        (background >> shift) & UINT32_C(0xFF);
+                    uint32_t value = foreground_value +
+                        (background_value * (UINT8_MAX - alpha) + 127U) /
+                            UINT8_MAX;
+
+                    if (value > UINT8_MAX) {
+                        value = UINT8_MAX;
+                    }
+                    pixel |= value << shift;
+                }
+            }
+            if (surface_pixel(canvas, clipped.x + x, clipped.y + y, pixel) !=
+                    SURFACE_STATUS_OK) {
                 return UI_STATUS_SURFACE_FAILURE;
             }
         }
     }
     return UI_STATUS_OK;
+}
+
+static enum ui_status draw_logo_color(
+    struct ui_rect bounds,
+    struct ui_rect damage
+)
+{
+    return draw_alpha_image(bounds, damage, logo_pixels, logo_alpha,
+        UI_LOGO_WIDTH, UI_LOGO_HEIGHT);
 }
 
 static enum ui_status gradient_rect(
@@ -722,9 +819,14 @@ static enum ui_status draw_icon(
             bounds.width * 5U / 11U, bounds.height / 3U };
         const struct ui_rect folder = { bounds.x + 3U, bounds.y + 16U,
             bounds.width - 6U, bounds.height - 20U };
-        const struct ui_rect inset = { bounds.x + bounds.width / 4U,
-            bounds.y + bounds.height / 3U, bounds.width / 2U,
-            bounds.height * 5U / 12U };
+        const uint32_t logo_width = bounds.width * 5U / 12U;
+        const uint32_t logo_height = logo_width * UI_LOGO_HEIGHT /
+            UI_LOGO_WIDTH;
+        const struct ui_rect mark = {
+            bounds.x + (bounds.width - logo_width) / 2U,
+            folder.y + (folder.height - logo_height) / 2U + 2U,
+            logo_width, logo_height
+        };
 
         if (status == UI_STATUS_OK) {
             status = gradient_rect(tab, damage, 0xC7U, 0xE5U, 0xF5U,
@@ -739,13 +841,7 @@ static enum ui_status draw_icon(
                 framebuffer_pack(0x3CU, 0x65U, 0x79U));
         }
         if (status == UI_STATUS_OK) {
-            status = fill_clipped(inset, damage,
-                framebuffer_pack(0x2EU, 0x3BU, 0x40U));
-        }
-        if (status == UI_STATUS_OK) {
-            status = draw_logo_color((struct ui_rect){ inset.x + 6U,
-                inset.y + 3U, inset.width - 12U, inset.height - 6U },
-                damage);
+            status = draw_logo_color(mark, damage);
         }
     } else if (id == UI_ELEMENT_DOCK_TERMINAL) {
         const struct ui_rect shell = { bounds.x + 2U, bounds.y + 2U,
@@ -813,6 +909,22 @@ static enum ui_status draw_icon(
                 page.width - 8U, 1U }, damage,
                 framebuffer_pack(0xB8U, 0xD1U, 0xDCU));
         }
+    } else if (id == UI_ELEMENT_DOCK_STUDIO) {
+        uint32_t mark_width = bounds.width;
+        uint32_t mark_height = mark_width * studio_icon_height /
+            studio_icon_width;
+
+        if (mark_height > bounds.height) {
+            mark_height = bounds.height;
+            mark_width = mark_height * studio_icon_width /
+                studio_icon_height;
+        }
+        status = draw_alpha_image((struct ui_rect){
+            bounds.x + (bounds.width - mark_width) / 2U,
+            bounds.y + (bounds.height - mark_height) / 2U,
+            mark_width, mark_height
+        }, damage, studio_icon_pixels, studio_icon_alpha,
+            studio_icon_width, studio_icon_height);
     } else {
         status = UI_STATUS_BAD_ELEMENT;
     }
@@ -895,7 +1007,7 @@ static enum ui_status draw_dock_item(
     const bool focused = state.focus == item->id;
     const bool pressed = state.pressed == item->id;
     const bool adjacent = state.hover >= UI_ELEMENT_DOCK_FILES &&
-        state.hover <= UI_ELEMENT_DOCK_NOTES && !hovered &&
+        state.hover <= UI_ELEMENT_DOCK_STUDIO && !hovered &&
         (state.hover + 1 == item->id || item->id + 1 == state.hover);
     struct ui_rect icon = item->icon_bounds;
 
@@ -910,7 +1022,8 @@ static enum ui_status draw_dock_item(
         icon.width += 6U;
         icon.height += 6U;
     } else if (pressed) {
-        icon.y += 3U;
+        /* Keep pressed icons on the front plane of the glass shelf. */
+        icon.y -= 1U;
     }
 
     enum ui_status status = draw_icon(item->id, icon, damage,
@@ -1052,12 +1165,42 @@ static bool entry_path(const char *name, char *path)
     return at != 0U && at <= SAPFS_MAX_PATH;
 }
 
+static bool file_is_internal(const char *name)
+{
+    static const char *const internal[] = {
+        "SAPSTUDI.SAP", "STUTEMP.SAP", "STUBACK.SAP",
+        "STUOUT.BMP", "OUTBACK.BMP"
+    };
+
+    if (!strings_equal(file_directory, ".")) {
+        return false;
+    }
+    for (size_t index = 0U; index < sizeof(internal) / sizeof(internal[0]);
+         ++index) {
+        if (strings_equal(name, internal[index])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static enum sapfs_status files_refresh(void)
 {
     file_entry_count = 0U;
     const enum sapfs_status status = sapfs_list(SAPFS_VOLUME_DATA,
         file_directory, file_entries,
         sizeof(file_entries) / sizeof(file_entries[0]), &file_entry_count);
+
+    if (status == SAPFS_STATUS_OK) {
+        size_t visible = 0U;
+
+        for (size_t index = 0U; index < file_entry_count; ++index) {
+            if (!file_is_internal(file_entries[index].name)) {
+                file_entries[visible++] = file_entries[index];
+            }
+        }
+        file_entry_count = visible;
+    }
 
     set_app_status(status == SAPFS_STATUS_OK ?
         "data volume / fat32 / synchronized view" : "Files", status);
@@ -1131,17 +1274,32 @@ static void files_create(bool directory)
 
 static enum sapfs_status note_load(void)
 {
-    sapfs_handle handle;
+    struct sapfs_stat stat;
+    sapfs_handle handle = 0U;
     size_t read_bytes = 0U;
-    enum sapfs_status status = sapfs_open(SAPFS_VOLUME_DATA, note_path,
-        SAPFS_ACCESS_READ, &handle);
+    enum sapfs_status status = sapfs_stat_path(SAPFS_VOLUME_DATA,
+        note_path, &stat);
 
     note_length = 0U;
     note_buffer[0] = '\0';
     note_dirty = false;
+    note_savable = false;
     if (status == SAPFS_STATUS_NOT_FOUND) {
+        note_savable = true;
         set_app_status("new note / Ctrl+S to save", SAPFS_STATUS_OK);
         return SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && stat.directory) {
+        status = SAPFS_STATUS_IS_DIRECTORY;
+    }
+    if (status == SAPFS_STATUS_OK &&
+        stat.size > (uint32_t)(sizeof(note_buffer) - 1U)) {
+        set_app_status("note exceeds editor capacity", SAPFS_STATUS_RANGE);
+        return SAPFS_STATUS_RANGE;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, note_path,
+            SAPFS_ACCESS_READ, &handle);
     }
     if (status == SAPFS_STATUS_OK) {
         status = sapfs_read(handle, (uint8_t *)note_buffer,
@@ -1152,9 +1310,13 @@ static enum sapfs_status note_load(void)
             status = close_status;
         }
     }
+    if (status == SAPFS_STATUS_OK && read_bytes != stat.size) {
+        status = SAPFS_STATUS_IO;
+    }
     if (status == SAPFS_STATUS_OK) {
         note_length = read_bytes;
         note_buffer[note_length] = '\0';
+        note_savable = true;
         set_app_status("note loaded from data volume", SAPFS_STATUS_OK);
     } else {
         set_app_status("open note", status);
@@ -1162,22 +1324,92 @@ static enum sapfs_status note_load(void)
     return status;
 }
 
-static enum sapfs_status note_save(void)
+static bool note_sibling_path(const char *leaf, char *path)
 {
-    struct sapfs_stat stat;
+    size_t slash = SIZE_MAX;
+    size_t source = 0U;
+    size_t destination = 0U;
+
+    if (leaf == NULL || path == NULL) {
+        return false;
+    }
+    while (note_path[source] != '\0') {
+        if (note_path[source] == '/') {
+            slash = source;
+        }
+        ++source;
+    }
+    if (slash != SIZE_MAX) {
+        for (size_t index = 0U; index <= slash; ++index) {
+            if (destination + 1U >= SAPFS_MAX_PATH + 1U) {
+                path[0] = '\0';
+                return false;
+            }
+            path[destination++] = note_path[index];
+        }
+    }
+    for (size_t index = 0U; leaf[index] != '\0'; ++index) {
+        if (destination + 1U >= SAPFS_MAX_PATH + 1U) {
+            path[0] = '\0';
+            return false;
+        }
+        path[destination++] = leaf[index];
+    }
+    path[destination] = '\0';
+    return destination != 0U && !strings_equal(path, note_path);
+}
+
+static enum sapfs_status note_replacement_paths(
+    char *temporary,
+    char *backup
+)
+{
+    char temporary_leaf[] = "SNTMP1.TMP";
+    char backup_leaf[] = "SNBAK1.BAK";
+
+    for (uint32_t number = 1U; number <= 9U; ++number) {
+        struct sapfs_stat stat;
+        enum sapfs_status status;
+
+        temporary_leaf[5] = (char)('0' + number);
+        backup_leaf[5] = (char)('0' + number);
+        if (!note_sibling_path(temporary_leaf, temporary) ||
+            !note_sibling_path(backup_leaf, backup)) {
+            return SAPFS_STATUS_PATH;
+        }
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, temporary, &stat);
+        if (status == SAPFS_STATUS_OK) {
+            continue;
+        }
+        if (status != SAPFS_STATUS_NOT_FOUND) {
+            return status;
+        }
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, backup, &stat);
+        if (status == SAPFS_STATUS_NOT_FOUND) {
+            return SAPFS_STATUS_OK;
+        }
+        if (status != SAPFS_STATUS_OK) {
+            return status;
+        }
+    }
+    return SAPFS_STATUS_DIRECTORY_FULL;
+}
+
+static void note_remove_temporary(const char *path)
+{
+    if (sapfs_unlink(SAPFS_VOLUME_DATA, path) == SAPFS_STATUS_OK) {
+        (void)sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+}
+
+static enum sapfs_status note_write_temporary(const char *path)
+{
     sapfs_handle handle;
     size_t written = 0U;
-    enum sapfs_status status = sapfs_stat_path(SAPFS_VOLUME_DATA,
-        note_path, &stat);
+    enum sapfs_status status = sapfs_create(SAPFS_VOLUME_DATA, path);
 
-    if (status == SAPFS_STATUS_NOT_FOUND) {
-        status = sapfs_create(SAPFS_VOLUME_DATA, note_path);
-    }
     if (status == SAPFS_STATUS_OK) {
-        status = sapfs_truncate(SAPFS_VOLUME_DATA, note_path, 0U);
-    }
-    if (status == SAPFS_STATUS_OK) {
-        status = sapfs_open(SAPFS_VOLUME_DATA, note_path,
+        status = sapfs_open(SAPFS_VOLUME_DATA, path,
             SAPFS_ACCESS_WRITE, &handle);
     }
     if (status == SAPFS_STATUS_OK) {
@@ -1189,15 +1421,915 @@ static enum sapfs_status note_save(void)
             status = close_status;
         }
     }
-    if (status == SAPFS_STATUS_OK && written == note_length) {
+    if (status == SAPFS_STATUS_OK && written != note_length) {
+        status = SAPFS_STATUS_WRITEBACK;
+    }
+    if (status == SAPFS_STATUS_OK) {
         status = sapfs_sync(SAPFS_VOLUME_DATA);
     }
-    if (status == SAPFS_STATUS_OK && written == note_length) {
-        note_dirty = false;
-        set_app_status("saved and synchronized to fat32", SAPFS_STATUS_OK);
+    if (status != SAPFS_STATUS_OK) {
+        note_remove_temporary(path);
+    }
+    return status;
+}
+
+static enum sapfs_status note_restore_original(
+    const char *temporary,
+    const char *backup,
+    bool replacement_visible
+)
+{
+    enum sapfs_status status = SAPFS_STATUS_OK;
+
+    if (replacement_visible) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, note_path, temporary);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, backup, note_path);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status == SAPFS_STATUS_OK && replacement_visible) {
+        note_remove_temporary(temporary);
+    }
+    return status;
+}
+
+static enum sapfs_status note_save(void)
+{
+    struct sapfs_stat stat;
+    char temporary[SAPFS_MAX_PATH + 1U];
+    char backup[SAPFS_MAX_PATH + 1U];
+    bool original_exists = false;
+    bool original_backed_up = false;
+    enum sapfs_status status;
+
+    if (!note_savable) {
+        status = SAPFS_STATUS_RANGE;
     } else {
-        set_app_status("save note", status == SAPFS_STATUS_OK ?
-            SAPFS_STATUS_WRITEBACK : status);
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, note_path, &stat);
+        if (status == SAPFS_STATUS_OK) {
+            original_exists = true;
+        } else if (status == SAPFS_STATUS_NOT_FOUND) {
+            status = SAPFS_STATUS_OK;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = note_replacement_paths(temporary, backup);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = note_write_temporary(temporary);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, note_path, backup);
+        if (status == SAPFS_STATUS_OK) {
+            original_backed_up = true;
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+        if (status != SAPFS_STATUS_OK) {
+            if (original_backed_up) {
+                const enum sapfs_status restore = note_restore_original(
+                    temporary, backup, false);
+
+                if (restore != SAPFS_STATUS_OK) {
+                    status = restore;
+                } else {
+                    note_remove_temporary(temporary);
+                }
+            } else {
+                note_remove_temporary(temporary);
+            }
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, temporary, note_path);
+        if (status != SAPFS_STATUS_OK && original_exists) {
+            const enum sapfs_status restore = note_restore_original(
+                temporary, backup, false);
+
+            if (restore != SAPFS_STATUS_OK) {
+                status = restore;
+            } else {
+                note_remove_temporary(temporary);
+            }
+        } else if (status != SAPFS_STATUS_OK) {
+            note_remove_temporary(temporary);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+        if (status != SAPFS_STATUS_OK && original_exists) {
+            const enum sapfs_status restore = note_restore_original(
+                temporary, backup, true);
+
+            if (restore != SAPFS_STATUS_OK) {
+                status = restore;
+            }
+        }
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = sapfs_unlink(SAPFS_VOLUME_DATA, backup);
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        note_dirty = false;
+        set_app_status("note saved", SAPFS_STATUS_OK);
+    } else {
+        set_app_status("save note / original retained", status);
+    }
+    return status;
+}
+
+static void studio_set_status(const char *message)
+{
+    if (!copy_string(studio_status, sizeof(studio_status), message)) {
+        (void)copy_string(studio_status, sizeof(studio_status), "Studio status");
+    }
+}
+
+static void studio_reset(bool dirty)
+{
+    for (size_t index = 0U; index < UI_STUDIO_MAX_CLIPS; ++index) {
+        studio_clip_durations[index] = 0U;
+        studio_clip_paths[index][0] = '\0';
+    }
+    studio_preview_width = 0U;
+    studio_preview_height = 0U;
+    studio_preview_loaded = false;
+    studio_clip_count = 0U;
+    studio_selected_clip = UINT8_MAX;
+    studio_playhead = 0U;
+    studio_dirty = dirty;
+    studio_set_status(dirty ? "New project" : "Project ready");
+}
+
+static void studio_store_u32(uint8_t *bytes, size_t offset, uint32_t value)
+{
+    bytes[offset] = (uint8_t)value;
+    bytes[offset + 1U] = (uint8_t)(value >> 8U);
+    bytes[offset + 2U] = (uint8_t)(value >> 16U);
+    bytes[offset + 3U] = (uint8_t)(value >> 24U);
+}
+
+static void studio_store_u16(uint8_t *bytes, size_t offset, uint16_t value)
+{
+    bytes[offset] = (uint8_t)value;
+    bytes[offset + 1U] = (uint8_t)(value >> 8U);
+}
+
+static uint16_t studio_load_u16(const uint8_t *bytes, size_t offset)
+{
+    return (uint16_t)((uint16_t)bytes[offset] |
+        (uint16_t)((uint16_t)bytes[offset + 1U] << 8U));
+}
+
+static uint32_t studio_load_u32(const uint8_t *bytes, size_t offset)
+{
+    return (uint32_t)bytes[offset] |
+        (uint32_t)bytes[offset + 1U] << 8U |
+        (uint32_t)bytes[offset + 2U] << 16U |
+        (uint32_t)bytes[offset + 3U] << 24U;
+}
+
+static void studio_encode_project(uint8_t *bytes)
+{
+    static const uint8_t magic[8U] = {
+        'S', 'A', 'P', 'S', 'T', 'U', '2', 0U
+    };
+
+    for (size_t index = 0U; index < UI_STUDIO_PROJECT_BYTES; ++index) {
+        bytes[index] = 0U;
+    }
+    for (size_t index = 0U; index < sizeof(magic); ++index) {
+        bytes[index] = magic[index];
+    }
+    bytes[8U] = studio_clip_count;
+    bytes[9U] = studio_selected_clip;
+    studio_store_u32(bytes, 12U, studio_playhead);
+    for (size_t index = 0U; index < UI_STUDIO_MAX_CLIPS; ++index) {
+        const size_t record = 16U + index * (4U + UI_STUDIO_PATH_BYTES);
+
+        studio_store_u32(bytes, record, studio_clip_durations[index]);
+        for (size_t at = 0U; at < UI_STUDIO_PATH_BYTES &&
+             studio_clip_paths[index][at] != '\0'; ++at) {
+            bytes[record + 4U + at] =
+                (uint8_t)studio_clip_paths[index][at];
+        }
+    }
+}
+
+static bool studio_decode_project(const uint8_t *bytes)
+{
+    static const uint8_t magic[8U] = {
+        'S', 'A', 'P', 'S', 'T', 'U', '2', 0U
+    };
+
+    for (size_t index = 0U; index < sizeof(magic); ++index) {
+        if (bytes[index] != magic[index]) {
+            return false;
+        }
+    }
+    if (bytes[8U] > UI_STUDIO_MAX_CLIPS ||
+        (bytes[9U] != UINT8_MAX && bytes[9U] >= bytes[8U]) ||
+        studio_load_u32(bytes, 12U) > 1000U) {
+        return false;
+    }
+    studio_clip_count = bytes[8U];
+    studio_selected_clip = bytes[9U];
+    studio_playhead = studio_load_u32(bytes, 12U);
+    for (size_t index = 0U; index < UI_STUDIO_MAX_CLIPS; ++index) {
+        const size_t record = 16U + index * (4U + UI_STUDIO_PATH_BYTES);
+        const uint32_t duration = studio_load_u32(bytes, record);
+        size_t path_length = 0U;
+
+        if ((index < studio_clip_count && (duration == 0U || duration > 1000U)) ||
+            (index >= studio_clip_count && duration != 0U)) {
+            return false;
+        }
+        while (path_length < UI_STUDIO_PATH_BYTES &&
+               bytes[record + 4U + path_length] != 0U) {
+            const uint8_t character = bytes[record + 4U + path_length];
+
+            if (character < 0x20U || character > 0x7EU ||
+                character == '\\') {
+                return false;
+            }
+            studio_clip_paths[index][path_length] = (char)character;
+            ++path_length;
+        }
+        studio_clip_paths[index][path_length] = '\0';
+        if ((index < studio_clip_count && path_length == 0U) ||
+            (index >= studio_clip_count && path_length != 0U)) {
+            return false;
+        }
+        studio_clip_durations[index] = duration;
+    }
+    return true;
+}
+
+static enum sapfs_status studio_load_preview(const char *path);
+
+static enum sapfs_status studio_remove_if_present(const char *path)
+{
+    struct sapfs_stat stat;
+    enum sapfs_status status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        return SAPFS_STATUS_OK;
+    }
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    return stat.directory ? SAPFS_STATUS_IS_DIRECTORY :
+        sapfs_unlink(SAPFS_VOLUME_DATA, path);
+}
+
+static enum sapfs_status studio_regular_presence(
+    const char *path,
+    bool *present
+)
+{
+    struct sapfs_stat stat;
+    enum sapfs_status status;
+
+    if (present == NULL) {
+        return SAPFS_STATUS_INVALID_ARGUMENT;
+    }
+    status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        *present = false;
+        return SAPFS_STATUS_OK;
+    }
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    if (stat.directory) {
+        return SAPFS_STATUS_IS_DIRECTORY;
+    }
+    *present = true;
+    return SAPFS_STATUS_OK;
+}
+
+static enum sapfs_status studio_recover_project(void)
+{
+    static const char project[] = "SAPSTUDI.SAP";
+    static const char scratch[] = "STUTEMP.SAP";
+    static const char backup[] = "STUBACK.SAP";
+    bool primary = false;
+    bool saved = false;
+    bool staged = false;
+    bool changed = false;
+    enum sapfs_status status = studio_regular_presence(project, &primary);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(backup, &saved);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(scratch, &staged);
+    }
+    if (status != SAPFS_STATUS_OK) {
+        return status;
+    }
+    if (!primary && saved) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, backup, project);
+        changed = status == SAPFS_STATUS_OK;
+    } else if (!primary && !saved && staged) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, project);
+        changed = status == SAPFS_STATUS_OK;
+        staged = status != SAPFS_STATUS_OK;
+    } else if (primary && saved) {
+        status = studio_remove_if_present(backup);
+        changed = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && staged) {
+        status = studio_remove_if_present(scratch);
+        changed = changed || status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && changed) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    return status;
+}
+
+static enum sapfs_status studio_load(void)
+{
+    static const char project[] = "SAPSTUDI.SAP";
+    uint8_t bytes[UI_STUDIO_PROJECT_BYTES];
+    struct sapfs_stat stat;
+    sapfs_handle handle;
+    size_t read_bytes = 0U;
+    enum sapfs_status status = studio_recover_project();
+
+    studio_reset(false);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, project, &stat);
+    }
+    if (status == SAPFS_STATUS_NOT_FOUND) {
+        studio_set_status("New project / ready to edit");
+        return SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK &&
+        (stat.directory || stat.size != UI_STUDIO_PROJECT_BYTES)) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, project,
+            SAPFS_ACCESS_READ, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_read(handle, bytes, sizeof(bytes), &read_bytes);
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK &&
+        (read_bytes != sizeof(bytes) || !studio_decode_project(bytes))) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        studio_dirty = false;
+        if (studio_selected_clip != UINT8_MAX &&
+            studio_load_preview(studio_clip_paths[studio_selected_clip]) !=
+                SAPFS_STATUS_OK) {
+            studio_set_status("Project opened / source offline");
+        } else {
+            studio_set_status("Project opened");
+        }
+    } else {
+        studio_reset(false);
+        studio_set_status("Project unavailable");
+    }
+    return status;
+}
+
+static enum sapfs_status studio_write_scratch(const uint8_t *bytes)
+{
+    static const char scratch[] = "STUTEMP.SAP";
+    sapfs_handle handle;
+    size_t written = 0U;
+    enum sapfs_status status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, scratch,
+            SAPFS_ACCESS_WRITE, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_write(handle, bytes, UI_STUDIO_PROJECT_BYTES, &written);
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK && written != UI_STUDIO_PROJECT_BYTES) {
+        status = SAPFS_STATUS_WRITEBACK;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    return status;
+}
+
+static enum sapfs_status studio_save(void)
+{
+    static const char project[] = "SAPSTUDI.SAP";
+    static const char scratch[] = "STUTEMP.SAP";
+    static const char backup[] = "STUBACK.SAP";
+    uint8_t bytes[UI_STUDIO_PROJECT_BYTES];
+    struct sapfs_stat stat;
+    bool original_exists = false;
+    bool backed_up = false;
+    bool replacement_visible = false;
+    enum sapfs_status status = studio_recover_project();
+
+    studio_encode_project(bytes);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, project, &stat);
+        if (status == SAPFS_STATUS_OK) {
+            original_exists = true;
+        } else if (status == SAPFS_STATUS_NOT_FOUND) {
+            status = SAPFS_STATUS_OK;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_scratch(bytes);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, project, backup);
+        backed_up = status == SAPFS_STATUS_OK;
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, project);
+        replacement_visible = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK && backed_up) {
+        if (replacement_visible) {
+            (void)sapfs_rename(SAPFS_VOLUME_DATA, project, scratch);
+        }
+        const enum sapfs_status restore = sapfs_rename(SAPFS_VOLUME_DATA,
+            backup, project);
+
+        if (restore == SAPFS_STATUS_OK) {
+            (void)sapfs_sync(SAPFS_VOLUME_DATA);
+            (void)studio_remove_if_present(scratch);
+        } else {
+            status = restore;
+        }
+    } else if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = studio_remove_if_present(backup);
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        studio_dirty = false;
+        studio_set_status("Project saved");
+    } else {
+        studio_set_status("Save failed / project retained");
+    }
+    return status;
+}
+
+static bool studio_file_is_bmp(const char *name)
+{
+    size_t length = 0U;
+
+    if (name == NULL) {
+        return false;
+    }
+    while (name[length] != '\0') {
+        ++length;
+    }
+    if (length < 5U || name[length - 4U] != '.') {
+        return false;
+    }
+    const char b = name[length - 3U];
+    const char m = name[length - 2U];
+    const char p = name[length - 1U];
+
+    return (b == 'B' || b == 'b') && (m == 'M' || m == 'm') &&
+        (p == 'P' || p == 'p');
+}
+
+static bool studio_path_used(const char *path)
+{
+    for (size_t index = 0U; index < studio_clip_count; ++index) {
+        if (strings_equal(studio_clip_paths[index], path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static enum sapfs_status studio_load_preview(const char *path)
+{
+    uint8_t header[UI_STUDIO_BMP_HEADER_BYTES];
+    struct sapfs_stat stat;
+    sapfs_handle handle = 0U;
+    size_t read_bytes = 0U;
+    enum sapfs_status status = sapfs_stat_path(SAPFS_VOLUME_DATA, path, &stat);
+    uint32_t width = 0U;
+    uint32_t height = 0U;
+    uint32_t pixel_offset = 0U;
+    uint32_t row_stride = 0U;
+    bool top_down = false;
+
+    studio_preview_loaded = false;
+    if (status == SAPFS_STATUS_OK &&
+        (stat.directory || stat.size < sizeof(header))) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, path, SAPFS_ACCESS_READ,
+            &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_read(handle, header, sizeof(header), &read_bytes);
+    }
+    if (status == SAPFS_STATUS_OK && read_bytes != sizeof(header)) {
+        status = SAPFS_STATUS_CORRUPT;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        const int32_t signed_width = (int32_t)studio_load_u32(header, 18U);
+        const int32_t signed_height = (int32_t)studio_load_u32(header, 22U);
+
+        pixel_offset = studio_load_u32(header, 10U);
+        if (header[0U] != 'B' || header[1U] != 'M' ||
+            studio_load_u32(header, 14U) < 40U ||
+            studio_load_u16(header, 26U) != 1U ||
+            studio_load_u16(header, 28U) != 24U ||
+            studio_load_u32(header, 30U) != 0U ||
+            signed_width <= 0 || signed_height == 0 ||
+            signed_height == INT32_MIN) {
+            status = SAPFS_STATUS_CORRUPT;
+        } else {
+            width = (uint32_t)signed_width;
+            top_down = signed_height < 0;
+            height = (uint32_t)(top_down ? -signed_height : signed_height);
+        }
+    }
+    if (status == SAPFS_STATUS_OK &&
+        (width > UI_STUDIO_BMP_MAX_WIDTH ||
+            height > UI_STUDIO_BMP_MAX_HEIGHT ||
+            pixel_offset < sizeof(header))) {
+        status = SAPFS_STATUS_RANGE;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        const uint64_t row_bytes = (uint64_t)width * 3U;
+        const uint64_t stride = (row_bytes + 3U) & ~UINT64_C(3);
+        const uint64_t required = (uint64_t)pixel_offset +
+            stride * height;
+
+        if (stride > sizeof(studio_bmp_row) || required > stat.size) {
+            status = SAPFS_STATUS_RANGE;
+        } else {
+            row_stride = (uint32_t)stride;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        if ((uint64_t)width * UI_STUDIO_PREVIEW_HEIGHT <=
+            (uint64_t)height * UI_STUDIO_PREVIEW_WIDTH) {
+            studio_preview_height = UI_STUDIO_PREVIEW_HEIGHT;
+            studio_preview_width = (uint32_t)((uint64_t)width *
+                UI_STUDIO_PREVIEW_HEIGHT / height);
+        } else {
+            studio_preview_width = UI_STUDIO_PREVIEW_WIDTH;
+            studio_preview_height = (uint32_t)((uint64_t)height *
+                UI_STUDIO_PREVIEW_WIDTH / width);
+        }
+        if (studio_preview_width == 0U || studio_preview_height == 0U) {
+            status = SAPFS_STATUS_RANGE;
+        }
+    }
+    for (size_t index = 0U;
+         index < UI_STUDIO_PREVIEW_WIDTH * UI_STUDIO_PREVIEW_HEIGHT; ++index) {
+        studio_preview_pixels[index] = framebuffer_pack(0U, 0U, 0U);
+    }
+    for (uint32_t y = 0U; y < studio_preview_height &&
+         status == SAPFS_STATUS_OK; ++y) {
+        const uint32_t source_y = (uint32_t)((uint64_t)y * height /
+            studio_preview_height);
+        const uint32_t stored_y = top_down ? source_y :
+            height - 1U - source_y;
+        const uint64_t row_offset = (uint64_t)pixel_offset +
+            (uint64_t)stored_y * row_stride;
+        uint32_t position = 0U;
+
+        status = sapfs_seek(handle, (int64_t)row_offset, SAPFS_SEEK_START,
+            &position);
+        if (status == SAPFS_STATUS_OK && position != row_offset) {
+            status = SAPFS_STATUS_RANGE;
+        }
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_read(handle, studio_bmp_row, row_stride,
+                &read_bytes);
+        }
+        if (status == SAPFS_STATUS_OK && read_bytes != row_stride) {
+            status = SAPFS_STATUS_CORRUPT;
+        }
+        for (uint32_t x = 0U; x < studio_preview_width &&
+             status == SAPFS_STATUS_OK; ++x) {
+            const uint32_t source_x = (uint32_t)((uint64_t)x * width /
+                studio_preview_width);
+            const size_t source = (size_t)source_x * 3U;
+
+            studio_preview_pixels[(size_t)y * UI_STUDIO_PREVIEW_WIDTH + x] =
+                framebuffer_pack(studio_bmp_row[source + 2U],
+                    studio_bmp_row[source + 1U], studio_bmp_row[source]);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        studio_preview_loaded = true;
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+            studio_preview_loaded = false;
+        }
+    }
+    return status;
+}
+
+static void studio_import_clip(void)
+{
+    struct sapfs_list_entry entries[12U];
+    size_t count = 0U;
+    enum sapfs_status status;
+
+    if (studio_clip_count >= UI_STUDIO_MAX_CLIPS) {
+        studio_set_status("Timeline is full");
+        return;
+    }
+    status = sapfs_list(SAPFS_VOLUME_DATA, file_directory, entries,
+        sizeof(entries) / sizeof(entries[0]), &count);
+    if (status != SAPFS_STATUS_OK) {
+        studio_set_status("Import failed / data unavailable");
+        return;
+    }
+    for (size_t index = 0U; index < count; ++index) {
+        char path[SAPFS_MAX_PATH + 1U];
+
+        if (entries[index].directory ||
+            !studio_file_is_bmp(entries[index].name) ||
+            !entry_path(entries[index].name, path) ||
+            studio_path_used(path)) {
+            continue;
+        }
+        size_t path_length = 0U;
+
+        while (path[path_length] != '\0') {
+            ++path_length;
+        }
+        if (path_length > UI_STUDIO_PATH_BYTES) {
+            studio_set_status("Import path exceeds Studio bound");
+            return;
+        }
+        status = studio_load_preview(path);
+        if (status != SAPFS_STATUS_OK) {
+            studio_set_status("BMP rejected / 24-bit RGB required");
+            return;
+        }
+        if (!copy_string(studio_clip_paths[studio_clip_count],
+                sizeof(studio_clip_paths[studio_clip_count]), path)) {
+            studio_set_status("Import path exceeds Studio bound");
+            return;
+        }
+        studio_clip_durations[studio_clip_count] = 180U;
+        studio_selected_clip = studio_clip_count;
+        ++studio_clip_count;
+        studio_dirty = true;
+        studio_set_status("BMP imported / ready to edit");
+        return;
+    }
+    studio_set_status("No new BMP in current data folder");
+}
+
+static void studio_trim_clip(void)
+{
+    if (studio_selected_clip == UINT8_MAX ||
+        studio_selected_clip >= studio_clip_count) {
+        studio_set_status("Select a clip to trim");
+        return;
+    }
+    if (studio_clip_durations[studio_selected_clip] <= 24U) {
+        studio_set_status("Clip reached one-second minimum");
+        return;
+    }
+    studio_clip_durations[studio_selected_clip] -= 24U;
+    studio_dirty = true;
+    studio_set_status("Trimmed one second");
+}
+
+static enum sapfs_status studio_write_all(
+    sapfs_handle handle,
+    const uint8_t *bytes,
+    size_t count
+)
+{
+    size_t written = 0U;
+    const enum sapfs_status status = sapfs_write(handle, bytes, count,
+        &written);
+
+    return status == SAPFS_STATUS_OK && written != count ?
+        SAPFS_STATUS_WRITEBACK : status;
+}
+
+static enum sapfs_status studio_write_export_scratch(void)
+{
+    static const char scratch[] = "STUOUT.BMP";
+    uint8_t header[UI_STUDIO_BMP_HEADER_BYTES] = { 0U };
+    const uint32_t row_stride =
+        (studio_preview_width * 3U + 3U) & ~UINT32_C(3);
+    const uint32_t file_bytes = UI_STUDIO_BMP_HEADER_BYTES +
+        row_stride * studio_preview_height;
+    sapfs_handle handle = 0U;
+    enum sapfs_status status = studio_remove_if_present(scratch);
+
+    header[0U] = 'B';
+    header[1U] = 'M';
+    studio_store_u32(header, 2U, file_bytes);
+    studio_store_u32(header, 10U, UI_STUDIO_BMP_HEADER_BYTES);
+    studio_store_u32(header, 14U, 40U);
+    studio_store_u32(header, 18U, studio_preview_width);
+    studio_store_u32(header, 22U, studio_preview_height);
+    studio_store_u16(header, 26U, 1U);
+    studio_store_u16(header, 28U, 24U);
+    studio_store_u32(header, 34U,
+        row_stride * studio_preview_height);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, scratch,
+            SAPFS_ACCESS_WRITE, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_all(handle, header, sizeof(header));
+    }
+    for (uint32_t row = 0U; row < studio_preview_height &&
+         status == SAPFS_STATUS_OK; ++row) {
+        const uint32_t source_y = studio_preview_height - 1U - row;
+
+        for (uint32_t x = 0U; x < row_stride; ++x) {
+            studio_bmp_row[x] = 0U;
+        }
+        for (uint32_t x = 0U; x < studio_preview_width; ++x) {
+            const uint32_t pixel = studio_preview_pixels[
+                (size_t)source_y * UI_STUDIO_PREVIEW_WIDTH + x
+            ];
+            const size_t destination = (size_t)x * 3U;
+
+            studio_bmp_row[destination] =
+                (uint8_t)(pixel >> logo_blue_shift);
+            studio_bmp_row[destination + 1U] =
+                (uint8_t)(pixel >> logo_green_shift);
+            studio_bmp_row[destination + 2U] =
+                (uint8_t)(pixel >> logo_red_shift);
+        }
+        status = studio_write_all(handle, studio_bmp_row, row_stride);
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    return status;
+}
+
+static enum sapfs_status studio_recover_export(void)
+{
+    static const char output[] = "EXPORT.BMP";
+    static const char scratch[] = "STUOUT.BMP";
+    static const char backup[] = "OUTBACK.BMP";
+    bool output_exists = false;
+    bool scratch_exists = false;
+    bool backup_exists = false;
+    bool changed = false;
+    enum sapfs_status status = studio_regular_presence(output,
+        &output_exists);
+
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(scratch, &scratch_exists);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_regular_presence(backup, &backup_exists);
+    }
+    if (status == SAPFS_STATUS_OK && !output_exists && backup_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, backup, output);
+        changed = status == SAPFS_STATUS_OK;
+        backup_exists = status != SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && output_exists && backup_exists) {
+        status = studio_remove_if_present(backup);
+        changed = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && scratch_exists) {
+        status = studio_remove_if_present(scratch);
+        changed = changed || status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK && changed) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    return status;
+}
+
+static enum sapfs_status studio_export(void)
+{
+    static const char output[] = "EXPORT.BMP";
+    static const char scratch[] = "STUOUT.BMP";
+    static const char backup[] = "OUTBACK.BMP";
+    struct sapfs_stat stat;
+    bool original_exists = false;
+    bool backed_up = false;
+    bool replacement_visible = false;
+    enum sapfs_status status;
+
+    if (!studio_preview_loaded) {
+        studio_set_status("Import a BMP before export");
+        return SAPFS_STATUS_NOT_FOUND;
+    }
+    status = studio_recover_export();
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, output, &stat);
+        if (status == SAPFS_STATUS_OK) {
+            original_exists = !stat.directory;
+            status = stat.directory ? SAPFS_STATUS_IS_DIRECTORY :
+                SAPFS_STATUS_OK;
+        } else if (status == SAPFS_STATUS_NOT_FOUND) {
+            status = SAPFS_STATUS_OK;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_export_scratch();
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, output, backup);
+        backed_up = status == SAPFS_STATUS_OK;
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, output);
+        replacement_visible = status == SAPFS_STATUS_OK;
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status != SAPFS_STATUS_OK && backed_up) {
+        if (replacement_visible) {
+            (void)sapfs_rename(SAPFS_VOLUME_DATA, output, scratch);
+        }
+        const enum sapfs_status restore = sapfs_rename(SAPFS_VOLUME_DATA,
+            backup, output);
+
+        if (restore == SAPFS_STATUS_OK) {
+            (void)sapfs_sync(SAPFS_VOLUME_DATA);
+            (void)studio_remove_if_present(scratch);
+        } else {
+            status = restore;
+        }
+    } else if (status != SAPFS_STATUS_OK) {
+        (void)studio_remove_if_present(scratch);
+    }
+    if (status == SAPFS_STATUS_OK && original_exists) {
+        status = studio_remove_if_present(backup);
+        if (status == SAPFS_STATUS_OK) {
+            status = sapfs_sync(SAPFS_VOLUME_DATA);
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        studio_set_status("EXPORT.BMP written to data");
+        (void)files_refresh();
+    } else {
+        studio_set_status("Export failed / previous output retained");
     }
     return status;
 }
@@ -1266,32 +2398,22 @@ static enum ui_status draw_files_app(struct ui_rect damage)
         { toolbar.x + toolbar.width - 78U, toolbar.y + 8U, 68U, 26U }
     };
     static const char *const labels[] = {
-        "Up", "New File", "New Folder", "Refresh", "Sync"
+        "< Up", "New File", "New Folder", "Refresh", "Sync"
     };
 
     for (size_t index = 0U; index < 5U && status == UI_STATUS_OK; ++index) {
         status = draw_button(buttons[index], damage, labels[index]);
     }
     if (status == UI_STATUS_OK) {
-        const struct ui_rect views[] = {
-            { toolbar.x + 304U, toolbar.y + 8U, 34U, 26U },
-            { toolbar.x + 338U, toolbar.y + 8U, 34U, 26U },
-            { toolbar.x + 372U, toolbar.y + 8U, 34U, 26U }
-        };
-        static const char *const view_labels[] = { "[]", "=", "|||" };
-
-        for (size_t index = 0U; index < 3U && status == UI_STATUS_OK;
-             ++index) {
-            status = draw_button(views[index], damage, view_labels[index]);
-        }
-    }
-    if (status == UI_STATUS_OK) {
-        const struct ui_rect location_field = { toolbar.x + 422U,
-            toolbar.y + 8U, toolbar.width - 588U, 26U };
+        const struct ui_rect location_field = { toolbar.x + 294U,
+            toolbar.y + 8U, toolbar.width - 460U, 26U };
         char location[SAPFS_MAX_PATH + 16U];
-        size_t at = append_text(location, sizeof(location), 0U, "data  / ");
+        size_t at = append_text(location, sizeof(location), 0U,
+            "Data  >  ");
 
-        if (!strings_equal(file_directory, ".")) {
+        if (strings_equal(file_directory, ".")) {
+            (void)append_text(location, sizeof(location), at, "Home");
+        } else {
             (void)append_text(location, sizeof(location), at, file_directory);
         }
         status = fill_clipped(location_field, damage, state.theme.white);
@@ -1328,11 +2450,11 @@ static enum ui_status draw_files_app(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 116U, "Root", state.theme.ink);
+            sidebar.y + 116U, "Data Home", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 142U, "Current Folder", state.theme.ink);
+            sidebar.y + 142U, "Open Folder", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 12U,
@@ -1476,6 +2598,327 @@ static enum ui_status draw_notes_app(struct ui_rect damage)
     return status;
 }
 
+static struct ui_rect studio_toolbar_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+
+    return (struct ui_rect){ client.x, client.y, client.width, 38U };
+}
+
+static struct ui_rect studio_button_rect(size_t index)
+{
+    const struct ui_rect toolbar = studio_toolbar_rect();
+    static const uint32_t widths[] = { 64U, 68U, 68U, 60U, 68U };
+    uint32_t x = toolbar.x + 10U;
+
+    for (size_t before = 0U; before < index && before < 5U; ++before) {
+        x += widths[before] + 6U;
+    }
+    return index < 5U ?
+        (struct ui_rect){ x, toolbar.y + 7U, widths[index], 24U } :
+        (struct ui_rect){ 0U, 0U, 0U, 0U };
+}
+
+static struct ui_rect studio_timeline_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t upper_height = (client.height - 38U) * 56U / 100U;
+
+    return (struct ui_rect){ client.x, client.y + 38U + upper_height,
+        client.width, client.height - 38U - upper_height };
+}
+
+static enum ui_status draw_studio_button(
+    struct ui_rect button,
+    struct ui_rect damage,
+    const char *label
+)
+{
+    enum ui_status status = gradient_rect(button, damage,
+        0x78U, 0x7DU, 0x82U, 0x34U, 0x38U, 0x3CU);
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(button, damage, 1U,
+            framebuffer_pack(0x0DU, 0x0FU, 0x11U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(button, damage, centered_text_x(button, label),
+            button.y + 17U, label, state.theme.white);
+    }
+    return status;
+}
+
+static enum ui_status draw_wallpaper_preview(
+    struct ui_rect bounds,
+    struct ui_rect damage
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        const uint32_t target_y = clipped.y + y;
+        const uint32_t source_y = (target_y - bounds.y) * 768U /
+            bounds.height;
+
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t target_x = clipped.x + x;
+            const uint32_t source_x = (target_x - bounds.x) * 1024U /
+                bounds.width;
+
+            if (surface_pixel(canvas, target_x, target_y,
+                    wallpaper_pixels[(size_t)source_y * 1024U + source_x]) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static enum ui_status draw_studio_preview(
+    struct ui_rect bounds,
+    struct ui_rect damage
+)
+{
+    if (!studio_preview_loaded) {
+        return draw_wallpaper_preview(bounds, damage);
+    }
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        const uint32_t target_y = clipped.y + y;
+        const uint32_t source_y = (target_y - bounds.y) *
+            studio_preview_height / bounds.height;
+
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t target_x = clipped.x + x;
+            const uint32_t source_x = (target_x - bounds.x) *
+                studio_preview_width / bounds.width;
+
+            if (surface_pixel(canvas, target_x, target_y,
+                    studio_preview_pixels[(size_t)source_y *
+                        UI_STUDIO_PREVIEW_WIDTH + source_x]) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static void studio_short_label(const char *path, char *label, size_t capacity)
+{
+    const char *name = path;
+    size_t length = 0U;
+
+    for (size_t index = 0U; path[index] != '\0'; ++index) {
+        if (path[index] == '/') {
+            name = &path[index + 1U];
+        }
+    }
+    while (name[length] != '\0' && length + 1U < capacity) {
+        label[length] = name[length];
+        ++length;
+    }
+    label[length] = '\0';
+}
+
+static enum ui_status draw_studio_app(struct ui_rect damage)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const struct ui_rect toolbar = studio_toolbar_rect();
+    const struct ui_rect timeline = studio_timeline_rect();
+    const struct ui_rect upper = { client.x, toolbar.y + toolbar.height,
+        client.width, timeline.y - toolbar.y - toolbar.height };
+    const uint32_t side_width = client.width / 5U;
+    const struct ui_rect browser = { upper.x, upper.y, side_width,
+        upper.height };
+    const struct ui_rect inspector = { upper.x + upper.width - side_width,
+        upper.y, side_width, upper.height };
+    const struct ui_rect viewer = { browser.x + browser.width, upper.y,
+        upper.width - browser.width - inspector.width, upper.height };
+    const uint32_t preview_width = viewer.width > 36U ? viewer.width - 36U :
+        viewer.width;
+    const uint32_t preview_height = preview_width * 9U / 16U <
+        viewer.height - 58U ? preview_width * 9U / 16U : viewer.height - 58U;
+    const struct ui_rect preview = {
+        viewer.x + (viewer.width - preview_width) / 2U,
+        viewer.y + 26U + (viewer.height - 48U - preview_height) / 2U,
+        preview_width, preview_height
+    };
+    static const char *const button_labels[] = {
+        "New", "Import", "Trim 1s", "Save", "Export"
+    };
+    enum ui_status status = gradient_rect(toolbar, damage,
+        0x68U, 0x6DU, 0x71U, 0x25U, 0x29U, 0x2CU);
+
+    for (size_t index = 0U; index < 5U && status == UI_STATUS_OK; ++index) {
+        status = draw_studio_button(studio_button_rect(index), damage,
+            button_labels[index]);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(toolbar, damage, toolbar.x + toolbar.width - 198U,
+            toolbar.y + 25U, studio_dirty ? "Project - Edited" :
+            "Project", state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(browser, damage,
+            framebuffer_pack(0x32U, 0x35U, 0x38U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(viewer, damage,
+            framebuffer_pack(0x12U, 0x14U, 0x16U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(inspector, damage,
+            framebuffer_pack(0x37U, 0x3AU, 0x3DU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(browser, damage, 1U,
+            framebuffer_pack(0x0CU, 0x0DU, 0x0FU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(inspector, damage, 1U,
+            framebuffer_pack(0x0CU, 0x0DU, 0x0FU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(browser, damage, browser.x + 10U,
+            browser.y + 22U, "LIBRARIES", state.theme.title_inactive);
+    }
+    if (status == UI_STATUS_OK) {
+        status = gradient_rect((struct ui_rect){ browser.x + 5U,
+            browser.y + 30U, browser.width - 10U, 28U }, damage,
+            0x65U, 0x83U, 0x96U, 0x35U, 0x55U, 0x68U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(browser, damage, browser.x + 16U,
+            browser.y + 49U, "SapStudio Library", state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(browser, damage, browser.x + 10U,
+            browser.y + 82U, "IMPORTED MEDIA", state.theme.title_inactive);
+    }
+    for (size_t index = 0U; index < studio_clip_count &&
+         status == UI_STATUS_OK; ++index) {
+        char label[18U];
+
+        studio_short_label(studio_clip_paths[index], label, sizeof(label));
+        status = draw_text(browser, damage, browser.x + 14U,
+            browser.y + 108U + (uint32_t)index * 23U, label,
+            index == studio_selected_clip ? state.theme.accent_teal :
+                state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(viewer, damage, viewer.x + 12U,
+            viewer.y + 20U, studio_preview_loaded ?
+            "VIEWER / 24-BIT BMP" : "VIEWER / NO MEDIA",
+            state.theme.title_inactive);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_studio_preview(preview, damage);
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(preview, damage, 1U,
+            framebuffer_pack(0x78U, 0x7CU, 0x80U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(viewer, damage,
+            centered_text_x(viewer, "00:00:00:00"),
+            viewer.y + viewer.height - 10U, "00:00:00:00",
+            state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(inspector, damage, inspector.x + 10U,
+            inspector.y + 22U, "INSPECTOR", state.theme.title_inactive);
+    }
+    static const char *const inspector_labels[] = {
+        "Transform", "Position   0  0", "Scale      100%",
+        "Opacity    100%", "Audio", "Volume       0 dB"
+    };
+    for (size_t index = 0U; index < 6U && status == UI_STATUS_OK; ++index) {
+        const uint32_t color = index == 0U || index == 4U ?
+            state.theme.white : state.theme.title_inactive;
+
+        status = draw_text(inspector, damage, inspector.x + 12U,
+            inspector.y + 52U + (uint32_t)index * 27U,
+            inspector_labels[index], color);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(timeline, damage,
+            framebuffer_pack(0x20U, 0x23U, 0x26U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped((struct ui_rect){ timeline.x, timeline.y,
+            timeline.width, 28U }, damage,
+            framebuffer_pack(0x3CU, 0x40U, 0x44U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(timeline, damage, timeline.x + 10U,
+            timeline.y + 19U, studio_status, state.theme.white);
+    }
+    for (uint32_t tick = 0U; tick <= 10U && status == UI_STATUS_OK; ++tick) {
+        const uint32_t x = timeline.x + 54U +
+            tick * (timeline.width - 68U) / 10U;
+
+        status = fill_clipped((struct ui_rect){ x, timeline.y + 28U,
+            1U, 8U }, damage, state.theme.title_inactive);
+    }
+    static const char *const track_labels[] = { "V1", "V2", "A1" };
+    for (size_t track = 0U; track < 3U && status == UI_STATUS_OK; ++track) {
+        const uint32_t y = timeline.y + 40U + (uint32_t)track * 30U;
+
+        status = draw_text(timeline, damage, timeline.x + 9U, y + 18U,
+            track_labels[track], state.theme.title_inactive);
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ timeline.x + 38U, y,
+                timeline.width - 48U, 26U }, damage,
+                framebuffer_pack(0x2BU, 0x2FU, 0x32U));
+        }
+    }
+    uint32_t clip_x = timeline.x + 42U;
+    for (size_t index = 0U; index < studio_clip_count &&
+         status == UI_STATUS_OK; ++index) {
+        uint32_t available;
+        uint32_t clip_width = 92U + studio_clip_durations[index] / 12U;
+
+        if (clip_x >= timeline.x + timeline.width - 12U) {
+            break;
+        }
+        available = timeline.x + timeline.width - 12U - clip_x;
+        if (clip_width > available) {
+            clip_width = available;
+        }
+        if (clip_width == 0U) {
+            break;
+        }
+        const struct ui_rect clip = { clip_x, timeline.y + 42U,
+            clip_width, 22U };
+        status = gradient_rect(clip, damage,
+            index == studio_selected_clip ? 0x96U : 0x68U,
+            index == studio_selected_clip ? 0xBCU : 0x96U,
+            index == studio_selected_clip ? 0xD0U : 0xAEU,
+            0x32U, 0x62U, 0x7CU);
+        if (status == UI_STATUS_OK) {
+            char label[14U];
+
+            studio_short_label(studio_clip_paths[index], label,
+                sizeof(label));
+            status = draw_text(clip, damage, clip.x + 6U, clip.y + 16U,
+                label, state.theme.white);
+        }
+        clip_x += clip_width + 5U;
+    }
+    if (status == UI_STATUS_OK) {
+        const uint32_t playhead_x = timeline.x + 38U +
+            studio_playhead * (timeline.width - 48U) / 1000U;
+
+        status = fill_clipped((struct ui_rect){ playhead_x,
+            timeline.y + 28U, 2U, timeline.height - 32U }, damage,
+            state.theme.accent_red);
+    }
+    return status;
+}
+
 static enum ui_status draw_panel(struct ui_rect damage)
 {
     enum ui_status status;
@@ -1507,7 +2950,8 @@ static enum ui_status draw_panel(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.panel_client, damage,
-            state.active_panel == UI_PANEL_TERMINAL ?
+            state.active_panel == UI_PANEL_TERMINAL ||
+            state.active_panel == UI_PANEL_STUDIO ?
             framebuffer_pack(0x08U, 0x10U, 0x12U) : state.theme.white);
     }
     if (status == UI_STATUS_OK) {
@@ -1532,6 +2976,9 @@ static enum ui_status draw_panel(struct ui_rect damage)
     }
     if (state.active_panel == UI_PANEL_NOTES) {
         return draw_notes_app(damage);
+    }
+    if (state.active_panel == UI_PANEL_STUDIO) {
+        return draw_studio_app(damage);
     }
     return UI_STATUS_BAD_PANEL;
 }
@@ -1566,6 +3013,18 @@ static struct ui_rect cursor_rect_for(struct ui_point point)
     return (struct ui_rect){ x, y, width, height };
 }
 
+static bool cursor_mask_contains(
+    const uint32_t *mask,
+    uint32_t x,
+    uint32_t y
+)
+{
+    const uint32_t source_x = x * UI_CURSOR_SOURCE_WIDTH / UI_CURSOR_WIDTH;
+    const uint32_t source_y = y * UI_CURSOR_SOURCE_HEIGHT / UI_CURSOR_HEIGHT;
+
+    return (mask[source_y] & (UINT32_C(0x80000000) >> source_x)) != 0U;
+}
+
 static enum ui_status draw_cursor(struct ui_rect damage)
 {
     const struct ui_rect cursor = cursor_rect_for(state.pointer);
@@ -1575,13 +3034,12 @@ static enum ui_status draw_cursor(struct ui_rect damage)
     }
     for (uint32_t y = 0U; y < cursor.height; ++y) {
         for (uint32_t x = 0U; x < cursor.width; ++x) {
-            const uint32_t bit = UINT32_C(0x80000000) >> x;
             uint32_t pixel;
 
-            if ((cursor_outer[y] & bit) == 0U) {
+            if (!cursor_mask_contains(cursor_outer, x, y)) {
                 continue;
             }
-            pixel = (cursor_inner[y] & bit) != 0U ?
+            pixel = cursor_mask_contains(cursor_inner, x, y) ?
                 state.theme.ink : state.theme.white;
             if (surface_pixel(canvas, cursor.x + x, cursor.y + y, pixel) !=
                 SURFACE_STATUS_OK) {
@@ -1600,33 +3058,35 @@ static enum ui_status draw_desktop_pattern(struct ui_rect damage)
 static enum ui_status draw_dock_shelf(struct ui_rect damage)
 {
     const struct ui_rect dock = state.layout.dock;
-    enum ui_status status = translucent_fill((struct ui_rect){ dock.x + 4U,
-        dock.y + 78U, dock.width - 8U, 43U }, damage,
+    const struct ui_rect shelf = { dock.x + 26U, dock.y + 80U,
+        dock.width - 52U, 42U };
+    enum ui_status status = translucent_fill((struct ui_rect){ shelf.x + 5U,
+        shelf.y + 6U, shelf.width - 10U, shelf.height - 7U }, damage,
         state.theme.shadow, 150U);
 
-    for (uint32_t row = 0U; row < 50U && status == UI_STATUS_OK; ++row) {
-        const uint32_t inset = (49U - row) * 24U / 49U;
+    for (uint32_t row = 0U; row < 36U && status == UI_STATUS_OK; ++row) {
+        const uint32_t inset = (35U - row) * 16U / 35U;
         const uint8_t shade = (uint8_t)(218U - row * 2U);
-        const struct ui_rect strip = { dock.x + inset,
-            dock.y + 72U + row, dock.width - inset * 2U, 1U };
+        const struct ui_rect strip = { shelf.x + inset,
+            shelf.y + row, shelf.width - inset * 2U, 1U };
 
         status = translucent_fill(strip, damage,
             framebuffer_pack(shade, (uint8_t)(shade + 5U),
                 (uint8_t)(shade + 8U)), row < 9U ? 152U : 218U);
     }
     if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ dock.x + 24U,
-            dock.y + 71U, dock.width - 48U, 2U }, damage,
+        status = fill_clipped((struct ui_rect){ shelf.x + 16U,
+            shelf.y, shelf.width - 32U, 2U }, damage,
             state.theme.white);
     }
     if (status == UI_STATUS_OK) {
-        status = translucent_fill((struct ui_rect){ dock.x + 2U,
-            dock.y + 120U, dock.width - 4U, 4U }, damage,
+        status = translucent_fill((struct ui_rect){ shelf.x + 2U,
+            shelf.y + 36U, shelf.width - 4U, 4U }, damage,
             framebuffer_pack(0x32U, 0x3BU, 0x40U), 230U);
     }
     if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ dock.x + 12U,
-            dock.y + 118U, dock.width - 24U, 1U }, damage,
+        status = fill_clipped((struct ui_rect){ shelf.x + 10U,
+            shelf.y + 35U, shelf.width - 20U, 1U }, damage,
             framebuffer_pack(0xD5U, 0xE4U, 0xE8U));
     }
     return status;
@@ -1738,10 +3198,27 @@ enum ui_status ui_construct(bool pointer_present)
         logo_width != UI_LOGO_WIDTH || logo_height != UI_LOGO_HEIGHT ||
         sapote_logo_decode(logo_pixels, UI_LOGO_PIXELS,
             framebuffer.red_position, framebuffer.green_position,
-            framebuffer.blue_position, framebuffer_pack(0xFFU, 0xFFU, 0xFFU)) !=
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_logo_decode_alpha(logo_alpha, UI_LOGO_PIXELS) !=
             LOGO_STATUS_OK) {
         canvas = NULL;
         return UI_STATUS_LOGO_FAILURE;
+    }
+    logo_red_shift = framebuffer.red_position;
+    logo_green_shift = framebuffer.green_position;
+    logo_blue_shift = framebuffer.blue_position;
+    if (sapote_studio_icon_geometry(&studio_icon_width,
+            &studio_icon_height) != LOGO_STATUS_OK ||
+        studio_icon_width == 0U || studio_icon_width > 80U ||
+        studio_icon_height == 0U || studio_icon_height > 80U ||
+        sapote_studio_icon_decode(studio_icon_pixels,
+            (size_t)studio_icon_width * studio_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_studio_icon_decode_alpha(studio_icon_alpha,
+            (size_t)studio_icon_width * studio_icon_height) != LOGO_STATUS_OK) {
+        canvas = NULL;
+        return UI_STATUS_STUDIO_ICON_FAILURE;
     }
     if (sapote_wallpaper_geometry(&wallpaper_width, &wallpaper_height) !=
             WALLPAPER_STATUS_OK || wallpaper_width != 1024U ||
@@ -1805,6 +3282,19 @@ enum ui_status ui_activate(void)
     }
     state.stable_render_hash = surface_hash();
     return UI_STATUS_OK;
+}
+
+enum ui_status ui_terminal_draw_logo(void)
+{
+    const uint32_t width = 148U;
+    const uint32_t height = width * UI_LOGO_HEIGHT / UI_LOGO_WIDTH;
+
+    if (!state.initialized || canvas == NULL) {
+        return UI_STATUS_NOT_INITIALIZED;
+    }
+    return screen_draw_image(logo_pixels, logo_alpha,
+        UI_LOGO_WIDTH, UI_LOGO_HEIGHT, width, height, 9U) == SCREEN_STATUS_OK ?
+        UI_STATUS_OK : UI_STATUS_SCREEN_FAILURE;
 }
 
 bool ui_is_active(void)
@@ -1908,12 +3398,16 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
     if (!state.active || !event->pressed) {
         return UI_STATUS_OK;
     }
-    if (state.active_panel == UI_PANEL_NOTES && event->scancode != 0x01U) {
+    if ((state.active_panel == UI_PANEL_NOTES ||
+            state.active_panel == UI_PANEL_STUDIO) &&
+        event->scancode != 0x01U) {
         ui_event.type = UI_EVENT_TEXT_INPUT;
         ui_event.control = event->control;
         if (event->control && (event->character == 's' ||
                 event->character == 'S')) {
             ui_event.character = 's';
+        } else if (state.active_panel == UI_PANEL_STUDIO) {
+            return UI_STATUS_OK;
         } else if (event->scancode == 0x0EU) {
             ui_event.character = '\b';
         } else if (event->scancode == 0x1CU) {
@@ -1939,14 +3433,14 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
 
 static enum ui_element_id next_focus(enum ui_element_id current, bool previous)
 {
-    if (current < UI_ELEMENT_DOCK_FILES || current > UI_ELEMENT_DOCK_NOTES) {
+    if (current < UI_ELEMENT_DOCK_FILES || current > UI_ELEMENT_DOCK_STUDIO) {
         return UI_ELEMENT_DOCK_FILES;
     }
     if (previous) {
-        return current == UI_ELEMENT_DOCK_FILES ? UI_ELEMENT_DOCK_NOTES :
+        return current == UI_ELEMENT_DOCK_FILES ? UI_ELEMENT_DOCK_STUDIO :
             (enum ui_element_id)(current - 1);
     }
-    return current == UI_ELEMENT_DOCK_NOTES ? UI_ELEMENT_DOCK_FILES :
+    return current == UI_ELEMENT_DOCK_STUDIO ? UI_ELEMENT_DOCK_FILES :
         (enum ui_element_id)(current + 1);
 }
 
@@ -1964,7 +3458,16 @@ static enum ui_status set_panel(
         return UI_STATUS_OK;
     }
     if (old_panel == UI_PANEL_NOTES && note_dirty) {
-        (void)note_save();
+        if (note_save() != SAPFS_STATUS_OK) {
+            *damage = rect_union(*damage, state.layout.panel);
+            return UI_STATUS_OK;
+        }
+    }
+    if (old_panel == UI_PANEL_STUDIO && studio_dirty) {
+        if (studio_save() != SAPFS_STATUS_OK) {
+            *damage = rect_union(*damage, state.layout.panel);
+            return UI_STATUS_OK;
+        }
     }
     if (old_panel != UI_PANEL_NONE || panel != UI_PANEL_NONE) {
         *damage = rect_union(*damage,
@@ -1974,7 +3477,8 @@ static enum ui_status set_panel(
         if (state.layout.dock_items[index].panel == old_panel ||
             state.layout.dock_items[index].panel == panel) {
             *damage = rect_union(*damage,
-                state.layout.dock_items[index].bounds);
+                dock_bounds_for(&state.layout,
+                    state.layout.dock_items[index].id));
         }
     }
     state.active_panel = panel;
@@ -1984,6 +3488,8 @@ static enum ui_status set_panel(
         (void)files_refresh();
     } else if (panel == UI_PANEL_NOTES) {
         (void)note_load();
+    } else if (panel == UI_PANEL_STUDIO) {
+        (void)studio_load();
     }
 
     if (panel == UI_PANEL_TERMINAL) {
@@ -2041,6 +3547,10 @@ static enum ui_element_id active_hit(struct ui_point point)
                 return ids[index];
             }
         }
+        if (rect_contains_point((struct ui_rect){ client.x + 8U,
+                client.y + 46U + 94U, 170U, 28U }, point)) {
+            return UI_ELEMENT_FILES_ROOT;
+        }
         for (size_t index = 0U; index < file_entry_count && index < 12U;
              ++index) {
             if (rect_contains_point(file_entry_rect(index), point)) {
@@ -2051,6 +3561,21 @@ static enum ui_element_id active_hit(struct ui_point point)
         rect_contains_point((struct ui_rect){ client.x + 10U,
             client.y + 8U, 72U, 26U }, point)) {
         return UI_ELEMENT_NOTES_SAVE;
+    } else if (state.active_panel == UI_PANEL_STUDIO) {
+        static const enum ui_element_id ids[] = {
+            UI_ELEMENT_STUDIO_NEW, UI_ELEMENT_STUDIO_IMPORT,
+            UI_ELEMENT_STUDIO_TRIM, UI_ELEMENT_STUDIO_SAVE,
+            UI_ELEMENT_STUDIO_EXPORT
+        };
+
+        for (size_t index = 0U; index < 5U; ++index) {
+            if (rect_contains_point(studio_button_rect(index), point)) {
+                return ids[index];
+            }
+        }
+        if (rect_contains_point(studio_timeline_rect(), point)) {
+            return UI_ELEMENT_STUDIO_TIMELINE;
+        }
     }
     return UI_ELEMENT_NONE;
 }
@@ -2061,7 +3586,7 @@ static enum ui_status activate_element(
 )
 {
     if (element >= UI_ELEMENT_DOCK_FILES &&
-        element <= UI_ELEMENT_DOCK_NOTES) {
+        element <= UI_ELEMENT_DOCK_STUDIO) {
         return set_panel(panel_for_element(element), damage);
     }
     if (element == UI_ELEMENT_WINDOW_CLOSE) {
@@ -2077,6 +3602,11 @@ static enum ui_status activate_element(
         (void)files_refresh();
     } else if (element == UI_ELEMENT_FILES_SYNC) {
         set_app_status("sync", sapfs_sync(SAPFS_VOLUME_DATA));
+    } else if (element == UI_ELEMENT_FILES_ROOT) {
+        if (!copy_string(file_directory, sizeof(file_directory), ".")) {
+            return UI_STATUS_FILESYSTEM_FAILURE;
+        }
+        (void)files_refresh();
     } else if (element >= UI_ELEMENT_FILES_ENTRY_0 &&
             element <= UI_ELEMENT_FILES_ENTRY_11) {
         const size_t index = (size_t)(element - UI_ELEMENT_FILES_ENTRY_0);
@@ -2100,6 +3630,51 @@ static enum ui_status activate_element(
         }
     } else if (element == UI_ELEMENT_NOTES_SAVE) {
         (void)note_save();
+    } else if (element == UI_ELEMENT_STUDIO_NEW) {
+        studio_reset(true);
+    } else if (element == UI_ELEMENT_STUDIO_IMPORT) {
+        studio_import_clip();
+    } else if (element == UI_ELEMENT_STUDIO_TRIM) {
+        studio_trim_clip();
+    } else if (element == UI_ELEMENT_STUDIO_SAVE) {
+        (void)studio_save();
+    } else if (element == UI_ELEMENT_STUDIO_EXPORT) {
+        (void)studio_export();
+    } else if (element == UI_ELEMENT_STUDIO_TIMELINE) {
+        const struct ui_rect timeline = studio_timeline_rect();
+        const uint32_t left = timeline.x + 38U;
+        const uint32_t right = timeline.x + timeline.width - 10U;
+        uint32_t pointer_x = state.pointer.x < 0 ? left :
+            (uint32_t)state.pointer.x;
+
+        if (pointer_x < left) {
+            pointer_x = left;
+        } else if (pointer_x > right) {
+            pointer_x = right;
+        }
+        studio_playhead = (pointer_x - left) * 1000U / (right - left);
+        studio_dirty = true;
+        uint32_t clip_x = timeline.x + 42U;
+
+        for (size_t index = 0U; index < studio_clip_count; ++index) {
+            const uint32_t clip_width = 92U +
+                studio_clip_durations[index] / 12U;
+
+            if (pointer_x >= clip_x && pointer_x < clip_x + clip_width) {
+                studio_selected_clip = (uint8_t)index;
+                if (studio_load_preview(studio_clip_paths[index]) ==
+                    SAPFS_STATUS_OK) {
+                    studio_set_status("Clip selected / playhead moved");
+                } else {
+                    studio_set_status("Source offline / playhead moved");
+                }
+                break;
+            }
+            clip_x += clip_width + 5U;
+        }
+        if (studio_selected_clip == UINT8_MAX) {
+            studio_set_status("Playhead moved");
+        }
     } else {
         return UI_STATUS_BAD_ELEMENT;
     }
@@ -2109,6 +3684,11 @@ static enum ui_status activate_element(
 
 static void note_input(char character, bool control)
 {
+    if (!note_savable) {
+        set_app_status("note is read-only in this editor",
+            SAPFS_STATUS_RANGE);
+        return;
+    }
     if (control && (character == 's' || character == 'S')) {
         (void)note_save();
         return;
@@ -2166,7 +3746,7 @@ static enum ui_status apply_event(
         hit = active_hit(event->point);
         state.pressed = hit;
         *damage = rect_union(*damage,
-            hit >= UI_ELEMENT_DOCK_FILES && hit <= UI_ELEMENT_DOCK_NOTES ?
+            hit >= UI_ELEMENT_DOCK_FILES && hit <= UI_ELEMENT_DOCK_STUDIO ?
             dock_bounds_for(&state.layout, hit) : state.layout.panel);
         state.renders.dock_state_changes += 1U;
     } else if (event->type == UI_EVENT_POINTER_BUTTON_RELEASE &&
@@ -2177,7 +3757,7 @@ static enum ui_status apply_event(
         state.pressed = UI_ELEMENT_NONE;
         *damage = rect_union(*damage,
             pressed >= UI_ELEMENT_DOCK_FILES &&
-                pressed <= UI_ELEMENT_DOCK_NOTES ?
+                pressed <= UI_ELEMENT_DOCK_STUDIO ?
             dock_bounds_for(&state.layout, pressed) : state.layout.panel);
         if (pressed != UI_ELEMENT_NONE && pressed == hit) {
             const enum ui_status status = activate_element(pressed, damage);
@@ -2207,6 +3787,11 @@ static enum ui_status apply_event(
     } else if (event->type == UI_EVENT_TEXT_INPUT &&
         state.active_panel == UI_PANEL_NOTES) {
         note_input(event->character, event->control);
+        *damage = rect_union(*damage, state.layout.panel);
+    } else if (event->type == UI_EVENT_TEXT_INPUT &&
+        state.active_panel == UI_PANEL_STUDIO && event->control &&
+        (event->character == 's' || event->character == 'S')) {
+        (void)studio_save();
         *damage = rect_union(*damage, state.layout.panel);
     } else if (event->type == UI_EVENT_REDRAW_REQUEST) {
         *damage = state.layout.surface;
@@ -2312,8 +3897,7 @@ static uint64_t synthetic_render_hash(bool active)
     }
     for (uint32_t y = 0U; y < UI_CURSOR_HEIGHT && y + 4U < 32U; ++y) {
         for (uint32_t x = 0U; x < UI_CURSOR_WIDTH && x + 44U < 64U; ++x) {
-            if ((cursor_outer[y] &
-                    (UINT32_C(0x80000000) >> x)) != 0U) {
+            if (cursor_mask_contains(cursor_outer, x, y)) {
                 pixels[(y + 4U) * 64U + x + 44U] = ink;
             }
         }
@@ -2464,15 +4048,15 @@ bool ui_self_test(void)
     const struct ui_rect first = { 0U, 0U, UI_CURSOR_WIDTH, UI_CURSOR_HEIGHT };
     const struct ui_rect last = { 100U, 100U, UI_CURSOR_WIDTH, UI_CURSOR_HEIGHT };
     const struct ui_rect both = rect_union(first, last);
-    if (both.x != 0U || both.y != 0U || both.width != 127U ||
-        both.height != 137U || UI_CURSOR_HOTSPOT_X >= UI_CURSOR_WIDTH ||
+    if (both.x != 0U || both.y != 0U || both.width != 118U ||
+        both.height != 125U || UI_CURSOR_HOTSPOT_X >= UI_CURSOR_WIDTH ||
         UI_CURSOR_HOTSPOT_Y >= UI_CURSOR_HEIGHT) {
         self_test_failure = "cursor damage union or hotspot is invalid";
         return false;
     }
     if (next_focus(UI_ELEMENT_DOCK_FILES, true) !=
-            UI_ELEMENT_DOCK_NOTES ||
-        next_focus(UI_ELEMENT_DOCK_NOTES, false) !=
+            UI_ELEMENT_DOCK_STUDIO ||
+        next_focus(UI_ELEMENT_DOCK_STUDIO, false) !=
             UI_ELEMENT_DOCK_FILES) {
         self_test_failure = "keyboard focus wrap is invalid";
         return false;
@@ -2483,7 +4067,7 @@ bool ui_self_test(void)
     }
 
     const uint64_t stable = synthetic_render_hash(false);
-    if (stable != UINT64_C(0x95DF9F60511EDCD5) ||
+    if (stable != UINT64_C(0xCD65C2C6A1DC2975) ||
         stable == synthetic_render_hash(true)) {
         self_test_failure = "synthetic First Environment render hash is invalid";
         return false;
@@ -2573,7 +4157,7 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
 const char *ui_panel_name(enum ui_panel_id panel)
 {
     static const char *const names[] = {
-        "None", "Files", "Terminal", "Notes"
+        "None", "Files", "Terminal", "Notes", "SapStudio"
     };
 
     if ((size_t)panel >= sizeof(names) / sizeof(names[0])) {
@@ -2595,6 +4179,9 @@ const char *ui_element_name(enum ui_element_id element)
     }
     if (element == UI_ELEMENT_DOCK_NOTES) {
         return "Notes";
+    }
+    if (element == UI_ELEMENT_DOCK_STUDIO) {
+        return "SapStudio";
     }
     return element < UI_ELEMENT_COUNT ? "application control" :
         "unknown element";
@@ -2624,6 +4211,7 @@ const char *ui_status_string(enum ui_status status)
         "UI font rendering failed",
         "cached surface rendering failed",
         "canonical logo rendering failed",
+        "SapStudio icon rendering failed",
         "desktop wallpaper rendering failed",
         "application filesystem operation failed",
         "terminal viewport rendering failed",
