@@ -26,7 +26,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+                      binutils ffmpeg gcc grub-common grub-pc-bin make mtools \
+                      qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
             - name: Record QEMU fixture capabilities
@@ -37,19 +38,23 @@ jobs:
                   qemu-system-x86_64 -device nvme,help
             - name: Verify the kernel artifact
               run: make verify
-            - name: Capture Sapote First Light from QEMU
+            - name: Capture Sapote First Environment from QEMU
               run: |
                   make iso
-                  python3 tools/capture-first-light.py \
+                  python3 tools/capture-first-environment.py \
                       --iso build/sapote.iso \
                       --system build/userspace/sapote-system-fat32.raw \
                       --data build/userspace/sapote-data-fat32.raw \
-                      --output build/first-light-captures
-            - name: Upload Sapote First Light captures
+                      --output build/first-environment-captures \
+                      --ffmpeg ffmpeg
+                  python3 tools/fat32_image.py inspect \
+                      build/first-environment-captures/sapote-first-environment-data.raw \
+                      --report build/first-environment-captures/fat32-report.json
+            - name: Upload Sapote First Environment captures
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
-                  name: sapote-first-light-captures
-                  path: build/first-light-captures
+                  name: sapote-first-environment-captures
+                  path: build/first-environment-captures
                   if-no-files-found: error
             - name: Prove faults and interrupts in QEMU
               run: |

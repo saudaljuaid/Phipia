@@ -4634,12 +4634,17 @@ _Noreturn void kernel_test_complete_first_light(void)
         }
     }
 
-    if (first_light_pixel(0U, 100U) == 0U ||
-        first_light_pixel(ui->layout.menu_bar.x,
-            ui->layout.menu_bar.y) == first_light_pixel(0U, 100U) ||
-        first_light_pixel(ui->layout.dock.x + ui->layout.dock.width / 2U,
-            ui->layout.dock.y + 80U) == 0U) {
-        kernel_test_fail("First Environment wallpaper or dock is not integrated");
+    const uint32_t wallpaper_probe = first_light_pixel(512U, 250U);
+    if (wallpaper_probe == 0U) {
+        kernel_test_fail("First Environment wallpaper probe is empty");
+    }
+    if (first_light_pixel(ui->layout.menu_bar.x,
+            ui->layout.menu_bar.y) == wallpaper_probe) {
+        kernel_test_fail("First Environment menu bar is not integrated");
+    }
+    if (first_light_pixel(ui->layout.dock.x + 28U,
+            ui->layout.dock.y + 71U) != ui->theme.white) {
+        kernel_test_fail("First Environment dock rim is not integrated");
     }
 
     trail_under = first_light_pixel(20U, 100U);
