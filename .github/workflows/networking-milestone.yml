@@ -102,8 +102,30 @@ jobs:
                       build/networking-capture/sapote-v2.1.0-networking-serial.log
                   grep -Fq '"production_path": true' \
                       build/networking-capture/sapote-v2.1.0-network-packet-audit.json
-                  python3 tools/fat32_image.py verify data \
-                      build/networking-capture/sapote-v2.1.0-network-data.raw
+                  python3 tools/fat32_image.py inspect \
+                      build/networking-capture/sapote-v2.1.0-network-data.raw \
+                      --report "$RUNNER_TEMP/network-capture-fat32.json"
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  from pathlib import Path
+
+                  report = json.loads(
+                      Path(os.environ["RUNNER_TEMP"],
+                           "network-capture-fat32.json").read_text(
+                               encoding="utf-8"
+                           )
+                  )
+                  files = {
+                      item["path"]: item for item in report["files"]
+                      if not item["directory"]
+                  }
+                  assert files["NETCAP.TXT"]["size"] == 30
+                  assert report["fat_copies_match"] is True
+                  assert report["cycles"] == 0
+                  assert report["cross_links"] == 0
+                  assert report["leaked_clusters"] == 0
+                  PY
             - name: Assemble v2.1.0 exact-commit evidence
               shell: bash
               run: |
