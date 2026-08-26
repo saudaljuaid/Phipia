@@ -68,6 +68,26 @@ There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
 or general USB class stack. The exact FAT32 design and limits are in
 [`FAT32.md`](FAT32.md).
 
+## Networking
+
+`virtio_net.c` owns one modern `virtio-net-pci` function through the same typed
+PCI, MSI-X and DMA substrate as storage. It exposes fixed split queues and a
+generation-checked packet arena to `network.c`; protocol code never touches a
+descriptor or device-owned buffer. Reset invalidates sockets and caches before
+releasing device resources.
+
+`network.c` supplies bounded Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP and
+HTTP state machines. HTTP can stream through `fat32_fs.c` to the writable Data
+volume with synchronized temporary-file replacement. `network_syscall.c`
+validates complete user ranges and authenticates process generations for the
+experimental native ABI. The Terminal calls the same public kernel operations.
+
+The Boot Ledger records networking after time, heap, paging, PCI, dynamic
+vectors, DMA, interrupts and the closed boot proofs, and before First
+Environment construction. NIC absence or link-down is a healthy availability
+decision; malformed initialization is a failed stage. See
+[`NETWORKING.md`](NETWORKING.md).
+
 ## Userspace boundaries
 
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
@@ -135,6 +155,7 @@ keeping milestone diaries in the active documentation set.
 
 ## Current limits
 
-Sapote has no SMP, networking, IOMMU, general VFS, journaled crash recovery,
-dynamic linker, signals, general descriptor table, broad hardware support, or
-stable native userspace ABI. These are boundaries, not implied features.
+Sapote has no SMP, IPv6, TLS, firewall, routing, Wi-Fi, IOMMU, general VFS,
+journaled crash recovery, dynamic linker, signals, general descriptor table,
+broad hardware support, browser, or generally stable native userspace ABI.
+These are boundaries, not implied features.

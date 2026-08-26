@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
-  <img src="https://img.shields.io/badge/version-2.0.0-18181C" alt="version 2.0.0">
+  <img src="https://img.shields.io/badge/version-2.1.0-18181C" alt="version 2.1.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-595976" alt="GPL-3.0-only"></a>
 </p>
 
@@ -22,6 +22,14 @@
 <p align="center"><sub>Sapote First Environment, captured from a real 1024×768 QEMU boot.</sub></p>
 
 <p align="center"><a href="assets/sapote-first-environment-20s.mp4">Watch the authentic 20-second QEMU interaction</a></p>
+
+<p align="center">
+  <img src="evidence/v2.1.0/Sapote-v2.1.0-networking.png" alt="Sapote 2.1.0 Terminal completing DHCP, ping, DNS, HTTP, and FAT32 synchronization" width="820">
+</p>
+
+<p align="center"><sub>Sapote 2.1.0 networking over a real QEMU virtio-net packet path.</sub></p>
+
+<p align="center"><a href="evidence/v2.1.0/Sapote-v2.1.0-networking-22s.mp4">Watch the authentic 22-second networking interaction</a> · <a href="evidence/v2.1.0/sapote-v2.1.0-networking.pcap">Inspect the captured Ethernet traffic</a></p>
 
 ## Overview
 
@@ -49,7 +57,13 @@ interactive `linux cat` profiles remain available.
 - Ring 3 execution with private address spaces and checked ELF64 loading.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
-- First Environment, a framebuffer console, filesystem commands, and 58 QEMU scenarios.
+- Modern virtio-net PCI/MSI-X/DMA with bounded Ethernet, ARP, IPv4, ICMP,
+  UDP, DHCP, DNS, TCP, HTTP/1.1, and streamed FAT32 downloads.
+- An experimental versioned native networking syscall boundary with checked
+  user ranges, authenticated process generations, polling, cancellation, time,
+  and bounded random bytes.
+- First Environment, a framebuffer console, networking and filesystem
+  commands, and 92 QEMU scenarios.
 - SapStudio's deterministic editor foundation, mirrored at upstream commit
   `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
   timeline trim/save, and bounded BMP frame export.
@@ -86,13 +100,15 @@ unapproved boot-path shortcuts.
 ## Project status
 
 Sapote is still a foundation-stage, single-core system. First Environment is a
-fixed four-application shell rather than a general window manager. FAT32 support is one
-bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files, no
-journal, and a clean-sync persistence contract. Networking, general process
-services, an IOMMU, and broad physical-hardware coverage remain future work.
-Version 2.0.0 is not a claim of POSIX compliance, a general VFS, production
-crash consistency, multi-user security, broad Linux compatibility, or a stable
-userspace ABI.
+fixed four-application shell rather than a general window manager. FAT32 support
+is one bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files,
+no journal, and a clean-sync persistence contract. Networking is intentionally
+IPv4-only and supports one modern emulated virtio-net device; it has no IPv6,
+TLS, firewall, routing, Wi-Fi, physical-hardware claim, or browser. General
+process services, an IOMMU, and broad hardware coverage remain future work.
+Version 2.1.0 is not a claim of POSIX compliance, a general VFS, production
+crash consistency, multi-user security, broad Linux compatibility, secure
+Internet access, or a generally stable userspace ABI.
 
 ## Documentation
 
@@ -101,6 +117,9 @@ userspace ABI.
 - [First Environment](docs/FIRST_ENVIRONMENT.md) — current interface and capture contract
 - [First Light](docs/FIRST_LIGHT.md) — retained v2.0.0 interface contract
 - [Persistent FAT32](docs/FAT32.md) — volumes, filesystem rules, and persistence
+- [Networking](docs/NETWORKING.md) — virtio-net, protocol, syscall, and test bounds
+- [Browser port plan](docs/BROWSER_PORT.md) — concrete future engine work and gaps
+- [TLS evaluation](docs/TLS_EVALUATION.md) — prerequisites and explicit non-claims
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles
 - [Rust boundary](docs/RUST.md) — where safe byte validation belongs
 - [Verification](docs/VERIFICATION.md) — build, QEMU, and evidence gates
