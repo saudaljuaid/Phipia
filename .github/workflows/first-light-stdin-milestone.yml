@@ -167,6 +167,7 @@ jobs:
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
                       build/all-qemu-scenarios.txt)" -eq 58
             - name: Capture authentic interactive First Light evidence
+              if: github.ref == 'refs/tags/v1.1.0'
               shell: bash
               run: |
                   set -euo pipefail
@@ -191,6 +192,7 @@ jobs:
                       build/sapote-first-light-cat-boot-20s.mp4 \
                       | grep -Eq '^20(\.0+)?$'
             - name: Assemble v1.1.0 release evidence
+              if: github.ref == 'refs/tags/v1.1.0'
               shell: bash
               run: |
                   set -euo pipefail
@@ -305,6 +307,7 @@ jobs:
                   cat "$release/verification-summary.txt"
                   cat "$release/SHA256SUMS"
             - name: Upload v1.1.0 milestone evidence
+              if: github.ref == 'refs/tags/v1.1.0'
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
                   name: Sapote-v1.1.0-evidence-${{ github.sha }}

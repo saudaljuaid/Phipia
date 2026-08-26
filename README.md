@@ -16,12 +16,12 @@
 </p>
 
 <p align="center">
-  <img src="assets/sapote-v2-first-light.png" alt="Sapote First Light desktop" width="820">
+  <img src="assets/sapote-first-environment.png" alt="Sapote First Environment desktop" width="820">
 </p>
 
-<p align="center"><sub>First Light, captured from a real 1024×768 QEMU boot.</sub></p>
+<p align="center"><sub>Sapote First Environment, captured from a real 1024×768 QEMU boot.</sub></p>
 
-<p align="center"><a href="assets/sapote-first-light-boot-20s.mp4">Watch the QEMU First Light boot capture</a></p>
+<p align="center"><a href="assets/sapote-first-environment-20s.mp4">Watch the authentic 20-second QEMU interaction</a></p>
 
 ## Overview
 
@@ -30,12 +30,13 @@ hosted kernel demo. It enters 64-bit mode, discovers hardware, manages memory,
 handles interrupts, drives a framebuffer, and presents its own graphical
 workspace.
 
-First Light is Sapote's compact desktop shell. It combines the canonical pebble
-with a classic workstation interface, a terminal, keyboard and pointer input,
-and four focused tools. In v2.0.0 it mounts separate immutable-system and
-writable-data FAT32 volumes through emulated NVMe. Files, directories, and
-metadata survive a clean synchronized QEMU reboot. The measured `linux echo`,
-`linux uname`, and bounded interactive `linux cat` profiles remain available.
+Sapote First Environment is the current compact graphical shell. It combines
+the canonical green pebble, a photographic desktop, a reflective 3D Dock, a
+real FAT32 Files app, a persistent Notes editor, a dark green Terminal, and the
+native SapStudio editing workspace.
+Separate immutable-system and writable-data FAT32 volumes remain attached
+through emulated NVMe. The measured `linux echo`, `linux uname`, and bounded
+interactive `linux cat` profiles remain available.
 
 ## Current capabilities
 
@@ -48,7 +49,10 @@ metadata survive a clean synchronized QEMU reboot. The measured `linux echo`,
 - Ring 3 execution with private address spaces and checked ELF64 loading.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
-- First Light, a framebuffer console, filesystem commands, and 58 QEMU scenarios.
+- First Environment, a framebuffer console, filesystem commands, and 58 QEMU scenarios.
+- SapStudio's deterministic editor foundation, mirrored at upstream commit
+  `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
+  timeline trim/save, and bounded BMP frame export.
 
 ## Build and boot
 
@@ -61,7 +65,7 @@ rustup target add x86_64-unknown-none
 
 make verify       # clean build and structural checks
 make qemu-tests   # run all QEMU scenarios
-make run          # boot First Light
+make run          # boot Sapote First Environment
 ```
 
 Build products are written to `build/sapote.elf`, `build/sapote.iso`, and the
@@ -81,8 +85,8 @@ unapproved boot-path shortcuts.
 
 ## Project status
 
-Sapote is still a foundation-stage, single-core system. First Light is a fixed
-kernel workspace rather than a general window manager. FAT32 support is one
+Sapote is still a foundation-stage, single-core system. First Environment is a
+fixed four-application shell rather than a general window manager. FAT32 support is one
 bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files, no
 journal, and a clean-sync persistence contract. Networking, general process
 services, an IOMMU, and broad physical-hardware coverage remain future work.
@@ -94,7 +98,8 @@ userspace ABI.
 
 - [Architecture](docs/ARCHITECTURE.md) — the durable map of the kernel
 - [Boot Ledger](docs/BOOT_LEDGER.md) — startup dependencies and installed state
-- [First Light](docs/FIRST_LIGHT.md) — interface and capture contract
+- [First Environment](docs/FIRST_ENVIRONMENT.md) — current interface and capture contract
+- [First Light](docs/FIRST_LIGHT.md) — retained v2.0.0 interface contract
 - [Persistent FAT32](docs/FAT32.md) — volumes, filesystem rules, and persistence
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles
 - [Rust boundary](docs/RUST.md) — where safe byte validation belongs

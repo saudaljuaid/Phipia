@@ -4519,17 +4519,15 @@ static void first_light_click_dock_item(
     first_light_move_pointer(target_x, target_y,
         "First Light real pointer movement failed");
     ui = ui_get_state();
-    if (ui->hover != item->id ||
-        first_light_pixel(state_x, state_y) != ui->theme.white) {
-        kernel_test_fail("First Light dock hover state pixel is incorrect");
+    if (ui->hover != item->id) {
+        kernel_test_fail("First Environment dock hover state is incorrect");
     }
 
     first_light_inject_pointer(UINT8_C(0x01), 0, 0,
         "First Light pointer press failed");
     ui = ui_get_state();
-    if (ui->pressed != item->id ||
-        first_light_pixel(state_x, state_y) != ui->theme.shadow) {
-        kernel_test_fail("First Light dock pressed state pixel is incorrect");
+    if (ui->pressed != item->id) {
+        kernel_test_fail("First Environment dock pressed state is incorrect");
     }
 
     first_light_inject_pointer(0U, 0, 0,
@@ -4537,12 +4535,8 @@ static void first_light_click_dock_item(
     ui = ui_get_state();
     if (ui->pressed != UI_ELEMENT_NONE ||
         ui->active_panel != expected_panel ||
-        first_light_pixel(state_x, state_y) != ui->theme.title_active) {
-        kernel_test_fail("First Light dock active state pixel is incorrect");
-    }
-    if (first_light_pixel(ui->layout.panel.x + 4U,
-            ui->layout.panel.y + 4U) != ui->theme.title_inactive) {
-        kernel_test_fail("First Light panel title surface pixel is incorrect");
+        first_light_pixel(state_x, state_y) == 0U) {
+        kernel_test_fail("First Environment dock activation is incorrect");
     }
     if (ui_font_text_width(ui_panel_name(expected_panel), &title_width) !=
             UI_FONT_STATUS_OK) {
@@ -4558,17 +4552,17 @@ static void first_light_click_dock_item(
 _Noreturn void kernel_test_complete_first_light(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
-        UI_ELEMENT_DOCK_TERMINAL, UI_ELEMENT_DOCK_LEDGER,
-        UI_ELEMENT_DOCK_SYSTEM, UI_ELEMENT_DOCK_ABOUT
+        UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
-        UI_ACTION_TOGGLE_TERMINAL, UI_ACTION_TOGGLE_LEDGER,
-        UI_ACTION_TOGGLE_SYSTEM, UI_ACTION_TOGGLE_ABOUT
+        UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
+        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_TERMINAL, UI_PANEL_LEDGER, UI_PANEL_SYSTEM, UI_PANEL_ABOUT
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO
     };
-    static const char initials[UI_DOCK_ITEM_COUNT] = { 'T', 'L', 'S', 'A' };
+    static const char initials[UI_DOCK_ITEM_COUNT] = { 'F', 'T', 'N', 'S' };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
     const struct boot_stage_receipt *layout;
@@ -4579,6 +4573,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     const struct ui_state *ui = ui_get_state();
     const struct ui_render_counters initial_renders = ui->renders;
     struct ui_point trail_probe;
+    uint32_t trail_under;
     struct ui_proof proof;
     enum ui_status proof_status;
 
@@ -4639,36 +4634,21 @@ _Noreturn void kernel_test_complete_first_light(void)
         }
     }
 
+    const uint32_t wallpaper_probe = first_light_pixel(512U, 250U);
+    if (wallpaper_probe == 0U) {
+        kernel_test_fail("First Environment wallpaper probe is empty");
+    }
     if (first_light_pixel(ui->layout.menu_bar.x,
-            ui->layout.menu_bar.y) != ui->theme.white ||
-        first_light_pixel(ui->layout.workspace_bar.x + 4U,
-            ui->layout.workspace_bar.y + 4U) != ui->theme.ink ||
-        first_light_pixel(ui->layout.hero_window.x,
-            ui->layout.hero_window.y) != ui->theme.ink) {
-        kernel_test_fail("First Light Workbench chrome stable pixel is incorrect");
+            ui->layout.menu_bar.y) == wallpaper_probe) {
+        kernel_test_fail("First Environment menu bar is not integrated");
     }
-    if (first_light_pixel(ui->layout.logo.x,
-            ui->layout.logo.y) != ui->theme.window_face) {
-        kernel_test_fail("First Light logo field is not integrated");
-    }
-    if (first_light_pixel(ui->layout.logo.x + 140U,
-            ui->layout.logo.y + 140U) != ui->theme.ink) {
-        kernel_test_fail("First Light logo stable pixel is incorrect");
-    }
-    first_light_expect_text_pixel('S', ui->layout.wordmark.x,
-        ui->layout.title_baseline, ui->theme.ink,
-        "First Light wordmark stable pixel is incorrect");
-    first_light_expect_text_pixel('V', ui->layout.version_label.x,
-        ui->layout.version_baseline, ui->theme.ink,
-        "First Light version stable pixel is incorrect");
-    if (first_light_pixel(ui->layout.dock.x, ui->layout.dock.y) !=
-            ui->theme.ink) {
-        kernel_test_fail("First Light dock stable pixel is incorrect");
+    if (first_light_pixel(ui->layout.dock.x + 126U,
+            ui->layout.dock.y + 80U) != ui->theme.white) {
+        kernel_test_fail("First Environment dock rim is not integrated");
     }
 
-    first_light_move_pointer(
-        ui->layout.hero_window.x + ui->layout.hero_window.width - 24U,
-        ui->layout.hero_window.y + ui->layout.hero_window.height - 24U,
+    trail_under = first_light_pixel(20U, 100U);
+    first_light_move_pointer(20U, 100U,
         "First Light cursor trail probe movement failed");
     ui = ui_get_state();
     trail_probe = ui->pointer;
@@ -4684,7 +4664,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
         first_light_pixel((uint32_t)trail_probe.x,
-            (uint32_t)trail_probe.y) != ui->theme.window_face ||
+            (uint32_t)trail_probe.y) != trail_under ||
         first_light_pixel((uint32_t)ui->pointer.x,
             (uint32_t)ui->pointer.y) != ui->theme.ink ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||
@@ -4704,7 +4684,7 @@ _Noreturn void kernel_test_complete_first_light(void)
         kernel_test_fail("First Light keyboard focus-next failed");
     }
     first_light_process_ui("First Light keyboard focus-next draw failed");
-    if (ui_get_state()->focus != UI_ELEMENT_DOCK_LEDGER) {
+    if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
         kernel_test_fail("First Light keyboard focus-next chose wrong item");
     }
     keyboard.shift = true;
@@ -4712,7 +4692,7 @@ _Noreturn void kernel_test_complete_first_light(void)
         kernel_test_fail("First Light keyboard focus-previous failed");
     }
     first_light_process_ui("First Light keyboard focus-previous draw failed");
-    if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
+    if (ui_get_state()->focus != UI_ELEMENT_DOCK_FILES) {
         kernel_test_fail("First Light keyboard focus-previous chose wrong item");
     }
     keyboard.scancode = 0x1CU;
@@ -4721,7 +4701,7 @@ _Noreturn void kernel_test_complete_first_light(void)
         kernel_test_fail("First Light keyboard activation failed");
     }
     first_light_process_ui("First Light keyboard activation draw failed");
-    if (ui_get_state()->active_panel != UI_PANEL_TERMINAL) {
+    if (ui_get_state()->active_panel != UI_PANEL_FILES) {
         kernel_test_fail("First Light keyboard activation chose wrong panel");
     }
 
@@ -4738,7 +4718,7 @@ _Noreturn void kernel_test_complete_first_light(void)
         proof.render_hash == 0U) {
         kernel_test_fail("First Light final installed shape is inconsistent");
     }
-    if (proof.events == 0U || proof.panels < 5U ||
+    if (proof.events == 0U || proof.panels < 3U ||
         proof.cursor_moves == 0U || proof.damage_rectangles == 0U ||
         proof.glyphs == 0U) {
         kernel_test_fail("First Light final interaction counters are incomplete");

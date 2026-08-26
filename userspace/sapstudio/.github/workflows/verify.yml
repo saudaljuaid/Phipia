@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-only
+name: verify
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: verify-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    verify:
+        name: verify
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - name: Install the bare-metal Rust target
+              run: rustup target add x86_64-unknown-none
+            - name: Record the toolchain
+              run: |
+                  rustc --version
+                  cargo --version
+                  ld --version | head -1
+            - name: Repository hygiene
+              run: make lint
+            - name: Formatting and lints
+              run: make check
+            - name: Host suite
+              run: make test
+            - name: Program image, ELF audit, and its control
+              run: make audit
+            - name: Two clean builds, compared
+              run: make reproducible

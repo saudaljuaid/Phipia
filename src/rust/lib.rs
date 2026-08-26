@@ -30,6 +30,7 @@ pub(crate) mod linux_elf64;
 pub mod font;
 pub mod logo;
 pub mod ui_font;
+pub mod wallpaper;
 
 /// Where a Rust panic goes.
 ///

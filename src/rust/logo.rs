@@ -167,6 +167,55 @@ pub fn decode(blob: &[u8], out: &mut [u32], format: &Format)
     Ok(geometry)
 }
 
+#[inline(never)]
+fn write_alpha_byte(out: &mut [u8], index: usize, value: u8) -> Result<(), Status> {
+    // Keeping this one-byte operation out of line stops LLVM from replacing
+    // the bounded caller loop with a freestanding memset call.
+    let Some(slot) = out.get_mut(index) else {
+        return Err(Status::BufferTooSmall);
+    };
+    *slot = value;
+    Ok(())
+}
+
+/// Decode only the source alpha channel, preserving transparent logo edges for
+/// callers that composite the mark over more than one background.
+pub fn decode_alpha(blob: &[u8], out: &mut [u8]) -> Result<Geometry, Status> {
+    let geometry = geometry(blob)?;
+    let pixels = (geometry.width as usize) * (geometry.height as usize);
+
+    if out.len() < pixels {
+        return Err(Status::BufferTooSmall);
+    }
+
+    let mut written = 0usize;
+    let mut offset = HEADER_SIZE;
+    while written < pixels {
+        let run = blob
+            .get(offset..offset + RUN_SIZE)
+            .ok_or(Status::Truncated)?;
+        let count = usize::from(run[0]);
+
+        if count == 0 {
+            return Err(Status::ZeroRun);
+        }
+        if count > pixels - written {
+            return Err(Status::TooManyPixels);
+        }
+        let mut index = 0usize;
+        while index < count {
+            write_alpha_byte(out, written + index, run[4])?;
+            index += 1;
+        }
+        written += count;
+        offset += RUN_SIZE;
+    }
+    if offset != blob.len() {
+        return Err(Status::TrailingBytes);
+    }
+    Ok(geometry)
+}
+
 /// Every refusal, driven by malformed blobs built here.
 ///
 /// Runs on every boot before the real image is touched, so a decoder that
@@ -180,6 +229,7 @@ pub fn self_test() -> bool {
         background: 0,
     };
     let mut out = [0u32; 8];
+    let mut alpha = [0u8; 8];
 
     // A two-by-two image: one run of three, then one single pixel.
     let good: [u8; 18] = [
@@ -194,6 +244,11 @@ pub fn self_test() -> bool {
         || out[0] != 0x0010_2030
         || out[2] != 0x0010_2030
         || out[3] != 0x0040_5060
+        || decode_alpha(&good, &mut alpha[..4]) != Ok(Geometry {
+            width: 2,
+            height: 2,
+        })
+        || alpha[..4] != [0xFF; 4]
     {
         return false;
     }
@@ -207,6 +262,9 @@ pub fn self_test() -> bool {
     let over_white = Format { background: 0x00FF_FFFF, ..format };
 
     if decode(&half, &mut out[..1], &over_black) .is_err() {
+        return false;
+    }
+    if decode_alpha(&half, &mut alpha[..1]).is_err() || alpha[0] != 0x80 {
         return false;
     }
 
@@ -232,6 +290,8 @@ pub fn self_test() -> bool {
         width: 1,
         height: 1,
     }) || out[0] != 0x00FF_FFFF
+        || decode_alpha(&clear, &mut alpha[..1]).is_err()
+        || alpha[0] != 0
     {
         return false;
     }

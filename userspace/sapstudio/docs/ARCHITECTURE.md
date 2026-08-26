@@ -1,0 +1,302 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
+# Architecture
+
+This is the shape of SapStudio. Six of its ten crates exist and are tested;
+the rest are named here so that the shape is decided before the pressure to
+compromise it arrives. Each crate below says which it is.
+
+## The shape in one paragraph
+
+A pure core, a thin platform edge, and exactly five seams between them. The
+project model, the timeline, the edit algebra, the render graph, the colour
+pipeline, and the mixer are pure functions over typed data with no knowledge of
+Sapote at all — they compile and are tested on a host with no operating system
+in the picture. Everything that touches the machine is behind five named seams
+in one crate. The application is the part in the middle that owns nothing but
+decisions.
+
+```text
+                        sapstudio-app
+                  (event loop, commands, policy)
+                              |
+   +---------------+----------+----------+---------------+
+   |               |                     |               |
+sapstudio-ui   sapstudio-io      sapstudio-render   sapstudio-rt
+               (every format)                     (entry, allocator)
+   |               |                     |               |
+   +-------+-------+----------+----------+-------+-------+
+           |                  |                  |
+   sapstudio-model    sapstudio-media    sapstudio-audio
+   (projects, edits)  (frames, colour)   (buffers, mixing)
+           |                  |                  |
+           +--------+---------+---------+--------+
+                              |
+                      sapstudio-abi
+        (the only unsafe: syscalls, C boundary, shims)
+                              |
+                     sapstudio-core
+        (time, rationals, identifiers, status, bounded types)
+                              |
+        ......................|...................... the five seams
+                              |
+                           Sapote
+```
+
+`sapstudio-io` sits above every domain crate rather than below them, because
+it is the format layer *for* them: it writes projects, reels, summaries and
+lookup tables, so it must know what each of those is.
+
+It moved up a layer of its own when the `.cube` reader arrived, because a
+lookup table lives in `sapstudio-render` and `io` was beside it rather than
+above it. The check refused the dependency, which is what it is for: the
+architecture has to move before the manifest can, and the alternative — quietly
+adding a sideways edge because a file needed one — is how a layering becomes a
+drawing again. An earlier version
+of this diagram drew it underneath `sapstudio-media` while the manifest
+already said otherwise, and nothing noticed, because nothing looked. So the
+layers below are machine-readable and `tools/layering.py` reads them, reads
+every manifest, and refuses any dependency that does not run strictly
+downward. The document is the source of truth; a crate that needs to move
+moves here first.
+
+```text layers
+0  sapstudio-core
+1  sapstudio-abi
+2  sapstudio-media  sapstudio-model  sapstudio-audio
+3  sapstudio-rt  sapstudio-render
+4  sapstudio-io
+5  sapstudio-app
+6  sapstudio-image
+```
+
+Sideways counts as a violation. Two crates in one layer that depend on each
+other are one crate that has not admitted it, and the layer stops meaning
+anything.
+
+## Crates
+
+| Crate | Owns | `unsafe` | State |
+| --- | --- | --- | --- |
+| `sapstudio-core` | Rational time, timebases, timecode, identifiers, fixed-point arithmetic and integer transcendentals, status enums | forbidden | **exists**, 79 tests |
+| `sapstudio-model` | Project, sequences, tracks, clips, media library, edit operations, undo journal, track faders, dissolves, the layer stack at an instant, keyframed parameter curves, opacity and fader automation, per-keyframe editing, a grade named by digest on a clip, dissolves and wipes, hard or soft, as one kind of transition, convex masks on clips, one asset per digest with a location hint | forbidden | **exists**, 123 tests |
+| `sapstudio-abi` | The five seams, every `extern "C"`, every raw pointer from outside | **permitted** | **exists**, two seams of five |
+| `sapstudio-rt` | Program entry, the allocator, the panic path, page and mapping management | **permitted** | **exists**, M1 heap |
+| `sapstudio-media` | Frame and sample types, full colour and format descriptions, content addressing, the frame pool, test patterns including the offline slate | forbidden | **exists**, 42 tests |
+| `sapstudio-io` | Every format: the project file, the reel, the waveform summary, the save protocol, CMX 3600 interchange and the conform that turns a sequence into one and back, the `.cube` lookup table, PNG reference captures, bounded byte readers and writers | forbidden | **exists**, 166 tests |
+| `sapstudio-app` | The event loop, command dispatch, playback policy, session lifetime, rendering a sequence at an instant, mixing its sound over a span | forbidden | **exists** as the slate — which now renders — the timeline renderer with offline media, the mixdown and the reference capture, 51 tests |
+| `sapstudio-image` | The entry point and nothing else; outside the workspace because it cannot build for the host | **permitted** | **exists**, audited |
+| `sapstudio-render` | The render graph, compositor, colour pipeline, lookup tables, rasterisation | forbidden | **exists** as the graph the timeline renders through, colour pipeline, conversion, compositor, scopes, 3D lookup tables applied to frames and to graph nodes, and the exact-area shape rasteriser a wipe and a mask are both made of, hard edges and soft, and masks, 165 tests |
+| `sapstudio-audio` | The mixer, DSP chain, loudness, waveform summaries, the real-time contract | forbidden | **exists** as buffers, gain, panning, the mix bus with moving faders, BS.1770 loudness and the waveform overview, 73 tests |
+| `sapstudio-ui` | Widgets, layout, damage tracking, interface state | forbidden | planned, M4 |
+
+Everything that exists today has no dependencies at all — not one line of
+third-party code — which is why [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md)
+has not yet had to refuse anything.
+
+Two crates may contain `unsafe`. Every other crate carries
+`#![forbid(unsafe_code)]`, which makes R-3.1.4 a compiler error rather than a
+review comment.
+
+`native/` holds the C shims (R-3.3). `perf/` holds C++ leaves when any exist
+(R-3.4). Neither directory may be referenced by any crate except
+`sapstudio-abi`.
+
+## The five seams
+
+Everything the platform provides arrives through exactly five interfaces. Each
+is a trait in `sapstudio-abi` with two implementations: the Sapote one, and a
+deterministic test one used by the host suite.
+
+| Seam | Provides | Sapote capability | State |
+| --- | --- | --- | --- |
+| `Console` | Write bytes to the kernel transcript | `SAP-01` | **exists** |
+| `Time` | Monotonic nanoseconds | `SAP-05` | **exists** |
+| `Presentation` | Acquire a pixel surface; present a damage rectangle | `SAP-06` | planned |
+| `Input` | Drain a bounded queue of key and pointer events | `SAP-07` | planned |
+| `Storage` | Two fixed extents and an atomic swap between them | `SAP-08` | **exists**, in memory |
+| `Audio` | Submit a period of samples; read the presentation clock | `SAP-13` | planned |
+
+`Console` is the diagnostic seam every program needs before it has a picture,
+and it is what the slate writes its report through today. `Storage` has its
+trait and its deterministic in-memory implementation, which is what lets the
+save protocol below be tested — including all four of its failure modes —
+before Sapote can write a byte.
+
+Six, and the sixth is a transcript. Not seven, and no general "system"
+interface that would become a seventh by accretion. Adding a seam is an
+amendment to this document and to
+[`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md).
+
+## The data model
+
+### Time
+
+```text
+Rational  { numerator: i64, denominator: NonZeroI64 }   exact, always reduced
+Timebase  { rate: Rational }                            e.g. 24000/1001
+Instant   { ticks: i64, timebase: Timebase }            a position
+Duration  { ticks: i64, timebase: Timebase }            a length
+Timecode  { hours, minutes, seconds, frames, drop }     presentation only
+SampleAt  { samples: i64, rate: u32 }                   audio position
+```
+
+Instants and durations in different timebases do not add. Conversion is an
+explicit, exact operation that refuses when it cannot be exact (R-4.8). Timecode
+is a rendering of an `Instant`, never a storage type.
+
+### Structure
+
+```text
+Project
+  media_library : SlotMap<MediaId, MediaAsset>
+  sequences     : SlotMap<SequenceId, Sequence>
+  history       : EditJournal
+
+MediaAsset  identity (content digest), timebase, duration, location hint
+Sequence    timebase, tracks                                   [markers planned]
+Track       ordered, non-overlapping items, fader, transitions,
+            opacity and level curves
+Item        clip | gap                          [nested sequence planned]
+Clip        media reference, source range, length, grade, mask
+```
+
+**Every line above is what exists.** An earlier version of this block was a
+sketch of the finished model written in the present tense, and it went stale
+without anyone noticing: it gave `MediaAsset` a location hint the type did not
+have, a "probed description" the *layering* forbids — `sapstudio-model` and
+`sapstudio-media` are siblings, so an asset can never hold a `FrameDescription`
+— and it listed a transition as a kind of `Item` in a document that explains at
+length why a transition is not one. What is planned is marked as planned.
+
+Reading that block is what found the location hint missing, and chasing that
+found a real bug: two identifiers could name one digest, which quietly
+falsified the conform round trip. A diagram nobody checks is a diagram that
+describes the program somebody meant to write.
+
+A transition is **not** an item, and that is the model's second most important
+decision after non-overlap: an item would have to overlap its neighbours, so a
+transition is a length and the cut it is centred on. Both a dissolve and a wipe
+are that same shape and differ only in what a renderer does with the fraction.
+
+Markers and nested sequences are named here so the shape is decided before the
+pressure to compromise it arrives, and neither exists. Effects do not exist
+either: a grade and a mask are fields on a clip rather than entries in a
+general effect list, and the general list is M8's problem.
+
+A track's items are non-overlapping by construction: the type cannot represent
+an overlap, so an editing operation that would create one fails to compile a
+value rather than being caught by a check. This is the model's single most
+important design decision.
+
+### Edits and history
+
+An edit is a value:
+
+```text
+Edit = Insert | Remove | Trim | Slip | Slide | Roll | Ripple | SetParameter | ...
+```
+
+Every variant carries enough to invert itself. The journal is a sequence of
+applied edits with the model root before and after each. Undo is the inverse;
+redo is reapplication. The property test that governs this is R-9.2: for any
+generated sequence of edits, undoing all of them reproduces the initial model
+hash exactly.
+
+Structural sharing (`rpds`, if adopted) makes keeping the old root cheap, which
+is what makes this design affordable rather than merely correct.
+
+## Saving
+
+A save must never be able to lose the last good file (R-9.4), so it is four
+steps and only the last one touches the project:
+
+```text
+  1. encode          the project becomes bytes, in memory
+  2. write scratch   the scratch slot takes them; the project is untouched
+  3. read back       the scratch slot is read and compared, byte for byte
+  4. commit          the seam's one atomic step: scratch becomes project
+```
+
+Step three exists because a storage that accepted a write and stored something
+else is exactly the failure that would otherwise be committed. Removing its
+comparison makes one test fail — the one about a storage that corrupts — which
+is how it is known to be load-bearing rather than decorative.
+
+The file format is versioned from its first byte, length-prefixed, and carries
+a SHA-256 of its payload, which together mean **every single-byte change to a
+valid file is refused**. That is checked by mutating every byte of a real file
+to five different values, by truncating it to every possible length, by
+extending it, and by pushing a few hundred thousand bytes of seeded garbage
+through the decoder.
+
+History is not saved. Undo is a property of a session; a file that carried its
+own history would make "open the file" and "open the file and undo twice" two
+different projects with one name.
+
+## The media pipeline
+
+```text
+  storage bytes
+        |  bounded read, digest verified
+   container demux            <- safe Rust, fuzzed, bounded
+        |  typed packets
+     decoder                  <- safe Rust today; sealed C leaf later
+        |  frames, fully described
+   frame cache                <- content-keyed, bounded, evictable
+        |
+   render graph               <- pure, deterministic, order-independent
+        |
+   compositor + colour        <- explicit conversions only
+        |
+   presentation surface       <- damage rectangle, one seam
+```
+
+Every arrow is a typed value with a hash. Every box is a pure function except
+the first and the last. Four of them exist: the frame types with their complete
+descriptions, the content addressing, the bounded pool, and the `SPRW`
+mezzanine that the first three are read from and written to. A frame whose
+colour is unstated is not merely refused — the types have no `Unknown`, no
+`Unspecified` and no `Default`, so it is not a value this application can
+construct. A cache entry's key is a digest over the input digest,
+the complete parameter set, and a code version constant (R-8.5) — so a cache
+can never return something computed by different code.
+
+The audio path is the same shape with a harder deadline: decode, resample,
+mix, meter, submit. Nothing on it allocates (R-5.3), nothing on it locks
+(R-6.4), and its latency is declared rather than measured (R-8.6).
+
+## Concurrency
+
+Single-core today, so everything runs in one thread and the render graph
+executes serially. The graph is nonetheless written as if it were parallel:
+pure tasks, typed edges, no ambient state, fixed reduction shapes. R-6.2's test
+— run the same graph in every order a scheduler could choose and compare the
+results — runs now, when it is close to trivially true, so that it is still
+true on the day `SAP-11` makes it interesting.
+
+Two of the graph's invariants are structural rather than checked. A node may
+only refer to nodes added before it, so **a cycle is unrepresentable**: there
+is no `add_edge` to get wrong and no validation pass to forget. And a node's
+identity is a digest over its kind, its parameters and its inputs' identities,
+so two nodes that would compute the same picture are the same node as far as
+the cache is concerned. Leaving the input out of that digest was shown to fail
+both the identity test and the order-independence test — the second because a
+shared cache then hands back the wrong frame, which is the exact failure a
+content-addressed cache exists to prevent.
+
+## Directory layout
+
+```text
+crates/            the Rust workspace
+native/            C shims (R-3.3)
+perf/              C++ leaves, if any (R-3.4)
+vendor/            vendored dependencies, exact and complete
+deps/manifest.toml the dependency record
+targets/           the SapStudio target specification and linker script
+tools/             build, fixture, and verification tooling
+fuzz/              fuzz targets and corpora
+tests/golden/      golden hashes and reference frames
+docs/              this documentation set
+assets/            the canonical mark and shipped assets
+```

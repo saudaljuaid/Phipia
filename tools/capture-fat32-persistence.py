@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Capture a real First Light FAT32 create/sync/reboot/read interaction."""
+"""Capture a real First Light FAT32 create/sync/reboot/read interaction.
+
+The clean reboot boundary tears down the first emulator after the guest's
+synchronization proof, then starts a second QEMU process on the same data image.
+"""
 
 import argparse
 import json
@@ -96,6 +100,13 @@ def send_line(qmp, text):
     qmp.hmp("sendkey ret")
 
 
+def open_terminal(qmp):
+    """Open Terminal through ordinary First Environment keyboard focus."""
+    qmp.hmp("sendkey tab")
+    time.sleep(0.10)
+    qmp.hmp("sendkey ret")
+
+
 def screendump(qmp, destination):
     qmp.execute("screendump", {
         "filename": destination.resolve().as_posix(), "format": "ppm"
@@ -177,6 +188,31 @@ def storage_arguments(system, data):
     ]
 
 
+def guest_command(args, system, data, serial, port):
+    return [
+        args.qemu, "-machine", "accel=tcg", "-m", "128M", "-smp", "1",
+        "-boot", "order=d", "-cdrom", str(Path(args.iso).resolve()),
+        *storage_arguments(system, data),
+        "-display", "none",
+        "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
+        "-serial", f"file:{serial}"
+    ]
+
+
+def stop_guest(qmp, process):
+    if qmp is not None:
+        try:
+            qmp.execute("quit")
+        except (OSError, RuntimeError):
+            pass
+        qmp.close()
+    try:
+        process.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", default="qemu-system-x86_64")
@@ -204,25 +240,18 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sapote-fat32-video-") as temp:
         temp = Path(temp)
         serial = temp / "serial.log"
+        second_serial = temp / "serial-second.log"
         port = free_port()
-        command = [
-            args.qemu, "-machine", "accel=tcg", "-m", "128M", "-smp", "1",
-            "-boot", "order=d", "-cdrom", str(Path(args.iso).resolve()),
-            *storage_arguments(system, data),
-            "-display", "none",
-            "-qmp", f"tcp:127.0.0.1:{port},server=on,wait=off",
-            "-serial", f"file:{serial}"
-        ]
         process = subprocess.Popen(
-            command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            guest_command(args, system, data, serial, port),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         qmp = None
         try:
             qmp = Qmp(port)
             wait_count(serial, PROOF, 1, 60.0)
-            qmp.hmp("mouse_move -260 320")
             prompt_count = serial.read_bytes().count(b"sap> ")
-            qmp.hmp("sendkey ret")
+            open_terminal(qmp)
             wait_count(serial, b"sap> ", prompt_count + 1, 5.0)
             started = time.monotonic()
             actions = [
@@ -234,8 +263,6 @@ def main():
                 (7.3, "reboot"),
             ]
             action_index = 0
-            second_prompt_target = None
-            persisted_read = False
             frames = round(args.seconds * args.fps)
             for index in range(frames):
                 deadline = started + index / args.fps
@@ -246,38 +273,40 @@ def main():
                 if action_index < len(actions) and elapsed >= actions[action_index][0]:
                     text = actions[action_index][1]
                     send_line(qmp, text)
+                    if text == "reboot":
+                        wait_count(serial,
+                            b"restarting after clean synchronization", 1, 5.0)
+                        stop_guest(qmp, process)
+                        qmp = None
+                        port = free_port()
+                        process = subprocess.Popen(
+                            guest_command(args, system, data, second_serial,
+                                port),
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        qmp = Qmp(port)
+                        wait_count(second_serial, PROOF, 1, 60.0)
+                        prompt_count = second_serial.read_bytes().count(
+                            b"sap> ")
+                        open_terminal(qmp)
+                        wait_count(second_serial, b"sap> ",
+                            prompt_count + 1, 5.0)
+                        send_line(qmp, "read projects/notes.txt")
                     action_index += 1
-                serial_bytes = serial.read_bytes() if serial.exists() else b""
-                if (serial_bytes.count(PROOF) >= 2 and
-                        second_prompt_target is None):
-                    second_prompt_target = serial_bytes.count(b"sap> ") + 1
-                    qmp.hmp("sendkey ret")
-                elif (second_prompt_target is not None and
-                        serial_bytes.count(b"sap> ") >= second_prompt_target and
-                        not persisted_read):
-                    send_line(qmp, "read projects/notes.txt")
-                    persisted_read = True
-                screendump(qmp, temp / f"frame-{index:04d}.ppm")
-            if not persisted_read:
-                raise RuntimeError("second First Light boot did not become ready")
+                frame = temp / f"frame-{index:04d}.ppm"
+                screendump(qmp, frame)
             time.sleep(0.4)
             final_ppm = temp / "persistence.ppm"
             screendump(qmp, final_ppm)
             ppm_to_png(final_ppm, screenshot)
         finally:
-            if qmp is not None:
-                try:
-                    qmp.execute("quit")
-                except (OSError, RuntimeError):
-                    pass
-                qmp.close()
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            stop_guest(qmp, process)
 
         serial_bytes = serial.read_bytes() if serial.exists() else b""
+        if second_serial.exists():
+            serial_bytes += second_serial.read_bytes()
+        transcript.write_bytes(serial_bytes)
         if serial_bytes.count(PROOF) < 2:
             raise RuntimeError("capture omitted the clean second boot")
         after_second_boot = serial_bytes.split(PROOF, 2)[2]
@@ -290,7 +319,6 @@ def main():
         if (b"data synchronized" not in serial_bytes or
                 b"restarting after clean synchronization" not in serial_bytes):
             raise RuntimeError("capture omitted clean synchronization evidence")
-        transcript.write_bytes(serial_bytes)
         encode(
             args.ffmpeg, temp / "frame-%04d.ppm", args.fps,
             args.seconds, video

@@ -323,6 +323,61 @@ def build_full_data_image() -> bytes:
     return bytes(image)
 
 
+def short_name_bytes(name: str) -> bytes:
+    """Encode the host staging subset as one canonical FAT 8.3 name."""
+    upper = name.upper()
+    if upper.count(".") > 1:
+        raise Fat32Error("staged filename must be a single 8.3 name")
+    parts = upper.split(".", 1)
+    base = parts[0]
+    extension = parts[1] if len(parts) == 2 else ""
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+    if not 1 <= len(base) <= 8 or len(extension) > 3:
+        raise Fat32Error("staged filename exceeds the 8.3 subset")
+    if any(character not in allowed for character in base + extension):
+        raise Fat32Error("staged filename contains an unsupported character")
+    return (base.ljust(8) + extension.ljust(3)).encode("ascii")
+
+
+def populate_data_image(source: bytes, name: str, payload: bytes) -> bytes:
+    """Place one bounded ordinary file in a fresh deterministic data image."""
+    verify_data(source)
+    if not payload:
+        raise Fat32Error("staged media file must not be empty")
+    if len(payload) > 16 * 1024 * 1024:
+        raise Fat32Error("staged media file exceeds the kernel file bound")
+    short_name = short_name_bytes(name)
+    clusters = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
+    first_cluster = ROOT_CLUSTER + 1
+    if first_cluster + clusters - 1 > CLUSTER_COUNT + 1:
+        raise Fat32Error("staged media file does not fit the data volume")
+
+    image = bytearray(source)
+    for ordinal in range(clusters):
+        cluster = first_cluster + ordinal
+        following = cluster + 1 if ordinal + 1 < clusters else FAT32_EOC
+        _set_fat(image, cluster, following)
+        offset = _cluster_offset(cluster)
+        start = ordinal * SECTOR_BYTES
+        block = payload[start:start + SECTOR_BYTES]
+        image[offset:offset + len(block)] = block
+    root = _cluster_offset(ROOT_CLUSTER)
+    image[root + ENTRY_BYTES:root + 2 * ENTRY_BYTES] = _directory_entry(
+        short_name, 0x20, first_cluster, len(payload)
+    )
+    free_clusters = CLUSTER_COUNT - 1 - clusters
+    next_free = first_cluster + clusters
+    if next_free > CLUSTER_COUNT + 1:
+        next_free = 0xFFFFFFFF
+    info = _fsinfo(free_clusters, next_free)
+    for sector in (FSINFO_SECTOR, BACKUP_BOOT_SECTOR + FSINFO_SECTOR):
+        offset = sector * SECTOR_BYTES
+        image[offset:offset + SECTOR_BYTES] = info
+    populated = bytes(image)
+    inspect_image(populated)
+    return populated
+
+
 def parse_geometry(image: bytes | bytearray | memoryview) -> Geometry:
     if len(image) < SECTOR_BYTES:
         raise Fat32Error("truncated boot sector")
@@ -749,6 +804,18 @@ def command_malform(args: argparse.Namespace) -> None:
     raise Fat32Error("malformed fixture was not rejected by the inspector")
 
 
+def command_populate(args: argparse.Namespace) -> None:
+    source = read_regular(Path(args.source))
+    payload = read_regular(Path(args.input))
+    populated = populate_data_image(source, args.name, payload)
+    atomic_write(Path(args.output), populated)
+    report = inspect_image(populated)
+    print(json.dumps({"output": str(Path(args.output)), "name": args.name,
+                      "payload_sha256": hashlib.sha256(payload).hexdigest().upper(),
+                      "sha256": hashlib.sha256(populated).hexdigest().upper(),
+                      **report}, sort_keys=True))
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
@@ -781,6 +848,12 @@ def parser() -> argparse.ArgumentParser:
     malformed.add_argument("source")
     malformed.add_argument("output")
     malformed.set_defaults(function=command_malform)
+    populate = commands.add_parser("populate-data")
+    populate.add_argument("source")
+    populate.add_argument("output")
+    populate.add_argument("--input", required=True)
+    populate.add_argument("--name", required=True)
+    populate.set_defaults(function=command_populate)
     return result
 
 

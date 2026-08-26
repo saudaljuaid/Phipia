@@ -34,7 +34,8 @@ enum screen_status {
     SCREEN_STATUS_SURFACE_FAILURE,
     SCREEN_STATUS_DRAW_FAILURE,
     SCREEN_STATUS_BAD_VIEWPORT,
-    SCREEN_STATUS_CELL_CAPACITY
+    SCREEN_STATUS_CELL_CAPACITY,
+    SCREEN_STATUS_BAD_IMAGE
 };
 
 struct screen_state {
@@ -91,6 +92,29 @@ enum screen_status screen_set_viewport(
 enum screen_status screen_set_visible(bool visible);
 enum screen_status screen_set_deferred_present(bool deferred);
 enum screen_status screen_redraw_region(struct surface_rect clip);
+enum screen_status screen_set_palette(
+    uint8_t background_red,
+    uint8_t background_green,
+    uint8_t background_blue,
+    uint8_t foreground_red,
+    uint8_t foreground_green,
+    uint8_t foreground_blue
+);
+
+/*
+ * Place one bounded, alpha-backed image at the text cursor and reserve complete
+ * rows below it. Pixels are packed for the installed framebuffer and already
+ * precomposed over black; source storage remains caller-owned.
+ */
+enum screen_status screen_draw_image(
+    const uint32_t *pixels,
+    const uint8_t *alpha,
+    uint32_t source_width,
+    uint32_t source_height,
+    uint32_t width,
+    uint32_t height,
+    uint32_t reserved_rows
+);
 
 struct screen_state screen_get_state(void);
 

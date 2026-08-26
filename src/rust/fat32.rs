@@ -52,6 +52,7 @@ pub(crate) enum Status {
     ComponentTooLong,
     NameMalformed,
     AboveRoot,
+    #[allow(dead_code)]
     Count,
 }
 

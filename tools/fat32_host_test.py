@@ -42,6 +42,24 @@ class Fat32HostTests(unittest.TestCase):
         self.assertEqual(len(report["files"]), 5)
         self.assertEqual(image, fat32.build_full_data_image())
 
+    def test_host_staging_populates_one_bounded_media_file(self) -> None:
+        payload = bytes(range(256)) * 5
+        populated = fat32.populate_data_image(
+            self.image, "AURORA.BMP", payload
+        )
+        report = fat32.inspect_image(populated)
+        self.assertEqual(
+            report["files"],
+            [{"path": "AURORA.BMP", "directory": False,
+              "size": len(payload), "first_cluster": 3}],
+        )
+        self.assertEqual(
+            populated,
+            fat32.populate_data_image(self.image, "AURORA.BMP", payload),
+        )
+        with self.assertRaisesRegex(fat32.Fat32Error, "8.3"):
+            fat32.populate_data_image(self.image, "TOO-LONG-NAME.BMP", payload)
+
     def test_all_supported_malformed_images_are_detected(self) -> None:
         kinds = (
             "boot-signature", "bpb-sector-size", "bpb-cluster-size",
