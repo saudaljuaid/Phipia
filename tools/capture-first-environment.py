@@ -566,44 +566,41 @@ def main():
                 captured_frames = []
                 capture_times = []
             else:
-                frame_count = round(args.seconds * args.fps)
                 events = set()
                 captured_frames = []
                 capture_times = []
                 started = time.monotonic()
-                for index in range(frame_count):
-                    deadline = started + index / args.fps
-                    remaining = deadline - time.monotonic()
-                    if remaining > 0.0:
-                        time.sleep(remaining)
-                    elapsed = index / args.fps
+                next_capture = started
+                index = 0
+                while time.monotonic() - started < args.seconds:
+                    elapsed = time.monotonic() - started
 
                     if elapsed >= 0.50 and "terminal_hover" not in events:
                         pointer.prime_terminal()
                         capture_png(qmp, work, output,
                                     "sapote-first-environment-dock")
                         events.add("terminal_hover")
-                    if elapsed >= 1.50 and "terminal_open" not in events:
+                    elif elapsed >= 1.50 and "terminal_open" not in events:
                         pointer.click()
                         time.sleep(0.35)
                         events.add("terminal_open")
-                    if elapsed >= 2.25 and "fetch" not in events:
+                    elif elapsed >= 2.25 and "fetch" not in events:
                         send_text(qmp, "fetch")
                         qmp.hmp("sendkey ret")
                         time.sleep(0.75)
                         capture_png(qmp, work, output,
                                     "sapote-first-environment-terminal")
                         events.add("fetch")
-                    if elapsed >= 4.75 and "terminal_close" not in events:
+                    elif elapsed >= 4.75 and "terminal_close" not in events:
                         pointer.move_to(101, 57)
                         pointer.click()
                         events.add("terminal_close")
-                    if elapsed >= 5.75 and "files_open" not in events:
+                    elif elapsed >= 5.75 and "files_open" not in events:
                         pointer.move_to(368, 700)
                         pointer.click()
                         time.sleep(0.35)
                         events.add("files_open")
-                    if elapsed >= 7.00 and "new_file" not in events:
+                    elif elapsed >= 7.00 and "new_file" not in events:
                         pointer.move_to(212, 99)
                         pointer.click()
                         time.sleep(1.50)
@@ -612,12 +609,12 @@ def main():
                         capture_png(qmp, work, output,
                                     "sapote-first-environment-files")
                         events.add("new_file")
-                    if elapsed >= 8.50 and "file_open" not in events:
+                    elif elapsed >= 8.50 and "file_open" not in events:
                         pointer.move_to(525, 180)
                         pointer.click()
                         time.sleep(0.80)
                         events.add("file_open")
-                    if elapsed >= 10.00 and "note_saved" not in events:
+                    elif elapsed >= 10.00 and "note_saved" not in events:
                         send_text(qmp, "first cut / saved from files.")
                         time.sleep(0.40)
                         pointer.move_to(138, 99)
@@ -627,51 +624,68 @@ def main():
                         capture_png(qmp, work, output,
                                     "sapote-first-environment-notes")
                         events.add("note_saved")
-                    if elapsed >= 12.00 and "notes_close" not in events:
+                    elif elapsed >= 12.00 and "notes_close" not in events:
                         pointer.move_to(101, 57)
                         pointer.click()
                         events.add("notes_close")
-                    if elapsed >= 12.50 and "studio_open" not in events:
+                    elif elapsed >= 12.50 and "studio_open" not in events:
                         pointer.move_to(656, 700)
                         pointer.click()
                         time.sleep(0.40)
                         events.add("studio_open")
-                    if elapsed >= 13.00 and "studio_new" not in events:
+                    elif elapsed >= 13.00 and "studio_new" not in events:
                         pointer.move_to(134, 97)
                         pointer.click()
                         time.sleep(0.20)
                         events.add("studio_new")
-                    if elapsed >= 13.35 and "studio_import" not in events:
+                    elif elapsed >= 13.35 and "studio_import" not in events:
                         pointer.move_to(206, 97)
                         pointer.click()
                         time.sleep(0.80)
                         events.add("studio_import")
-                    if elapsed >= 14.00 and "studio_trim" not in events:
+                    elif elapsed >= 14.00 and "studio_trim" not in events:
                         pointer.move_to(280, 97)
                         pointer.click()
                         time.sleep(0.25)
                         events.add("studio_trim")
-                    if elapsed >= 14.35 and "studio_seek" not in events:
+                    elif elapsed >= 14.35 and "studio_seek" not in events:
                         pointer.move_to(566, 564)
                         pointer.click()
                         time.sleep(0.20)
                         events.add("studio_seek")
-                    if elapsed >= 14.70 and "studio_save" not in events:
+                    elif elapsed >= 14.70 and "studio_save" not in events:
                         pointer.move_to(350, 97)
                         pointer.click()
-                        time.sleep(5.00)
                         events.add("studio_save")
-                    if elapsed >= 15.20 and "studio_export" not in events:
-                        pointer.move_to(420, 97)
-                        click_export_and_wait(pointer, durable_data)
-                        capture_png(qmp, work, output,
-                                    "sapote-first-environment-studio")
-                        events.add("studio_export")
+
+                    now = time.monotonic()
+                    if now - started >= args.seconds:
+                        break
+                    remaining = next_capture - now
+                    if remaining > 0.0:
+                        time.sleep(remaining)
+                    captured_at = time.monotonic()
+                    if captured_at - started >= args.seconds:
+                        break
 
                     frame = work / f"frame-{index:04d}.ppm"
                     capture_ppm(qmp, frame)
+                    captured_at = time.monotonic()
                     captured_frames.append(frame)
-                    capture_times.append(index / args.fps)
+                    capture_times.append(captured_at)
+                    index += 1
+                    next_capture = captured_at + 1.0 / args.fps
+
+                # The twenty-second recording ends after the visible Save
+                # click.  Complete the slower synchronized export afterward,
+                # as live-window capture does, while QEMU and its NVMe devices
+                # remain active for the consistency evidence.
+                time.sleep(5.0)
+                pointer.move_to(420, 97)
+                click_export_and_wait(pointer, durable_data)
+                capture_png(qmp, work, output,
+                            "sapote-first-environment-studio")
+                events.add("studio_export")
 
             required = {
                 "terminal_hover", "terminal_open", "fetch", "terminal_close",
