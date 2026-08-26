@@ -90,20 +90,21 @@ def wait_ready(path: Path, process: subprocess.Popen[bytes]) -> None:
 def qmp_command(endpoint: Path | tuple[str, int], execute: str,
                 arguments: dict[str, object]) -> None:
     deadline = time.monotonic() + 8.0
-    if isinstance(endpoint, Path):
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        address: str | tuple[str, int] = str(endpoint)
-    else:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        address = endpoint
+    family = socket.AF_UNIX if isinstance(endpoint, Path) else socket.AF_INET
+    address: str | tuple[str, int] = (
+        str(endpoint) if isinstance(endpoint, Path) else endpoint
+    )
     while True:
+        client = socket.socket(family, socket.SOCK_STREAM)
         try:
             client.connect(address)
             break
-        except (FileNotFoundError, ConnectionRefusedError):
+        except (FileNotFoundError, ConnectionRefusedError) as error:
+            client.close()
             if time.monotonic() >= deadline:
-                client.close()
-                raise RuntimeError("QMP socket did not become ready")
+                raise RuntimeError(
+                    "QMP socket did not become ready"
+                ) from error
             time.sleep(0.02)
     stream = client.makefile("rwb", buffering=0)
 

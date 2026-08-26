@@ -13,7 +13,7 @@
   },
   "malformed": 0,
   "missing": [],
-  "pcap": "C:\\Users\\Saud\\Documents\\Codex\\2026-08-26\\re\\Sapote\\build\\networking-capture\\sapote-v2.1.0-networking.pcap",
+  "pcap": "sapote-v2.1.0-networking.pcap",
   "production_path": true,
   "required": [
     "guest_tx",

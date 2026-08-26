@@ -1138,10 +1138,18 @@ static void command_ping(const char *arguments)
 
 static void command_resolve(const char *arguments)
 {
+    char hostname[SAPFS_MAX_PATH + 1U];
+    const char *remainder;
     uint32_t address;
-    const enum network_status status = network_resolve(arguments, &address,
-        NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+    enum network_status status;
 
+    if (!first_argument(arguments, hostname, &remainder) ||
+        remainder[0] != '\0') {
+        console_write("resolve: use 'resolve HOSTNAME'\n");
+        return;
+    }
+    status = network_resolve(hostname, &address,
+        NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
     if (status != NETWORK_STATUS_OK) {
         network_error("resolve", status);
         return;
@@ -1153,16 +1161,18 @@ static void command_resolve(const char *arguments)
 static void command_http(const char *arguments)
 {
     char url[SAPFS_MAX_PATH + 1U];
-    const char *destination;
+    char path[SAPFS_MAX_PATH + 1U];
+    const char *remainder;
     struct network_http_result result;
     enum network_status status;
 
-    if (!first_argument(arguments, url, &destination) ||
-        destination[0] == '\0') {
+    if (!first_argument(arguments, url, &remainder) ||
+        !first_argument(remainder, path, &remainder) ||
+        remainder[0] != '\0') {
         console_write("http: use 'http URL DATA-PATH'\n");
         return;
     }
-    status = network_http_download(SHELL_NETWORK_OWNER, url, destination,
+    status = network_http_download(SHELL_NETWORK_OWNER, url, path,
         false, UINT64_C(15000000000), &result);
     if (status != NETWORK_STATUS_OK) {
         network_error("http", status);
@@ -1170,7 +1180,7 @@ static void command_http(const char *arguments)
     }
     console_write_u64(result.status_code);
     console_write(" HTTP response\nsaved ");
-    console_write(destination);
+    console_write(path);
     console_putc('\n');
     console_write_u64(result.body_bytes);
     console_write(" bytes synchronized\n");

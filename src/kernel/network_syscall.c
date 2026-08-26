@@ -21,21 +21,31 @@ struct syscall_context {
     uint64_t generation;
     uint64_t owner;
     bool active;
+    uint8_t transfer[NETWORK_SYSCALL_MAX_TRANSFER];
+    char primary_text[768];
+    char secondary_text[SAPFS_MAX_PATH + 1U];
 };
 
 static struct syscall_context contexts[NETWORK_SYSCALL_MAX_CONTEXTS];
 static uint64_t next_generation = UINT64_C(1);
-static uint8_t transfer[NETWORK_SYSCALL_MAX_TRANSFER];
-static char primary_text[768];
-static char secondary_text[SAPFS_MAX_PATH + 1U];
 
-static void clear_temporary(void)
+static void clear_bytes(void *destination, size_t length)
 {
-    volatile uint8_t *bytes = transfer;
+    volatile uint8_t *bytes = destination;
 
-    for (size_t index = 0U; index < sizeof(transfer); ++index) {
+    for (size_t index = 0U; index < length; ++index) {
         bytes[index] = 0U;
     }
+}
+
+static void clear_temporary(struct syscall_context *context)
+{
+    if (context == NULL) {
+        return;
+    }
+    clear_bytes(context->transfer, sizeof(context->transfer));
+    clear_bytes(context->primary_text, sizeof(context->primary_text));
+    clear_bytes(context->secondary_text, sizeof(context->secondary_text));
 }
 
 static bool canonical_user(uint64_t address)
@@ -277,10 +287,10 @@ static enum network_syscall_status dispatch_operation(
                     request->primary_length, true)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
-            if (random_bytes(transfer, request->primary_length) !=
+            if (random_bytes(context->transfer, request->primary_length) !=
                     RANDOM_STATUS_OK ||
-                !copy_to_user(context, request->primary_address, transfer,
-                    request->primary_length)) {
+                !copy_to_user(context, request->primary_address,
+                    context->transfer, request->primary_length)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
             response->value = request->primary_length;
@@ -288,12 +298,12 @@ static enum network_syscall_status dispatch_operation(
         case NETWORK_SYSCALL_RESOLVE:
             if (request->primary_length > NETWORK_MAX_HOSTNAME ||
                 !copy_text(context, request->primary_address,
-                    request->primary_length, primary_text,
-                    sizeof(primary_text))) {
+                    request->primary_length, context->primary_text,
+                    sizeof(context->primary_text))) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
-            status = network_resolve(primary_text, &response->ipv4_address,
-                request->timeout_ns);
+            status = network_resolve(context->primary_text,
+                &response->ipv4_address, request->timeout_ns);
             break;
         case NETWORK_SYSCALL_STREAM_OPEN:
             status = network_tcp_open(context->owner, &response->handle);
@@ -311,10 +321,10 @@ static enum network_syscall_status dispatch_operation(
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
             status = network_tcp_read(context->owner, request->handle,
-                transfer, request->primary_length, &completed,
+                context->transfer, request->primary_length, &completed,
                 request->timeout_ns);
             if (completed != 0U && !copy_to_user(context,
-                    request->primary_address, transfer, completed)) {
+                    request->primary_address, context->transfer, completed)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
             response->value = (uint32_t)completed;
@@ -324,12 +334,12 @@ static enum network_syscall_status dispatch_operation(
             size_t completed = 0U;
 
             if (request->primary_length == 0U ||
-                !copy_from_user(context, transfer, request->primary_address,
-                    request->primary_length)) {
+                !copy_from_user(context, context->transfer,
+                    request->primary_address, request->primary_length)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
             status = network_tcp_write(context->owner, request->handle,
-                transfer, request->primary_length, &completed,
+                context->transfer, request->primary_length, &completed,
                 request->timeout_ns);
             response->value = (uint32_t)completed;
             break;
@@ -365,22 +375,22 @@ static enum network_syscall_status dispatch_operation(
             struct network_http_result result;
 
             if (request->primary_length == 0U ||
-                request->primary_length >= sizeof(primary_text) ||
+                request->primary_length >= sizeof(context->primary_text) ||
                 request->secondary_length == 0U ||
                 !copy_text(context, request->primary_address,
-                    request->primary_length, primary_text,
-                    sizeof(primary_text)) ||
+                    request->primary_length, context->primary_text,
+                    sizeof(context->primary_text)) ||
                 !user_range_valid(context, request->secondary_address,
                     request->secondary_length, true)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
-            status = network_http_memory(context->owner, primary_text,
-                (request->flags & UINT16_C(1)) != 0U,
-                request->timeout_ns, transfer, request->secondary_length,
-                &result);
+            status = network_http_memory(context->owner,
+                context->primary_text, (request->flags & UINT16_C(1)) != 0U,
+                request->timeout_ns, context->transfer,
+                request->secondary_length, &result);
             if (status == NETWORK_STATUS_OK && result.body_bytes != 0U &&
-                !copy_to_user(context, request->secondary_address, transfer,
-                    result.body_bytes)) {
+                !copy_to_user(context, request->secondary_address,
+                    context->transfer, result.body_bytes)) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
             response->http_status = result.status_code;
@@ -390,19 +400,20 @@ static enum network_syscall_status dispatch_operation(
         case NETWORK_SYSCALL_HTTP_TO_FILE: {
             struct network_http_result result;
 
-            if (request->primary_length >= sizeof(primary_text) ||
+            if (request->primary_length >= sizeof(context->primary_text) ||
                 request->secondary_length > SAPFS_MAX_PATH ||
                 !copy_text(context, request->primary_address,
-                    request->primary_length, primary_text,
-                    sizeof(primary_text)) ||
+                    request->primary_length, context->primary_text,
+                    sizeof(context->primary_text)) ||
                 !copy_text(context, request->secondary_address,
-                    request->secondary_length, secondary_text,
-                    sizeof(secondary_text))) {
+                    request->secondary_length, context->secondary_text,
+                    sizeof(context->secondary_text))) {
                 return NETWORK_SYSCALL_STATUS_BAD_POINTER;
             }
-            status = network_http_download(context->owner, primary_text,
-                secondary_text, (request->flags & UINT16_C(1)) != 0U,
-                request->timeout_ns, &result);
+            status = network_http_download(context->owner,
+                context->primary_text, context->secondary_text,
+                (request->flags & UINT16_C(1)) != 0U, request->timeout_ns,
+                &result);
             response->http_status = result.status_code;
             response->value = result.body_bytes;
             break;
@@ -433,6 +444,7 @@ enum network_syscall_status network_syscall_register(
         struct syscall_context *context = &contexts[index];
 
         if (!context->active) {
+            clear_temporary(context);
             context->address_space = address_space;
             context->process_generation = process_generation;
             context->generation = next_generation++;
@@ -474,15 +486,14 @@ enum network_syscall_status network_syscall_dispatch(
     initialize_response(&request, &response);
     if (status == NETWORK_SYSCALL_STATUS_OK) {
         status = dispatch_operation(context, &request, &response);
-    } else {
-        response.boundary_status = status;
     }
+    response.boundary_status = status;
     if (!copy_to_user(context, response_address, &response,
             sizeof(response))) {
-        clear_temporary();
+        clear_temporary(context);
         return NETWORK_SYSCALL_STATUS_BAD_POINTER;
     }
-    clear_temporary();
+    clear_temporary(context);
     return status;
 }
 
@@ -494,6 +505,7 @@ void network_syscall_process_terminated(
 
     if (context != NULL) {
         network_process_terminated(context->owner);
+        clear_temporary(context);
         context->address_space = NULL;
         context->process_generation = 0U;
         context->owner = 0U;
@@ -547,8 +559,30 @@ bool network_syscall_self_test(size_t *completed_tests)
         return false;
     }
     completed += 3U;
+    contexts[0].transfer[0] = UINT8_C(0xA5);
+    contexts[0].primary_text[0] = 'A';
+    contexts[0].secondary_text[0] = 'B';
+    contexts[1].transfer[0] = UINT8_C(0x5A);
+    contexts[1].primary_text[0] = 'C';
+    contexts[1].secondary_text[0] = 'D';
+    clear_temporary(&contexts[0]);
+    if (contexts[0].transfer[0] != 0U ||
+        contexts[0].primary_text[0] != '\0' ||
+        contexts[0].secondary_text[0] != '\0' ||
+        contexts[1].transfer[0] != UINT8_C(0x5A) ||
+        contexts[1].primary_text[0] != 'C' ||
+        contexts[1].secondary_text[0] != 'D' ||
+        &contexts[0].transfer[0] == &contexts[1].transfer[0] ||
+        &contexts[0].primary_text[0] == &contexts[1].primary_text[0] ||
+        &contexts[0].secondary_text[0] ==
+            &contexts[1].secondary_text[0]) {
+        clear_temporary(&contexts[1]);
+        return false;
+    }
+    clear_temporary(&contexts[1]);
+    completed += 9U;
     *completed_tests = completed;
-    return completed == 13U;
+    return completed == 22U;
 }
 
 const char *network_syscall_status_string(enum network_syscall_status status)

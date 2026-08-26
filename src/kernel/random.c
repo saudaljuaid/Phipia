@@ -7,6 +7,7 @@
 #include <sapote/cpu.h>
 #include <sapote/random.h>
 
+#define CPUID_BASIC UINT32_C(0)
 #define CPUID_FEATURES UINT32_C(1)
 #define CPUID_EXTENDED UINT32_C(7)
 #define CPUID_RDRAND (UINT32_C(1) << 30U)
@@ -91,14 +92,20 @@ static uint64_t generator_next(void)
 
 void random_initialize(void)
 {
+    struct cpuid_result basic = {0};
     struct cpuid_result features = {0};
     struct cpuid_result extended = {0};
     uint64_t seed;
     uint64_t hardware = 0U;
     bool hardware_ok = false;
 
-    cpu_cpuid(CPUID_FEATURES, 0U, &features);
-    cpu_cpuid(CPUID_EXTENDED, 0U, &extended);
+    cpu_cpuid(CPUID_BASIC, 0U, &basic);
+    if (basic.eax >= CPUID_FEATURES) {
+        cpu_cpuid(CPUID_FEATURES, 0U, &features);
+    }
+    if (basic.eax >= CPUID_EXTENDED) {
+        cpu_cpuid(CPUID_EXTENDED, 0U, &extended);
+    }
     state.rdrand = (features.ecx & CPUID_RDRAND) != 0U;
     state.rdseed = (extended.ebx & CPUID_RDSEED) != 0U;
 

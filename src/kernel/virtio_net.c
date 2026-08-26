@@ -744,7 +744,8 @@ static enum virtio_net_status read_device_configuration(void)
         }
         copy_bytes(runtime.public.mac, mac, sizeof(mac));
         runtime.public.link_up = (status & VIRTIO_NET_STATUS_LINK_UP) != 0U;
-        return VIRTIO_NET_STATUS_OK;
+        return runtime.public.link_up ? VIRTIO_NET_STATUS_OK :
+            VIRTIO_NET_STATUS_LINK_DOWN;
     }
     return VIRTIO_NET_STATUS_FEATURE_FAILURE;
 }
@@ -915,11 +916,14 @@ enum virtio_net_status virtio_net_initialize(void)
         return status;
     }
     status = read_device_configuration();
-    if (status != VIRTIO_NET_STATUS_OK ||
-        mmio_read16(runtime.common.base, VIRTIO_COMMON_NUM_QUEUES) < 2U) {
+    if (status != VIRTIO_NET_STATUS_OK &&
+        status != VIRTIO_NET_STATUS_LINK_DOWN) {
         (void)cleanup(true);
-        return status == VIRTIO_NET_STATUS_OK ?
-            VIRTIO_NET_STATUS_QUEUE_FAILURE : status;
+        return status;
+    }
+    if (mmio_read16(runtime.common.base, VIRTIO_COMMON_NUM_QUEUES) < 2U) {
+        (void)cleanup(true);
+        return VIRTIO_NET_STATUS_QUEUE_FAILURE;
     }
     status = allocate_dma();
     if (status != VIRTIO_NET_STATUS_OK) {

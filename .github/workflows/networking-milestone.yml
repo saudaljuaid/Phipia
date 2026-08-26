@@ -142,11 +142,15 @@ jobs:
                       printf 'interactive media: real QEMU keyboard/pointer/network/storage path\n'
                       printf 'scope: IPv4-only modern virtio-net; no browser, TLS, HTTPS, IPv6, firewall, Wi-Fi or physical-NIC claim\n'
                   } >"$release/verification-summary.txt"
+                  rm -f "$release/SHA256SUMS"
+                  manifest=$(mktemp \
+                      "$RUNNER_TEMP/sapote-v2.1.0-sha256.XXXXXX")
                   (
                       cd "$release"
-                      find . -type f ! -name SHA256SUMS -print0 \
-                          | sort -z | xargs -0 sha256sum >SHA256SUMS
+                      find . -type f -print0 \
+                          | sort -z | xargs -0 sha256sum >"$manifest"
                   )
+                  mv "$manifest" "$release/SHA256SUMS"
                   (
                       cd evidence
                       tar -czf Sapote-v2.1.0-evidence.tar.gz Sapote-v2.1.0
