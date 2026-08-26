@@ -68,4 +68,3 @@ teardown; the packet audit confirms that HTTP plaintext is absent from PCAP;
 expired, wrong-name, unknown-root, malformed-chain, weak-algorithm, bad-record,
 truncation, replay, entropy-failure, timeout and reset controls all fail closed;
 and an independent review has no unresolved high-severity finding.
-

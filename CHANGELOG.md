@@ -19,4 +19,3 @@
 
 Explicit non-features: no browser, Chromium, browser icon, JavaScript, TLS,
 HTTPS, IPv6, firewall, Wi-Fi, physical-NIC support, or secure-Internet claim.
-

@@ -83,4 +83,3 @@ equality, malformed-input controls, and authentic framebuffer evidence:
 
 Until all six pass, Sapote release notes must say “browser foundation” or
 “future browser port plan,” never “browser support.”
-

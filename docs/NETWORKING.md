@@ -145,4 +145,3 @@ The 22-second evidence interaction completed DHCP, ping, DNS, HTTP streaming,
 FAT32 synchronization, screen updates, keyboard/pointer input, and `netstat`
 without packet drops. Larger-body and multi-connection performance remains
 future work.
-

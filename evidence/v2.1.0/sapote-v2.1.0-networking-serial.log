@@ -10,9 +10,9 @@ Sapote: boot loader: GRUB 2.12-1ubuntu7
 Sapote: memory map entries: 24
 Sapote: reported usable bytes: 127676416
 Sapote: highest reported address: 0x0000010000000000
-Sapote: ACPI XSDT at 0x000000000777D0E8 OEM BOCHS 
+Sapote: ACPI XSDT at 0x000000000777D0E8 OEM BOCHS
 Sapote: ACPI MADT at 0x0000000007778000 local APIC 0x00000000FEE00000 flags 0x0000000000000001
-Sapote: ACPI root entries: 6 MADT OEM BOCHS  BXPC    
+Sapote: ACPI root entries: 6 MADT OEM BOCHS  BXPC
 Sapote: ACPI local APIC base 0x00000000FEE00000
 Sapote: ACPI processors: 1 enabled 1 NMI entries 1 unmodelled 0
 Sapote: ACPI I/O APIC id 0 at 0x00000000FEC00000 base GSI 0
@@ -72,7 +72,7 @@ Sapote: keyboard decoded "hiI" from injected scancodes
 Sapote: keyboard established
 echo hi
 hi
-sap> 
+sap>
 Sapote: shell ran "echo hi" from 8 injected scancodes
 Sapote: shell output verified on screen
 Sapote: shell established
@@ -193,4 +193,4 @@ sap> netstat
 udp 0/8  tcp 0/8  timers 0/32
 rx 10  tx 12  malformed 0
 ethernet 10  ipv4 7  ipv4-checksum-fail 0  udp 3
-sap> 
+sap>
