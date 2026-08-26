@@ -12,7 +12,7 @@ untested hardware support or a broader ABI.
 make lint         # repository whitespace policy
 make verify       # clean build, host tests, ELF/link/layout checks
 make smoke        # normal QEMU boot and transcript
-make qemu-tests   # all 58 bounded QEMU scenarios
+make qemu-tests   # all 92 bounded QEMU scenarios
 ```
 
 Useful inspection targets:
@@ -30,7 +30,7 @@ reconstruction, failed host filesystem checks, and failed Rust parser tests.
 
 ## QEMU scenarios
 
-The Makefile is the source of truth for the 58 names. They cover:
+The Makefile is the source of truth for the 92 names. They cover:
 
 - exception entry, IST handling, APIC/I/O APIC routing, and legacy retirement;
 - clock calibration, deadlines, paging, heap, and guarded threads;
@@ -44,6 +44,10 @@ The Makefile is the source of truth for the 58 names. They cover:
   random writes, truncation, rename/move, deletion/reuse, full/corrupt/missing
   media, clean-reboot persistence, cache synchronization, immutability, and
   handle generations.
+- modern virtio-net discovery, initialization, absence, link-down and reset;
+  DHCP/static configuration, ARP, ICMP, UDP, DNS A/CNAME/malformed handling,
+  TCP close/retransmission/reset, HTTP framing/redirect/recovery, FAT32 streamed
+  download/persistence, syscall isolation and existing-environment regressions.
 
 Each scenario has a stable guest debug-exit value, expected host status, and
 required serial transcript. A scenario target is deliberately not phony so GNU
@@ -59,16 +63,23 @@ reboot, which reuses its synchronized backing. Evidence requires real
 interrupt/DMA ownership transitions and complete teardown; a synthetic unit
 result cannot substitute for the installed path.
 
-The xHCI, NVMe, filesystem, process, and Linux-profile workflows add focused
+The xHCI, NVMe, filesystem, process, Linux-profile and networking workflows add focused
 matrix checks. BusyBox workflows build twice from clean pinned sources, compare
 the binaries byte-for-byte, audit the ELF and exercised instructions, and check
 the exact syscall trace. The dedicated First Light interactive-userspace
 workflow also builds the three-profile volume twice, runs every scenario,
 captures real QEMU media, and preserves the v1.1.0 release evidence. The
 dedicated v2.0.0 workflow reconstructs both FAT32 images, runs host positive
-and negative checks plus all 58 guest scenarios, captures clean-reboot media,
+and negative checks plus all 92 guest scenarios, captures clean-reboot media,
 and assembles exact-commit release evidence. See
 [`BUSYBOX_REPRODUCIBLE_BUILD.md`](BUSYBOX_REPRODUCIBLE_BUILD.md).
+
+The v2.1.0 networking workflow self-tests the deterministic peer, runs all 92
+scenarios, requires all 34 networking scenarios, reconstructs the production
+PCAP through every protocol layer, inspects the synchronized Data image, and
+captures an interactive 20–25 second QEMU session. Screenshot/video evidence
+supplements the serial, packet and storage proofs; it never substitutes for
+them.
 
 ## Negative controls
 
@@ -98,6 +109,10 @@ merge. Do not bypass hooks or protected-branch rules.
 make capture-first-light
 make screenshot-proof
 make capture-boot-video
+python3 tools/capture-networking.py --iso build/sapote.iso \
+    --system build/userspace/sapote-system-fat32.raw \
+    --data build/userspace/sapote-data-fat32.raw \
+    --output build/networking-capture
 ```
 
 These targets produce QEMU evidence for the committed First Light images and

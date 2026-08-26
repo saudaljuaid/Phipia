@@ -27,7 +27,7 @@ The ledger makes those claims explicit and executable.
 
 ## Model
 
-The current bounded model supports 48 descriptors and receipts, with fixed
+The current bounded model supports 49 descriptors and receipts, with fixed
 capability sets per descriptor. The planner rejects duplicate IDs, missing or
 duplicate providers, dependency cycles, capacity overflow, invalid phases, and
 unsafe irreversible ordering before it runs a stage.
@@ -41,8 +41,9 @@ Stages fall into six broad phases:
 4. runtime: heap, framebuffer, input, shell, layout, and early scenarios;
 5. services: timers, PCI, threads, scheduler, DMA, devices, storage, processes,
    and measured Linux profiles;
-6. proofs and presentation: closing checks, desktop activation, and the
-   installed First Light proof.
+6. proofs and presentation: closing checks, the optional networking/entropy
+   availability decision, desktop activation, and the installed First Light
+   proof.
 
 Within those phases, declared capabilities—not descriptor insertion order—form
 the canonical sequence.
@@ -68,9 +69,11 @@ Optional does not mean silent. A stage produces exactly one of:
 - a typed neutral absence result when absence is allowed;
 - a failure that prevents dependent execution.
 
-Framebuffer, pointer, emulated-device, process, Linux-profile, and desktop
-stages use this distinction so a serial-only boot cannot masquerade as a fully
-installed graphical or device-backed boot.
+Framebuffer, pointer, emulated-device, process, Linux-profile, networking, and
+desktop stages use this distinction so a serial-only boot cannot masquerade as
+a fully installed graphical or device-backed boot. Networking distinguishes
+working, NIC-absent, and link-down outcomes; malformed hardware or failed
+ownership setup is not neutral absence.
 
 ## Receipts and installed proof
 

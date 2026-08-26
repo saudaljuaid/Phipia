@@ -107,8 +107,13 @@ Sapote does not claim atomic multi-sector transactions or arbitrary power-loss
 recovery. An interruption may leave secondary/primary FAT disagreement,
 unreachable allocation, or a size/chain mismatch. The next mount detects and
 refuses those states. Use `tools/fat32_image.py inspect` to diagnose the image;
-v2.0.0 supplies inspection and deterministic reconstruction, not an in-kernel
+v2.1.0 supplies inspection and deterministic reconstruction, not an in-kernel
 repair service.
+
+HTTP streaming in v2.1.0 uses the same bounded handle/cache/NVMe path. A
+download is written to a temporary 8.3 entry, synchronized, verified, and then
+renamed over its destination. Protocol, capacity, disk-full, reset, or sync
+failure removes the temporary entry and preserves any prior destination.
 
 ## Host tooling and verification
 
@@ -135,4 +140,4 @@ for guest filesystem execution.
 There is no journal, fsck repair mode, POSIX metadata, permissions model,
 timestamps, hard links, symbolic links, sparse files, multi-user security,
 arbitrary FAT32 geometry, VFAT long-name support, hotplug, concurrent writers,
-or stable userspace ABI. These are explicit v2.0.0 boundaries.
+or stable userspace ABI. These are explicit v2.1.0 boundaries.
