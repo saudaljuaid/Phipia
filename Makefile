@@ -16,9 +16,19 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	first-light-userland-interactive-absent \
 	fat32-system fat32-data fat32-nested fat32-growth fat32-random \
 	fat32-truncate fat32-rename fat32-delete fat32-full fat32-corrupt \
-	fat32-missing fat32-persistence fat32-cache fat32-immutable fat32-handles
+	fat32-missing fat32-persistence fat32-cache fat32-immutable fat32-handles \
+	network-nic-discovery network-nic-initialization network-nic-absent \
+	network-link-down network-dhcp network-dhcp-timeout network-static \
+	network-arp network-icmp network-icmp-timeout network-udp network-dns-a \
+	network-dns-cname network-dns-malformed network-tcp \
+	network-tcp-retransmit network-tcp-reset network-http-length \
+	network-http-chunked network-http-redirect network-http-malformed \
+	network-http-nested network-http-replace network-http-disk-full \
+	network-nic-reset network-system-immutable network-missing-linux-echo \
+	network-missing-linux-uname network-missing-linux-cat network-files \
+	network-notes network-studio network-persistence network-socket-isolation
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 58
+EXPECTED_TEST_SCENARIO_COUNT := 92
 EXPECTED_SHELL_ASSERTION_COUNT := 359
 
 CC := gcc
@@ -74,6 +84,7 @@ FIRST_ENVIRONMENT_FILES_IMAGE := assets/sapote-first-environment-files.png
 FIRST_ENVIRONMENT_NOTES_IMAGE := assets/sapote-first-environment-notes.png
 FIRST_ENVIRONMENT_STUDIO_IMAGE := assets/sapote-first-environment-studio.png
 FIRST_ENVIRONMENT_VIDEO := assets/sapote-first-environment-20s.mp4
+NETWORK_CAPTURE_DIR := $(BUILD_DIR)/networking-capture
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
 PROCESS_ELF := $(TEST_BUILD_DIR)/process/SAPOTE.BIN
@@ -138,7 +149,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-first-environment capture-first-light clean contract-counts contract-scenarios fat32-images hooks \
+.PHONY: all capture-boot-video capture-first-environment capture-first-light capture-networking clean contract-counts contract-scenarios fat32-images hooks \
 	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
@@ -799,6 +810,12 @@ capture-first-environment: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-20s.mp4 \
 		$(FIRST_ENVIRONMENT_VIDEO)
 
+capture-networking: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	rm -rf $(NETWORK_CAPTURE_DIR)
+	$(PYTHON) tools/capture-networking.py --iso $(ISO) \
+		--system $(FAT32_SYSTEM_IMAGE) --data $(FAT32_DATA_IMAGE) \
+		--output $(NETWORK_CAPTURE_DIR) --ffmpeg $(FFMPEG)
+
 capture-boot-video: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	cp $(FAT32_DATA_IMAGE) $(BUILD_DIR)/capture-video-data-fat32.raw
 	$(PYTHON) tools/capture-fat32-persistence.py --iso $(ISO) \
@@ -826,6 +843,68 @@ $(TEST_BUILD_DIR)/%/sapote.iso: $(KERNEL) Makefile
 		'    multiboot2 /boot/sapote.elf sapote.test=$*' \
 		'    boot' '}' >$(TEST_BUILD_DIR)/$*/iso-root/boot/grub/grub.cfg
 	$(GRUB_MKRESCUE) $(GRUB_MKRESCUE_FLAGS) -o $@ $(TEST_BUILD_DIR)/$*/iso-root
+
+# Networking scenarios have an isolated Ethernet peer and packet capture rather
+# than a host-network dependency.  This more-specific pattern is selected ahead
+# of qemu-test-% and keeps the existing 58 scenario recipe unchanged.
+qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
+	@for tool in qemu-system-x86_64 $(PYTHON); do \
+		command -v $$tool >/dev/null 2>&1 || { echo "missing tool: $$tool"; exit 1; }; \
+	done
+	@case '$*' in \
+		nic-discovery) expected=151 ;; \
+		nic-initialization) expected=153 ;; \
+		nic-absent) expected=155 ;; \
+		link-down) expected=157 ;; \
+		dhcp) expected=159 ;; \
+		dhcp-timeout) expected=161 ;; \
+		static) expected=163 ;; \
+		arp) expected=165 ;; \
+		icmp) expected=167 ;; \
+		icmp-timeout) expected=169 ;; \
+		udp) expected=171 ;; \
+		dns-a) expected=173 ;; \
+		dns-cname) expected=175 ;; \
+		dns-malformed) expected=177 ;; \
+		tcp) expected=179 ;; \
+		tcp-retransmit) expected=181 ;; \
+		tcp-reset) expected=183 ;; \
+		http-length) expected=185 ;; \
+		http-chunked) expected=187 ;; \
+		http-redirect) expected=189 ;; \
+		http-malformed) expected=191 ;; \
+		http-nested) expected=193 ;; \
+		http-replace) expected=195 ;; \
+		http-disk-full) expected=197 ;; \
+		nic-reset) expected=199 ;; \
+		system-immutable) expected=201 ;; \
+		missing-linux-echo) expected=203 ;; \
+		missing-linux-uname) expected=205 ;; \
+		missing-linux-cat) expected=207 ;; \
+		files) expected=209 ;; \
+		notes) expected=211 ;; \
+		studio) expected=213 ;; \
+		persistence) expected=215 ;; \
+		socket-isolation) expected=217 ;; \
+		*) echo 'unknown network scenario: network-$*'; exit 1 ;; \
+	esac; \
+	case '$*' in \
+		http-disk-full) \
+			$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_FULL_IMAGE)' || exit 1 ;; \
+		http-length|http-chunked|http-redirect|http-malformed|http-nested|\
+		http-replace|system-immutable|missing-linux-echo|missing-linux-uname|\
+		missing-linux-cat|files|notes|studio|persistence) \
+			$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_DATA_IMAGE)' || exit 1 ;; \
+	esac; \
+	timeout=45; if test '$*' = persistence; then timeout=70; fi; \
+	$(PYTHON) tools/run_network_scenario.py \
+		--scenario 'network-$*' --expected "$$expected" --iso '$<' \
+		--output '$(TEST_BUILD_DIR)/network-$*' \
+		--fixture tools/network_fixture.py \
+		--audit tools/network_packet_audit.py \
+		--system '$(FAT32_SYSTEM_IMAGE)' --data '$(FAT32_DATA_IMAGE)' \
+		--full '$(FAT32_FULL_IMAGE)' --qemu qemu-system-x86_64 \
+		--python '$(PYTHON)' --accel '$(QEMU_ACCEL)' --timeout "$$timeout"
 
 qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	@for tool in qemu-system-x86_64 timeout grep; do \

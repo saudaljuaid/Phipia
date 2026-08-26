@@ -1,0 +1,161 @@
+name: Advanced networking exact-commit evidence
+
+on:
+    workflow_dispatch:
+    pull_request:
+        branches: [main]
+    push:
+        tags: [v2.1.0]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: networking-milestone-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    exact-commit-evidence:
+        name: advanced-networking-exact-commit-evidence
+        runs-on: ubuntu-24.04
+        timeout-minutes: 300
+        steps:
+            - name: Check out exact source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install build, packet, capture, and emulation tools
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils build-essential bzip2 ffmpeg file grub-common \
+                      grub-pc-bin make mtools qemu-system-x86 qemu-user \
+                      strace xorriso
+            - name: Install the Rust bare-metal target
+              run: rustup target add x86_64-unknown-none
+            - name: Verify kernel, parsers, host tools, and deterministic peer
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p build/evidence-logs
+                  python3 -m py_compile \
+                      tools/network_fixture.py \
+                      tools/network_packet_audit.py \
+                      tools/run_network_scenario.py \
+                      tools/capture-networking.py
+                  python3 tools/network_fixture.py --self-test \
+                      | tee build/evidence-logs/network-fixture-self-test.log
+                  make verify | tee build/evidence-logs/make-verify.log
+                  git diff --check
+            - name: Run all 92 production QEMU scenarios
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  read -r expected_scenarios expected_assertions < <(
+                      make --no-print-directory -s contract-counts
+                  )
+                  scenario_count=$(
+                      make --no-print-directory -s contract-scenarios | wc -l
+                  )
+                  network_count=$(
+                      make --no-print-directory -s contract-scenarios \
+                          | grep -c '^network-'
+                  )
+                  assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
+                  test "$expected_scenarios" -eq 92
+                  test "$scenario_count" -eq 92
+                  test "$network_count" -eq 34
+                  test "$assertion_count" -eq "$expected_assertions"
+                  make qemu-tests QEMU_ACCEL=tcg \
+                      | tee build/evidence-logs/all-qemu-scenarios.txt
+                  test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
+                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 92
+                  test "$(grep -Ec '^QEMU scenario network-[a-z0-9-]+ passed$' \
+                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 34
+                  cp build/tests/network-http-length/network.pcap \
+                      build/evidence-logs/network-http-length.pcap
+                  cp build/tests/network-http-length/packet-audit.json \
+                      build/evidence-logs/network-http-length-packet-audit.json
+                  grep -Fq 'ST NETWORK syscall v1 HTTP-to-FAT32 boundary passed' \
+                      build/tests/network-http-length/serial.log
+            - name: Capture authentic interactive networking media
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make capture-networking
+                  file build/networking-capture/Sapote-v2.1.0-networking.png \
+                      | grep -Fq 'PNG image data, 1024 x 768'
+                  duration=$(ffprobe -v error -show_entries format=duration \
+                      -of default=noprint_wrappers=1:nokey=1 \
+                      build/networking-capture/Sapote-v2.1.0-networking-22s.mp4)
+                  awk -v duration="$duration" \
+                      'BEGIN { exit !(duration >= 20.0 && duration <= 25.0) }'
+                  grep -Fq '200 HTTP response' \
+                      build/networking-capture/sapote-v2.1.0-networking-serial.log
+                  grep -Fq '30 bytes synchronized' \
+                      build/networking-capture/sapote-v2.1.0-networking-serial.log
+                  grep -Fq '"production_path": true' \
+                      build/networking-capture/sapote-v2.1.0-network-packet-audit.json
+                  python3 tools/fat32_image.py verify data \
+                      build/networking-capture/sapote-v2.1.0-network-data.raw
+            - name: Assemble v2.1.0 exact-commit evidence
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  release=evidence/Sapote-v2.1.0
+                  mkdir -p "$release/qemu-transcripts" "$release/reproduction"
+                  cp build/sapote.iso "$release/Sapote-v2.1.0.iso"
+                  cp build/sapote.elf "$release/sapote-v2.1.0.elf"
+                  cp build/userspace/sapote-system-fat32.raw \
+                      "$release/sapote-v2.1.0-system-fat32.raw"
+                  cp build/userspace/sapote-data-fat32.raw \
+                      "$release/sapote-v2.1.0-data-fat32.raw"
+                  cp build/networking-capture/* "$release/"
+                  cp build/evidence-logs/* "$release/"
+                  while IFS= read -r transcript; do
+                      scenario=$(basename "$(dirname "$transcript")")
+                      cp "$transcript" "$release/qemu-transcripts/$scenario.log"
+                  done < <(find build/tests -mindepth 2 -maxdepth 2 \
+                      -name serial.log -print | sort)
+                  test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
+                      -eq 92
+                  cp tools/network_fixture.py tools/network_packet_audit.py \
+                      tools/run_network_scenario.py tools/capture-networking.py \
+                      docs/NETWORKING.md docs/BROWSER_PORT.md \
+                      docs/TLS_EVALUATION.md "$release/reproduction/"
+                  git archive --format=tar.gz -o \
+                      "$release/reproduction/Sapote-v2.1.0-source.tar.gz" HEAD
+                  qemu-system-x86_64 -version \
+                      >"$release/qemu-version.txt"
+                  {
+                      printf 'Sapote v2.1.0 exact-commit verification\n'
+                      printf 'commit: %s\n' "$GITHUB_SHA"
+                      printf 'tree: %s\n' "$(git rev-parse 'HEAD^{tree}')"
+                      printf 'make verify: passed without warnings\n'
+                      printf 'QEMU scenarios: 92 passed individually; 34 networking\n'
+                      printf 'packet path: Ethernet/ARP/IPv4/ICMP/UDP/DHCP/DNS/TCP/HTTP reconstructed\n'
+                      printf 'syscall v1: authenticated HTTP-to-FAT32 and teardown passed\n'
+                      printf 'FAT32: streamed, synchronized, reopened and host-verified\n'
+                      printf 'interactive media: real QEMU keyboard/pointer/network/storage path\n'
+                      printf 'scope: IPv4-only modern virtio-net; no browser, TLS, HTTPS, IPv6, firewall, Wi-Fi or physical-NIC claim\n'
+                  } >"$release/verification-summary.txt"
+                  (
+                      cd "$release"
+                      find . -type f ! -name SHA256SUMS -print0 \
+                          | sort -z | xargs -0 sha256sum >SHA256SUMS
+                  )
+                  (
+                      cd evidence
+                      tar -czf Sapote-v2.1.0-evidence.tar.gz Sapote-v2.1.0
+                  )
+                  cat "$release/verification-summary.txt"
+            - name: Upload v2.1.0 exact-commit evidence
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: Sapote-v2.1.0-evidence-${{ github.sha }}
+                  path: evidence
+                  if-no-files-found: error
+                  retention-days: 90
