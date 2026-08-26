@@ -40,20 +40,23 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
-                  mkdir -p build/evidence-logs
+                  log_dir="$RUNNER_TEMP/sapote-network-logs"
+                  mkdir -p "$log_dir"
                   python3 -m py_compile \
                       tools/network_fixture.py \
                       tools/network_packet_audit.py \
                       tools/run_network_scenario.py \
                       tools/capture-networking.py
                   python3 tools/network_fixture.py --self-test \
-                      | tee build/evidence-logs/network-fixture-self-test.log
-                  make verify | tee build/evidence-logs/make-verify.log
+                      | tee "$log_dir/network-fixture-self-test.log"
+                  make verify | tee "$log_dir/make-verify.log"
                   git diff --check
             - name: Run all 92 production QEMU scenarios
               shell: bash
               run: |
                   set -euo pipefail
+                  log_dir="$RUNNER_TEMP/sapote-network-logs"
+                  mkdir -p "$log_dir"
                   read -r expected_scenarios expected_assertions < <(
                       make --no-print-directory -s contract-counts
                   )
@@ -70,15 +73,15 @@ jobs:
                   test "$network_count" -eq 34
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
-                      | tee build/evidence-logs/all-qemu-scenarios.txt
+                      | tee "$log_dir/all-qemu-scenarios.txt"
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 92
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 92
                   test "$(grep -Ec '^QEMU scenario network-[a-z0-9-]+ passed$' \
-                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 34
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 34
                   cp build/tests/network-http-length/network.pcap \
-                      build/evidence-logs/network-http-length.pcap
+                      "$log_dir/network-http-length.pcap"
                   cp build/tests/network-http-length/packet-audit.json \
-                      build/evidence-logs/network-http-length-packet-audit.json
+                      "$log_dir/network-http-length-packet-audit.json"
                   grep -Fq 'ST NETWORK syscall v1 HTTP-to-FAT32 boundary passed' \
                       build/tests/network-http-length/serial.log
             - name: Capture authentic interactive networking media
@@ -114,7 +117,7 @@ jobs:
                   cp build/userspace/sapote-data-fat32.raw \
                       "$release/sapote-v2.1.0-data-fat32.raw"
                   cp build/networking-capture/* "$release/"
-                  cp build/evidence-logs/* "$release/"
+                  cp "$RUNNER_TEMP/sapote-network-logs/"* "$release/"
                   while IFS= read -r transcript; do
                       scenario=$(basename "$(dirname "$transcript")")
                       cp "$transcript" "$release/qemu-transcripts/$scenario.log"
