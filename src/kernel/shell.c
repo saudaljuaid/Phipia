@@ -14,6 +14,7 @@
 #include <sapote/linux_userland.h>
 #include <sapote/linux_syscall.h>
 #include <sapote/memory.h>
+#include <sapote/network.h>
 #include <sapote/pci.h>
 #include <sapote/screen.h>
 #include <sapote/shell.h>
@@ -39,6 +40,7 @@
  */
 
 #define SHELL_PROMPT "sap> "
+#define SHELL_NETWORK_OWNER UINT64_C(1)
 
 /* What splits a command from its arguments. Nothing exotic; space and tab. */
 static bool is_separator(char character)
@@ -168,6 +170,10 @@ static void command_help(void)
     console_write("  truncate  set a file's byte length\n");
     console_write("  stat/mv/rm  inspect, move, or remove a path\n");
     console_write("  sync      persist completed data operations\n");
+    console_write("  network/dhcp/ip  inspect or configure IPv4\n");
+    console_write("  arp/ping/resolve inspect and test the network\n");
+    console_write("  http      stream an HTTP response to the data volume\n");
+    console_write("  netstat   bounded socket and packet counters\n");
     console_write("  reboot    sync, unmount, and restart cleanly\n");
     console_write("  clear     clear the screen\n");
     console_write("  fetch     Sapote identity and live system summary\n");
@@ -899,7 +905,7 @@ static void command_version(void)
 {
     const struct screen_state screen = screen_get_state();
 
-    console_write("Sapote 2.0.0, a small proof-driven x86_64 operating system.\n");
+    console_write("Sapote 2.1.0, a small proof-driven x86_64 operating system.\n");
     console_write("console ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -929,7 +935,7 @@ static void command_fetch(void)
     }
     console_write("\n");
     console_write("  Sapote First Environment\n");
-    console_write("  kernel      Sapote 2.0.0 / x86_64\n");
+    console_write("  kernel      Sapote 2.1.0 / x86_64\n");
     console_write("  terminal    ");
     console_write_u64(screen.columns);
     console_putc('x');
@@ -970,6 +976,231 @@ static void command_ledger(void)
     console_putc('\n');
     console_write("fingerprint ");
     console_write_hex(ledger->fingerprint);
+    console_putc('\n');
+}
+
+static void print_ipv4(uint32_t address)
+{
+    char text[16];
+
+    network_format_ipv4(address, text);
+    console_write(text);
+}
+
+static void print_mac(const uint8_t mac[6])
+{
+    for (size_t index = 0U; index < 6U; ++index) {
+        static const char digits[] = "0123456789abcdef";
+
+        console_putc(digits[mac[index] >> 4U]);
+        console_putc(digits[mac[index] & UINT8_C(0x0f)]);
+        if (index != 5U) {
+            console_putc(':');
+        }
+    }
+}
+
+static void command_network(void)
+{
+    const struct network_state network = network_get_state();
+
+    if (!network.device.present) {
+        console_write("virtio-net0  unavailable\n");
+        return;
+    }
+    console_write("virtio-net0  ");
+    console_write(network.device.link_up ? "link up\n" : "link down\n");
+    console_write("mac          ");
+    print_mac(network.device.mac);
+    console_putc('\n');
+    if (!network.configuration.configured) {
+        console_write("ipv4         unconfigured\n");
+        return;
+    }
+    console_write("ipv4         ");
+    print_ipv4(network.configuration.address);
+    console_putc('\n');
+    console_write("gateway      ");
+    print_ipv4(network.configuration.gateway);
+    console_putc('\n');
+    console_write("dns          ");
+    print_ipv4(network.configuration.dns_server);
+    console_putc('\n');
+    console_write("source       ");
+    console_write(network.configuration.source == NETWORK_CONFIGURATION_DHCP ?
+        "dhcp\n" : "static\n");
+}
+
+static void network_error(const char *operation, enum network_status status)
+{
+    console_write(operation);
+    console_write(": ");
+    console_write(network_status_string(status));
+    console_putc('\n');
+}
+
+static void command_dhcp(void)
+{
+    const enum network_status status = network_start_dhcp(
+        NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+
+    if (status != NETWORK_STATUS_OK) {
+        network_error("dhcp", status);
+        return;
+    }
+    command_network();
+}
+
+static void command_ip(const char *arguments)
+{
+    char address_text[SAPFS_MAX_PATH + 1U];
+    char mask_text[SAPFS_MAX_PATH + 1U];
+    char gateway_text[SAPFS_MAX_PATH + 1U];
+    char dns_text[SAPFS_MAX_PATH + 1U];
+    const char *remainder;
+    uint32_t address;
+    uint32_t mask;
+    uint32_t gateway;
+    uint32_t dns;
+
+    if (arguments[0] == '\0') {
+        command_network();
+        return;
+    }
+    if (!first_argument(arguments, address_text, &remainder) ||
+        !first_argument(remainder, mask_text, &remainder) ||
+        !first_argument(remainder, gateway_text, &remainder) ||
+        !first_argument(remainder, dns_text, &remainder) ||
+        remainder[0] != '\0' ||
+        !network_parse_ipv4(address_text, &address) ||
+        !network_parse_ipv4(mask_text, &mask) ||
+        !network_parse_ipv4(gateway_text, &gateway) ||
+        !network_parse_ipv4(dns_text, &dns)) {
+        console_write("ip: use 'ip ADDRESS MASK GATEWAY DNS'\n");
+        return;
+    }
+    const enum network_status status = network_configure_static(address, mask,
+        gateway, dns);
+
+    if (status != NETWORK_STATUS_OK) {
+        network_error("ip", status);
+    } else {
+        command_network();
+    }
+}
+
+static void command_arp(void)
+{
+    const struct network_state network = network_get_state();
+
+    console_write_u64(network.arp_entries);
+    console_write(" authenticated ARP entr");
+    console_write(network.arp_entries == 1U ? "y\n" : "ies\n");
+    console_write("conflicts    ");
+    console_write_u64(network.statistics.arp_conflicts);
+    console_putc('\n');
+}
+
+static void command_ping(const char *arguments)
+{
+    char address_text[SAPFS_MAX_PATH + 1U];
+    const char *remainder;
+    uint32_t address;
+    uint32_t count = 3U;
+    struct network_ping_result result;
+    enum network_status status;
+
+    if (!first_argument(arguments, address_text, &remainder) ||
+        !network_parse_ipv4(address_text, &address) ||
+        (remainder[0] != '\0' && !decimal_u32(remainder, &count)) ||
+        count == 0U || count > NETWORK_PING_MAX_COUNT) {
+        console_write("ping: use 'ping ADDRESS [1-8]'\n");
+        return;
+    }
+    status = network_ping(address, count, UINT64_C(1000000000), &result);
+    for (uint32_t index = 0U; index < count; ++index) {
+        if (result.result[index] == NETWORK_STATUS_OK) {
+            console_write("reply seq=");
+            console_write_u64(index + 1U);
+            console_write(" time=");
+            console_write_u64(result.round_trip_ns[index] / UINT64_C(1000));
+            console_write(" us\n");
+        }
+    }
+    console_write_u64(result.sent);
+    console_write(" sent, ");
+    console_write_u64(result.received);
+    console_write(" received\n");
+    if (status != NETWORK_STATUS_OK && result.received == 0U) {
+        network_error("ping", status);
+    }
+}
+
+static void command_resolve(const char *arguments)
+{
+    uint32_t address;
+    const enum network_status status = network_resolve(arguments, &address,
+        NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+
+    if (status != NETWORK_STATUS_OK) {
+        network_error("resolve", status);
+        return;
+    }
+    print_ipv4(address);
+    console_putc('\n');
+}
+
+static void command_http(const char *arguments)
+{
+    char url[SAPFS_MAX_PATH + 1U];
+    const char *destination;
+    struct network_http_result result;
+    enum network_status status;
+
+    if (!first_argument(arguments, url, &destination) ||
+        destination[0] == '\0') {
+        console_write("http: use 'http URL DATA-PATH'\n");
+        return;
+    }
+    status = network_http_download(SHELL_NETWORK_OWNER, url, destination,
+        false, UINT64_C(15000000000), &result);
+    if (status != NETWORK_STATUS_OK) {
+        network_error("http", status);
+        return;
+    }
+    console_write_u64(result.status_code);
+    console_write(" HTTP response\nsaved ");
+    console_write(destination);
+    console_putc('\n');
+    console_write_u64(result.body_bytes);
+    console_write(" bytes synchronized\n");
+}
+
+static void command_netstat(void)
+{
+    const struct network_state network = network_get_state();
+
+    console_write("udp ");
+    console_write_u64(network.udp_sockets);
+    console_write("/8  tcp ");
+    console_write_u64(network.tcp_connections);
+    console_write("/8  timers ");
+    console_write_u64(network.timers);
+    console_write("/32\nrx ");
+    console_write_u64(network.device.statistics.rx_frames);
+    console_write("  tx ");
+    console_write_u64(network.device.statistics.tx_frames);
+    console_write("  malformed ");
+    console_write_u64(network.statistics.malformed_packets);
+    console_putc('\n');
+    console_write("ethernet ");
+    console_write_u64(network.statistics.ethernet_accepted);
+    console_write("  ipv4 ");
+    console_write_u64(network.statistics.ipv4_accepted);
+    console_write("  ipv4-checksum-fail ");
+    console_write_u64(network.statistics.ipv4_checksum_failures);
+    console_write("  udp ");
+    console_write_u64(network.statistics.udp_accepted);
     console_putc('\n');
 }
 
@@ -1033,6 +1264,22 @@ enum shell_status shell_execute(const char *text)
         command_rm(arguments_of(text));
     } else if (matches(text, "sync")) {
         command_sync();
+    } else if (matches(text, "network")) {
+        command_network();
+    } else if (matches(text, "dhcp")) {
+        command_dhcp();
+    } else if (matches(text, "ip")) {
+        command_ip(arguments_of(text));
+    } else if (matches(text, "arp")) {
+        command_arp();
+    } else if (matches(text, "ping")) {
+        command_ping(arguments_of(text));
+    } else if (matches(text, "resolve")) {
+        command_resolve(arguments_of(text));
+    } else if (matches(text, "http")) {
+        command_http(arguments_of(text));
+    } else if (matches(text, "netstat")) {
+        command_netstat();
     } else if (matches(text, "reboot")) {
         command_reboot();
     } else if (matches(text, "clear")) {
@@ -1340,6 +1587,7 @@ _Noreturn void shell_run(void)
         ui_keyboard_operational = ui_operational;
         ui_keyboard_decided = true;
         shell_process_keyboard_events();
+        (void)network_service();
         ui_operational = ui_keyboard_operational;
 
         if (ui_operational) {

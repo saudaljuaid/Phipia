@@ -21,6 +21,8 @@
 #include <sapote/interrupts.h>
 #include <sapote/ioapic.h>
 #include <sapote/memory.h>
+#include <sapote/network.h>
+#include <sapote/network_syscall.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
@@ -383,6 +385,108 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "fat32-handles")) {
         return KERNEL_TEST_FAT32_HANDLES;
     }
+    if (token_equals(value, length, "network-nic-discovery")) {
+        return KERNEL_TEST_NETWORK_NIC_DISCOVERY;
+    }
+    if (token_equals(value, length, "network-nic-initialization")) {
+        return KERNEL_TEST_NETWORK_NIC_INITIALIZATION;
+    }
+    if (token_equals(value, length, "network-nic-absent")) {
+        return KERNEL_TEST_NETWORK_NIC_ABSENT;
+    }
+    if (token_equals(value, length, "network-link-down")) {
+        return KERNEL_TEST_NETWORK_LINK_DOWN;
+    }
+    if (token_equals(value, length, "network-dhcp")) {
+        return KERNEL_TEST_NETWORK_DHCP;
+    }
+    if (token_equals(value, length, "network-dhcp-timeout")) {
+        return KERNEL_TEST_NETWORK_DHCP_TIMEOUT;
+    }
+    if (token_equals(value, length, "network-static")) {
+        return KERNEL_TEST_NETWORK_STATIC;
+    }
+    if (token_equals(value, length, "network-arp")) {
+        return KERNEL_TEST_NETWORK_ARP;
+    }
+    if (token_equals(value, length, "network-icmp")) {
+        return KERNEL_TEST_NETWORK_ICMP;
+    }
+    if (token_equals(value, length, "network-icmp-timeout")) {
+        return KERNEL_TEST_NETWORK_ICMP_TIMEOUT;
+    }
+    if (token_equals(value, length, "network-udp")) {
+        return KERNEL_TEST_NETWORK_UDP;
+    }
+    if (token_equals(value, length, "network-dns-a")) {
+        return KERNEL_TEST_NETWORK_DNS_A;
+    }
+    if (token_equals(value, length, "network-dns-cname")) {
+        return KERNEL_TEST_NETWORK_DNS_CNAME;
+    }
+    if (token_equals(value, length, "network-dns-malformed")) {
+        return KERNEL_TEST_NETWORK_DNS_MALFORMED;
+    }
+    if (token_equals(value, length, "network-tcp")) {
+        return KERNEL_TEST_NETWORK_TCP;
+    }
+    if (token_equals(value, length, "network-tcp-retransmit")) {
+        return KERNEL_TEST_NETWORK_TCP_RETRANSMIT;
+    }
+    if (token_equals(value, length, "network-tcp-reset")) {
+        return KERNEL_TEST_NETWORK_TCP_RESET;
+    }
+    if (token_equals(value, length, "network-http-length")) {
+        return KERNEL_TEST_NETWORK_HTTP_LENGTH;
+    }
+    if (token_equals(value, length, "network-http-chunked")) {
+        return KERNEL_TEST_NETWORK_HTTP_CHUNKED;
+    }
+    if (token_equals(value, length, "network-http-redirect")) {
+        return KERNEL_TEST_NETWORK_HTTP_REDIRECT;
+    }
+    if (token_equals(value, length, "network-http-malformed")) {
+        return KERNEL_TEST_NETWORK_HTTP_MALFORMED;
+    }
+    if (token_equals(value, length, "network-http-nested")) {
+        return KERNEL_TEST_NETWORK_HTTP_NESTED;
+    }
+    if (token_equals(value, length, "network-http-replace")) {
+        return KERNEL_TEST_NETWORK_HTTP_REPLACE;
+    }
+    if (token_equals(value, length, "network-http-disk-full")) {
+        return KERNEL_TEST_NETWORK_HTTP_DISK_FULL;
+    }
+    if (token_equals(value, length, "network-nic-reset")) {
+        return KERNEL_TEST_NETWORK_NIC_RESET;
+    }
+    if (token_equals(value, length, "network-system-immutable")) {
+        return KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE;
+    }
+    if (token_equals(value, length, "network-missing-linux-echo")) {
+        return KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO;
+    }
+    if (token_equals(value, length, "network-missing-linux-uname")) {
+        return KERNEL_TEST_NETWORK_MISSING_LINUX_UNAME;
+    }
+    if (token_equals(value, length, "network-missing-linux-cat")) {
+        return KERNEL_TEST_NETWORK_MISSING_LINUX_CAT;
+    }
+    if (token_equals(value, length, "network-files")) {
+        return KERNEL_TEST_NETWORK_FILES;
+    }
+    if (token_equals(value, length, "network-notes")) {
+        return KERNEL_TEST_NETWORK_NOTES;
+    }
+    if (token_equals(value, length, "network-studio")) {
+        return KERNEL_TEST_NETWORK_STUDIO;
+    }
+    if (token_equals(value, length, "network-persistence")) {
+        return KERNEL_TEST_NETWORK_PERSISTENCE;
+    }
+    if (token_equals(value, length, "network-socket-isolation")) {
+        return KERNEL_TEST_NETWORK_SOCKET_ISOLATION;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -515,6 +619,40 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x49);
     case KERNEL_TEST_FAT32_HANDLES:
         return UINT8_C(0x4A);
+    case KERNEL_TEST_NETWORK_NIC_DISCOVERY: return UINT8_C(0x4B);
+    case KERNEL_TEST_NETWORK_NIC_INITIALIZATION: return UINT8_C(0x4C);
+    case KERNEL_TEST_NETWORK_NIC_ABSENT: return UINT8_C(0x4D);
+    case KERNEL_TEST_NETWORK_LINK_DOWN: return UINT8_C(0x4E);
+    case KERNEL_TEST_NETWORK_DHCP: return UINT8_C(0x4F);
+    case KERNEL_TEST_NETWORK_DHCP_TIMEOUT: return UINT8_C(0x50);
+    case KERNEL_TEST_NETWORK_STATIC: return UINT8_C(0x51);
+    case KERNEL_TEST_NETWORK_ARP: return UINT8_C(0x52);
+    case KERNEL_TEST_NETWORK_ICMP: return UINT8_C(0x53);
+    case KERNEL_TEST_NETWORK_ICMP_TIMEOUT: return UINT8_C(0x54);
+    case KERNEL_TEST_NETWORK_UDP: return UINT8_C(0x55);
+    case KERNEL_TEST_NETWORK_DNS_A: return UINT8_C(0x56);
+    case KERNEL_TEST_NETWORK_DNS_CNAME: return UINT8_C(0x57);
+    case KERNEL_TEST_NETWORK_DNS_MALFORMED: return UINT8_C(0x58);
+    case KERNEL_TEST_NETWORK_TCP: return UINT8_C(0x59);
+    case KERNEL_TEST_NETWORK_TCP_RETRANSMIT: return UINT8_C(0x5A);
+    case KERNEL_TEST_NETWORK_TCP_RESET: return UINT8_C(0x5B);
+    case KERNEL_TEST_NETWORK_HTTP_LENGTH: return UINT8_C(0x5C);
+    case KERNEL_TEST_NETWORK_HTTP_CHUNKED: return UINT8_C(0x5D);
+    case KERNEL_TEST_NETWORK_HTTP_REDIRECT: return UINT8_C(0x5E);
+    case KERNEL_TEST_NETWORK_HTTP_MALFORMED: return UINT8_C(0x5F);
+    case KERNEL_TEST_NETWORK_HTTP_NESTED: return UINT8_C(0x60);
+    case KERNEL_TEST_NETWORK_HTTP_REPLACE: return UINT8_C(0x61);
+    case KERNEL_TEST_NETWORK_HTTP_DISK_FULL: return UINT8_C(0x62);
+    case KERNEL_TEST_NETWORK_NIC_RESET: return UINT8_C(0x63);
+    case KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE: return UINT8_C(0x64);
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO: return UINT8_C(0x65);
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_UNAME: return UINT8_C(0x66);
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT: return UINT8_C(0x67);
+    case KERNEL_TEST_NETWORK_FILES: return UINT8_C(0x68);
+    case KERNEL_TEST_NETWORK_NOTES: return UINT8_C(0x69);
+    case KERNEL_TEST_NETWORK_STUDIO: return UINT8_C(0x6A);
+    case KERNEL_TEST_NETWORK_PERSISTENCE: return UINT8_C(0x6B);
+    case KERNEL_TEST_NETWORK_SOCKET_ISOLATION: return UINT8_C(0x6C);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4205,6 +4343,40 @@ void kernel_test_run(
     case KERNEL_TEST_FAT32_CACHE:
     case KERNEL_TEST_FAT32_IMMUTABLE:
     case KERNEL_TEST_FAT32_HANDLES:
+    case KERNEL_TEST_NETWORK_NIC_DISCOVERY:
+    case KERNEL_TEST_NETWORK_NIC_INITIALIZATION:
+    case KERNEL_TEST_NETWORK_NIC_ABSENT:
+    case KERNEL_TEST_NETWORK_LINK_DOWN:
+    case KERNEL_TEST_NETWORK_DHCP:
+    case KERNEL_TEST_NETWORK_DHCP_TIMEOUT:
+    case KERNEL_TEST_NETWORK_STATIC:
+    case KERNEL_TEST_NETWORK_ARP:
+    case KERNEL_TEST_NETWORK_ICMP:
+    case KERNEL_TEST_NETWORK_ICMP_TIMEOUT:
+    case KERNEL_TEST_NETWORK_UDP:
+    case KERNEL_TEST_NETWORK_DNS_A:
+    case KERNEL_TEST_NETWORK_DNS_CNAME:
+    case KERNEL_TEST_NETWORK_DNS_MALFORMED:
+    case KERNEL_TEST_NETWORK_TCP:
+    case KERNEL_TEST_NETWORK_TCP_RETRANSMIT:
+    case KERNEL_TEST_NETWORK_TCP_RESET:
+    case KERNEL_TEST_NETWORK_HTTP_LENGTH:
+    case KERNEL_TEST_NETWORK_HTTP_CHUNKED:
+    case KERNEL_TEST_NETWORK_HTTP_REDIRECT:
+    case KERNEL_TEST_NETWORK_HTTP_MALFORMED:
+    case KERNEL_TEST_NETWORK_HTTP_NESTED:
+    case KERNEL_TEST_NETWORK_HTTP_REPLACE:
+    case KERNEL_TEST_NETWORK_HTTP_DISK_FULL:
+    case KERNEL_TEST_NETWORK_NIC_RESET:
+    case KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE:
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO:
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_UNAME:
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT:
+    case KERNEL_TEST_NETWORK_FILES:
+    case KERNEL_TEST_NETWORK_NOTES:
+    case KERNEL_TEST_NETWORK_STUDIO:
+    case KERNEL_TEST_NETWORK_PERSISTENCE:
+    case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_DOUBLE_FAULT:
@@ -5914,6 +6086,652 @@ _Noreturn void kernel_test_complete_fat32(void)
     kernel_test_pass();
 }
 
+#define NETWORK_TEST_OWNER UINT64_C(0x54455354)
+#define NETWORK_TEST_GUEST UINT32_C(0x0A00020F)
+#define NETWORK_TEST_MASK UINT32_C(0xFFFFFF00)
+#define NETWORK_TEST_GATEWAY UINT32_C(0x0A000202)
+#define NETWORK_TEST_DNS UINT32_C(0x0A000203)
+#define NETWORK_TEST_HTTP UINT32_C(0x0A000214)
+
+static const uint8_t network_welcome[] =
+    "hello from the Sapote network\n";
+
+static void network_require_device(void)
+{
+    const struct network_state state = network_get_state();
+
+    if (!state.active || !state.device.present || !state.device.active ||
+        !state.device.link_up || state.device.rx_queue_size == 0U ||
+        state.device.tx_queue_size == 0U) {
+        kernel_test_fail("production virtio-net device is not ready");
+    }
+}
+
+static void network_require_dhcp(void)
+{
+    enum network_status status;
+
+    network_require_device();
+    status = network_start_dhcp(NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+    if (status != NETWORK_STATUS_OK) {
+        kernel_test_fail(network_status_string(status));
+    }
+    const struct network_ipv4_configuration configuration =
+        network_get_state().configuration;
+
+    if (!configuration.configured ||
+        configuration.source != NETWORK_CONFIGURATION_DHCP ||
+        configuration.address != NETWORK_TEST_GUEST ||
+        configuration.gateway != NETWORK_TEST_GATEWAY ||
+        configuration.dns_server != NETWORK_TEST_DNS ||
+        configuration.lease_expires_ns == 0U) {
+        kernel_test_fail("DHCP configuration is not the fixture lease");
+    }
+}
+
+static void network_require_static(void)
+{
+    network_require_device();
+    if (network_configure_static(NETWORK_TEST_GUEST, NETWORK_TEST_MASK,
+            NETWORK_TEST_GATEWAY, NETWORK_TEST_DNS) != NETWORK_STATUS_OK) {
+        kernel_test_fail("static IPv4 configuration was refused");
+    }
+}
+
+static bool network_bytes_equal(
+    const uint8_t *left,
+    const uint8_t *right,
+    size_t length
+)
+{
+    for (size_t index = 0U; index < length; ++index) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void network_syscall_http_download_scenario(void)
+{
+    const uint64_t request_address = PAGING_LINUX_STACK_BASE;
+    const uint64_t response_address = request_address + UINT64_C(256);
+    const uint64_t url_address = request_address + UINT64_C(512);
+    const uint64_t path_address = request_address + UINT64_C(640);
+    static const char url[] = "http://sapote.test/welcome.txt";
+    static const char destination[] = "HTTPLEN.TXT";
+    uintptr_t executable_frame = 0U;
+    uintptr_t data_frame = 0U;
+    struct paging_process_space space = {0};
+    struct paging_process_alias_set alias = {0};
+    struct network_syscall_authenticator authenticator = {0};
+    struct network_syscall_request *request;
+    struct network_syscall_response *response;
+    struct paging_process_expected_page pages[2];
+    uint64_t executable_pages[1];
+    const bool restore_interrupts = cpu_interrupts_enabled();
+
+    fat32_require_base(true);
+    if (frame_allocate(&executable_frame) != FRAME_STATUS_OK ||
+        frame_allocate(&data_frame) != FRAME_STATUS_OK) {
+        kernel_test_fail("network syscall fixture frames were unavailable");
+    }
+    for (size_t offset = 0U; offset < (size_t)PAGING_PAGE_SIZE; ++offset) {
+        ((uint8_t *)(void *)executable_frame)[offset] = 0U;
+        ((uint8_t *)(void *)data_frame)[offset] = 0U;
+    }
+    request = (struct network_syscall_request *)(void *)data_frame;
+    response = (struct network_syscall_response *)(void *)(data_frame + 256U);
+    for (size_t index = 0U; index < sizeof(url) - 1U; ++index) {
+        ((char *)(void *)(data_frame + 512U))[index] = url[index];
+    }
+    for (size_t index = 0U; index < sizeof(destination) - 1U; ++index) {
+        ((char *)(void *)(data_frame + 640U))[index] = destination[index];
+    }
+    *request = (struct network_syscall_request){
+        .version = NETWORK_SYSCALL_ABI_VERSION,
+        .size = sizeof(*request),
+        .operation = NETWORK_SYSCALL_HTTP_TO_FILE,
+        .primary_address = url_address,
+        .secondary_address = path_address,
+        .timeout_ns = UINT64_C(15000000000),
+        .primary_length = sizeof(url) - 1U,
+        .secondary_length = sizeof(destination) - 1U
+    };
+    if (restore_interrupts) {
+        cpu_interrupt_disable();
+    }
+    executable_pages[0] = executable_frame;
+    pages[0] = (struct paging_process_expected_page){
+        .virtual_address = PAGING_LINUX_IMAGE_BASE + PAGING_PAGE_SIZE,
+        .physical_address = executable_frame,
+        .permissions = PAGING_EXECUTE
+    };
+    pages[1] = (struct paging_process_expected_page){
+        .virtual_address = PAGING_LINUX_STACK_BASE,
+        .physical_address = data_frame,
+        .permissions = PAGING_WRITE
+    };
+    if (paging_process_space_build(&space) != PAGING_STATUS_OK ||
+        paging_process_alias_set_narrow(&space, executable_pages, 1U,
+            &alias) != PAGING_STATUS_OK ||
+        paging_process_map_user_page(&space,
+            PAGING_PROCESS_MAPPING_LINUX_IMAGE,
+            pages[0].virtual_address, executable_frame, PAGING_EXECUTE) !=
+                PAGING_STATUS_OK ||
+        paging_process_map_user_page(&space,
+            PAGING_PROCESS_MAPPING_LINUX_STACK,
+            pages[1].virtual_address, data_frame, PAGING_WRITE) !=
+                PAGING_STATUS_OK ||
+        paging_process_validate_linux(&space, pages, 2U) !=
+                PAGING_STATUS_OK) {
+        kernel_test_fail("network syscall process boundary was not installed");
+    }
+    if (restore_interrupts) {
+        cpu_interrupt_enable();
+    }
+    if (network_syscall_register(&space, UINT64_C(0x210),
+            &authenticator) != NETWORK_SYSCALL_STATUS_OK ||
+        network_syscall_dispatch(&authenticator, request_address,
+            response_address) != NETWORK_SYSCALL_STATUS_OK ||
+        response->boundary_status != NETWORK_SYSCALL_STATUS_OK ||
+        response->network_status != NETWORK_STATUS_OK ||
+        response->http_status != 200U ||
+        response->value != sizeof(network_welcome) - 1U) {
+        kernel_test_fail("network syscall HTTP operation failed");
+    }
+    network_syscall_process_terminated(&authenticator);
+    if (network_syscall_dispatch(&authenticator, request_address,
+            response_address) != NETWORK_SYSCALL_STATUS_BAD_TOKEN) {
+        kernel_test_fail("terminated network syscall token remained valid");
+    }
+    if (restore_interrupts) {
+        cpu_interrupt_disable();
+    }
+    if (paging_process_unmap_user_page(&space,
+            PAGING_PROCESS_MAPPING_LINUX_STACK,
+            PAGING_LINUX_STACK_BASE) != PAGING_STATUS_OK ||
+        paging_process_unmap_user_page(&space,
+            PAGING_PROCESS_MAPPING_LINUX_IMAGE,
+            PAGING_LINUX_IMAGE_BASE + PAGING_PAGE_SIZE) != PAGING_STATUS_OK ||
+        paging_process_alias_set_restore(&space, &alias) != PAGING_STATUS_OK ||
+        paging_process_space_release(&space) != PAGING_STATUS_OK ||
+        frame_release(data_frame) != FRAME_STATUS_OK ||
+        frame_release(executable_frame) != FRAME_STATUS_OK) {
+        kernel_test_fail("network syscall proof did not release its resources");
+    }
+    if (restore_interrupts) {
+        cpu_interrupt_enable();
+    }
+    if (!fat32_file_equals(destination, network_welcome,
+            sizeof(network_welcome) - 1U)) {
+        kernel_test_fail("network syscall HTTP file changed after sync");
+    }
+    console_write("ST NETWORK syscall v1 HTTP-to-FAT32 boundary passed\n");
+}
+
+static void network_http_download_scenario(
+    const char *url,
+    const char *destination,
+    bool expect_chunked,
+    uint32_t redirects
+)
+{
+    struct network_http_result result;
+    enum network_status status;
+
+    fat32_require_base(true);
+    if (!network_get_state().configuration.configured) {
+        network_require_dhcp();
+    }
+    status = network_http_download(NETWORK_TEST_OWNER, url, destination,
+        false, UINT64_C(15000000000), &result);
+    if (status != NETWORK_STATUS_OK ||
+        result.status_code != 200U ||
+        result.body_bytes != sizeof(network_welcome) - 1U ||
+        result.chunked != expect_chunked || result.redirects != redirects ||
+        !result.synchronized ||
+        !fat32_file_equals(destination, network_welcome,
+            sizeof(network_welcome) - 1U)) {
+        console_write("ST NETWORK HTTP failure status ");
+        console_write(network_status_string(status));
+        console_write(" code ");
+        console_write_u64(result.status_code);
+        console_write(" bytes ");
+        console_write_u64(result.body_bytes);
+        console_write(" redirects ");
+        console_write_u64(result.redirects);
+        console_write(" synchronized ");
+        console_write(result.synchronized ? "yes\n" : "no\n");
+        kernel_test_fail("bounded HTTP FAT32 response changed");
+    }
+    console_write("ST NETWORK HTTP bytes ");
+    console_write_u64(result.body_bytes);
+    console_write(" elapsed-ns ");
+    console_write_u64(result.elapsed_ns);
+    console_write(" sync-ns ");
+    console_write_u64(result.synchronize_ns);
+    console_write(" throughput-Bps ");
+    console_write_u64(result.elapsed_ns == 0U ? 0U :
+        (uint64_t)result.body_bytes * UINT64_C(1000000000) /
+            result.elapsed_ns);
+    console_putc('\n');
+    const struct virtio_net_statistics statistics =
+        network_get_state().device.statistics;
+
+    console_write("ST NETWORK CPU poll-ns ");
+    console_write_u64(statistics.polling_processing_ns);
+    console_write(" interrupt-ns ");
+    console_write_u64(statistics.interrupt_processing_ns);
+    console_write(" drops ");
+    console_write_u64(statistics.dropped_frames);
+    console_putc('\n');
+}
+
+static void network_tcp_connect_close(bool expect_reset)
+{
+    network_handle handle;
+    enum network_status status;
+
+    network_require_dhcp();
+    if (network_tcp_open(NETWORK_TEST_OWNER, &handle) != NETWORK_STATUS_OK) {
+        kernel_test_fail("TCP connection allocation failed");
+    }
+    status = network_tcp_connect(NETWORK_TEST_OWNER, handle,
+        NETWORK_TEST_HTTP, 80U, NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+    if ((!expect_reset && status != NETWORK_STATUS_OK) ||
+        (expect_reset && status != NETWORK_STATUS_CONNECTION_RESET) ||
+        network_close(NETWORK_TEST_OWNER, handle) != NETWORK_STATUS_OK) {
+        kernel_test_fail("TCP connection terminal state changed");
+    }
+}
+
+static void network_udp_scenario(bool isolate)
+{
+    network_handle first;
+    network_handle second = 0U;
+    uint8_t first_message[] = "one";
+    uint8_t second_message[] = "two";
+    uint8_t received[8];
+    uint32_t source;
+    uint16_t port;
+    size_t length;
+
+    network_require_dhcp();
+    if (network_udp_open(NETWORK_TEST_OWNER, &first) != NETWORK_STATUS_OK ||
+        network_udp_bind(NETWORK_TEST_OWNER, first, 50001U) !=
+            NETWORK_STATUS_OK ||
+        (isolate &&
+            (network_udp_open(NETWORK_TEST_OWNER, &second) !=
+                NETWORK_STATUS_OK ||
+             network_udp_bind(NETWORK_TEST_OWNER, second, 50002U) !=
+                NETWORK_STATUS_OK))) {
+        kernel_test_fail("UDP endpoint allocation failed");
+    }
+    if (network_udp_send(NETWORK_TEST_OWNER, first, NETWORK_TEST_HTTP, 4242U,
+            first_message, sizeof(first_message) - 1U,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        (isolate && network_udp_send(NETWORK_TEST_OWNER, second,
+            NETWORK_TEST_HTTP, 4242U, second_message,
+            sizeof(second_message) - 1U,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK) ||
+        network_udp_receive(NETWORK_TEST_OWNER, first, &source, &port,
+            received, sizeof(received), &length,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        source != NETWORK_TEST_HTTP || port != 4242U ||
+        length != sizeof(first_message) - 1U ||
+        !network_bytes_equal(received, first_message, length)) {
+        kernel_test_fail("UDP echo used the wrong endpoint");
+    }
+    if (isolate &&
+        (network_udp_receive(NETWORK_TEST_OWNER, second, &source, &port,
+            received, sizeof(received), &length,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+         length != sizeof(second_message) - 1U ||
+         !network_bytes_equal(received, second_message, length))) {
+        kernel_test_fail("one socket received another socket's datagram");
+    }
+    if (network_close(NETWORK_TEST_OWNER, first) != NETWORK_STATUS_OK ||
+        (isolate && network_close(NETWORK_TEST_OWNER, second) !=
+            NETWORK_STATUS_OK)) {
+        kernel_test_fail("UDP endpoint teardown failed");
+    }
+}
+
+static void network_download(const char *destination)
+{
+    struct network_http_result result;
+
+    network_require_dhcp();
+    if (network_http_download(NETWORK_TEST_OWNER,
+            "http://sapote.test/welcome.txt", destination, false,
+            UINT64_C(15000000000), &result) != NETWORK_STATUS_OK ||
+        !result.synchronized || result.status_code != 200U ||
+        !fat32_file_equals(destination, network_welcome,
+            sizeof(network_welcome) - 1U)) {
+        kernel_test_fail("HTTP download did not reach synchronized FAT32");
+    }
+}
+
+static void network_linux_cat_twice(void)
+{
+    static const uint8_t input[] = "fixture\n";
+
+    for (size_t run = 0U; run < 2U; ++run) {
+        struct linux_userland_result result;
+
+        if (linux_userland_launch(LINUX_USERLAND_PROFILE_CAT, &result) !=
+                LINUX_USERLAND_STATUS_WAITING ||
+            linux_userland_deliver_cat_input(input, sizeof(input) - 1U,
+                false, &result) != LINUX_USERLAND_STATUS_WAITING ||
+            linux_userland_deliver_cat_input(NULL, 0U, true, &result) !=
+                LINUX_USERLAND_STATUS_OK || !result.teardown_complete ||
+            !linux_userland_resources_released()) {
+            kernel_test_fail("authenticated cat launch did not recover");
+        }
+    }
+}
+
+_Noreturn void kernel_test_complete_network(void)
+{
+    if (active_scenario < KERNEL_TEST_NETWORK_NIC_DISCOVERY ||
+        active_scenario > KERNEL_TEST_NETWORK_SOCKET_ISOLATION) {
+        kernel_test_fail("network completion used outside its scenario");
+    }
+    cpu_interrupt_enable();
+    switch (active_scenario) {
+    case KERNEL_TEST_NETWORK_NIC_DISCOVERY:
+    case KERNEL_TEST_NETWORK_NIC_INITIALIZATION:
+        network_require_device();
+        break;
+    case KERNEL_TEST_NETWORK_NIC_ABSENT:
+        if (network_get_state().device.present || network_get_state().active) {
+            kernel_test_fail("absent NIC was invented");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_LINK_DOWN:
+        if (!network_get_state().device.present ||
+            network_get_state().device.link_up) {
+            kernel_test_fail("link-down state was not retained");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_DHCP:
+        if (shell_execute("dhcp") != SHELL_STATUS_OK ||
+            !network_get_state().configuration.configured) {
+            (void)shell_execute("netstat");
+            (void)shell_execute("network");
+            kernel_test_fail("Terminal DHCP command did not configure IPv4");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_DHCP_TIMEOUT: {
+        enum network_status status = network_start_dhcp(UINT64_C(1000000000));
+
+        if (status != NETWORK_STATUS_TIMEOUT ||
+            network_get_state().configuration.configured) {
+            kernel_test_fail("DHCP timeout invented a lease");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_STATIC:
+        network_require_static();
+        if (network_get_state().configuration.source !=
+                NETWORK_CONFIGURATION_STATIC) {
+            kernel_test_fail("static IPv4 source was not recorded");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_ARP:
+    case KERNEL_TEST_NETWORK_ICMP: {
+        struct network_ping_result result;
+
+        network_require_static();
+        if (network_ping(NETWORK_TEST_GATEWAY, 3U, UINT64_C(1000000000),
+                &result) != NETWORK_STATUS_OK || result.received != 3U ||
+            network_get_state().arp_entries == 0U) {
+            kernel_test_fail("ARP and ICMP production exchange failed");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_ICMP_TIMEOUT: {
+        struct network_ping_result result;
+
+        network_require_static();
+        if (network_ping(NETWORK_TEST_GATEWAY, 1U, UINT64_C(500000000),
+                &result) != NETWORK_STATUS_TIMEOUT || result.received != 0U) {
+            kernel_test_fail("ICMP timeout was not recoverable");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_UDP:
+        network_udp_scenario(false);
+        break;
+    case KERNEL_TEST_NETWORK_DNS_A:
+    case KERNEL_TEST_NETWORK_DNS_CNAME: {
+        uint32_t address;
+
+        network_require_dhcp();
+        if (network_resolve("sapote.test", &address,
+                NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+            address != NETWORK_TEST_HTTP) {
+            kernel_test_fail("DNS resolution did not return fixture address");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_DNS_MALFORMED: {
+        uint32_t address;
+        enum network_status status;
+
+        network_require_dhcp();
+        status = network_resolve("sapote.test", &address,
+            UINT64_C(1000000000));
+        if (status != NETWORK_STATUS_TIMEOUT &&
+            status != NETWORK_STATUS_DNS_FAILURE &&
+            status != NETWORK_STATUS_MALFORMED) {
+            kernel_test_fail("malformed DNS response was accepted");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_TCP:
+        network_tcp_connect_close(false);
+        break;
+    case KERNEL_TEST_NETWORK_TCP_RETRANSMIT: {
+        uint64_t before = network_get_state().statistics.tcp_retransmissions;
+
+        network_tcp_connect_close(false);
+        if (network_get_state().statistics.tcp_retransmissions <= before) {
+            kernel_test_fail("TCP SYN was not retransmitted");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_TCP_RESET:
+        network_tcp_connect_close(true);
+        break;
+    case KERNEL_TEST_NETWORK_HTTP_LENGTH: {
+        struct network_ping_result proof_ping;
+
+        network_require_dhcp();
+        if (network_ping(NETWORK_TEST_GATEWAY, 1U, UINT64_C(1000000000),
+                &proof_ping) != NETWORK_STATUS_OK ||
+            proof_ping.received != 1U) {
+            kernel_test_fail("HTTP production proof could not ping gateway");
+        }
+        network_syscall_http_download_scenario();
+        break;
+    }
+    case KERNEL_TEST_NETWORK_HTTP_CHUNKED:
+        network_http_download_scenario(
+            "http://sapote.test/welcome.txt", "HTTPCHNK.TXT", true, 0U);
+        break;
+    case KERNEL_TEST_NETWORK_HTTP_REDIRECT:
+        network_http_download_scenario(
+            "http://sapote.test/start", "HTTPREDR.TXT", false, 1U);
+        break;
+    case KERNEL_TEST_NETWORK_HTTP_MALFORMED: {
+        struct network_http_result result;
+        struct sapfs_stat stat;
+
+        fat32_require_base(true);
+        network_require_dhcp();
+        if (network_http_download(NETWORK_TEST_OWNER,
+                "http://sapote.test/welcome.txt", "BADHTTP.TXT", false,
+                UINT64_C(5000000000), &result) == NETWORK_STATUS_OK ||
+            sapfs_stat_path(SAPFS_VOLUME_DATA, "BADHTTP.TXT", &stat) !=
+                SAPFS_STATUS_NOT_FOUND) {
+            kernel_test_fail("malformed HTTP response was accepted");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_HTTP_NESTED:
+        fat32_require_base(true);
+        if (sapfs_mkdir(SAPFS_VOLUME_DATA, "DOWNLDS") != SAPFS_STATUS_OK &&
+            sapfs_stat_path(SAPFS_VOLUME_DATA, "DOWNLDS",
+                &(struct sapfs_stat){0}) != SAPFS_STATUS_OK) {
+            kernel_test_fail("download directory was not available");
+        }
+        network_download("DOWNLDS/WELCOME.TXT");
+        break;
+    case KERNEL_TEST_NETWORK_HTTP_REPLACE:
+        fat32_require_base(true);
+        fat32_feed("write welcome.txt old");
+        network_download("welcome.txt");
+        break;
+    case KERNEL_TEST_NETWORK_HTTP_DISK_FULL: {
+        struct network_http_result result;
+        enum network_status status;
+
+        fat32_require_base(true);
+        network_require_dhcp();
+        status = network_http_download(NETWORK_TEST_OWNER,
+            "http://sapote.test/welcome.txt", "full.txt", false,
+            UINT64_C(5000000000), &result);
+        if (status != NETWORK_STATUS_TOO_LARGE &&
+            status != NETWORK_STATUS_FILESYSTEM) {
+            kernel_test_fail("disk-full HTTP failure was not recoverable");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_NIC_RESET: {
+        network_handle stale;
+        enum network_status open_status;
+        enum network_status shutdown_status;
+        enum network_status initialize_status;
+        enum network_status stale_status;
+
+        network_require_dhcp();
+        open_status = network_udp_open(NETWORK_TEST_OWNER, &stale);
+        shutdown_status = network_shutdown();
+        initialize_status = network_initialize();
+        stale_status = network_close(NETWORK_TEST_OWNER, stale);
+        if (open_status != NETWORK_STATUS_OK ||
+            shutdown_status != NETWORK_STATUS_OK ||
+            initialize_status != NETWORK_STATUS_OK ||
+            stale_status != NETWORK_STATUS_STALE_HANDLE) {
+            console_write("ST NETWORK RESET open ");
+            console_write(network_status_string(open_status));
+            console_write(" shutdown ");
+            console_write(network_status_string(shutdown_status));
+            console_write(" initialize ");
+            console_write(network_status_string(initialize_status));
+            console_write(" stale ");
+            console_write(network_status_string(stale_status));
+            console_putc('\n');
+            kernel_test_fail("NIC reset retained an open handle");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE: {
+        sapfs_handle handle;
+
+        fat32_require_base(true);
+        network_http_download_scenario(
+            "http://sapote.test/welcome.txt", "IMMUTABL.TXT",
+            false, 0U);
+        if (sapfs_open(SAPFS_VOLUME_SYSTEM, "BUSYBOX", SAPFS_ACCESS_WRITE,
+                &handle) != SAPFS_STATUS_READ_ONLY) {
+            kernel_test_fail("networking weakened the immutable system volume");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO:
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_UNAME: {
+        struct linux_userland_result result;
+        enum linux_userland_profile profile = active_scenario ==
+            KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO ?
+            LINUX_USERLAND_PROFILE_ECHO : LINUX_USERLAND_PROFILE_UNAME;
+
+        fat32_require_base(false);
+        if (network_get_state().device.present ||
+            linux_userland_launch(profile, &result) !=
+                LINUX_USERLAND_STATUS_OK || !result.teardown_complete) {
+            kernel_test_fail("missing NIC blocked authenticated userspace");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT:
+        fat32_require_base(false);
+        if (network_get_state().device.present) {
+            kernel_test_fail("missing NIC scenario discovered a device");
+        }
+        network_linux_cat_twice();
+        break;
+    case KERNEL_TEST_NETWORK_FILES: {
+        struct sapfs_list_entry entries[4];
+        size_t count = 0U;
+
+        fat32_require_base(true);
+        network_require_dhcp();
+        if (sapfs_list(SAPFS_VOLUME_DATA, ".", entries, 4U, &count) !=
+                SAPFS_STATUS_OK || ui_flush() != UI_STATUS_OK) {
+            kernel_test_fail("networking regressed Files");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_NOTES:
+        fat32_require_base(true);
+        network_require_dhcp();
+        fat32_feed("write NOTES.TXT network-note");
+        if (ui_flush() != UI_STATUS_OK) {
+            kernel_test_fail("networking regressed Notes");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_STUDIO:
+        fat32_require_base(true);
+        network_require_dhcp();
+        if (!ui_is_active() || ui_flush() != UI_STATUS_OK) {
+            kernel_test_fail("networking regressed SapStudio");
+        }
+        break;
+    case KERNEL_TEST_NETWORK_PERSISTENCE: {
+        struct sapfs_stat stat;
+        enum sapfs_status status;
+
+        fat32_require_base(true);
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, "network.txt", &stat);
+        if (status == SAPFS_STATUS_NOT_FOUND) {
+            network_download("network.txt");
+            if (sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+                kernel_test_fail("network download did not unmount cleanly");
+            }
+            console_write("\nST NETWORK PERSISTENCE synchronized reboot phase\n");
+            cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+            kernel_test_fail("platform reset did not restart QEMU");
+        }
+        if (status != SAPFS_STATUS_OK ||
+            !fat32_file_equals("network.txt", network_welcome,
+                sizeof(network_welcome) - 1U)) {
+            kernel_test_fail("network download did not persist after reboot");
+        }
+        break;
+    }
+    case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
+        network_udp_scenario(true);
+        break;
+    default:
+        kernel_test_fail("unreachable network scenario");
+    }
+    console_write("\nST NETWORK production path bounded and recoverable\n");
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -6092,6 +6910,74 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "fat32-immutable";
     case KERNEL_TEST_FAT32_HANDLES:
         return "fat32-handles";
+    case KERNEL_TEST_NETWORK_NIC_DISCOVERY:
+        return "network-nic-discovery";
+    case KERNEL_TEST_NETWORK_NIC_INITIALIZATION:
+        return "network-nic-initialization";
+    case KERNEL_TEST_NETWORK_NIC_ABSENT:
+        return "network-nic-absent";
+    case KERNEL_TEST_NETWORK_LINK_DOWN:
+        return "network-link-down";
+    case KERNEL_TEST_NETWORK_DHCP:
+        return "network-dhcp";
+    case KERNEL_TEST_NETWORK_DHCP_TIMEOUT:
+        return "network-dhcp-timeout";
+    case KERNEL_TEST_NETWORK_STATIC:
+        return "network-static";
+    case KERNEL_TEST_NETWORK_ARP:
+        return "network-arp";
+    case KERNEL_TEST_NETWORK_ICMP:
+        return "network-icmp";
+    case KERNEL_TEST_NETWORK_ICMP_TIMEOUT:
+        return "network-icmp-timeout";
+    case KERNEL_TEST_NETWORK_UDP:
+        return "network-udp";
+    case KERNEL_TEST_NETWORK_DNS_A:
+        return "network-dns-a";
+    case KERNEL_TEST_NETWORK_DNS_CNAME:
+        return "network-dns-cname";
+    case KERNEL_TEST_NETWORK_DNS_MALFORMED:
+        return "network-dns-malformed";
+    case KERNEL_TEST_NETWORK_TCP:
+        return "network-tcp";
+    case KERNEL_TEST_NETWORK_TCP_RETRANSMIT:
+        return "network-tcp-retransmit";
+    case KERNEL_TEST_NETWORK_TCP_RESET:
+        return "network-tcp-reset";
+    case KERNEL_TEST_NETWORK_HTTP_LENGTH:
+        return "network-http-length";
+    case KERNEL_TEST_NETWORK_HTTP_CHUNKED:
+        return "network-http-chunked";
+    case KERNEL_TEST_NETWORK_HTTP_REDIRECT:
+        return "network-http-redirect";
+    case KERNEL_TEST_NETWORK_HTTP_MALFORMED:
+        return "network-http-malformed";
+    case KERNEL_TEST_NETWORK_HTTP_NESTED:
+        return "network-http-nested";
+    case KERNEL_TEST_NETWORK_HTTP_REPLACE:
+        return "network-http-replace";
+    case KERNEL_TEST_NETWORK_HTTP_DISK_FULL:
+        return "network-http-disk-full";
+    case KERNEL_TEST_NETWORK_NIC_RESET:
+        return "network-nic-reset";
+    case KERNEL_TEST_NETWORK_SYSTEM_IMMUTABLE:
+        return "network-system-immutable";
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_ECHO:
+        return "network-missing-linux-echo";
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_UNAME:
+        return "network-missing-linux-uname";
+    case KERNEL_TEST_NETWORK_MISSING_LINUX_CAT:
+        return "network-missing-linux-cat";
+    case KERNEL_TEST_NETWORK_FILES:
+        return "network-files";
+    case KERNEL_TEST_NETWORK_NOTES:
+        return "network-notes";
+    case KERNEL_TEST_NETWORK_STUDIO:
+        return "network-studio";
+    case KERNEL_TEST_NETWORK_PERSISTENCE:
+        return "network-persistence";
+    case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
+        return "network-socket-isolation";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

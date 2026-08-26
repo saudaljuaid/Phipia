@@ -3104,7 +3104,7 @@ static enum ui_status draw_menu_brand(struct ui_rect damage)
     if (status == UI_STATUS_OK) {
         status = draw_text(state.layout.menu_bar, damage,
             state.layout.surface.width - 134U, state.layout.menu_baseline,
-            "Sapote 2.0.0", state.theme.white);
+            "Sapote 2.1.0", state.theme.white);
     }
     return status;
 }

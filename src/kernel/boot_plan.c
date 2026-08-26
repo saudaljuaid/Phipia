@@ -38,6 +38,8 @@
 #include <sapote/linux_uname.h>
 #include <sapote/memory.h>
 #include <sapote/msix.h>
+#include <sapote/network.h>
+#include <sapote/network_syscall.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
@@ -45,6 +47,7 @@
 #include <sapote/pointer.h>
 #include <sapote/process.h>
 #include <sapote/pm_timer.h>
+#include <sapote/random.h>
 #include <sapote/screen.h>
 #include <sapote/self_test.h>
 #include <sapote/shell.h>
@@ -67,8 +70,10 @@ static bool test_uses_first_light_userland(enum kernel_test_scenario scenario)
 
 static bool test_uses_fat32_volumes(enum kernel_test_scenario scenario)
 {
-    return scenario >= KERNEL_TEST_FAT32_SYSTEM &&
-        scenario <= KERNEL_TEST_FAT32_HANDLES;
+    return (scenario >= KERNEL_TEST_FAT32_SYSTEM &&
+            scenario <= KERNEL_TEST_FAT32_HANDLES) ||
+        (scenario >= KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
+            scenario <= KERNEL_TEST_NETWORK_SOCKET_ISOLATION);
 }
 
 static void stage_failed(
@@ -887,6 +892,50 @@ static void execute_dma_foundation(
     console_write("Sapote: bounded DMA negative controls 2/2 passed\n");
     console_write("Sapote: contiguous DMA ownership foundation established\n");
     boot_stage_result_succeed(descriptor, result);
+}
+
+static void execute_network_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t network_tests = 0U;
+    size_t syscall_tests = 0U;
+    enum network_status status;
+
+    random_initialize();
+    if (!random_self_test()) {
+        stage_failed(context, result, "random-source self-test failed");
+        return;
+    }
+    if (!network_self_test(&network_tests) ||
+        !network_syscall_self_test(&syscall_tests)) {
+        stage_failed(context, result, "network foundation self-test failed");
+        return;
+    }
+    status = network_initialize();
+    if (status != NETWORK_STATUS_OK && status != NETWORK_STATUS_UNAVAILABLE &&
+        status != NETWORK_STATUS_LINK_DOWN) {
+        stage_failed(context, result, network_status_string(status));
+        return;
+    }
+    console_write("Sapote: network controls ");
+    console_write_u64(network_tests + syscall_tests);
+    console_write(" passed; entropy ");
+    console_write(random_capability_string(random_get_state().capability));
+    console_putc('\n');
+    if (status == NETWORK_STATUS_OK) {
+        console_write("Sapote: virtio-net0 initialized\n");
+    } else if (status == NETWORK_STATUS_LINK_DOWN) {
+        console_write("Sapote: virtio-net0 initialized without carrier\n");
+    } else {
+        console_write("Sapote: virtio-net0 absent\n");
+    }
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = network_tests + syscall_tests;
+    result->proof_counters[1] = network_get_state().active ? 1U : 0U;
+    result->proof_counter_count = 2U;
 }
 
 static bool dependencies_complete(
@@ -2164,6 +2213,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     REQUIRED_STAGE(BOOT_STAGE_DMA_FOUNDATION, "DMA foundation",
         BOOT_PHASE_SERVICES, BOOT_IRREVERSIBLE_NONE,
         execute_dma_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_NETWORK_FOUNDATION,
+        "network and entropy foundation", BOOT_PHASE_PROOFS,
+        BOOT_IRREVERSIBLE_NONE, execute_network_foundation),
     REQUIRED_STAGE(BOOT_STAGE_XHCI_FOUNDATION,
         "xHCI host-controller foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_xhci_foundation),
@@ -2550,6 +2602,32 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
         descriptor->provided_capability_count = 1U;
         break;
+    case BOOT_STAGE_NETWORK_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capabilities[2] =
+            BOOT_CAPABILITY_DYNAMIC_VECTOR_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[3] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE;
+        descriptor->required_capabilities[5] =
+            BOOT_CAPABILITY_HEAP_AVAILABLE;
+        descriptor->required_capabilities[6] =
+            BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE;
+        descriptor->required_capabilities[7] =
+            BOOT_CAPABILITY_INTERRUPTS_ENABLED;
+        descriptor->required_capabilities[8] =
+            BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
+        descriptor->required_capability_count = 9U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_NETWORK_FOUNDATION_AVAILABLE;
+        descriptor->provided_capabilities[1] =
+            BOOT_CAPABILITY_NETWORK_AVAILABILITY_DECIDED;
+        descriptor->provided_capability_count = 2U;
+        break;
     case BOOT_STAGE_THREADING:
         descriptor->required_capabilities[0] =
             BOOT_CAPABILITY_HEAP_AVAILABLE;
@@ -2912,7 +2990,9 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_UI_LAYOUT_VALIDATED;
         descriptor->required_capabilities[3] =
             BOOT_CAPABILITY_POINTER_AVAILABILITY_DECIDED;
-        descriptor->required_capability_count = 4U;
+        descriptor->required_capabilities[4] =
+            BOOT_CAPABILITY_NETWORK_AVAILABILITY_DECIDED;
+        descriptor->required_capability_count = 5U;
         descriptor->provided_capabilities[0] =
             BOOT_CAPABILITY_DESKTOP_SHELL_AVAILABLE;
         descriptor->provided_capability_count = 1U;
