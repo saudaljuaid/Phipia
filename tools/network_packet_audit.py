@@ -86,7 +86,7 @@ def audit(path: Path) -> dict[str, object]:
     missing = [name for name in required if counts[name] == 0]
     return {"pcap": path.name, "counts": counts, "malformed": malformed,
             "required": list(required), "missing": missing,
-            "production_path": not missing}
+            "production_path": not missing and malformed == 0}
 
 
 def main() -> int:
