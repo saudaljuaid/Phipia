@@ -30,6 +30,12 @@
  * VBIOS parser against a reference image pinned three independent ways, and
  * the matcher's refusal of every device that is not an NVIDIA function.
  *
+ * The bind path has been executed once, against a model of this register
+ * interface built into QEMU (tools/qemu/). That is a stand-in and not the
+ * thing: it shares its register offsets with this file, so a misreading of the
+ * documentation would appear in both. docs/NVIDIA.md records what it did and
+ * did not establish.
+ *
  * No driver here enables bus mastering or allocates DMA. Exactly one of them
  * writes a register at all -- the ROM shadow-disable bit the VBIOS window
  * requires -- and it restores what it found.

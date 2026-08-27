@@ -148,7 +148,7 @@ secure Internet access, or a generally stable userspace ABI.
 - [Several processes](docs/MULTIPROCESS.md) — private address spaces, the round robin, and its bounds
 - [Bounded drivers](docs/DRIVERS.md) — the thirteen devices Sapote binds and identifies
 - [HD Audio](docs/AUDIO.md) — codec conversation over DMA rings, and the order that makes it safe
-- [NVIDIA](docs/NVIDIA.md) — five register contracts, the VBIOS parser, and what has never been run
+- [NVIDIA](docs/NVIDIA.md) — five register contracts, the VBIOS parser, a device model, and what has never been run
 - [Browser port plan](docs/BROWSER_PORT.md) — concrete future engine work and gaps
 - [TLS evaluation](docs/TLS_EVALUATION.md) — prerequisites and explicit non-claims
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles

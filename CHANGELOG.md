@@ -48,6 +48,10 @@
 - Added a freestanding Rust VBIOS validator with sixteen controls, and a
   synthesised reference image stated three independent times in C, Rust and
   Python with the build comparing all three.
+- Added a QEMU device model of the NVIDIA register interface so those five
+  drivers can be executed end to end without the silicon, with the boot
+  register, the ROM image, the configuration mirror and the clock all supplied
+  from outside both the driver and the model.
 - Added eight typed Boot Ledger stages, nine QEMU scenarios and a 101-scenario
   total contract.
 
@@ -59,7 +63,8 @@ listener has no background retransmission timer, no listen queue that outlives
 its caller, and no rate limit on refusals; the five NVIDIA drivers have never
 run against NVIDIA silicon, read five register contracts rather than driving a
 graphics part, and do no mode setting, framebuffer programming, command
-submission or memory management.
+submission or memory management; the device model that executes them is a
+stand-in sharing their register offsets, not hardware.
 
 ## 2.1.0 — Advanced Networking and Browser Foundation
 
