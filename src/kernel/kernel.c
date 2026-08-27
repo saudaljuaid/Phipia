@@ -180,6 +180,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_audio();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_NVIDIA ||
+        installed_context.test_scenario == KERNEL_TEST_NVIDIA_BUILTIN) {
+        kernel_test_complete_nvidia();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=

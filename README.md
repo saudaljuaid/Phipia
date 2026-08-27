@@ -63,6 +63,10 @@ interactive `linux cat` profiles remain available.
   substrate.
 - An HD Audio driver that talks to codecs over bus-mastering command and
   response rings, with bus mastering withdrawn before the rings are reclaimed.
+- Five bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK and
+  NVIDIA's published material, with a freestanding Rust VBIOS validator. They
+  have never run against NVIDIA silicon; what is proved is the decode, the
+  parser and the refusal of every function that is not NVIDIA's.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
 - Modern virtio-net PCI/MSI-X/DMA with bounded Ethernet, ARP, IPv4, ICMP,
@@ -74,7 +78,7 @@ interactive `linux cat` profiles remain available.
   user ranges, authenticated process generations, polling, cancellation, time,
   and bounded random bytes.
 - First Environment, a framebuffer console, networking and filesystem
-  commands, and 99 QEMU scenarios.
+  commands, and 101 QEMU scenarios.
 - SapStudio's deterministic editor foundation, mirrored at upstream commit
   `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
   timeline trim/save, and bounded BMP frame export.
@@ -125,6 +129,9 @@ thirteen bounded drivers bind, reset and identify their devices; none of them
 moves data, enables bus mastering, allocates DMA, or takes an interrupt. The
 HD Audio driver identifies codecs over DMA rings but plays nothing: there is no
 stream descriptor, format negotiation, widget graph, mixer or capture.
+The five NVIDIA drivers read five register contracts and are not a graphics
+driver: no mode setting, no framebuffer programming, no channel, no command
+submission, and no hardware has ever run them.
 General process services, an IOMMU, and broad hardware coverage remain future
 work. Version 2.2.0 is not a claim of POSIX compliance, a general VFS,
 production crash consistency, multi-user security, broad Linux compatibility,
@@ -141,6 +148,7 @@ secure Internet access, or a generally stable userspace ABI.
 - [Several processes](docs/MULTIPROCESS.md) — private address spaces, the round robin, and its bounds
 - [Bounded drivers](docs/DRIVERS.md) — the thirteen devices Sapote binds and identifies
 - [HD Audio](docs/AUDIO.md) — codec conversation over DMA rings, and the order that makes it safe
+- [NVIDIA](docs/NVIDIA.md) — five register contracts, the VBIOS parser, and what has never been run
 - [Browser port plan](docs/BROWSER_PORT.md) — concrete future engine work and gaps
 - [TLS evaluation](docs/TLS_EVALUATION.md) — prerequisites and explicit non-claims
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles

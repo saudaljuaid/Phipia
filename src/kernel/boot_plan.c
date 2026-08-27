@@ -40,6 +40,7 @@
 #include <sapote/msix.h>
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
+#include <sapote/nvidia.h>
 #include <sapote/nvme.h>
 #include <sapote/audio.h>
 #include <sapote/driver.h>
@@ -2543,6 +2544,160 @@ static void execute_audio_codec_proof(
     result->proof_counter_count = 2U;
 }
 
+/*
+ * Everything the NVIDIA drivers can prove without an NVIDIA device, which on
+ * this machine is everything they have ever been able to prove: the identity
+ * decode against the published encoding, the layout the Rust validator writes
+ * through, and that validator's own sixteen controls.
+ */
+static void execute_nvidia_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!nvidia_foundation_self_test(&completed) ||
+        completed != NVIDIA_CONTROLLED_CONTROLS) {
+        stage_failed(context, result, "bounded NVIDIA controls failed");
+        return;
+    }
+    console_write("Sapote: NVIDIA driver foundation controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(NVIDIA_CONTROLLED_CONTROLS);
+    console_write(" passed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static const enum boot_capability nvidia_probe_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
+    BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_IDT_INSTALLED,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+    BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+    BOOT_CAPABILITY_NVIDIA_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(nvidia_probe_requirements) /
+    sizeof(nvidia_probe_requirements[0]) == 11U,
+    "NVIDIA probe prerequisite count changed");
+_Static_assert(sizeof(nvidia_probe_requirements) /
+    sizeof(nvidia_probe_requirements[0]) <= BOOT_STAGE_CAPABILITY_CAPACITY,
+    "NVIDIA probe prerequisites exceed the descriptor bound");
+
+static bool nvidia_probe_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    return dependencies_complete(descriptor, nvidia_probe_requirements,
+        sizeof(nvidia_probe_requirements) /
+            sizeof(nvidia_probe_requirements[0]));
+}
+
+/*
+ * Binding claims a live graphics function and, for the video BIOS, writes one
+ * bit of it. On a machine whose display this kernel is already drawing on,
+ * that is not something to do on every boot uninvited, so the probe runs where
+ * its scenario asks for it. A machine with no NVIDIA function is a machine
+ * this stage has nothing to do on, which is a decision rather than a failure,
+ * and it is the only outcome this code has ever actually been observed to
+ * produce.
+ */
+static void execute_nvidia_probe(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct nvidia_result probe;
+    enum nvidia_status status;
+
+    if (!nvidia_probe_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "NVIDIA probe prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (nvidia_probe_dependencies_complete(&missing_count) ||
+        nvidia_probe_dependencies_complete(&missing_member)) {
+        stage_failed(context, result,
+            "NVIDIA probe prerequisite check accepted an incomplete set");
+        return;
+    }
+    if (context->test_scenario != KERNEL_TEST_NVIDIA) {
+        console_write("Sapote: NVIDIA functions absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
+    status = nvidia_bind(&probe);
+    if (status != NVIDIA_STATUS_OK) {
+        console_write("Sapote: NVIDIA probe violated invariant: ");
+        console_write(nvidia_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, nvidia_status_string(status));
+        return;
+    }
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        const struct nvidia_driver_probe *entry = &probe.probes[index];
+
+        console_write("ST NVIDIA driver ");
+        console_write_u64(index);
+        console_putc(' ');
+        console_write(nvidia_driver_name(index));
+        if (!entry->present) {
+            console_write(" absent\n");
+            continue;
+        }
+        console_write(entry->bound ? " bound " : " refused ");
+        console_write_hex(entry->identity);
+        console_putc('/');
+        console_write_hex(entry->detail);
+        console_write(" reads ");
+        console_write_u64(entry->register_reads);
+        console_write(" writes ");
+        console_write_u64(entry->register_writes);
+        console_putc('\n');
+    }
+    console_write("ST NVIDIA declared ");
+    console_write_u64(probe.declared);
+    console_write(" present ");
+    console_write_u64(probe.present);
+    console_write(" bound ");
+    console_write_u64(probe.bound);
+    console_write(" controls ");
+    console_write_u64(probe.controls);
+    console_write(" architecture ");
+    console_write(nvidia_architecture_name(probe.identity.architecture));
+    console_write(" chipset ");
+    console_write_hex(probe.identity.chipset);
+    console_write(" reads ");
+    console_write_u64(probe.register_reads);
+    console_write(" writes ");
+    console_write_u64(probe.register_writes);
+    console_write(probe.any_function_present ?
+        " function present" : " no function present");
+    console_write(" teardown clean census equal\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = probe.bound;
+    result->proof_counters[1] = probe.controls;
+    result->proof_counter_count = 2U;
+}
+
 #define REQUIRED_STAGE(identifier, label, boot_phase, irreversible, function) \
     { \
         .id = identifier, \
@@ -2708,6 +2863,12 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_AUDIO_CODEC_PROOF,
         "installed HD Audio codec proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_audio_codec_proof),
+    REQUIRED_STAGE(BOOT_STAGE_NVIDIA_FOUNDATION,
+        "bounded NVIDIA driver foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_nvidia_foundation),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_NVIDIA_PROBE,
+        "installed NVIDIA driver probe", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_nvidia_probe),
     REQUIRED_STAGE(BOOT_STAGE_DRIVER_MATRIX_FOUNDATION,
         "bounded PCI driver matrix foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_driver_matrix_foundation),
@@ -3362,6 +3523,31 @@ static bool declare_dependencies(
         descriptor->provided_capability_count = 1U;
         descriptor->skipped_capabilities[0] =
             BOOT_CAPABILITY_AUDIO_CONTROLLER_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_NVIDIA_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capability_count = 1U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_NVIDIA_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_NVIDIA_PROBE:
+        for (size_t index = 0U;
+             index < sizeof(nvidia_probe_requirements) /
+                sizeof(nvidia_probe_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                nvidia_probe_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(nvidia_probe_requirements) /
+                sizeof(nvidia_probe_requirements[0]);
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_NVIDIA_PROBE_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_NVIDIA_FUNCTIONS_ABSENT;
         descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_DRIVER_MATRIX_FOUNDATION:

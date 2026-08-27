@@ -90,7 +90,9 @@ static const char *const stage_names[] = {
     "bounded PCI driver matrix foundation",
     "installed PCI driver matrix probe",
     "bounded HD Audio foundation",
-    "installed HD Audio codec proof"
+    "installed HD Audio codec proof",
+    "bounded NVIDIA driver foundation",
+    "installed NVIDIA driver probe"
 };
 
 _Static_assert(sizeof(stage_names) / sizeof(stage_names[0]) ==
@@ -173,7 +175,10 @@ static const char *const capability_names[] = {
     "PCI driver matrix devices absent",
     "HD Audio foundation available",
     "HD Audio codec proof complete",
-    "HD Audio controller absent"
+    "HD Audio controller absent",
+    "NVIDIA driver foundation available",
+    "NVIDIA driver probe complete",
+    "NVIDIA functions absent"
 };
 
 _Static_assert(sizeof(capability_names) / sizeof(capability_names[0]) ==

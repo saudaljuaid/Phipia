@@ -24,6 +24,7 @@
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
 #include <sapote/audio.h>
+#include <sapote/nvidia.h>
 #include <sapote/driver.h>
 #include <sapote/multiprocess.h>
 #include <sapote/nvme.h>
@@ -511,6 +512,12 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "audio")) {
         return KERNEL_TEST_AUDIO;
     }
+    if (token_equals(value, length, "nvidia")) {
+        return KERNEL_TEST_NVIDIA;
+    }
+    if (token_equals(value, length, "nvidia-builtin")) {
+        return KERNEL_TEST_NVIDIA_BUILTIN;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -684,6 +691,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_DRIVER_MATRIX: return UINT8_C(0x71);
     case KERNEL_TEST_DRIVER_MATRIX_BUILTIN: return UINT8_C(0x72);
     case KERNEL_TEST_AUDIO: return UINT8_C(0x73);
+    case KERNEL_TEST_NVIDIA: return UINT8_C(0x74);
+    case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -821,6 +830,19 @@ bool kernel_test_driver_matrix_exit_self_test(void)
             scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN)) &&
         !driver_matrix_exit_contract(
             scenario_exit_value(KERNEL_TEST_MULTIPROCESS));
+}
+
+static bool nvidia_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x74);
+}
+
+bool kernel_test_nvidia_exit_self_test(void)
+{
+    return nvidia_exit_contract(scenario_exit_value(KERNEL_TEST_NVIDIA)) &&
+        !nvidia_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NVIDIA_BUILTIN)) &&
+        !nvidia_exit_contract(scenario_exit_value(KERNEL_TEST_AUDIO));
 }
 
 static bool audio_exit_contract(uint8_t value)
@@ -4630,6 +4652,8 @@ void kernel_test_run(
     case KERNEL_TEST_DRIVER_MATRIX:
     case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
     case KERNEL_TEST_AUDIO:
+    case KERNEL_TEST_NVIDIA:
+    case KERNEL_TEST_NVIDIA_BUILTIN:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -7522,6 +7546,276 @@ _Noreturn void kernel_test_complete_audio(void)
     kernel_test_pass();
 }
 
+/*
+ * The published encodings this scenario re-derives independently of the
+ * driver's own table. Each is a master control register value built from the
+ * documented field layout -- part number in bits 20 through 28, revision in
+ * the low byte -- and the family Nouveau's device table puts it in. They are
+ * constructed from that encoding rather than captured from a board, and this
+ * scenario exists to make that construction check the same decode the driver
+ * would use on real silicon.
+ */
+static const struct {
+    uint32_t boot0;
+    uint32_t chipset;
+    enum nvidia_architecture architecture;
+} nvidia_published_encodings[] = {
+    { UINT32_C(0x050000A2), UINT32_C(0x050), NVIDIA_ARCHITECTURE_TESLA },
+    { UINT32_C(0x0A0000A3), UINT32_C(0x0A0), NVIDIA_ARCHITECTURE_TESLA },
+    { UINT32_C(0x0C0000A3), UINT32_C(0x0C0), NVIDIA_ARCHITECTURE_FERMI },
+    { UINT32_C(0x0D9000A1), UINT32_C(0x0D9), NVIDIA_ARCHITECTURE_FERMI },
+    { UINT32_C(0x0E4000A1), UINT32_C(0x0E4), NVIDIA_ARCHITECTURE_KEPLER },
+    { UINT32_C(0x108000A1), UINT32_C(0x108), NVIDIA_ARCHITECTURE_KEPLER },
+    { UINT32_C(0x117000A1), UINT32_C(0x117), NVIDIA_ARCHITECTURE_MAXWELL },
+    { UINT32_C(0x124000A1), UINT32_C(0x124), NVIDIA_ARCHITECTURE_MAXWELL },
+    { UINT32_C(0x134000A1), UINT32_C(0x134), NVIDIA_ARCHITECTURE_PASCAL },
+    { UINT32_C(0x140000A1), UINT32_C(0x140), NVIDIA_ARCHITECTURE_VOLTA },
+    { UINT32_C(0x164000A1), UINT32_C(0x164), NVIDIA_ARCHITECTURE_TURING },
+    { UINT32_C(0x172000A1), UINT32_C(0x172), NVIDIA_ARCHITECTURE_AMPERE },
+    { UINT32_C(0x192000A1), UINT32_C(0x192), NVIDIA_ARCHITECTURE_ADA }
+};
+
+#define NVIDIA_PUBLISHED_ENCODINGS \
+    (sizeof(nvidia_published_encodings) / \
+        sizeof(nvidia_published_encodings[0]))
+
+/* The declared shape of the five drivers, restated outside the driver. */
+static const struct {
+    uint8_t class_code;
+    uint8_t subclass;
+    bool writes_registers;
+} nvidia_declared_drivers[NVIDIA_DRIVER_COUNT] = {
+    { UINT8_C(0x03), UINT8_C(0xFF), false },
+    { UINT8_C(0x03), UINT8_C(0xFF), false },
+    { UINT8_C(0x03), UINT8_C(0xFF), false },
+    { UINT8_C(0x03), UINT8_C(0xFF), true },
+    { UINT8_C(0x04), UINT8_C(0x03), false }
+};
+
+static void nvidia_require_pure_layer(void)
+{
+    size_t controls = 0U;
+    size_t reference_length = 0U;
+    const uint8_t *reference;
+    uint32_t writers = 0U;
+
+    if (!kernel_test_nvidia_exit_self_test()) {
+        kernel_test_fail("the NVIDIA exit contract drifted");
+    }
+    if (!nvidia_foundation_self_test(&controls) ||
+        controls != NVIDIA_CONTROLLED_CONTROLS) {
+        kernel_test_fail("the NVIDIA foundation controls did not all pass");
+    }
+    if (nvidia_driver_count() != NVIDIA_DRIVER_COUNT) {
+        kernel_test_fail("the NVIDIA driver table changed size");
+    }
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        if (nvidia_driver_name(index) == NULL ||
+            nvidia_driver_class(index) !=
+                nvidia_declared_drivers[index].class_code ||
+            nvidia_driver_subclass(index) !=
+                nvidia_declared_drivers[index].subclass ||
+            nvidia_driver_writes_registers(index) !=
+                nvidia_declared_drivers[index].writes_registers) {
+            kernel_test_fail("an NVIDIA driver is not the one declared");
+        }
+        if (nvidia_driver_writes_registers(index)) {
+            ++writers;
+        }
+    }
+    if (writers != 1U) {
+        kernel_test_fail("the NVIDIA drivers gained a second writer");
+    }
+    /*
+     * Every published encoding, decoded again here rather than trusted from
+     * the driver's own self-test.
+     */
+    for (size_t index = 0U; index < NVIDIA_PUBLISHED_ENCODINGS; ++index) {
+        const struct nvidia_identity identity =
+            nvidia_decode_identity(nvidia_published_encodings[index].boot0);
+
+        if (!identity.recognized ||
+            identity.chipset != nvidia_published_encodings[index].chipset ||
+            identity.architecture !=
+                nvidia_published_encodings[index].architecture ||
+            identity.revision !=
+                (nvidia_published_encodings[index].boot0 & UINT32_C(0xFF)) ||
+            identity.family != (identity.chipset & UINT32_C(0x1F0))) {
+            kernel_test_fail("a published NVIDIA encoding decoded wrongly");
+        }
+    }
+    /* An absent aperture and a dead bus are both refused, never guessed. */
+    if (nvidia_decode_identity(0U).recognized ||
+        nvidia_decode_identity(UINT32_MAX).recognized ||
+        nvidia_decode_identity(UINT32_C(0x180000A1)).recognized) {
+        kernel_test_fail("the NVIDIA decode invented a part");
+    }
+    reference = nvidia_reference_vbios(&reference_length);
+    if (reference == NULL || reference_length != 1024U ||
+        reference[0] != UINT8_C(0x55) || reference[1] != UINT8_C(0xAA) ||
+        reference[0x40] != (uint8_t)'P' || reference[0x41] != (uint8_t)'C' ||
+        reference[0x42] != (uint8_t)'I' || reference[0x43] != (uint8_t)'R' ||
+        reference[0x44] != UINT8_C(0xDE) || reference[0x45] != UINT8_C(0x10) ||
+        reference[0x100] != UINT8_C(0xFF) ||
+        reference[0x101] != UINT8_C(0xB8) ||
+        reference[0x102] != (uint8_t)'B') {
+        kernel_test_fail("the reference VBIOS image is not the pinned one");
+    }
+    if (!nvidia_resources_released()) {
+        kernel_test_fail("the NVIDIA drivers are holding a claim");
+    }
+}
+
+_Noreturn void kernel_test_complete_nvidia(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+
+    if (active_scenario != KERNEL_TEST_NVIDIA &&
+        active_scenario != KERNEL_TEST_NVIDIA_BUILTIN) {
+        kernel_test_fail("NVIDIA completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger, BOOT_STAGE_NVIDIA_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_NVIDIA_PROBE);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVIDIA_FOUNDATION_AVAILABLE)) {
+        kernel_test_fail("the NVIDIA foundation receipt is invalid");
+    }
+    nvidia_require_pure_layer();
+
+    if (active_scenario == KERNEL_TEST_NVIDIA_BUILTIN) {
+        /*
+         * The probe was never asked for, so the ledger must say it was
+         * skipped and say why, and nothing may have been claimed.
+         */
+        if (receipt->result != BOOT_RECEIPT_SKIPPED ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_FUNCTIONS_ABSENT) ||
+            boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_PROBE_COMPLETE)) {
+            kernel_test_fail("a skipped NVIDIA probe was not recorded as one");
+        }
+        if (pci_resource_get_state().active_claims != 0U ||
+            pci_resource_get_state().active_mappings != 0U ||
+            dma_get_state().active_allocations != 0U) {
+            kernel_test_fail("the skipped NVIDIA probe still took resources");
+        }
+        kernel_test_pass();
+    }
+
+    {
+        const struct nvidia_result probe = nvidia_get_result();
+
+        if (receipt->result != BOOT_RECEIPT_RAN ||
+            receipt->proof_counter_count != 2U ||
+            receipt->proof_counters[0] != probe.bound ||
+            receipt->proof_counters[1] != probe.controls ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_PROBE_COMPLETE) ||
+            boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_FUNCTIONS_ABSENT)) {
+            kernel_test_fail("the NVIDIA probe receipt is invalid");
+        }
+        if (probe.declared != NVIDIA_DRIVER_COUNT ||
+            probe.controls != NVIDIA_CONTROLLED_CONTROLS ||
+            probe.bound != probe.present ||
+            !probe.every_present_function_bound ||
+            !probe.teardown_complete || !probe.resource_census_equal) {
+            kernel_test_fail("the NVIDIA probe is inconsistent");
+        }
+        /*
+         * Absence is the answer this machine gives, and it has to be given
+         * honestly: no function present means no register was read, no claim
+         * was taken, and no identity was invented.
+         */
+        if (!probe.any_function_present) {
+            /*
+             * Absence has to be a refusal rather than an empty machine. This
+             * scenario attaches display and HD Audio functions of exactly the
+             * classes the five drivers match on, from vendors that are not
+             * NVIDIA, so "no function present" means every one of them was
+             * turned down on the one field that decides it.
+             */
+            size_t candidates = 0U;
+
+            for (size_t index = 0U; index < pci_function_count(); ++index) {
+                const struct pci_function *function = pci_function_at(index);
+
+                if (function == NULL) {
+                    continue;
+                }
+                if (function->vendor_id == NVIDIA_VENDOR_ID) {
+                    kernel_test_fail(
+                        "an NVIDIA function was present and reported absent");
+                }
+                for (size_t driver = 0U; driver < NVIDIA_DRIVER_COUNT;
+                     ++driver) {
+                    const uint8_t subclass = nvidia_driver_subclass(driver);
+
+                    if (function->class_code != nvidia_driver_class(driver)) {
+                        continue;
+                    }
+                    if (subclass == UINT8_C(0xFF) ?
+                            (function->subclass == 0U ||
+                                function->subclass == 2U) :
+                            function->subclass == subclass) {
+                        ++candidates;
+                        break;
+                    }
+                }
+            }
+            if (candidates < 3U) {
+                kernel_test_fail("the NVIDIA refusal had nothing to refuse");
+            }
+            if (probe.present != 0U || probe.bound != 0U ||
+                probe.register_reads != 0U || probe.register_writes != 0U ||
+                probe.identity.recognized || probe.vbios_valid ||
+                probe.identity.boot0 != 0U) {
+                kernel_test_fail("an absent NVIDIA board reported readings");
+            }
+            for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+                if (probe.probes[index].present ||
+                    probe.probes[index].bound ||
+                    probe.probes[index].identity != 0U) {
+                    kernel_test_fail("an absent NVIDIA driver reported a bind");
+                }
+            }
+        } else {
+            /*
+             * Never yet observed on any machine this has run on. If it ever
+             * is, every bound driver has to have read something, and only the
+             * video BIOS driver may have written.
+             */
+            for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+                const struct nvidia_driver_probe *entry = &probe.probes[index];
+
+                if (!entry->bound) {
+                    continue;
+                }
+                if (entry->vendor_id != NVIDIA_VENDOR_ID ||
+                    entry->register_reads == 0U ||
+                    (entry->register_writes != 0U &&
+                        !nvidia_driver_writes_registers(index))) {
+                    kernel_test_fail("a bound NVIDIA driver broke its bounds");
+                }
+            }
+            if (!probe.identity.recognized) {
+                kernel_test_fail("a present NVIDIA board was not identified");
+            }
+        }
+        if (pci_resource_get_state().active_claims != 0U ||
+            pci_resource_get_state().bus_masters != 0U ||
+            dma_get_state().active_allocations != 0U ||
+            !nvidia_resources_released()) {
+            kernel_test_fail("the NVIDIA probe left the machine holding a claim");
+        }
+    }
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -7782,6 +8076,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "driver-matrix-builtin";
     case KERNEL_TEST_AUDIO:
         return "audio";
+    case KERNEL_TEST_NVIDIA:
+        return "nvidia";
+    case KERNEL_TEST_NVIDIA_BUILTIN:
+        return "nvidia-builtin";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

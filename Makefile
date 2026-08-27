@@ -28,10 +28,11 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-missing-linux-uname network-missing-linux-cat network-files \
 	network-notes network-studio network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused \
-	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio
+	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
+	nvidia nvidia-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 99
-EXPECTED_SHELL_ASSERTION_COUNT := 392
+EXPECTED_TEST_SCENARIO_COUNT := 101
+EXPECTED_SHELL_ASSERTION_COUNT := 401
 
 CC := gcc
 LD := ld
@@ -58,6 +59,7 @@ RUST_LINUX_UNAME_ELF64_TEST := $(BUILD_DIR)/linux-uname-elf64-tests
 RUST_LINUX_CAT_FAT16_TEST := $(BUILD_DIR)/linux-cat-fat16-tests
 RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
+RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -422,6 +424,16 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
+	# Bytes from an NVIDIA board's ROM are bytes from outside, so the parser
+	# is Rust's and its controls run on the host as well as in the kernel.
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/nvbios.rs \
+		-o $(RUST_NVBIOS_TEST)
+	$(RUST_NVBIOS_TEST)
+	$(PYTHON) tools/nvidia_vbios_image.py --self-test
+	# The kernel's reference VBIOS table, the Rust validator that parses it,
+	# and the Python record that rebuilds it are three independent statements
+	# of the same 1,024 bytes.
+	$(PYTHON) tools/check-nvidia-vbios.py
 	# The kernel's multiprocess executable table, the Rust profile that
 	# validates it, and the Python record that rebuilds it are three
 	# independent statements of the same 256 bytes. Any two disagreeing is a
@@ -581,6 +593,52 @@ verify: toolchain lint
 		src/kernel/audio.c)" -eq 2 || \
 		{ echo 'the audio driver lost its bus-master negative control'; \
 		exit 1; }
+	@if grep -ERn '\bnvidia_bind[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=nvidia.c; then \
+		echo 'NVIDIA probe bypasses the Boot Ledger'; exit 1; \
+	fi
+	# Five drivers, and exactly one of them may write a register: the video
+	# BIOS window needs the ROM shadow bit cleared, and nothing else here has
+	# any business changing a live graphics part.
+	@grep -Fq '#define NVIDIA_DRIVER_COUNT 5U' include/sapote/nvidia.h
+	@test "$$(grep -Ec '^        \.name = "NVIDIA ' src/kernel/nvidia.c)" \
+		-eq 5 || \
+		{ echo 'the NVIDIA table does not declare five drivers'; exit 1; }
+	@test "$$(grep -Ec '\.writes_registers = true' src/kernel/nvidia.c)" \
+		-eq 1 || \
+		{ echo 'the NVIDIA drivers gained a second register writer'; \
+		exit 1; }
+	@test "$$(grep -Ec 'mmio_write32[[:space:]]*[(]' \
+		src/kernel/nvidia.c)" -eq 3 || \
+		{ echo 'an NVIDIA driver gained an unreviewed register write'; \
+		exit 1; }
+	# The one write is reversible and is proved reversed, not assumed.
+	@save=$$(grep -n 'saved = mmio_read32(registers, shadow);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		restore=$$(grep -n 'mmio_write32(registers, shadow, saved);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		verify=$$(grep -n 'restored = mmio_read32(registers, shadow);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		test -n "$$save" && test -n "$$restore" && test -n "$$verify" && \
+		test "$$save" -lt "$$restore" && test "$$restore" -lt "$$verify" || \
+		{ echo 'the NVIDIA ROM shadow bit is not proved restored'; exit 1; }
+	# No driver here may reach memory: Sapote has no IOMMU.
+	@if grep -En \
+		'pci_claim_enable_bus_master|dma_(allocate|mark_initialized|transfer_to_device|transfer_to_cpu|release)' \
+		src/kernel/nvidia.c; then \
+		echo 'an NVIDIA driver reached for bus-mastering DMA'; exit 1; \
+	fi
+	@if grep -En 'pci_config_write_(port|ecam)' src/kernel/nvidia.c; then \
+		echo 'an NVIDIA driver wrote configuration space'; exit 1; \
+	fi
+	# C never parses a VBIOS byte; the freestanding Rust validator does.
+	@grep -Fq 'sapote_nvbios_parse(' src/kernel/nvidia.c || \
+		{ echo 'the NVIDIA driver stopped using the Rust VBIOS boundary'; \
+		exit 1; }
+	@grep -Fq 'NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON' \
+		include/sapote/nvidia.h || \
+		{ echo 'the NVIDIA hardware-testing limit was dropped'; exit 1; }
 	# One receive buffer and one transmit buffer serve the whole stack, so a
 	# handler that answers the frame it is reading must never re-enter the
 	# pump. The guard is the only thing standing between an inbound segment
@@ -1112,6 +1170,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		driver-matrix) expected=227 ;; \
 		driver-matrix-builtin) expected=229 ;; \
 		audio) expected=231 ;; \
+		nvidia) expected=233 ;; \
+		nvidia-builtin) expected=235 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1131,6 +1191,14 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			driver-matrix-builtin) hardware='' ;; \
 			audio) \
 				hardware='-device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=none0 -audiodev none,id=none0' ;; \
+			# No emulator models an NVIDIA part, so the nvidia scenario \
+			# attaches display and HD Audio functions of exactly the classes \
+			# the five drivers match on, from vendors that are not NVIDIA. \
+			# That turns "no function present" from an empty machine into a \
+			# refusal with something to refuse. \
+			nvidia) \
+				hardware='-vga std -device cirrus-vga,romfile= -device bochs-display,romfile= -device ich9-intel-hda' ;; \
+			nvidia-builtin) hardware='' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \

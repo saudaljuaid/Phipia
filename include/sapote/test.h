@@ -111,6 +111,8 @@ enum kernel_test_scenario {
     KERNEL_TEST_DRIVER_MATRIX,
     KERNEL_TEST_DRIVER_MATRIX_BUILTIN,
     KERNEL_TEST_AUDIO,
+    KERNEL_TEST_NVIDIA,
+    KERNEL_TEST_NVIDIA_BUILTIN,
     KERNEL_TEST_INVALID
 };
 
@@ -167,7 +169,9 @@ bool kernel_test_multiprocess_exit_self_test(void);
 _Noreturn void kernel_test_complete_driver_matrix(void);
 bool kernel_test_driver_matrix_exit_self_test(void);
 _Noreturn void kernel_test_complete_audio(void);
+_Noreturn void kernel_test_complete_nvidia(void);
 bool kernel_test_audio_exit_self_test(void);
+bool kernel_test_nvidia_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

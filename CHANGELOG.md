@@ -40,7 +40,15 @@
   receive and transmit buffers its own caller held. The pump now refuses
   recursive entry and an unresolved send from the receive path defers to
   retransmission instead.
-- Added six typed Boot Ledger stages, seven QEMU scenarios and a 99-scenario
+- Added five bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK,
+  NVIDIA's open kernel modules and the PCI Firmware Specification: the master
+  control identity decode, the configuration-space mirror cross-check, the
+  timer, the video BIOS window and the HD Audio function. Exactly one of them
+  writes a register, and it proves the write reversed.
+- Added a freestanding Rust VBIOS validator with sixteen controls, and a
+  synthesised reference image stated three independent times in C, Rust and
+  Python with the build comparing all three.
+- Added eight typed Boot Ledger stages, nine QEMU scenarios and a 101-scenario
   total contract.
 
 Explicit non-features: no preemptive user scheduling, no fork, exec, signals,
@@ -48,7 +56,10 @@ process identifiers or inter-process communication; the thirteen bounded
 drivers move no data, enable no bus mastering, allocate no DMA and take no
 interrupt; the HD Audio driver identifies codecs and plays nothing; a TCP
 listener has no background retransmission timer, no listen queue that outlives
-its caller, and no rate limit on refusals.
+its caller, and no rate limit on refusals; the five NVIDIA drivers have never
+run against NVIDIA silicon, read five register contracts rather than driving a
+graphics part, and do no mode setting, framebuffer programming, command
+submission or memory management.
 
 ## 2.1.0 — Advanced Networking and Browser Foundation
 
