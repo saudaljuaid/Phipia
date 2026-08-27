@@ -78,6 +78,18 @@
 #define PAGING_PROCESS_ALIAS_MAX_PAGES 16U
 #define PAGING_PROCESS_EXPECTED_MAX_PAGES 24U
 
+/*
+ * How many private user address spaces may exist at once. One is what the
+ * v0.7.0 proof needed; the bounded multiprocess runtime needs several live
+ * together, because a scheduler that can only hold one hierarchy has to tear a
+ * process down before it can look at another. Each slot costs a complete
+ * private hierarchy - a fresh identity map plus the replayed supervisor
+ * intents - so this is a memory bound, not an architectural one. Four is what
+ * the 128 MiB test machine carries comfortably while still proving that
+ * ownership, aliasing and teardown are per space rather than global.
+ */
+#define PAGING_PROCESS_SPACE_SLOTS 4U
+
 /* console.c's fallback output page, described here once for every owner. */
 #define PAGING_VGA_TEXT_BUFFER_BASE UINT64_C(0x000B8000)
 

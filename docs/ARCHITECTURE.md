@@ -33,6 +33,12 @@ types, and installed W^X checks. Kernel mappings remain supervisor-only.
 ELF image is RX/R, writable state and stack are RW/NX, the stack has a guard
 page, and teardown restores the kernel CR3 before releasing user resources.
 
+`paging.c` holds `PAGING_PROCESS_SPACE_SLOTS` such hierarchies at once rather
+than one. Every private operation resolves the caller's token to a slot, a
+space and its identity-alias narrowings share an index, and a narrowing may
+only be undone while it is the newest one owned - which is what stops one
+process's teardown from freeing a split page table another still has a leaf in.
+
 ## Interrupts, clocks, and scheduling
 
 The IDT and assembly stubs preserve same-privilege and CPL3 frames. ACPI MADT
@@ -44,8 +50,15 @@ preemption, the TSC supplies a second calibrated counter, and `clock.c` exposes
 one monotonic time source. `timer.c` builds bounded deadlines on it.
 
 `thread.c` provides guarded kernel stacks, a small scheduler, and preemption.
-Sapote remains single-core and has no userspace scheduler or general process
-service.
+Sapote remains single-core.
+
+`multiprocess.c` adds a bounded user scheduler above them: up to four processes
+exist at once, each with its own hierarchy, image, stack, generation and saved
+CPL3 register set, and the processor goes to each runnable one in turn. A
+process leaves through the same reviewed gate the Ring 3 proof uses, with its
+whole register set saved on the way out and loaded again on the way back. The
+schedule is cooperative and a faulting process is terminated without disturbing
+its neighbours. See [`MULTIPROCESS.md`](MULTIPROCESS.md).
 
 ## Devices and storage
 
@@ -63,6 +76,13 @@ The current device boundaries are deliberately small:
   handles, a four-sector cache, and clean-sync persistence;
 - FAT16: retained read-only compatibility proofs for historical releases;
 - PS/2: keyboard and three-byte pointer input for the shell and First Light.
+
+`driver.c` adds thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus
+Logic and Bochs Display Interface devices. Each binds through the same typed
+claim and mapping substrate, performs the reset its specification defines,
+identifies its device against a property that specification guarantees, and
+releases everything. None of them enables bus mastering, so none of them can
+reach memory. See [`DRIVERS.md`](DRIVERS.md).
 
 There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
 or general USB class stack. The exact FAT32 design and limits are in
@@ -157,5 +177,8 @@ keeping milestone diaries in the active documentation set.
 
 Sapote has no SMP, IPv6, TLS, firewall, routing, Wi-Fi, IOMMU, general VFS,
 journaled crash recovery, dynamic linker, signals, general descriptor table,
-broad hardware support, browser, or generally stable native userspace ABI.
-These are boundaries, not implied features.
+broad hardware support, browser, or generally stable native userspace ABI. User
+scheduling is cooperative rather than preemptive, and there is no fork, exec,
+process identifier space or inter-process communication. The thirteen bounded
+drivers bind and identify their devices; none of them moves data. These are
+boundaries, not implied features.

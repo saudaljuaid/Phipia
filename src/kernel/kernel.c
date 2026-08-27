@@ -166,6 +166,16 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_fat32();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_MULTIPROCESS) {
+        kernel_test_complete_multiprocess();
+    }
+
+    if (installed_context.test_scenario == KERNEL_TEST_DRIVER_MATRIX ||
+        installed_context.test_scenario ==
+            KERNEL_TEST_DRIVER_MATRIX_BUILTIN) {
+        kernel_test_complete_driver_matrix();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=

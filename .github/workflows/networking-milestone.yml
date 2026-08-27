@@ -51,7 +51,7 @@ jobs:
                       | tee "$log_dir/network-fixture-self-test.log"
                   make verify | tee "$log_dir/make-verify.log"
                   git diff --check
-            - name: Run all 92 production QEMU scenarios
+            - name: Run all 96 production QEMU scenarios
               shell: bash
               run: |
                   set -euo pipefail
@@ -68,14 +68,14 @@ jobs:
                           | grep -c '^network-'
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 92
-                  test "$scenario_count" -eq 92
+                  test "$expected_scenarios" -eq 96
+                  test "$scenario_count" -eq 96
                   test "$network_count" -eq 34
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee "$log_dir/all-qemu-scenarios.txt"
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      "$log_dir/all-qemu-scenarios.txt")" -eq 92
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 96
                   test "$(grep -Ec '^QEMU scenario network-[a-z0-9-]+ passed$' \
                       "$log_dir/all-qemu-scenarios.txt")" -eq 34
                   cp build/tests/network-http-length/network.pcap \
@@ -146,7 +146,7 @@ jobs:
                   done < <(find build/tests -mindepth 2 -maxdepth 2 \
                       -name serial.log -print | sort)
                   test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
-                      -eq 92
+                      -eq 96
                   cp tools/network_fixture.py tools/network_packet_audit.py \
                       tools/run_network_scenario.py tools/capture-networking.py \
                       docs/NETWORKING.md docs/BROWSER_PORT.md \

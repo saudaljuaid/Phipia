@@ -817,6 +817,34 @@ struct process_proof_result process_get_proof_result(void)
     return installed_result;
 }
 
+bool process_user_context_layout_self_test(void)
+{
+    /*
+     * The assembly boundary reads this structure by fixed byte offset, so the
+     * only way the two can be kept honest is to state the offsets here as
+     * well. src/arch/x86_64/process.S carries the same numbers.
+     */
+    return sizeof(struct process_user_context) == 144U &&
+        offsetof(struct process_user_context, rax) == 0U &&
+        offsetof(struct process_user_context, rbx) == 8U &&
+        offsetof(struct process_user_context, rcx) == 16U &&
+        offsetof(struct process_user_context, rdx) == 24U &&
+        offsetof(struct process_user_context, rsi) == 32U &&
+        offsetof(struct process_user_context, rdi) == 40U &&
+        offsetof(struct process_user_context, rbp) == 48U &&
+        offsetof(struct process_user_context, r8) == 56U &&
+        offsetof(struct process_user_context, r9) == 64U &&
+        offsetof(struct process_user_context, r10) == 72U &&
+        offsetof(struct process_user_context, r11) == 80U &&
+        offsetof(struct process_user_context, r12) == 88U &&
+        offsetof(struct process_user_context, r13) == 96U &&
+        offsetof(struct process_user_context, r14) == 104U &&
+        offsetof(struct process_user_context, r15) == 112U &&
+        offsetof(struct process_user_context, rip) == 120U &&
+        offsetof(struct process_user_context, rsp) == 128U &&
+        offsetof(struct process_user_context, rflags) == 136U;
+}
+
 bool process_resources_released(void)
 {
     const struct paging_state paging = paging_get_state();

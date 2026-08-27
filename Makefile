@@ -26,9 +26,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-http-nested network-http-replace network-http-disk-full \
 	network-nic-reset network-system-immutable network-missing-linux-echo \
 	network-missing-linux-uname network-missing-linux-cat network-files \
-	network-notes network-studio network-persistence network-socket-isolation
+	network-notes network-studio network-persistence network-socket-isolation \
+	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 92
+EXPECTED_TEST_SCENARIO_COUNT := 96
 EXPECTED_SHELL_ASSERTION_COUNT := 359
 
 CC := gcc
@@ -420,6 +421,11 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
+	# The kernel's multiprocess executable table, the Rust profile that
+	# validates it, and the Python record that rebuilds it are three
+	# independent statements of the same 256 bytes. Any two disagreeing is a
+	# build failure rather than a program that quietly does something else.
+	$(PYTHON) tools/check-multiprocess-image.py
 	@test "$(words $(TEST_SCENARIOS))" -eq \
 		'$(EXPECTED_TEST_SCENARIO_COUNT)'
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
@@ -485,6 +491,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_elf64_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_parse$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
 		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
 	fi
@@ -533,6 +541,57 @@ verify: toolchain lint
 		--exclude=process.c; then \
 		echo 'process proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bmultiprocess_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=multiprocess.c; then \
+		echo 'multiprocess proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -ERn '\bdriver_matrix_bind[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=driver.c; then \
+		echo 'driver matrix bind bypasses the Boot Ledger'; exit 1; \
+	fi
+	# The saved-context CPL3 entry belongs to the scheduler that saves the
+	# context. Anything else entering Ring 3 from a register set it did not
+	# authenticate would be a second, unreviewed user boundary.
+	@test "$$(grep -ERh '\bprocess_enter_user_context[[:space:]]*[(]' \
+		src/kernel --include='*.c' | wc -l)" -eq 1 && \
+		grep -Fq 'process_enter_user_context(&process->context);' \
+			src/kernel/multiprocess.c || \
+		{ echo 'saved-context user entry escaped the scheduler'; exit 1; }
+	@test "$$(grep -Ec 'multiprocess_trap_interrupt[[:space:]]*[(]' \
+		src/kernel/multiprocess.c)" -eq 1 && \
+		grep -Fq 'interrupt_process_gate_arm(multiprocess_trap_interrupt,' \
+		src/kernel/multiprocess.c || \
+		{ echo 'multiprocess trap handler has an unexpected call site'; \
+		exit 1; }
+	# Ten drivers, and no driver may enable bus mastering: Sapote has no
+	# IOMMU, so a register-only driver is one that cannot reach memory at all.
+	@grep -Fq '#define DRIVER_MATRIX_CAPACITY 13U' include/sapote/driver.h
+	@test "$$(grep -Ec '^        \.name = ' src/kernel/driver.c)" -eq 13 || \
+		{ echo 'the driver matrix does not declare thirteen drivers'; \
+		exit 1; }
+	# The station addresses the scenario asserts are the ones the host hands
+	# QEMU on its command line. A driver that invented them, cached them, or
+	# read the wrong device would have to invent these exact four.
+	@for mac in 01 02 03 04; do \
+		grep -Fq "mac=52:54:00:AA:BB:$$mac" Makefile || \
+			{ echo "driver scenario lost a pinned station address"; \
+			exit 1; }; \
+		grep -Fq "UINT64_C(0x$${mac}BBAA005452)" src/kernel/test.c || \
+			{ echo "the kernel lost a pinned station address"; exit 1; }; \
+	done
+	@if grep -En \
+		'pci_claim_enable_bus_master|dma_(allocate|mark_initialized|transfer_to_device|transfer_to_cpu|release)' \
+		src/kernel/driver.c; then \
+		echo 'a bounded driver reached for bus-mastering DMA'; exit 1; \
+	fi
+	@if grep -En 'pci_config_write_(port|ecam)' src/kernel/driver.c; then \
+		echo 'a bounded driver wrote configuration space'; exit 1; \
+	fi
+	@grep -Fq '#define PAGING_PROCESS_SPACE_SLOTS 4U' include/sapote/paging.h
+	@grep -Fq 'newest_owned_alias_order()' src/kernel/paging.c || \
+		{ echo 'private alias restores lost their ordering guard'; exit 1; }
 	@if grep -ERn '\blinux_abi_installed_prove[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=boot_plan.c \
 		--exclude=linux_abi.c; then \
@@ -971,6 +1030,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-cache) expected=145 ;; \
 		fat32-immutable) expected=147 ;; \
 		fat32-handles) expected=149 ;; \
+		multiprocess) expected=219 ;; \
+		multiprocess-slots) expected=221 ;; \
+		driver-matrix) expected=223 ;; \
+		driver-matrix-builtin) expected=225 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -985,6 +1048,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			pci-ecam) \
 				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
 			device-windows) hardware='-machine q35' ;; \
+			driver-matrix) \
+				hardware='-nic none -device e1000,mac=52:54:00:AA:BB:01 -device e1000e,mac=52:54:00:AA:BB:02 -device rtl8139,mac=52:54:00:AA:BB:03 -device pcnet,mac=52:54:00:AA:BB:04 -device ich9-ahci -device ich9-intel-hda -device usb-ehci -vga std -device cirrus-vga,romfile= -device bochs-display,romfile=' ;; \
+			driver-matrix-builtin) hardware='' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \

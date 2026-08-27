@@ -1461,3 +1461,41 @@ pub unsafe extern "C" fn sapote_elf64_parse(
         Err(status) => elf64_status_code(status),
     }
 }
+
+/// Run all host-independent multiprocess ELF64 parser mutation families.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_multiprocess_elf64_self_test() -> u32 {
+    elf64::self_test_multiprocess()
+}
+
+/// Parse one CPU-owned multiprocess ELF file into pointer-free facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` must
+/// address one writable `elf64::ValidatedImage`.  The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_multiprocess_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable output and null was refused.
+    unsafe { *out = elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this one readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match elf64::parse_multiprocess(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            elf64_status_code(elf64::Status::Ok)
+        }
+        Err(status) => elf64_status_code(status),
+    }
+}

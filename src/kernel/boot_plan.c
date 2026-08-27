@@ -41,6 +41,8 @@
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
 #include <sapote/nvme.h>
+#include <sapote/driver.h>
+#include <sapote/multiprocess.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
 #include <sapote/pci_resource.h>
@@ -2108,6 +2110,286 @@ static void execute_first_light_proof(
     result->proof_counter_count = 2U;
 }
 
+static void execute_multiprocess_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!multiprocess_foundation_self_test(&completed) ||
+        completed != MULTIPROCESS_CONTROLLED_ROBUSTNESS_TESTS) {
+        stage_failed(context, result,
+            "bounded multiprocess foundation controls failed");
+        return;
+    }
+    console_write("Sapote: multiprocess foundation controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(MULTIPROCESS_CONTROLLED_ROBUSTNESS_TESTS);
+    console_write(" passed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static const enum boot_capability multiprocess_proof_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
+    BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_IDT_INSTALLED,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_THREADING_AVAILABLE,
+    BOOT_CAPABILITY_SCHEDULER_AVAILABLE,
+    BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_MULTIPROCESS_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(multiprocess_proof_requirements) /
+    sizeof(multiprocess_proof_requirements[0]) == 13U,
+    "multiprocess proof prerequisite count changed");
+_Static_assert(sizeof(multiprocess_proof_requirements) /
+    sizeof(multiprocess_proof_requirements[0]) <=
+        BOOT_STAGE_CAPABILITY_CAPACITY,
+    "multiprocess proof prerequisites exceed the descriptor bound");
+
+static bool multiprocess_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    return dependencies_complete(descriptor, multiprocess_proof_requirements,
+        sizeof(multiprocess_proof_requirements) /
+            sizeof(multiprocess_proof_requirements[0]));
+}
+
+/*
+ * The multiprocess proof carries no fixture. Its executable is the kernel's
+ * own bounded table and its evidence is the schedule, so it runs on every
+ * boot rather than only where a disk was attached: running several processes
+ * is a property of the system, not of the machine it was started on.
+ */
+static void execute_multiprocess_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct multiprocess_proof_result proof;
+    enum multiprocess_status status;
+
+    if (!multiprocess_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "multiprocess proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (multiprocess_proof_dependencies_complete(&missing_count) ||
+        multiprocess_proof_dependencies_complete(&missing_member)) {
+        stage_failed(context, result,
+            "multiprocess proof contract negative controls failed");
+        return;
+    }
+
+    status = multiprocess_prove(&proof);
+    if (status != MULTIPROCESS_STATUS_OK) {
+        console_write("Sapote: multiprocess proof violated invariant: ");
+        console_write(multiprocess_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, multiprocess_status_string(status));
+        return;
+    }
+    console_write("ST MULTIPROCESS processes ");
+    console_write_u64(proof.process_count);
+    console_write(" rounds ");
+    console_write_u64(proof.rounds);
+    console_write(" switches ");
+    console_write_u64(proof.switches);
+    console_write(" completed ");
+    console_write_u64(proof.completed);
+    console_write(" tables ");
+    console_write_u64(proof.address_space_table_frames);
+    console_write(
+        " address spaces private schedule round-robin isolation confirmed "
+        "fault contained teardown clean robustness ");
+    console_write_u64(proof.robustness_tests);
+    console_putc('\n');
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.switches;
+    result->proof_counters[1] = proof.process_count;
+    result->proof_counter_count = 2U;
+}
+
+static void execute_driver_matrix_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!driver_matrix_self_test(&completed) ||
+        completed != DRIVER_MATRIX_CONTROLLED_CONTROLS) {
+        stage_failed(context, result,
+            "bounded PCI driver matrix controls failed");
+        return;
+    }
+    console_write("Sapote: PCI driver matrix controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(DRIVER_MATRIX_CONTROLLED_CONTROLS);
+    console_write(" passed for ");
+    console_write_u64(driver_matrix_count());
+    console_write(" declared drivers\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static const enum boot_capability driver_matrix_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_IDT_INSTALLED,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+    BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+    BOOT_CAPABILITY_DRIVER_MATRIX_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(driver_matrix_requirements) /
+    sizeof(driver_matrix_requirements[0]) == 10U,
+    "driver matrix prerequisite count changed");
+_Static_assert(sizeof(driver_matrix_requirements) /
+    sizeof(driver_matrix_requirements[0]) <=
+        BOOT_STAGE_CAPABILITY_CAPACITY,
+    "driver matrix prerequisites exceed the descriptor bound");
+
+static bool driver_matrix_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    return dependencies_complete(descriptor, driver_matrix_requirements,
+        sizeof(driver_matrix_requirements) /
+            sizeof(driver_matrix_requirements[0]));
+}
+
+/*
+ * Binding ten devices resets several of them, so the matrix runs where its
+ * own scenarios attach the hardware rather than on every boot. Absence stays a
+ * healthy decision: a machine that carries none of the ten declared devices is
+ * a machine this stage has nothing to do on, not a machine that failed.
+ */
+static void execute_driver_matrix_probe(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct driver_matrix_result matrix;
+    enum driver_status status;
+
+    if (!driver_matrix_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "driver matrix prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (driver_matrix_dependencies_complete(&missing_count) ||
+        driver_matrix_dependencies_complete(&missing_member)) {
+        stage_failed(context, result,
+            "driver matrix contract negative controls failed");
+        return;
+    }
+
+    if (context->test_scenario != KERNEL_TEST_DRIVER_MATRIX &&
+        context->test_scenario != KERNEL_TEST_DRIVER_MATRIX_BUILTIN) {
+        console_write("Sapote: PCI driver matrix devices absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
+    status = driver_matrix_bind(&matrix);
+    if (status == DRIVER_STATUS_ABSENT) {
+        console_write("Sapote: PCI driver matrix devices absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != DRIVER_STATUS_OK) {
+        console_write("Sapote: PCI driver matrix violated invariant: ");
+        console_write(driver_status_string(status));
+        if (matrix.failed_driver < driver_matrix_count()) {
+            const struct driver_probe *failed =
+                &matrix.probes[matrix.failed_driver];
+
+            console_write(" in driver ");
+            console_write(driver_matrix_name(matrix.failed_driver));
+            console_write(" identity ");
+            console_write_hex(failed->identity);
+            console_write(" detail ");
+            console_write_hex(failed->detail);
+            console_write(" window ");
+            console_write_u64(failed->register_bytes);
+        }
+        console_putc('\n');
+        stage_failed(context, result, driver_status_string(status));
+        return;
+    }
+    for (size_t index = 0U; index < driver_matrix_count(); ++index) {
+        const struct driver_probe *probe = &matrix.probes[index];
+
+        console_write("ST DRIVER ");
+        console_write(driver_matrix_name(index));
+        console_write(" ");
+        console_write_hex(driver_matrix_vendor(index));
+        console_putc(':');
+        console_write_hex(driver_matrix_device(index));
+        if (!probe->present) {
+            console_write(" absent\n");
+            continue;
+        }
+        console_write(" bound identity ");
+        console_write_hex(probe->identity);
+        console_write(" detail ");
+        console_write_hex(probe->detail);
+        console_write(probe->reset_observed ? " reset observed\n" :
+            " no reset defined\n");
+    }
+    console_write("ST DRIVER-MATRIX declared ");
+    console_write_u64(matrix.declared);
+    console_write(" present ");
+    console_write_u64(matrix.present);
+    console_write(" bound ");
+    console_write_u64(matrix.bound);
+    console_write(" resets ");
+    console_write_u64(matrix.resets);
+    console_write(" reads ");
+    console_write_u64(matrix.register_reads);
+    console_write(" writes ");
+    console_write_u64(matrix.register_writes);
+    console_write(" teardown clean census equal\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = matrix.bound;
+    result->proof_counters[1] = matrix.present;
+    result->proof_counter_count = 2U;
+}
+
 #define REQUIRED_STAGE(identifier, label, boot_phase, irreversible, function) \
     { \
         .id = identifier, \
@@ -2267,6 +2549,18 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_LINUX_UNAME_INSTALLED_PROOF,
         "installed static BusyBox uname proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_linux_uname_installed_proof),
+    REQUIRED_STAGE(BOOT_STAGE_DRIVER_MATRIX_FOUNDATION,
+        "bounded PCI driver matrix foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_driver_matrix_foundation),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_DRIVER_MATRIX_PROBE,
+        "installed PCI driver matrix probe", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_driver_matrix_probe),
+    REQUIRED_STAGE(BOOT_STAGE_MULTIPROCESS_FOUNDATION,
+        "bounded multiprocess foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_multiprocess_foundation),
+    REQUIRED_STAGE(BOOT_STAGE_MULTIPROCESS_PROOF,
+        "installed multiprocess proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_multiprocess_proof),
     REQUIRED_STAGE(BOOT_STAGE_CLOSING_PROOFS, "closing boot proofs",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE, execute_closing_proofs),
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_CONSTRUCTION, "desktop construction",
@@ -2883,6 +3177,57 @@ static bool declare_dependencies(
         descriptor->provided_capabilities[1] =
             BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE;
         descriptor->provided_capability_count = 2U;
+        break;
+    case BOOT_STAGE_DRIVER_MATRIX_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DRIVER_MATRIX_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_DRIVER_MATRIX_PROBE:
+        for (size_t index = 0U;
+             index < sizeof(driver_matrix_requirements) /
+                sizeof(driver_matrix_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                driver_matrix_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(driver_matrix_requirements) /
+                sizeof(driver_matrix_requirements[0]);
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_DRIVER_MATRIX_PROBE_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_DRIVER_MATRIX_DEVICES_ABSENT;
+        descriptor->skipped_capability_count = 1U;
+        break;
+    case BOOT_STAGE_MULTIPROCESS_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PROCESS_ADDRESS_SPACE_FOUNDATION_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_MULTIPROCESS_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_MULTIPROCESS_PROOF:
+        for (size_t index = 0U;
+             index < sizeof(multiprocess_proof_requirements) /
+                sizeof(multiprocess_proof_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                multiprocess_proof_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(multiprocess_proof_requirements) /
+                sizeof(multiprocess_proof_requirements[0]);
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_MULTIPROCESS_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
         break;
     case BOOT_STAGE_PROCESS_INSTALLED_PROOF:
         for (size_t index = 0U;

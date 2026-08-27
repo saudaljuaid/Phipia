@@ -23,6 +23,8 @@
 #include <sapote/memory.h>
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
+#include <sapote/driver.h>
+#include <sapote/multiprocess.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
@@ -487,6 +489,18 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "network-socket-isolation")) {
         return KERNEL_TEST_NETWORK_SOCKET_ISOLATION;
     }
+    if (token_equals(value, length, "multiprocess")) {
+        return KERNEL_TEST_MULTIPROCESS;
+    }
+    if (token_equals(value, length, "multiprocess-slots")) {
+        return KERNEL_TEST_MULTIPROCESS_SLOTS;
+    }
+    if (token_equals(value, length, "driver-matrix")) {
+        return KERNEL_TEST_DRIVER_MATRIX;
+    }
+    if (token_equals(value, length, "driver-matrix-builtin")) {
+        return KERNEL_TEST_DRIVER_MATRIX_BUILTIN;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -653,6 +667,10 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NETWORK_STUDIO: return UINT8_C(0x6A);
     case KERNEL_TEST_NETWORK_PERSISTENCE: return UINT8_C(0x6B);
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION: return UINT8_C(0x6C);
+    case KERNEL_TEST_MULTIPROCESS: return UINT8_C(0x6D);
+    case KERNEL_TEST_MULTIPROCESS_SLOTS: return UINT8_C(0x6E);
+    case KERNEL_TEST_DRIVER_MATRIX: return UINT8_C(0x6F);
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN: return UINT8_C(0x70);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -739,6 +757,34 @@ bool kernel_test_linux_uname_exit_self_test(void)
             scenario_exit_value(KERNEL_TEST_LINUX_ABI_UNAME)) &&
         !linux_uname_exit_contract(UINT8_C(0x36)) &&
         !linux_uname_exit_contract(UINT8_C(0x38));
+}
+
+static bool multiprocess_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x6D);
+}
+
+bool kernel_test_multiprocess_exit_self_test(void)
+{
+    return multiprocess_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS)) &&
+        !multiprocess_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS_SLOTS)) &&
+        !multiprocess_exit_contract(UINT8_C(0x34));
+}
+
+static bool driver_matrix_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x6F);
+}
+
+bool kernel_test_driver_matrix_exit_self_test(void)
+{
+    return driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX)) &&
+        !driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN)) &&
+        !driver_matrix_exit_contract(UINT8_C(0x6D));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -3885,6 +3931,158 @@ static void write_combining_scenario(
     console_write(" PAGES\n");
 }
 
+/*
+ * The address-space slot bound, proved directly rather than through the
+ * scheduler. Sapote used to hold exactly one private hierarchy, so "another
+ * one" was not a state the kernel could be in; this builds every slot at once,
+ * checks that they are genuinely separate, that one more is refused, and that
+ * a narrowing may only be undone while it is the newest - which is what stops
+ * one process's teardown from freeing a page table another still has a leaf
+ * in.
+ */
+static void multiprocess_slots_scenario(void)
+{
+    struct paging_process_space spaces[MULTIPROCESS_MAX_PROCESSES];
+    struct paging_process_image_alias aliases[MULTIPROCESS_MAX_PROCESSES];
+    uintptr_t image_frames[MULTIPROCESS_MAX_PROCESSES];
+    uintptr_t stack_frames[MULTIPROCESS_MAX_PROCESSES]
+        [PAGING_PROCESS_STACK_PAGES];
+    struct paging_process_space overflow;
+    struct paging_translation translation;
+    const struct frame_allocator_stats before = frame_allocator_get_stats();
+    const struct paging_state paging_before = paging_get_state();
+    const bool restore_interrupts = cpu_interrupts_enabled();
+    struct frame_allocator_stats after;
+
+    if (!multiprocess_resources_released() ||
+        !paging_process_resources_released()) {
+        kernel_test_fail("multiprocess slots began with resources held");
+    }
+    cpu_interrupt_disable();
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        image_frames[index] = 0U;
+        if (frame_allocate(&image_frames[index]) != FRAME_STATUS_OK) {
+            kernel_test_fail("multiprocess slot image frame allocation failed");
+        }
+        for (size_t page = 0U; page < PAGING_PROCESS_STACK_PAGES; ++page) {
+            stack_frames[index][page] = 0U;
+            if (frame_allocate(&stack_frames[index][page]) !=
+                    FRAME_STATUS_OK) {
+                kernel_test_fail(
+                    "multiprocess slot stack frame allocation failed");
+            }
+            for (size_t offset = 0U; offset < PAGING_PAGE_SIZE; ++offset) {
+                ((volatile uint8_t *)(void *)stack_frames[index][page])
+                    [offset] = 0U;
+            }
+        }
+        for (size_t offset = 0U; offset < PAGING_PAGE_SIZE; ++offset) {
+            ((volatile uint8_t *)(void *)image_frames[index])[offset] = 0U;
+        }
+        if (paging_process_space_build(&spaces[index]) != PAGING_STATUS_OK ||
+            paging_process_image_alias_narrow(&spaces[index],
+                image_frames[index], &aliases[index]) != PAGING_STATUS_OK ||
+            paging_process_map_user_page(&spaces[index],
+                PAGING_PROCESS_MAPPING_IMAGE, PAGING_PROCESS_IMAGE_ADDRESS,
+                image_frames[index], PAGING_EXECUTE) != PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent private address space was refused");
+        }
+        for (size_t page = 0U; page < PAGING_PROCESS_STACK_PAGES; ++page) {
+            if (paging_process_map_user_page(&spaces[index],
+                    PAGING_PROCESS_MAPPING_STACK,
+                    PAGING_PROCESS_STACK_BASE +
+                        (uint64_t)page * PAGING_PAGE_SIZE,
+                    stack_frames[index][page], PAGING_WRITE) !=
+                    PAGING_STATUS_OK) {
+                kernel_test_fail("a concurrent private stack was refused");
+            }
+        }
+        if (paging_process_validate(&spaces[index], image_frames[index],
+                stack_frames[index]) != PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent address space failed its walk");
+        }
+    }
+
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        for (size_t other = 0U; other < index; ++other) {
+            if (spaces[index].root_physical_address ==
+                    spaces[other].root_physical_address ||
+                spaces[index].generation == spaces[other].generation ||
+                image_frames[index] == image_frames[other]) {
+                kernel_test_fail("two concurrent address spaces are the same");
+            }
+        }
+        if (paging_process_translate(&spaces[index],
+                PAGING_PROCESS_IMAGE_ADDRESS, &translation) !=
+                PAGING_STATUS_OK ||
+            !translation.user ||
+            translation.permissions != PAGING_EXECUTE ||
+            translation.physical_address != image_frames[index]) {
+            kernel_test_fail("a private image mapping is not its own");
+        }
+    }
+    if (paging_process_space_build(&overflow) != PAGING_STATUS_PROCESS_BUSY ||
+        overflow.state != PAGING_PROCESS_SPACE_INVALID) {
+        kernel_test_fail("the address-space slot bound was not enforced");
+    }
+
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        for (size_t page = PAGING_PROCESS_STACK_PAGES; page > 0U; --page) {
+            if (paging_process_unmap_user_page(&spaces[index],
+                    PAGING_PROCESS_MAPPING_STACK,
+                    PAGING_PROCESS_STACK_BASE +
+                        (uint64_t)(page - 1U) * PAGING_PAGE_SIZE) !=
+                    PAGING_STATUS_OK) {
+                kernel_test_fail("a private stack mapping refused removal");
+            }
+        }
+        if (paging_process_unmap_user_page(&spaces[index],
+                PAGING_PROCESS_MAPPING_IMAGE, PAGING_PROCESS_IMAGE_ADDRESS) !=
+                PAGING_STATUS_OK) {
+            kernel_test_fail("a private image mapping refused removal");
+        }
+    }
+    if (paging_process_image_alias_restore(&spaces[0], &aliases[0]) !=
+            PAGING_STATUS_PROCESS_ALIAS_STATE) {
+        kernel_test_fail("an out-of-order alias restore was accepted");
+    }
+    for (size_t count = MULTIPROCESS_MAX_PROCESSES; count > 0U; --count) {
+        const size_t index = count - 1U;
+
+        if (paging_process_image_alias_restore(&spaces[index],
+                &aliases[index]) != PAGING_STATUS_OK ||
+            paging_process_space_release(&spaces[index]) !=
+                PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent address space refused teardown");
+        }
+        for (size_t page = PAGING_PROCESS_STACK_PAGES; page > 0U; --page) {
+            if (frame_release(stack_frames[index][page - 1U]) !=
+                    FRAME_STATUS_OK) {
+                kernel_test_fail("a private stack frame refused release");
+            }
+        }
+        if (frame_release(image_frames[index]) != FRAME_STATUS_OK) {
+            kernel_test_fail("a private image frame refused release");
+        }
+    }
+    if (restore_interrupts) {
+        cpu_interrupt_enable();
+    }
+
+    after = frame_allocator_get_stats();
+    if (after.free_frames != before.free_frames ||
+        after.allocated_frames != before.allocated_frames ||
+        paging_get_state().table_frames != paging_before.table_frames ||
+        paging_verify() != PAGING_STATUS_OK ||
+        !paging_process_resources_released() ||
+        !multiprocess_resources_released()) {
+        kernel_test_fail("concurrent address spaces leaked on teardown");
+    }
+    console_write("ST MULTIPROCESS-SLOTS concurrent address spaces ");
+    console_write_u64(MULTIPROCESS_MAX_PROCESSES);
+    console_write(" bound enforced alias order enforced teardown clean\n");
+}
+
 static void device_windows_scenario(
     const struct paging_device_windows *expected
 )
@@ -4377,8 +4575,14 @@ void kernel_test_run(
     case KERNEL_TEST_NETWORK_STUDIO:
     case KERNEL_TEST_NETWORK_PERSISTENCE:
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
+    case KERNEL_TEST_MULTIPROCESS:
+    case KERNEL_TEST_DRIVER_MATRIX:
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
+    case KERNEL_TEST_MULTIPROCESS_SLOTS:
+        multiprocess_slots_scenario();
+        kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -6732,6 +6936,164 @@ _Noreturn void kernel_test_complete_network(void)
     kernel_test_pass();
 }
 
+_Noreturn void kernel_test_complete_multiprocess(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct multiprocess_proof_result proof =
+        multiprocess_get_proof_result();
+
+    if (active_scenario != KERNEL_TEST_MULTIPROCESS) {
+        kernel_test_fail("multiprocess completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_MULTIPROCESS_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_MULTIPROCESS_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != MULTIPROCESS_EXPECTED_SWITCHES ||
+        receipt->proof_counters[1] != MULTIPROCESS_MAX_PROCESSES ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_MULTIPROCESS_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_MULTIPROCESS_PROOF_COMPLETE) ||
+        !kernel_test_multiprocess_exit_self_test()) {
+        kernel_test_fail("multiprocess installed receipt is invalid");
+    }
+    if (proof.process_count != MULTIPROCESS_MAX_PROCESSES ||
+        proof.rounds != MULTIPROCESS_ROUNDS ||
+        proof.switches != MULTIPROCESS_EXPECTED_SWITCHES ||
+        proof.completed != MULTIPROCESS_MAX_PROCESSES ||
+        proof.terminated != 0U ||
+        proof.address_space_table_frames == 0U ||
+        proof.robustness_tests !=
+            MULTIPROCESS_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.concurrent_address_spaces ||
+        !proof.round_robin_interleaved || !proof.contexts_preserved ||
+        !proof.isolation_confirmed || !proof.fault_contained ||
+        !proof.teardown_complete || !proof.resource_census_equal ||
+        !multiprocess_resources_released()) {
+        kernel_test_fail("multiprocess installed proof is inconsistent");
+    }
+    kernel_test_pass();
+}
+
+/*
+ * The station addresses the host hands QEMU on its command line, in the order
+ * the driver matrix declares the devices that carry them. Nothing inside the
+ * kernel could produce these values: they travel from the Makefile, through
+ * QEMU's device models, into each part's own EEPROM or address registers, and
+ * back out through the driver that read them. A driver that reported a
+ * plausible-looking address it had not actually fetched would have to invent
+ * all four of these exactly.
+ */
+#define DRIVER_PINNED_STATION_ADDRESSES 4U
+
+static const struct {
+    size_t driver;
+    uint64_t station;
+} driver_pinned_stations[DRIVER_PINNED_STATION_ADDRESSES] = {
+    { 4U, UINT64_C(0x01BBAA005452) },
+    { 5U, UINT64_C(0x02BBAA005452) },
+    { 8U, UINT64_C(0x03BBAA005452) },
+    { 12U, UINT64_C(0x04BBAA005452) }
+};
+
+_Noreturn void kernel_test_complete_driver_matrix(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct driver_matrix_result matrix = driver_matrix_get_result();
+    const bool every_device = active_scenario == KERNEL_TEST_DRIVER_MATRIX;
+    const uint32_t expected_present = every_device ?
+        (uint32_t)driver_matrix_count() : 5U;
+    uint32_t reset_capable = 0U;
+
+    if (active_scenario != KERNEL_TEST_DRIVER_MATRIX &&
+        active_scenario != KERNEL_TEST_DRIVER_MATRIX_BUILTIN) {
+        kernel_test_fail("driver completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_DRIVER_MATRIX_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_DRIVER_MATRIX_PROBE);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != matrix.bound ||
+        receipt->proof_counters[1] != matrix.present ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_PROBE_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_DEVICES_ABSENT) ||
+        !kernel_test_driver_matrix_exit_self_test()) {
+        kernel_test_fail("driver matrix receipt is invalid");
+    }
+    if (matrix.declared != driver_matrix_count() ||
+        matrix.controls != DRIVER_MATRIX_CONTROLLED_CONTROLS ||
+        matrix.present != expected_present ||
+        matrix.bound != matrix.present ||
+        !matrix.every_present_device_bound || !matrix.teardown_complete ||
+        !matrix.resource_census_equal || matrix.register_reads == 0U ||
+        matrix.register_writes == 0U ||
+        !driver_matrix_resources_released()) {
+        kernel_test_fail("driver matrix result is inconsistent");
+    }
+    for (size_t index = 0U; index < driver_matrix_count(); ++index) {
+        const struct driver_probe *probe = &matrix.probes[index];
+        const bool memory_driver =
+            driver_matrix_access(index) == DRIVER_ACCESS_MEMORY;
+
+        if (!every_device && !probe->present) {
+            if (probe->bound || probe->identity != 0U) {
+                kernel_test_fail("an absent device reported a bound driver");
+            }
+            continue;
+        }
+        if (!probe->present || !probe->bound ||
+            probe->vendor_id != driver_matrix_vendor(index) ||
+            probe->device_id != driver_matrix_device(index) ||
+            probe->identity == 0U) {
+            kernel_test_fail("a declared driver did not bind its device");
+        }
+        if (memory_driver) {
+            if (probe->register_bytes == 0U ||
+                probe->reset_observed != driver_matrix_defines_reset(index)) {
+                kernel_test_fail("a driver did not honour its reset contract");
+            }
+            if (driver_matrix_defines_reset(index)) {
+                ++reset_capable;
+            }
+        } else if (probe->register_bytes != 0U || probe->reset_observed ||
+            driver_matrix_defines_reset(index)) {
+            kernel_test_fail("a configuration driver mapped a window");
+        }
+    }
+    if (matrix.resets != reset_capable) {
+        kernel_test_fail("the recorded reset count is inconsistent");
+    }
+    if (every_device) {
+        for (size_t index = 0U; index < DRIVER_PINNED_STATION_ADDRESSES;
+             ++index) {
+            const size_t driver = driver_pinned_stations[index].driver;
+
+            if (driver >= driver_matrix_count() ||
+                matrix.probes[driver].identity !=
+                    driver_pinned_stations[index].station) {
+                kernel_test_fail(
+                    "a driver did not read its device's real station address");
+            }
+        }
+    }
+    kernel_test_pass();
+}
+
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame)
 {
     bool matches = false;
@@ -6978,6 +7340,14 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "network-persistence";
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         return "network-socket-isolation";
+    case KERNEL_TEST_MULTIPROCESS:
+        return "multiprocess";
+    case KERNEL_TEST_MULTIPROCESS_SLOTS:
+        return "multiprocess-slots";
+    case KERNEL_TEST_DRIVER_MATRIX:
+        return "driver-matrix";
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
+        return "driver-matrix-builtin";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

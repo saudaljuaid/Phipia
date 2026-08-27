@@ -104,6 +104,10 @@ enum kernel_test_scenario {
     KERNEL_TEST_NETWORK_STUDIO,
     KERNEL_TEST_NETWORK_PERSISTENCE,
     KERNEL_TEST_NETWORK_SOCKET_ISOLATION,
+    KERNEL_TEST_MULTIPROCESS,
+    KERNEL_TEST_MULTIPROCESS_SLOTS,
+    KERNEL_TEST_DRIVER_MATRIX,
+    KERNEL_TEST_DRIVER_MATRIX_BUILTIN,
     KERNEL_TEST_INVALID
 };
 
@@ -154,6 +158,10 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
 );
 _Noreturn void kernel_test_complete_fat32(void);
 _Noreturn void kernel_test_complete_network(void);
+_Noreturn void kernel_test_complete_multiprocess(void);
+bool kernel_test_multiprocess_exit_self_test(void);
+_Noreturn void kernel_test_complete_driver_matrix(void);
+bool kernel_test_driver_matrix_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);
 const char *kernel_test_scenario_name(enum kernel_test_scenario scenario);
 _Noreturn void kernel_test_fail(const char *reason);

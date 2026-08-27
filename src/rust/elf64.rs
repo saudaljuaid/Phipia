@@ -6,8 +6,12 @@
 //! structure, retains caller storage, allocates, or performs machine-state
 //! work.  Sapote-specific collision policy remains in C.
 
-/// The one accepted file length.
+/// The accepted file length of the v0.7.0 Ring 3 proof executable.
 pub const FILE_BYTES: usize = 128;
+/// The accepted file length of the bounded multiprocess executable.
+pub const MULTIPROCESS_FILE_BYTES: usize = 256;
+/// The longest file any admitted profile has, which bounds every buffer here.
+pub const MAX_FILE_BYTES: usize = MULTIPROCESS_FILE_BYTES;
 /// ELF64 header size from the System V ABI.
 pub const HEADER_BYTES: u16 = 64;
 /// ELF64 program-header size from the System V ABI.
@@ -18,6 +22,76 @@ pub const PAGE_BYTES: u64 = 4096;
 pub const CODE_OFFSET: u64 = 120;
 /// The deterministic instruction stream carried by the load segment.
 pub const CODE: [u8; 8] = [0xB8, 0x37, 0x50, 0x41, 0x53, 0xCD, 0x81, 0xF4];
+/// The deterministic instruction stream carried by the multiprocess profile.
+///
+/// It is one bounded loop. Each pass publishes the round it has reached and
+/// the identity the kernel handed it on its own private stack, then leaves
+/// through the same software interrupt the Ring 3 proof uses, so the kernel
+/// can save its registers and give the processor to another process. After the
+/// last round it leaves with a different value in RAX, which is how the kernel
+/// tells a yield from an exit. The branch at the top exists so one process can
+/// be told to fault into its unmapped guard page instead: that is the control
+/// that shows a failing process is terminated without disturbing its
+/// neighbours. The tail is HLT, which is privileged, so a processor that ever
+/// ran past the end of the program would fault rather than continue.
+pub const MULTIPROCESS_CODE: [u8; 136] = [
+    0x31, 0xC9, 0x48, 0x89, 0xE5, 0x48, 0xFF, 0xC1,
+    0x48, 0x89, 0x4D, 0xF8, 0x48, 0x89, 0x7D, 0xF0,
+    0x48, 0x39, 0xD1, 0x74, 0x1B, 0xB8, 0x4D, 0x50,
+    0x41, 0x53, 0x48, 0x89, 0xCB, 0xCD, 0x81, 0x48,
+    0x39, 0xF1, 0x72, 0xE1, 0xB8, 0x58, 0x50, 0x41,
+    0x53, 0x48, 0x89, 0xCB, 0xCD, 0x81, 0x0F, 0x0B,
+    0x48, 0xB8, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40,
+    0x00, 0x00, 0x48, 0xC7, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x0F, 0x0B, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+    0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4, 0xF4,
+];
+/// Offset of the yield return address inside the multiprocess instructions.
+pub const MULTIPROCESS_YIELD_RETURN_OFFSET: u64 = 0x1F;
+/// Offset of the exit return address inside the multiprocess instructions.
+pub const MULTIPROCESS_EXIT_RETURN_OFFSET: u64 = 0x2E;
+/// Offset of the deliberate guard-page store inside the multiprocess program.
+pub const MULTIPROCESS_FAULT_OFFSET: u64 = 0x3A;
+/// The value the multiprocess program leaves in EAX when it yields.
+pub const MULTIPROCESS_YIELD_RESULT: u32 = 0x5341_504D;
+/// The value the multiprocess program leaves in EAX when it exits.
+pub const MULTIPROCESS_EXIT_RESULT: u32 = 0x5341_5058;
+
+/// One admitted executable body: how long the file is, where its instructions
+/// begin, and exactly which instructions they are. Everything else about the
+/// accepted subset - the identification, the single read-execute load segment,
+/// the absent section table, the page-aligned canonical user placement - is
+/// the same for every profile and is checked once, below.
+pub struct Profile {
+    /// The one accepted file length for this profile.
+    pub file_bytes: usize,
+    /// Offset of the first instruction, which is also the entry offset.
+    pub code_offset: u64,
+    /// The exact instruction bytes the file must carry.
+    pub code: &'static [u8],
+}
+
+/// The v0.7.0 Ring 3 proof executable.
+pub const PROOF: Profile = Profile {
+    file_bytes: FILE_BYTES,
+    code_offset: CODE_OFFSET,
+    code: &CODE,
+};
+
+/// The bounded multiprocess executable.
+pub const MULTIPROCESS: Profile = Profile {
+    file_bytes: MULTIPROCESS_FILE_BYTES,
+    code_offset: CODE_OFFSET,
+    code: &MULTIPROCESS_CODE,
+};
+
 /// Parser controls represented by the accepted path and mutation families.
 pub const ROBUSTNESS_CONTROLS: u32 = 34;
 
@@ -206,10 +280,20 @@ fn canonical_user(address: u64) -> bool {
 
 /// Decode and validate the exact ELF64 subset from one CPU-owned byte slice.
 pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
-    if input.len() < FILE_BYTES {
+    parse_with(input, &PROOF)
+}
+
+/// Decode and validate the bounded multiprocess executable.
+pub fn parse_multiprocess(input: &[u8]) -> Result<ValidatedImage, Status> {
+    parse_with(input, &MULTIPROCESS)
+}
+
+/// Decode and validate one CPU-owned byte slice against one admitted profile.
+pub fn parse_with(input: &[u8], profile: &Profile) -> Result<ValidatedImage, Status> {
+    if input.len() < profile.file_bytes {
         return Err(Status::Truncated);
     }
-    if input.len() != FILE_BYTES {
+    if input.len() != profile.file_bytes {
         return Err(Status::FileLength);
     }
     if byte(input, 0)? != 0x7F
@@ -286,7 +370,7 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
         .checked_mul(usize::from(program_count))
         .ok_or(Status::ProgramTable)?;
     let table_end = table_offset.checked_add(table_bytes).ok_or(Status::ProgramTable)?;
-    if table_end != usize::try_from(CODE_OFFSET).map_err(|_| Status::ProgramTable)?
+    if table_end != usize::try_from(profile.code_offset).map_err(|_| Status::ProgramTable)?
         || table_end > input.len()
     {
         return Err(Status::ProgramTable);
@@ -313,7 +397,7 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     if file_offset != 0 {
         return Err(Status::FileRange);
     }
-    if file_size != FILE_BYTES as u64 || memory_size != FILE_BYTES as u64 {
+    if file_size != profile.file_bytes as u64 || memory_size != profile.file_bytes as u64 {
         return Err(Status::LoadSize);
     }
     let file_end = file_offset.checked_add(file_size).ok_or(Status::FileRange)?;
@@ -342,13 +426,15 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
     if mapping_end <= virtual_address || !canonical_user(mapping_end - 1) {
         return Err(Status::VirtualAddress);
     }
-    let expected_entry = virtual_address.checked_add(CODE_OFFSET).ok_or(Status::AddressOverflow)?;
+    let expected_entry = virtual_address
+        .checked_add(profile.code_offset)
+        .ok_or(Status::AddressOverflow)?;
     let executable_end = virtual_address.checked_add(file_size).ok_or(Status::AddressOverflow)?;
     if entry != expected_entry || entry < virtual_address || entry >= executable_end {
         return Err(Status::Entry);
     }
-    let code_offset = usize::try_from(CODE_OFFSET).map_err(|_| Status::FileRange)?;
-    for (index, expected) in CODE.iter().copied().enumerate() {
+    let code_offset = usize::try_from(profile.code_offset).map_err(|_| Status::FileRange)?;
+    for (index, expected) in profile.code.iter().copied().enumerate() {
         let position = code_offset.checked_add(index).ok_or(Status::FileRange)?;
         if byte(input, position)? != expected {
             return Err(Status::Code);
@@ -369,8 +455,21 @@ pub fn parse(input: &[u8]) -> Result<ValidatedImage, Status> {
         alignment,
         mapping_start: virtual_address,
         mapping_end,
-        code: CODE,
+        code: leading_code(profile),
     })
+}
+
+/// The first eight instruction bytes, which is what the C receipt carries.
+fn leading_code(profile: &Profile) -> [u8; 8] {
+    let mut leading = [0u8; 8];
+
+    for index in 0..8usize {
+        leading[index] = match profile.code.get(index).copied() {
+            Some(value) => value,
+            None => 0,
+        };
+    }
+    leading
 }
 
 fn put_byte(image: &mut [u8], offset: usize, value: u8) -> bool {
@@ -412,7 +511,7 @@ fn put_integer(
     true
 }
 
-fn write_fixture(image: &mut [u8]) -> bool {
+fn write_fixture(image: &mut [u8], profile: &Profile) -> bool {
     let ident = [
         0x7F, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
@@ -432,14 +531,17 @@ fn write_fixture(image: &mut [u8]) -> bool {
         || !put_u32(image, 64 + PROGRAM_TYPE, 1)
         || !put_u32(image, 64 + PROGRAM_FLAGS, 5)
         || !put_u64(image, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000)
-        || !put_u64(image, 64 + PROGRAM_FILE_SIZE, 128)
-        || !put_u64(image, 64 + PROGRAM_MEMORY_SIZE, 128)
+        || !put_u64(image, 64 + PROGRAM_FILE_SIZE, profile.file_bytes as u64)
+        || !put_u64(image, 64 + PROGRAM_MEMORY_SIZE, profile.file_bytes as u64)
         || !put_u64(image, 64 + PROGRAM_ALIGNMENT, 4096)
     {
         return false;
     }
-    for (index, value) in CODE.iter().copied().enumerate() {
-        let Some(offset) = 120usize.checked_add(index) else {
+    let Ok(code_offset) = usize::try_from(profile.code_offset) else {
+        return false;
+    };
+    for (index, value) in profile.code.iter().copied().enumerate() {
+        let Some(offset) = code_offset.checked_add(index) else {
             return false;
         };
         if !put_byte(image, offset, value) {
@@ -449,52 +551,77 @@ fn write_fixture(image: &mut [u8]) -> bool {
     true
 }
 
-fn fixture() -> [u8; FILE_BYTES] {
-    let mut image = [0u8; FILE_BYTES];
-    if !write_fixture(&mut image) {
-        return [0; FILE_BYTES];
+fn fixture(profile: &Profile) -> [u8; MAX_FILE_BYTES] {
+    let mut image = [0u8; MAX_FILE_BYTES];
+    let Some(body) = image.get_mut(..profile.file_bytes) else {
+        return [0; MAX_FILE_BYTES];
+    };
+    if !write_fixture(body, profile) {
+        return [0; MAX_FILE_BYTES];
     }
     image
 }
 
-fn rejects(image: &[u8], expected: Status) -> bool {
-    matches!(parse(image), Err(found) if found == expected)
+fn rejects(image: &[u8], profile: &Profile, expected: Status) -> bool {
+    matches!(parse_with(image, profile), Err(found) if found == expected)
 }
 
 /// Exercise and count the accepted image and mutation families 1 through 34.
 pub fn self_test() -> u32 {
+    self_test_with(&PROOF)
+}
+
+/// The same thirty-four controls applied to the multiprocess profile.
+pub fn self_test_multiprocess() -> u32 {
+    self_test_with(&MULTIPROCESS)
+}
+
+/// Exercise and count one profile's accepted image and mutation families.
+pub fn self_test_with(profile: &Profile) -> u32 {
     let mut passed = 0u32;
-    let base = fixture();
-    let accepted = match parse(&base) {
+    let stored = fixture(profile);
+    let Some(base) = stored.get(..profile.file_bytes) else {
+        return 0;
+    };
+    let accepted = match parse_with(base, profile) {
         Ok(value) => value,
         Err(_) => return 0,
     };
     if accepted.valid != 1
         || accepted.segment_count != 1
         || accepted.mapping_end - accepted.mapping_start != PAGE_BYTES
-        || accepted.code != CODE
+        || accepted.code != leading_code(profile)
     {
         return 0;
     }
     passed += 1;
-    for length in 0..FILE_BYTES {
+    for length in 0..profile.file_bytes {
         let Some(truncated) = base.get(..length) else {
             return 0;
         };
-        if !rejects(truncated, Status::Truncated) {
+        if !rejects(truncated, profile, Status::Truncated) {
             return 0;
         }
     }
     passed += 1;
-    let mut long = [0u8; FILE_BYTES + 1];
-    if !write_fixture(&mut long) {
+    let mut long = [0u8; MAX_FILE_BYTES + 1];
+    let Some(long_body) = long.get_mut(..profile.file_bytes) else {
+        return 0;
+    };
+    if !write_fixture(long_body, profile) {
         return 0;
     }
-    if !rejects(&long, Status::FileLength) {
+    let Some(long_image) = long.get(..profile.file_bytes + 1) else {
+        return 0;
+    };
+    if !rejects(long_image, profile, Status::FileLength) {
         return 0;
     }
     passed += 1;
 
+    let Ok(code_offset) = usize::try_from(profile.code_offset) else {
+        return 0;
+    };
     let mutations: &[(usize, u8, Status)] = &[
         (0, 0, Status::Magic),
         (EI_CLASS, 1, Status::Class),
@@ -518,19 +645,19 @@ pub fn self_test() -> u32 {
         (64 + PROGRAM_TYPE, 2, Status::SegmentType),
         (64 + PROGRAM_FLAGS, 7, Status::SegmentFlags),
         (64 + PROGRAM_OFFSET, 1, Status::FileRange),
-        (64 + PROGRAM_FILE_SIZE, 127, Status::LoadSize),
-        (64 + PROGRAM_MEMORY_SIZE, 127, Status::LoadSize),
+        (64 + PROGRAM_FILE_SIZE, 0xFF, Status::LoadSize),
+        (64 + PROGRAM_MEMORY_SIZE, 0xFF, Status::LoadSize),
         (64 + PROGRAM_ALIGNMENT, 1, Status::Alignment),
         (64 + PROGRAM_VIRTUAL, 1, Status::Alignment),
         (64 + PROGRAM_PHYSICAL, 1, Status::PhysicalAddress),
         (ELF_ENTRY, 0, Status::Entry),
-        (120, 0x90, Status::Code),
+        (code_offset, 0x90, Status::Code),
     ];
-    let mut changed = [0u8; FILE_BYTES];
-    if !write_fixture(&mut changed) {
-        return 0;
-    }
+    let mut storage = fixture(profile);
     for &(offset, value, expected) in mutations {
+        let Some(changed) = storage.get_mut(..profile.file_bytes) else {
+            return 0;
+        };
         let original = match changed.get(offset).copied() {
             Some(found) => found,
             None => return 0,
@@ -539,32 +666,33 @@ pub fn self_test() -> u32 {
             return 0;
         };
         *destination = value;
-        if !rejects(&changed, expected) {
+        if !rejects(changed, profile, expected) {
             return 0;
         }
-        if !put_byte(&mut changed, offset, original) {
+        if !put_byte(changed, offset, original) {
             return 0;
         }
         passed += 1;
     }
 
-    if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0xFFFF_8000_0000_0000)
-        || !put_u64(&mut changed, ELF_ENTRY, 0xFFFF_8000_0000_0078)
+    let Some(changed) = storage.get_mut(..profile.file_bytes) else {
+        return 0;
+    };
+    if !put_u64(changed, 64 + PROGRAM_VIRTUAL, 0xFFFF_8000_0000_0000)
+        || !put_u64(changed, ELF_ENTRY, 0xFFFF_8000_0000_0000 + profile.code_offset)
     {
         return 0;
     }
-    if !rejects(&changed, Status::VirtualAddress) {
+    if !rejects(changed, profile, Status::VirtualAddress) {
         return 0;
     }
     passed += 1;
-    if !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, 0x0000_4000_0000_0000)
-        || !put_u64(&mut changed, ELF_ENTRY, 0x0000_4000_0000_0078)
-        || !put_u64(&mut changed, 64 + PROGRAM_VIRTUAL, u64::MAX & !0xFFF)
-        || !put_u64(&mut changed, ELF_ENTRY, u64::MAX - 0xF87)
+    if !put_u64(changed, 64 + PROGRAM_VIRTUAL, u64::MAX & !0xFFF)
+        || !put_u64(changed, ELF_ENTRY, (u64::MAX & !0xFFF) + profile.code_offset)
     {
         return 0;
     }
-    if !rejects(&changed, Status::VirtualAddress) {
+    if !rejects(changed, profile, Status::VirtualAddress) {
         return 0;
     }
     passed += 1;
@@ -577,7 +705,8 @@ mod tests {
 
     #[test]
     fn accepted_image_is_pointer_free_and_page_rounded() {
-        let parsed = parse(&fixture()).expect("exact ELF must parse");
+        let stored = fixture(&PROOF);
+        let parsed = parse(&stored[..PROOF.file_bytes]).expect("exact ELF must parse");
         assert_eq!(parsed.virtual_address, 0x0000_4000_0000_0000);
         assert_eq!(parsed.entry, 0x0000_4000_0000_0078);
         assert_eq!(parsed.mapping_end, 0x0000_4000_0000_1000);
@@ -586,5 +715,74 @@ mod tests {
     #[test]
     fn every_frozen_parser_control_passes() {
         assert_eq!(self_test(), ROBUSTNESS_CONTROLS);
+    }
+
+    #[test]
+    fn multiprocess_image_is_one_page_of_read_execute_bytes() {
+        let stored = fixture(&MULTIPROCESS);
+        let parsed = parse_multiprocess(&stored[..MULTIPROCESS.file_bytes])
+            .expect("multiprocess ELF must parse");
+        assert_eq!(parsed.file_size, MULTIPROCESS_FILE_BYTES as u64);
+        assert_eq!(parsed.program_flags, 5);
+        assert_eq!(parsed.entry, 0x0000_4000_0000_0078);
+        assert_eq!(parsed.mapping_end, 0x0000_4000_0000_1000);
+    }
+
+    #[test]
+    fn every_multiprocess_parser_control_passes() {
+        assert_eq!(self_test_multiprocess(), ROBUSTNESS_CONTROLS);
+    }
+
+    #[test]
+    fn the_two_profiles_refuse_each_other() {
+        let proof = fixture(&PROOF);
+        let multiprocess = fixture(&MULTIPROCESS);
+        assert!(parse_multiprocess(&proof[..PROOF.file_bytes]).is_err());
+        assert!(parse(&multiprocess[..MULTIPROCESS.file_bytes]).is_err());
+    }
+
+    #[test]
+    fn the_multiprocess_return_offsets_name_real_instructions() {
+        let yield_return = MULTIPROCESS_YIELD_RETURN_OFFSET as usize;
+        let exit_return = MULTIPROCESS_EXIT_RETURN_OFFSET as usize;
+        let fault = MULTIPROCESS_FAULT_OFFSET as usize;
+
+        assert_eq!(MULTIPROCESS_CODE[yield_return - 2], 0xCD);
+        assert_eq!(MULTIPROCESS_CODE[yield_return - 1], 0x81);
+        assert_eq!(MULTIPROCESS_CODE[exit_return - 2], 0xCD);
+        assert_eq!(MULTIPROCESS_CODE[exit_return - 1], 0x81);
+        assert_eq!(MULTIPROCESS_CODE[fault], 0x48);
+        assert_eq!(MULTIPROCESS_CODE[fault + 1], 0xC7);
+    }
+
+    #[test]
+    fn the_multiprocess_markers_are_the_immediates_the_program_loads() {
+        let yield_immediate = u32::from_le_bytes([
+            MULTIPROCESS_CODE[0x16],
+            MULTIPROCESS_CODE[0x17],
+            MULTIPROCESS_CODE[0x18],
+            MULTIPROCESS_CODE[0x19],
+        ]);
+        let exit_immediate = u32::from_le_bytes([
+            MULTIPROCESS_CODE[0x25],
+            MULTIPROCESS_CODE[0x26],
+            MULTIPROCESS_CODE[0x27],
+            MULTIPROCESS_CODE[0x28],
+        ]);
+
+        assert_eq!(MULTIPROCESS_CODE[0x15], 0xB8);
+        assert_eq!(MULTIPROCESS_CODE[0x24], 0xB8);
+        assert_eq!(yield_immediate, MULTIPROCESS_YIELD_RESULT);
+        assert_eq!(exit_immediate, MULTIPROCESS_EXIT_RESULT);
+        assert_ne!(MULTIPROCESS_YIELD_RESULT, MULTIPROCESS_EXIT_RESULT);
+    }
+
+    #[test]
+    fn the_multiprocess_tail_is_a_privileged_instruction() {
+        let body = MULTIPROCESS_FAULT_OFFSET as usize + 9;
+
+        for byte in MULTIPROCESS_CODE.iter().skip(body).copied() {
+            assert_eq!(byte, 0xF4);
+        }
     }
 }
