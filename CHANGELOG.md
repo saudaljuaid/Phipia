@@ -48,6 +48,12 @@
 - Added a freestanding Rust VBIOS validator with sixteen controls, and a
   synthesised reference image stated three independent times in C, Rust and
   Python with the build comparing all three.
+- Fixed every CPL3 boundary treating the processor's RF flag as user state.
+  RF is the processor's own note about a trap, not a choice the program made,
+  so the Ring 3 proof, the multiprocess trap and saved context, and the Linux
+  syscall boundary now discard it rather than requiring it clear. Sapote used
+  to panic on QEMU 9.1.0, which sets the bit on some traps, and boots on both
+  9.1.0 and 8.2.2 now.
 - Added a QEMU device model of the NVIDIA register interface so those five
   drivers can be executed end to end without the silicon, with the boot
   register, the ROM image, the configuration mirror and the clock all supplied

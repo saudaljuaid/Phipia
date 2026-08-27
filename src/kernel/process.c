@@ -303,7 +303,8 @@ static bool return_frame_authenticated(const struct interrupt_frame *frame)
         runtime.address_space.state == PAGING_PROCESS_SPACE_ACTIVE &&
         frame->vector == INTERRUPT_PROCESS_PROOF_VECTOR &&
         frame->error_code == 0U && frame->rip == PROCESS_EXPECTED_RETURN_RIP &&
-        frame->cs == CPU_GDT_USER_CODE_SELECTOR && frame->rflags == UINT64_C(2) &&
+        frame->cs == CPU_GDT_USER_CODE_SELECTOR &&
+        (frame->rflags & ~CPU_RFLAGS_PROCESSOR_BOOKKEEPING) == UINT64_C(2) &&
         interrupt_frame_has_stack_tail(frame) &&
         interrupt_frame_stack_pointer(frame) == PAGING_PROCESS_STACK_END &&
         interrupt_frame_stack_selector(frame) == CPU_GDT_USER_DATA_SELECTOR &&

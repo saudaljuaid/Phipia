@@ -136,6 +136,13 @@ decision; malformed initialization is a failed stage. See
 
 ## Userspace boundaries
 
+Four places authenticate a register set arriving from CPL3: the Ring 3 proof,
+the multiprocess trap, the context that trap saves, and the Linux syscall
+boundary. All four discard `CPU_RFLAGS_PROCESSOR_BOOKKEEPING` before checking
+what is left. RF is the processor's own note about the trap rather than
+something the program chose, and a kernel that authenticates it as user state
+refuses legal returns on any processor that sets it.
+
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
 private interrupt gate. Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox

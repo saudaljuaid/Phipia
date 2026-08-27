@@ -34,10 +34,9 @@ both the driver and the model, and its "the two configuration paths agree" and
 
 ## Building
 
-QEMU 8.2.2 is the version Sapote is verified on. Newer QEMU is **not**
-interchangeable: on 9.1.0 the processor model sets RF (bit 16) in the RFLAGS
-image saved on some CPL3 traps, and Sapote's multiprocess proof requires that
-bit clear, so it panics before it reaches any of this.
+QEMU 8.2.2 is the version Sapote's own scenarios are verified on; 9.1.0 also
+works. Building 9.1 is what first exposed the RF handling described in
+`docs/NVIDIA.md`, and the model runs on either.
 
 ```sh
 git clone --depth 1 --branch v8.2.2 https://github.com/qemu/qemu.git

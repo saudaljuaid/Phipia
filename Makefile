@@ -32,7 +32,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	nvidia nvidia-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 101
-EXPECTED_SHELL_ASSERTION_COUNT := 401
+EXPECTED_SHELL_ASSERTION_COUNT := 404
 
 CC := gcc
 LD := ld
@@ -639,6 +639,25 @@ verify: toolchain lint
 	@grep -Fq 'NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON' \
 		include/sapote/nvidia.h || \
 		{ echo 'the NVIDIA hardware-testing limit was dropped'; exit 1; }
+	# RF is the processor's bookkeeping about a trap, not state the program
+	# chose, so every CPL3 boundary discards it rather than authenticating it.
+	# A boundary that forgot would refuse a legal return on any processor that
+	# sets the bit -- which is the difference between QEMU 8.2 and 9.1.
+	@for file in src/kernel/multiprocess.c src/kernel/process.c \
+		src/kernel/linux_syscall.c; do \
+		grep -Fq 'CPU_RFLAGS_PROCESSOR_BOOKKEEPING' "$$file" || \
+			{ echo "$$file authenticates processor bookkeeping as user state"; \
+			exit 1; }; \
+	done
+	@grep -Fq '#define CPU_RFLAGS_PROCESSOR_BOOKKEEPING UINT64_C(0x00010000)' \
+		include/sapote/cpu.h || \
+		{ echo 'the processor-bookkeeping flag set moved'; exit 1; }
+	# The saved context is normalised, not merely checked: nothing hands the
+	# bit back to a process through an IRETQ.
+	@grep -Fq 'context->rflags = authenticated_user_rflags(frame->rflags);' \
+		src/kernel/multiprocess.c || \
+		{ echo 'a saved user context keeps the processor bookkeeping bit'; \
+		exit 1; }
 	# One receive buffer and one transmit buffer serve the whole stack, so a
 	# handler that answers the frame it is reading must never re-enter the
 	# pump. The guard is the only thing standing between an inbound segment

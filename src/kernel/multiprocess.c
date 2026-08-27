@@ -56,6 +56,18 @@
 #define MULTIPROCESS_ARITHMETIC_FLAGS UINT64_C(0x08D5)
 
 /*
+ * What the program actually chose. RF is the processor's own note about the
+ * trap rather than anything the program did (see cpu.h), so it is removed
+ * before a register set is authenticated and before one is saved: a context
+ * this kernel resumes carries exactly the flags it decided on, never a bit the
+ * hardware happened to leave behind.
+ */
+static uint64_t authenticated_user_rflags(uint64_t rflags)
+{
+    return rflags & ~CPU_RFLAGS_PROCESSOR_BOOKKEEPING;
+}
+
+/*
  * Intel SDM volume 3A section 4.7: a user write to an absent page reports
  * P=0 W=1 U=1. That is the only error code the deliberate guard-page store may
  * produce, and it is distinct from every supervisor fault the kernel proves
@@ -391,8 +403,8 @@ static bool context_authenticated(const struct multiprocess_process *process)
     const bool first_entry = process->observed_rounds == 0U;
 
     if (context->rsp != PAGING_PROCESS_STACK_END ||
-        (context->rflags & ~MULTIPROCESS_ARITHMETIC_FLAGS) !=
-            MULTIPROCESS_USER_RFLAGS ||
+        (authenticated_user_rflags(context->rflags) &
+            ~MULTIPROCESS_ARITHMETIC_FLAGS) != MULTIPROCESS_USER_RFLAGS ||
         context->rdi != process->identity ||
         context->rsi != (uint64_t)process->rounds ||
         context->rdx != (uint64_t)process->fault_round ||
@@ -433,7 +445,7 @@ static void save_context(
     context->r15 = frame->r15;
     context->rip = frame->rip;
     context->rsp = (uint64_t)interrupt_frame_stack_pointer(frame);
-    context->rflags = frame->rflags;
+    context->rflags = authenticated_user_rflags(frame->rflags);
 }
 
 static enum multiprocess_trap classify_trap(
@@ -516,8 +528,8 @@ static void multiprocess_trap_interrupt(
         process->last_trap = MULTIPROCESS_TRAP_UNEXPECTED;
     } else if (frame == NULL || (frame->cs & UINT64_C(3)) != 3U ||
         frame->cs != CPU_GDT_USER_CODE_SELECTOR ||
-        (frame->rflags & ~MULTIPROCESS_ARITHMETIC_FLAGS) !=
-            MULTIPROCESS_USER_RFLAGS ||
+        (authenticated_user_rflags(frame->rflags) &
+            ~MULTIPROCESS_ARITHMETIC_FLAGS) != MULTIPROCESS_USER_RFLAGS ||
         !interrupt_frame_has_stack_tail(frame) ||
         interrupt_frame_stack_pointer(frame) != PAGING_PROCESS_STACK_END ||
         interrupt_frame_stack_selector(frame) != CPU_GDT_USER_DATA_SELECTOR ||
@@ -1144,8 +1156,22 @@ bool multiprocess_foundation_self_test(size_t *completed_tests)
         }
     }
     ++completed;
+    /*
+     * RF is discarded rather than authenticated, and discarded rather than
+     * merely tolerated: a register set carrying it is accepted, and the value
+     * that survives has the bit gone, so nothing hands it back to a process.
+     * Every other flag outside the arithmetic set is still required to be
+     * exact, which the interrupt-enable case here is the control for.
+     */
     if (MULTIPROCESS_EXPECTED_SWITCHES >= MULTIPROCESS_SWITCH_CAPACITY ||
-        !multiprocess_resources_released()) {
+        !multiprocess_resources_released() ||
+        authenticated_user_rflags(MULTIPROCESS_USER_RFLAGS |
+            CPU_RFLAGS_PROCESSOR_BOOKKEEPING) != MULTIPROCESS_USER_RFLAGS ||
+        (authenticated_user_rflags(UINT64_C(0x10046)) &
+            ~MULTIPROCESS_ARITHMETIC_FLAGS) != MULTIPROCESS_USER_RFLAGS ||
+        (authenticated_user_rflags(MULTIPROCESS_USER_RFLAGS |
+            UINT64_C(0x200)) & ~MULTIPROCESS_ARITHMETIC_FLAGS) ==
+            MULTIPROCESS_USER_RFLAGS) {
         return false;
     }
     ++completed;

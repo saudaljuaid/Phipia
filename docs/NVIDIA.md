@@ -230,21 +230,39 @@ configuration mirror and the clock all come from outside it.
 The model is also not part of `make verify` or the 101 scenarios: it needs a
 QEMU built from source, so it is reproducible evidence rather than a gate.
 
-### A finding on the way
+### A bug found on the way, and fixed
 
-Building a newer QEMU turned up something unrelated to NVIDIA and worth
-recording: **Sapote panics on QEMU 9.1.0 and boots on 8.2.2.** On 9.1 the saved
-RFLAGS image on some CPL3 traps has RF (bit 16) set, and the multiprocess
-proof's `MULTIPROCESS_ARITHMETIC_FLAGS` mask requires it clear:
+Building a newer QEMU turned up something unrelated to NVIDIA: **Sapote used to
+panic on QEMU 9.1.0 while booting fine on 8.2.2.** On 9.1 the RFLAGS image saved
+on some CPL3 traps has RF (bit 16) set, and every one of this kernel's four user
+boundaries required it clear:
 
 ```
 DIAG branchC cs 0x33 rfl 0x00010046 tail 1 rsp 0x400000205000 ss 0x2B
 Sapote PANIC: required stage failed (installed multiprocess proof)
 ```
 
-That mask is a deliberate security boundary — it is what stops a user process
-re-enabling interrupts or single-stepping on the way back in — so widening it
-is a design decision rather than a bug fix, and it has not been made here.
+The mistake was categorical rather than numerical. RF is not a flag a program
+sets; it is the processor's own note about the trap, and both emulators are
+entitled to their answer. A kernel authenticating a user register set has to
+decide what to do with a bit the user did not choose, and requiring it clear is
+the wrong answer — it refuses a legal return.
+
+`CPU_RFLAGS_PROCESSOR_BOOKKEEPING` in `include/sapote/cpu.h` now names that
+distinction, and all four boundaries **discard** the bit rather than tolerate
+it: the Ring 3 proof, the multiprocess trap, the multiprocess saved context and
+the Linux syscall boundary. Discarding matters more than tolerating — a saved
+context is normalised on the way in, so nothing hands the bit back to a process
+through an IRETQ, and every other flag outside the arithmetic set is still
+required to be exact. `make verify` refuses a tree where a boundary forgets.
+
+Sapote now boots on both, and the NVIDIA drivers bind on both:
+
+```
+QEMU 9.1.0: ST MULTIPROCESS processes 4 rounds 6 switches 28 ... fault contained
+            ST NVIDIA declared 5 present 4 bound 4 ... architecture Turing
+            ST PASS nvidia
+```
 
 ## Limits
 
