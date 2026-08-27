@@ -63,11 +63,11 @@ The Makefile is the source of truth for the 101 names. They cover:
 - an HD Audio codec conversation over bus-mastering command and response rings,
   including the refusal of bus mastering before the rings are prepared and its
   withdrawal before they are reclaimed;
-- five NVIDIA register contracts refusing every display and multimedia function
-  that is not NVIDIA's, with the identity decode re-derived from thirteen
-  published encodings and a VBIOS parser held to a reference image stated in C,
-  Rust and Python. No NVIDIA hardware has ever run this code, and the scenarios
-  prove the refusal rather than a bind.
+- fifteen NVIDIA register and configuration contracts refusing every display
+  and multimedia function that is not NVIDIA's, with the identity decode
+  re-derived from thirteen published encodings and a VBIOS parser held to a
+  reference image stated in C, Rust and Python. No NVIDIA hardware has ever run
+  this code, and the scenarios prove the refusal rather than a bind.
 
 Each scenario has a stable guest debug-exit value, expected host status, and
 required serial transcript. A scenario target is deliberately not phony so GNU

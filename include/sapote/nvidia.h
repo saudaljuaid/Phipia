@@ -9,18 +9,27 @@
 #include <sapote/pci.h>
 
 /*
- * Five bounded drivers for the five register contracts an NVIDIA graphics
- * board publishes across its PCI functions.
+ * Fifteen bounded drivers for the register and configuration contracts an
+ * NVIDIA graphics board publishes across its PCI functions.
  *
  * Everything here is written from public material: the envytools hardware
  * documentation project, the Nouveau driver in the Linux kernel, Mesa's NVK
  * back end, NVIDIA's own open GPU kernel modules and published headers, the
+ * PCI and PCI Express base specifications for the capability structures, the
  * PCI Firmware Specification for the expansion ROM, and the High Definition
- * Audio and xHCI specifications for the two non-graphics functions. Where the
- * public record is exact -- the master control register at offset zero, the
- * endian switch beside it, the timer's two halves, the ROM window and its
+ * Audio specification for the audio function. Where the public record is
+ * exact -- the master control register at offset zero, the endian switch
+ * beside it, the timer's two halves and its rate pair, the ROM window and its
  * shadow-disable bit -- this driver states it. Where it is not, this driver
  * reads and reports rather than asserts.
+ *
+ * Not all fifteen are equally NVIDIA-specific, and pretending otherwise would
+ * be the kind of inflation this project exists to avoid. Drivers ten through
+ * twelve read the power-management, message-interrupt and PCI Express device
+ * capabilities that *every* PCI function carries; what makes them part of this
+ * set is that they run against an NVIDIA function and cross-check what the
+ * NVIDIA-specific drivers before them established. docs/NVIDIA.md says which
+ * is which, driver by driver.
  *
  * NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON. No NVIDIA device was
  * reachable from the machine this was written on, and QEMU models none, so the
@@ -44,8 +53,8 @@
 /* PCI-SIG vendor identifier assigned to NVIDIA Corporation. */
 #define NVIDIA_VENDOR_ID UINT16_C(0x10DE)
 
-#define NVIDIA_DRIVER_COUNT 10U
-#define NVIDIA_CONTROLLED_CONTROLS 18U
+#define NVIDIA_DRIVER_COUNT 15U
+#define NVIDIA_CONTROLLED_CONTROLS 21U
 
 /*
  * The PROM window is a 64 KiB aperture on every part that has one, and a
@@ -72,6 +81,11 @@ enum nvidia_status {
     NVIDIA_STATUS_STRAPS,
     NVIDIA_STATUS_APERTURE,
     NVIDIA_STATUS_LINK,
+    NVIDIA_STATUS_ENDPOINT,
+    NVIDIA_STATUS_POWER_MANAGEMENT,
+    NVIDIA_STATUS_MESSAGE_INTERRUPTS,
+    NVIDIA_STATUS_EXPANSION_ROM,
+    NVIDIA_STATUS_TIMER_SCALE,
     NVIDIA_STATUS_TIMER_STOPPED,
     NVIDIA_STATUS_ROM_ABSENT,
     NVIDIA_STATUS_ROM_MALFORMED,

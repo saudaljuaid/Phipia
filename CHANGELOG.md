@@ -40,15 +40,23 @@
   receive and transmit buffers its own caller held. The pump now refuses
   recursive entry and an unresolved send from the receive path defers to
   retransmission instead.
-- Added ten bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK,
-  NVIDIA's open kernel modules and the PCI and PCI Express specifications: the
-  master control identity decode, the configuration-space mirror cross-check,
-  the timer, the video BIOS window, the HD Audio function, the board straps,
-  the engine enable mask, the memory aperture shape, the PCI Express link and
-  the add-in-board subsystem identity. Seven map one register window each, one
+- Added fifteen bounded NVIDIA drivers written from envytools, Nouveau,
+  Mesa/NVK, NVIDIA's open kernel modules and the PCI and PCI Express
+  specifications: the master control identity decode, the configuration-space
+  mirror cross-check, the timer and its rate pair, the video BIOS window, the
+  HD Audio function, the board straps, the engine enable mask, the memory
+  aperture shape, the PCI Express link and endpoint type, the add-in-board
+  subsystem identity, the power-management state, the message-interrupt state
+  and the expansion ROM declaration. Eight map one register window each, one
   reads only the aperture descriptions a claim produces and touches no
-  register at all, and two read configuration space and take nothing. Exactly
-  one of the ten writes a register, and it proves the write reversed.
+  register at all, and six read configuration space and take nothing. Exactly
+  one of the fifteen writes a register, and it proves the write reversed. Four
+  of the fifteen read capabilities every PCI function carries and earn their
+  place as cross-checks rather than as vendor knowledge; the documentation
+  says so rather than counting them as NVIDIA expertise.
+- Added a foundation control that states, pair by pair, which NVIDIA drivers
+  depend on an earlier one having run, so a reordered table is refused at boot
+  instead of silently producing a weaker result.
 - Added a freestanding Rust VBIOS validator with sixteen controls, and a
   synthesised reference image stated three independent times in C, Rust and
   Python with the build comparing all three.
@@ -58,10 +66,18 @@
   syscall boundary now discard it rather than requiring it clear. Sapote used
   to panic on QEMU 9.1.0, which sets the bit on some traps, and boots on both
   9.1.0 and 8.2.2 now.
-- Added a QEMU device model of the NVIDIA register interface so those five
+- Added a QEMU device model of the NVIDIA register interface so those fifteen
   drivers can be executed end to end without the silicon, with the boot
-  register, the ROM image, the configuration mirror and the clock all supplied
-  from outside both the driver and the model.
+  register, the ROM image, the timer rate pair, the configuration mirror, the
+  standard PCI capabilities and the clock all supplied from outside both the
+  driver and the model, and with eleven injectable defects each refused by
+  name.
+- Fixed the Express capability driver decoding a field out of a neighbouring
+  capability when the capability itself sits at an offset PCI forbids. It now
+  reads the capability's own identifier byte back from the device first, so an
+  unreachable capability is a named refusal rather than a wrong answer. The
+  device model exposed this by packing its capabilities the way QEMU's
+  automatic placement does, which real parts do not.
 - Added eight typed Boot Ledger stages, nine QEMU scenarios and a 101-scenario
   total contract.
 
@@ -70,11 +86,13 @@ process identifiers or inter-process communication; the thirteen bounded
 drivers move no data, enable no bus mastering, allocate no DMA and take no
 interrupt; the HD Audio driver identifies codecs and plays nothing; a TCP
 listener has no background retransmission timer, no listen queue that outlives
-its caller, and no rate limit on refusals; the five NVIDIA drivers have never
-run against NVIDIA silicon, read five register contracts rather than driving a
-graphics part, and do no mode setting, framebuffer programming, command
-submission or memory management; the device model that executes them is a
-stand-in sharing their register offsets, not hardware.
+its caller, and no rate limit on refusals; the fifteen NVIDIA drivers have
+never run against NVIDIA silicon, read fifteen register and configuration
+contracts rather than driving a graphics part, and do no mode setting,
+framebuffer programming, command submission, memory management or power
+management despite one of them reading the capability of that name; the device
+model that executes them is a stand-in sharing their register offsets, not
+hardware.
 
 ## 2.1.0 — Advanced Networking and Browser Foundation
 

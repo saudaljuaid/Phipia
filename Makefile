@@ -32,7 +32,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	nvidia nvidia-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 101
-EXPECTED_SHELL_ASSERTION_COUNT := 407
+EXPECTED_SHELL_ASSERTION_COUNT := 410
 
 CC := gcc
 LD := ld
@@ -598,21 +598,21 @@ verify: toolchain lint
 		--exclude=nvidia.c; then \
 		echo 'NVIDIA probe bypasses the Boot Ledger'; exit 1; \
 	fi
-	# Five drivers, and exactly one of them may write a register: the video
+	# Fifteen drivers, and exactly one of them may write a register: the video
 	# BIOS window needs the ROM shadow bit cleared, and nothing else here has
 	# any business changing a live graphics part.
-	@grep -Fq '#define NVIDIA_DRIVER_COUNT 10U' include/sapote/nvidia.h
+	@grep -Fq '#define NVIDIA_DRIVER_COUNT 15U' include/sapote/nvidia.h
 	@test "$$(grep -Ec '^        \.name = "NVIDIA ' src/kernel/nvidia.c)" \
-		-eq 10 || \
-		{ echo 'the NVIDIA table does not declare ten drivers'; exit 1; }
-	# Seven map a window, one reads aperture descriptions, two read
+		-eq 15 || \
+		{ echo 'the NVIDIA table does not declare fifteen drivers'; exit 1; }
+	# Eight map a window, one reads aperture descriptions, six read
 	# configuration space and take nothing at all.
 	@test "$$(grep -Ec '\.access = NVIDIA_ACCESS_MEMORY' \
-		src/kernel/nvidia.c)" -eq 7 && \
+		src/kernel/nvidia.c)" -eq 8 && \
 		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_APERTURE' \
 		src/kernel/nvidia.c)" -eq 1 && \
 		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_CONFIGURATION' \
-		src/kernel/nvidia.c)" -eq 2 || \
+		src/kernel/nvidia.c)" -eq 6 || \
 		{ echo 'the NVIDIA access census changed'; exit 1; }
 	@test "$$(grep -Ec '\.writes_registers = true' src/kernel/nvidia.c)" \
 		-eq 1 || \
@@ -648,6 +648,19 @@ verify: toolchain lint
 	@grep -Fq 'NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON' \
 		include/sapote/nvidia.h || \
 		{ echo 'the NVIDIA hardware-testing limit was dropped'; exit 1; }
+	# Five drivers read what an earlier driver established, and the table's
+	# order is those dependencies. The control that states them pair by pair is
+	# what keeps a reordered table from silently producing a weaker result.
+	@grep -Fq '#define NVIDIA_CONTROLLED_CONTROLS 21U' include/sapote/nvidia.h
+	@test "$$(grep -Ec '^            \{ probe_[a-z_]+, probe_[a-z_]+ \}' \
+		src/kernel/nvidia.c)" -eq 5 || \
+		{ echo 'the NVIDIA driver ordering control changed shape'; exit 1; }
+	# A capability the enumeration could not reach must be a named refusal, not
+	# a field decoded out of the capability before it.
+	@grep -Fq '(header & UINT32_C(0xFF)) != PCI_CAPABILITY_EXPRESS' \
+		src/kernel/nvidia.c || \
+		{ echo 'the NVIDIA Express driver stopped checking its capability'; \
+		exit 1; }
 	# RF is the processor's bookkeeping about a trap, not state the program
 	# chose, so every CPL3 boundary discards it rather than authenticating it.
 	# A boundary that forgot would refuse a legal return on any processor that
@@ -726,7 +739,7 @@ verify: toolchain lint
 		src/kernel/multiprocess.c || \
 		{ echo 'multiprocess trap handler has an unexpected call site'; \
 		exit 1; }
-	# Ten drivers, and no driver may enable bus mastering: Sapote has no
+	# Thirteen drivers, and no driver may enable bus mastering: Sapote has no
 	# IOMMU, so a register-only driver is one that cannot reach memory at all.
 	@grep -Fq '#define DRIVER_MATRIX_CAPACITY 13U' include/sapote/driver.h
 	@test "$$(grep -Ec '^        \.name = ' src/kernel/driver.c)" -eq 13 || \
@@ -1221,7 +1234,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				hardware='-device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=none0 -audiodev none,id=none0' ;; \
 			# No emulator models an NVIDIA part, so the nvidia scenario \
 			# attaches display and HD Audio functions of exactly the classes \
-			# the five drivers match on, from vendors that are not NVIDIA. \
+			# these drivers match on, from vendors that are not NVIDIA. \
 			# That turns "no function present" from an empty machine into a \
 			# refusal with something to refuse. \
 			nvidia) \

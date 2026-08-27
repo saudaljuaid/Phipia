@@ -5,11 +5,13 @@
  *
  * THIS IS NOT AN NVIDIA GPU AND IT DOES NOT EMULATE ONE. It presents the
  * handful of registers a bind-and-identify driver reads -- the master control
- * pair, the configuration-space mirror, the timer, the ROM shadow bit and the
- * PROM window -- so that such a driver can be executed end to end without the
- * silicon. There is no graphics engine, no channel, no display, no interrupt
- * and no memory management here, and nothing in this file should be taken as a
- * description of how real hardware behaves beyond those few registers.
+ * pair, the configuration-space mirror, the timer and its rate pair, the ROM
+ * shadow bit and the PROM window -- plus the standard PCI capabilities such a
+ * driver cross-checks them against, so that such a driver can be executed end
+ * to end without the silicon. There is no graphics engine, no channel, no
+ * display, no interrupt and no memory management here, and nothing in this
+ * file should be taken as a description of how real hardware behaves beyond
+ * those few registers.
  *
  * The values it answers with are deliberately NOT invented here: the boot
  * register comes from a command-line property and the ROM image is read from a
@@ -31,6 +33,7 @@
 #include "qapi/error.h"
 #include "hw/pci/pci_device.h"
 #include "hw/pci/pcie.h"
+#include "hw/pci/msi.h"
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 
@@ -57,6 +60,35 @@ OBJECT_DECLARE_SIMPLE_TYPE(SapoteNvidiaState, SAPOTE_NVIDIA_MODEL)
 #define NV_PMC_ENABLE            0x000200
 /* Nouveau nvkm/subdev/devinit: the board strap register. */
 #define NV_PEXTDEV_BOOT_0        0x101000
+/* Nouveau nvkm/subdev/timer/nv04.c: the two halves of the timer's rate. */
+#define NV_PTIMER_NUMERATOR      0x009200
+#define NV_PTIMER_DENOMINATOR    0x009210
+
+/*
+ * Where the capabilities go. All three offsets are stated here rather than
+ * left to QEMU's own placement, because that placement packs capabilities
+ * byte-tight and can land one on an offset that is not dword aligned. The PCI
+ * specification requires the pointers between them to be dword aligned -- the
+ * bottom two bits are reserved -- so a conforming driver masks them off, and a
+ * capability at an odd offset is one such a driver cannot reach. Real parts do
+ * not do that; this model must not either.
+ */
+#define SAPOTE_NVIDIA_PM_OFFSET  0x40
+#define SAPOTE_NVIDIA_MSI_OFFSET 0x50
+#define SAPOTE_NVIDIA_EXPRESS_OFFSET 0x60
+#define SAPOTE_NVIDIA_MSI_VECTORS 1
+
+/*
+ * Deliberate defects, for negative controls. A driver's check is worth nothing
+ * until something has failed it, and these are the switches that make a
+ * conforming model stop conforming in one named way at a time. Nothing here is
+ * a description of real hardware: these are lies a device could tell, injected
+ * so a driver can be shown to catch them.
+ */
+#define SAPOTE_NVIDIA_DEFECT_NO_POWER_MANAGEMENT 0x1
+#define SAPOTE_NVIDIA_DEFECT_MESSAGE_INTERRUPTS  0x2
+#define SAPOTE_NVIDIA_DEFECT_ROOT_PORT           0x4
+#define SAPOTE_NVIDIA_DEFECT_ALIASED_SCALE       0x8
 
 #define SAPOTE_NVIDIA_BAR_BYTES  (16 * MiB)
 /*
@@ -78,6 +110,10 @@ struct SapoteNvidiaState {
     uint32_t straps;
     uint32_t enable;
     uint32_t subsystem;
+    uint32_t numerator;
+    uint32_t denominator;
+    uint32_t rom_declaration;
+    uint32_t defects;
     char *vbios_path;
 
     uint32_t shadow;
@@ -137,6 +173,25 @@ static uint64_t sapote_nvidia_read(void *opaque, hwaddr addr, unsigned size)
         return 0;
     case NV_PEXTDEV_BOOT_0:
         return state->straps;
+    /*
+     * The rate pair, straight from the command line. This model's counter is
+     * QEMU's own nanosecond clock and does NOT obey these two numbers: they
+     * are here so a driver that reads them has something pinned outside itself
+     * to read, and a driver that claimed the ratio explained the rate would be
+     * claiming something this model cannot support.
+     */
+    case NV_PTIMER_NUMERATOR:
+        /*
+         * The aliased-scale defect is the one an offset-decoding mistake looks
+         * like from outside: the window accepts the read and answers with the
+         * counter next door instead of the configuration register asked for.
+         */
+        if (state->defects & SAPOTE_NVIDIA_DEFECT_ALIASED_SCALE) {
+            return (uint32_t)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+        }
+        return state->numerator;
+    case NV_PTIMER_DENOMINATOR:
+        return state->denominator;
     case NV_PTIMER_TIME_0:
         return (uint32_t)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     case NV_PTIMER_TIME_1:
@@ -164,6 +219,49 @@ static const MemoryRegionOps sapote_nvidia_ops = {
     .valid = { .min_access_size = 1, .max_access_size = 4 },
     .impl = { .min_access_size = 1, .max_access_size = 4 },
 };
+
+/*
+ * Patch one 16-bit field inside a configuration read that covers it. The
+ * defects below are told on the wire rather than written into QEMU's own copy
+ * of configuration space, for two reasons: a device reset would undo a written
+ * one before the guest ever looked, and rewriting the Express capability's
+ * type in place makes QEMU's own PCI Express code assert. A device that lies
+ * only when asked is also the more faithful model of a device that lies.
+ */
+static uint32_t patch_field(uint32_t value, uint32_t address, int len,
+                            uint32_t field, uint16_t clear, uint16_t set)
+{
+    unsigned shift;
+
+    if (address > field || address + (uint32_t)len < field + 2) {
+        return value;
+    }
+    shift = (field - address) * 8;
+    value &= ~((uint32_t)clear << shift);
+    value |= (uint32_t)set << shift;
+    return value;
+}
+
+static uint32_t sapote_nvidia_config_read(PCIDevice *dev, uint32_t address,
+                                          int len)
+{
+    SapoteNvidiaState *state = SAPOTE_NVIDIA_MODEL(dev);
+    uint32_t value = pci_default_read_config(dev, address, len);
+
+    if (state->defects & SAPOTE_NVIDIA_DEFECT_MESSAGE_INTERRUPTS) {
+        value = patch_field(value, address, len,
+                            SAPOTE_NVIDIA_MSI_OFFSET + PCI_MSI_FLAGS,
+                            0, PCI_MSI_FLAGS_ENABLE);
+    }
+    if (state->defects & SAPOTE_NVIDIA_DEFECT_ROOT_PORT) {
+        value = patch_field(value, address, len,
+                            SAPOTE_NVIDIA_EXPRESS_OFFSET + PCI_EXP_FLAGS,
+                            PCI_EXP_FLAGS_TYPE,
+                            PCI_EXP_TYPE_ROOT_PORT <<
+                                PCI_EXP_FLAGS_TYPE_SHIFT);
+    }
+    return value;
+}
 
 static void sapote_nvidia_realize(PCIDevice *dev, Error **errp)
 {
@@ -224,14 +322,56 @@ static void sapote_nvidia_realize(PCIDevice *dev, Error **errp)
                      PCI_BASE_ADDRESS_MEM_PREFETCH, &state->framebuffer);
 
     /*
-     * Every NVIDIA graphics part made this century is a PCI Express endpoint,
-     * so the model is one too: a driver that asks how wide its link is gets a
-     * real capability structure to read rather than a fabricated answer.
+     * A PCI Express function carries power management, and QEMU's own
+     * capability machinery installs it: the version and the D0 power state a
+     * driver reads back are the specification's defaults through QEMU's code
+     * rather than values this file made up.
      */
-    if (pcie_endpoint_cap_init(dev, 0) < 0) {
+    if (!(state->defects & SAPOTE_NVIDIA_DEFECT_NO_POWER_MANAGEMENT)) {
+        if (pci_add_capability(dev, PCI_CAP_ID_PM, SAPOTE_NVIDIA_PM_OFFSET,
+                               PCI_PM_SIZEOF, errp) < 0) {
+            return;
+        }
+        pci_set_word(dev->config + SAPOTE_NVIDIA_PM_OFFSET + PCI_PM_PMC,
+                     PCI_PM_CAP_VER_1_2);
+        pci_set_word(dev->wmask + SAPOTE_NVIDIA_PM_OFFSET + PCI_PM_CTRL,
+                     PCI_PM_CTRL_STATE_MASK);
+    }
+
+    /*
+     * And message-signalled interrupts, which this model declares and never
+     * enables. A driver whose job is to notice that nothing turned them on
+     * needs a function that could have been turned on.
+     */
+    if (msi_init(dev, SAPOTE_NVIDIA_MSI_OFFSET, SAPOTE_NVIDIA_MSI_VECTORS,
+                 true, false, errp) < 0) {
+        return;
+    }
+
+    /*
+     * The expansion ROM declaration. This is a declaration and nothing more:
+     * there is no memory behind it, which is why it is left disabled and made
+     * read-only. A model that presented an executable option ROM would have it
+     * executed by the firmware long before the kernel under test ever ran.
+     */
+    pci_set_long(dev->config + PCI_ROM_ADDRESS, state->rom_declaration);
+    pci_set_long(dev->wmask + PCI_ROM_ADDRESS, 0);
+
+    /*
+     * Every NVIDIA graphics part made this century is a PCI Express endpoint,
+     * so the model is one too: a driver that asks how wide its link is, or
+     * what kind of port it is, gets a real capability structure to read rather
+     * than a fabricated answer.
+     */
+    if (pcie_endpoint_cap_init(dev, SAPOTE_NVIDIA_EXPRESS_OFFSET) < 0) {
         error_setg(errp, "could not install the PCI Express capability");
         return;
     }
+}
+
+static void sapote_nvidia_exit(PCIDevice *dev)
+{
+    msi_uninit(dev);
 }
 
 static Property sapote_nvidia_properties[] = {
@@ -240,6 +380,10 @@ static Property sapote_nvidia_properties[] = {
     DEFINE_PROP_UINT32("straps", SapoteNvidiaState, straps, 0x0000042C),
     DEFINE_PROP_UINT32("enable", SapoteNvidiaState, enable, 0x11111111),
     DEFINE_PROP_UINT32("subsystem", SapoteNvidiaState, subsystem, 0x87651043),
+    DEFINE_PROP_UINT32("numerator", SapoteNvidiaState, numerator, 27),
+    DEFINE_PROP_UINT32("denominator", SapoteNvidiaState, denominator, 1000),
+    DEFINE_PROP_UINT32("rom", SapoteNvidiaState, rom_declaration, 0),
+    DEFINE_PROP_UINT32("defects", SapoteNvidiaState, defects, 0),
     DEFINE_PROP_STRING("vbios", SapoteNvidiaState, vbios_path),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -250,6 +394,8 @@ static void sapote_nvidia_class_init(ObjectClass *klass, void *data)
     PCIDeviceClass *pci = PCI_DEVICE_CLASS(klass);
 
     pci->realize = sapote_nvidia_realize;
+    pci->exit = sapote_nvidia_exit;
+    pci->config_read = sapote_nvidia_config_read;
     pci->vendor_id = NVIDIA_VENDOR_ID;
     pci->device_id = 0x1B80;
     pci->revision = 0xA1;

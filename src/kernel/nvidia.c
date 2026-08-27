@@ -143,6 +143,77 @@
 #define PCI_EXPRESS_LINK_SPEED_MASK UINT32_C(0x0F)
 
 /*
+ * PCI Bus Power Management Interface Specification 1.2 section 3.2. The
+ * capabilities live in the top half of the capability's own dword and the
+ * control and status register is one dword further on. Only three interface
+ * versions were ever defined, and the power state occupies the bottom two bits
+ * of the control register with D0 encoded as zero.
+ */
+#define PCI_POWER_CONTROL_STATUS UINT16_C(0x04)
+#define PCI_POWER_VERSION_MASK UINT32_C(0x0007)
+#define PCI_POWER_VERSION_MAXIMUM UINT32_C(3)
+#define PCI_POWER_STATE_MASK UINT32_C(0x0003)
+#define PCI_POWER_STATE_D0 UINT32_C(0)
+
+/*
+ * PCI Local Bus Specification 3.0 section 6.8.1: the message control field in
+ * the top half of the message-signalled interrupt capability's own dword. Bits
+ * 3:1 say how many messages the function can send and bits 6:4 how many
+ * software turned on, both as a power-of-two exponent, and only the encodings
+ * zero through five are defined. Bit zero is the enable itself.
+ */
+#define PCI_MSI_CONTROL_ENABLE UINT32_C(0x0001)
+#define PCI_MSI_CONTROL_CAPABLE_SHIFT 1U
+#define PCI_MSI_CONTROL_ENABLED_SHIFT 4U
+#define PCI_MSI_CONTROL_COUNT_MASK UINT32_C(0x0007)
+#define PCI_MSI_COUNT_MAXIMUM UINT32_C(5)
+
+/*
+ * PCI Express Base Specification, the rest of the capability whose link half
+ * driver eight reads. The capability register in the top of the first dword
+ * carries the structure's version and what kind of port this is; device
+ * capabilities at +0x04 says the largest payload the function can accept and
+ * device control at +0x08 says what it was actually programmed to. Both
+ * payload fields are a power-of-two exponent above 128 bytes, so only the
+ * encodings zero through five are defined.
+ */
+#define PCI_EXPRESS_DEVICE_CAPABILITIES UINT16_C(0x04)
+#define PCI_EXPRESS_DEVICE_CONTROL UINT16_C(0x08)
+#define PCI_EXPRESS_VERSION_MASK UINT32_C(0x000F)
+#define PCI_EXPRESS_TYPE_SHIFT 4U
+#define PCI_EXPRESS_TYPE_MASK UINT32_C(0x000F)
+#define PCI_EXPRESS_TYPE_ENDPOINT UINT32_C(0x0)
+#define PCI_EXPRESS_TYPE_LEGACY_ENDPOINT UINT32_C(0x1)
+#define PCI_EXPRESS_TYPE_INTEGRATED_ENDPOINT UINT32_C(0x9)
+#define PCI_EXPRESS_PAYLOAD_MASK UINT32_C(0x0007)
+#define PCI_EXPRESS_PAYLOAD_MAXIMUM UINT32_C(5)
+#define PCI_EXPRESS_CONTROL_PAYLOAD_SHIFT 5U
+
+/*
+ * PCI Local Bus Specification 3.0 section 6.2.5.2: the expansion ROM base
+ * address register in a type-0 header. Bit zero enables the decoder, bits 10:1
+ * are reserved and read as zero, and what is left is a base address the
+ * specification requires to be 2 KiB aligned. The three fields cover the
+ * register exactly, which is a fact this file checks rather than assumes.
+ */
+#define PCI_EXPANSION_ROM_BASE UINT16_C(0x30)
+#define PCI_EXPANSION_ROM_ENABLE UINT32_C(0x00000001)
+#define PCI_EXPANSION_ROM_RESERVED_MASK UINT32_C(0x000007FE)
+#define PCI_EXPANSION_ROM_ADDRESS_MASK UINT32_C(0xFFFFF800)
+
+/*
+ * Nouveau, nvkm/subdev/timer/nv04.c and nv40.c: the timer's rate is a ratio,
+ * and these are the two registers it is written into. Nouveau reduces the
+ * crystal frequency and a nanosecond into a numerator and a denominator and
+ * writes them here; this kernel only reads them. What it asserts is that
+ * neither half is degenerate and that neither offset is the free-running
+ * counter beside them wearing another name -- not that the ratio explains the
+ * rate, which needs a crystal frequency this kernel has no way to know.
+ */
+#define NV_PTIMER_NUMERATOR UINT64_C(0x009200)
+#define NV_PTIMER_DENOMINATOR UINT64_C(0x009210)
+
+/*
  * PCI Local Bus Specification 3.0 section 6.2.1: a type-0 header carries the
  * identity of the board the chip is soldered to, which for a graphics part is
  * not the same organisation as the chip's own vendor. NVIDIA sells the silicon
@@ -396,6 +467,36 @@ static bool configuration_dword(
     ++register_reads;
     return pci_config_read_port(function->address, offset, value) ==
         PCI_STATUS_OK;
+}
+
+/*
+ * Where a capability sits, taken from the list PCI enumeration already walked.
+ * Zero is not a legal capability offset -- the list may not start below 0x40 --
+ * so it is an unambiguous "absent". Every driver that uses this reads the
+ * capability's own identifier byte back from the device afterwards, so a stale
+ * or wrong entry in that list is caught rather than trusted.
+ */
+static uint8_t capability_offset(
+    const struct pci_function *function,
+    uint8_t identifier
+)
+{
+    for (size_t index = 0U; index < function->capability_count; ++index) {
+        if (function->capabilities[index].identifier == identifier) {
+            return function->capabilities[index].offset;
+        }
+    }
+    return 0U;
+}
+
+/*
+ * A capability whose last dword would fall outside configuration space is not
+ * a capability, whatever the list said.
+ */
+static bool capability_fits(uint8_t offset, uint16_t last_dword)
+{
+    return offset >= PCI_CAPABILITY_FIRST_OFFSET &&
+        (uint32_t)offset + last_dword + 4U <= PCI_CONFIG_SPACE_SIZE;
 }
 
 /*
@@ -1007,6 +1108,337 @@ static enum nvidia_status probe_board_identity(
 }
 
 /*
+ * Driver ten, and the first of three in a row that read a capability every PCI
+ * function carries rather than anything NVIDIA-specific. Driver eight is a
+ * fourth of that kind. Their place in a set of NVIDIA drivers is as
+ * cross-checks and not as vendor knowledge, which docs/NVIDIA.md says outright
+ * rather than counting them as expertise they are not.
+ *
+ * This one asks the function what power state it is in, and the only answer
+ * consistent with drivers zero through seven having just read its
+ * memory-mapped registers is D0, because every lower state turns that decoder
+ * off. A function that says otherwise is one whose configuration space and
+ * whose register window disagree about what it is doing, and that is worth
+ * refusing over.
+ */
+static enum nvidia_status probe_power_management(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    const uint8_t offset = capability_offset(function,
+        PCI_CAPABILITY_POWER_MANAGEMENT);
+    uint32_t header = 0U;
+    uint32_t control = 0U;
+    uint32_t version;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if (offset == 0U || !capability_fits(offset, PCI_POWER_CONTROL_STATUS)) {
+        return NVIDIA_STATUS_POWER_MANAGEMENT;
+    }
+    if (!configuration_dword(function, offset, &header) ||
+        !configuration_dword(function,
+            (uint16_t)(offset + PCI_POWER_CONTROL_STATUS), &control)) {
+        return NVIDIA_STATUS_POWER_MANAGEMENT;
+    }
+    probe->identity = header;
+    probe->detail = control;
+    /* The enumeration said the capability was here; the device has to agree. */
+    if ((header & UINT32_C(0xFF)) != PCI_CAPABILITY_POWER_MANAGEMENT) {
+        return NVIDIA_STATUS_POWER_MANAGEMENT;
+    }
+    version = (header >> 16U) & PCI_POWER_VERSION_MASK;
+    if (version == 0U || version > PCI_POWER_VERSION_MAXIMUM) {
+        return NVIDIA_STATUS_POWER_MANAGEMENT;
+    }
+    if ((control & PCI_POWER_STATE_MASK) != PCI_POWER_STATE_D0) {
+        return NVIDIA_STATUS_POWER_MANAGEMENT;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver eleven. Configuration space only. Message-signalled interrupts are
+ * delivered as a memory write to the local APIC, so a function that arrives
+ * with them already enabled can interrupt this kernel without this kernel ever
+ * having agreed to it. Nothing in Sapote enabled them on this function and
+ * nothing outside Sapote may have: this driver's whole job is to say so out
+ * loud, and to check the count fields against the encodings the specification
+ * actually defines rather than assuming a device fills them in sanely.
+ */
+static enum nvidia_status probe_message_interrupts(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    const uint8_t offset = capability_offset(function, PCI_CAPABILITY_MSI);
+    uint32_t header = 0U;
+    uint32_t control;
+    uint32_t capable;
+    uint32_t enabled;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if (offset == 0U || !capability_fits(offset, 0U)) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    /*
+     * PCI enumeration keeps a shortcut to this capability beside the list it
+     * came from. The two are written at different times by different code, so
+     * requiring them to agree is a real check on the enumerator and not a
+     * tautology.
+     */
+    if (offset != function->msi_offset) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    if (!configuration_dword(function, offset, &header)) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    control = header >> 16U;
+    probe->identity = control;
+    probe->detail = offset;
+    if ((header & UINT32_C(0xFF)) != PCI_CAPABILITY_MSI) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    capable = (control >> PCI_MSI_CONTROL_CAPABLE_SHIFT) &
+        PCI_MSI_CONTROL_COUNT_MASK;
+    enabled = (control >> PCI_MSI_CONTROL_ENABLED_SHIFT) &
+        PCI_MSI_CONTROL_COUNT_MASK;
+    if (capable > PCI_MSI_COUNT_MAXIMUM || enabled > capable) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    if ((control & PCI_MSI_CONTROL_ENABLE) != 0U || enabled != 0U) {
+        return NVIDIA_STATUS_MESSAGE_INTERRUPTS;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver twelve. Configuration space only, and the other half of the Express
+ * capability driver eight reads: what kind of port this is, and how large a
+ * transaction it agreed to accept.
+ *
+ * A graphics function is an endpoint, and the specification gives endpoints
+ * three encodings rather than one: a plain endpoint behind a root port or a
+ * switch, a legacy endpoint, and a root complex integrated endpoint for a part
+ * that hangs off the root complex with no port above it. All three are
+ * accepted here. What is refused is everything that is not an endpoint at all
+ * -- a root port, either kind of switch port, either kind of bridge, an event
+ * collector -- because a function answering to the display class while
+ * describing itself as a port is not the thing this kernel went looking for.
+ *
+ * And a function programmed to accept a payload larger than it says it
+ * supports has been misconfigured by whatever ran before this kernel, which is
+ * worth knowing before anything is asked of it.
+ */
+static enum nvidia_status probe_express_device(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    const uint8_t offset = function->express_offset;
+    uint32_t header = 0U;
+    uint32_t capabilities = 0U;
+    uint32_t control = 0U;
+    uint32_t type;
+    uint32_t supported;
+    uint32_t programmed;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if (offset == 0U ||
+        offset != capability_offset(function, PCI_CAPABILITY_EXPRESS) ||
+        !capability_fits(offset, PCI_EXPRESS_DEVICE_CONTROL)) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    if (!configuration_dword(function, offset, &header) ||
+        !configuration_dword(function,
+            (uint16_t)(offset + PCI_EXPRESS_DEVICE_CAPABILITIES),
+            &capabilities) ||
+        !configuration_dword(function,
+            (uint16_t)(offset + PCI_EXPRESS_DEVICE_CONTROL), &control)) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    probe->identity = capabilities;
+    probe->detail = ((uint64_t)(header >> 16U) << 32U) |
+        (control & UINT32_C(0xFFFF));
+    /*
+     * The capability's own identifier byte, read back from the device. PCI
+     * requires capability pointers to be dword aligned and a conforming
+     * enumeration masks the bottom two bits off, so a capability placed at an
+     * odd offset is reachable only at the aligned offset below it -- where the
+     * bytes belong to whatever came before. This check is what turns that into
+     * a refusal with a name instead of a field decoded out of a neighbour.
+     */
+    if ((header & UINT32_C(0xFF)) != PCI_CAPABILITY_EXPRESS) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    header >>= 16U;
+    if ((header & PCI_EXPRESS_VERSION_MASK) == 0U) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    type = (header >> PCI_EXPRESS_TYPE_SHIFT) & PCI_EXPRESS_TYPE_MASK;
+    if (type != PCI_EXPRESS_TYPE_ENDPOINT &&
+        type != PCI_EXPRESS_TYPE_LEGACY_ENDPOINT &&
+        type != PCI_EXPRESS_TYPE_INTEGRATED_ENDPOINT) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    supported = capabilities & PCI_EXPRESS_PAYLOAD_MASK;
+    programmed = (control >> PCI_EXPRESS_CONTROL_PAYLOAD_SHIFT) &
+        PCI_EXPRESS_PAYLOAD_MASK;
+    if (supported > PCI_EXPRESS_PAYLOAD_MAXIMUM || programmed > supported) {
+        return NVIDIA_STATUS_ENDPOINT;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver thirteen. Configuration space only, and the counterpart to driver
+ * three: the expansion ROM this board declares to PCI, as opposed to the one
+ * driver three actually read through the PROM aperture. Those are two decoders
+ * over the same ROM and this kernel deliberately used only one of them, so the
+ * other had better still be switched off -- which is the check. The image
+ * driver three came back with is checked here too, against the shape the PCI
+ * Firmware Specification requires of any expansion ROM: a whole number of
+ * 512-byte blocks, inside the window.
+ *
+ * Nothing here writes. Sizing a base address register means writing all ones
+ * to it and putting it back, and this driver is not going to do that to a
+ * decoder that may be pointed at live firmware.
+ */
+static enum nvidia_status probe_expansion_rom(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t rom = 0U;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if ((function->header_type & PCI_HEADER_TYPE_MASK) !=
+        PCI_HEADER_TYPE_ENDPOINT) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    if (!configuration_dword(function, PCI_EXPANSION_ROM_BASE, &rom)) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    probe->identity = rom;
+    probe->detail = installed_result.vbios_valid ?
+        installed_result.vbios.image_bytes : 0U;
+    if (rom == UINT32_MAX) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    if ((rom & PCI_EXPANSION_ROM_ENABLE) != 0U) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    if ((rom & PCI_EXPANSION_ROM_RESERVED_MASK) != 0U) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    /*
+     * The image driver three came back with, re-asserted here against the
+     * shape the PCI Firmware Specification requires of an expansion ROM. The
+     * Rust validator already guarantees this -- it derives the length from the
+     * image's own block count -- so no device can make this fire and it is not
+     * claimed as a check on hardware. It is a check on the boundary: this is
+     * where C first uses that number, and a number that crossed from another
+     * language is worth confirming where it is used rather than where it was
+     * made.
+     */
+    if (installed_result.vbios_valid &&
+        (installed_result.vbios.image_bytes == 0U ||
+        installed_result.vbios.image_bytes % NVIDIA_VBIOS_BLOCK_BYTES != 0U ||
+        installed_result.vbios.image_bytes > NVIDIA_VBIOS_MAX_BYTES)) {
+        return NVIDIA_STATUS_EXPANSION_ROM;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver fourteen. The last one with a register window, and the counterpart to
+ * driver two: the pair of registers that set the timer's rate. Driver two
+ * proved the counter moves; this one proves the two offsets beside it are
+ * their own registers rather than more of the counter, by reading the
+ * numerator, waiting for the counter to advance, and reading the numerator
+ * again. A configuration register does not change while a counter does.
+ *
+ * What this does not do is claim the ratio explains the rate. That needs the
+ * part's crystal frequency, which is not in any register this kernel reads, so
+ * the numerator and the denominator are reported and only their degeneracy is
+ * refused.
+ */
+static enum nvidia_status probe_timer_scale(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t numerator;
+    uint32_t denominator;
+    uint32_t again;
+    uint64_t first = 0U;
+    uint64_t second = 0U;
+    uint64_t deadline;
+
+    (void)record;
+    (void)function;
+    (void)claim;
+    if (register_bytes < NV_PTIMER_DENOMINATOR + 4U) {
+        return NVIDIA_STATUS_REGISTER_WINDOW;
+    }
+    numerator = mmio_read32(registers, NV_PTIMER_NUMERATOR);
+    denominator = mmio_read32(registers, NV_PTIMER_DENOMINATOR);
+    probe->identity = ((uint64_t)numerator << 32U) | denominator;
+    if (numerator == 0U || denominator == 0U ||
+        numerator == UINT32_MAX || denominator == UINT32_MAX) {
+        return NVIDIA_STATUS_TIMER_SCALE;
+    }
+    if (!read_ptimer(registers, &first)) {
+        return NVIDIA_STATUS_TIMER_STOPPED;
+    }
+    deadline = clock_monotonic_ns() + NVIDIA_TIMER_OBSERVATION_NS;
+    while (clock_monotonic_ns() < deadline) {
+        __asm__ volatile ("" : : : "memory");
+    }
+    if (!read_ptimer(registers, &second) || second <= first) {
+        return NVIDIA_STATUS_TIMER_STOPPED;
+    }
+    probe->detail = second - first;
+    again = mmio_read32(registers, NV_PTIMER_NUMERATOR);
+    if (again != numerator) {
+        return NVIDIA_STATUS_TIMER_SCALE;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
  * The order matters exactly once: driver zero establishes which side of the
  * NV50 boundary the part is on, and drivers one and three pick their register
  * offsets from that.
@@ -1121,6 +1553,61 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .access = NVIDIA_ACCESS_CONFIGURATION,
         .writes_registers = false,
         .probe = probe_board_identity
+    },
+    {
+        .name = "NVIDIA GPU power management",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_power_management
+    },
+    {
+        .name = "NVIDIA GPU message interrupts",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_message_interrupts
+    },
+    {
+        .name = "NVIDIA GPU PCI Express endpoint",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_express_device
+    },
+    {
+        .name = "NVIDIA GPU expansion ROM declaration",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_expansion_rom
+    },
+    {
+        .name = "NVIDIA GPU timer scale",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = 0U,
+        .minimum_register_bytes = UINT32_C(0xA000),
+        .access = NVIDIA_ACCESS_MEMORY,
+        .writes_registers = false,
+        .probe = probe_timer_scale
     }
 };
 
@@ -1564,8 +2051,8 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
 
     /*
      * The table's access census, stated here so a driver cannot quietly change
-     * how much of the machine it takes: seven map one window each, one reads
-     * the aperture descriptions a claim produces, two read configuration space
+     * how much of the machine it takes: eight map one window each, one reads
+     * the aperture descriptions a claim produces, six read configuration space
      * and take nothing at all, and only a driver with a window may write.
      */
     {
@@ -1587,7 +2074,7 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
                 return false;
             }
         }
-        if (memory != 7U || apertures != 1U || configuration != 2U) {
+        if (memory != 8U || apertures != 1U || configuration != 6U) {
             return false;
         }
     }
@@ -1603,6 +2090,87 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
         if (nvidia_drivers[index].programming_interface != NVIDIA_MATCH_ANY) {
             return false;
         }
+    }
+    ++completed;
+
+    /*
+     * No probe function appears in the table twice. The control above catches
+     * two records that would match the same function in the same way; this one
+     * catches the same code being listed under two names, which is how a table
+     * of fifteen drivers becomes a table of fourteen drivers and a duplicate.
+     */
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        for (size_t other = 0U; other < index; ++other) {
+            if (nvidia_drivers[index].probe == nvidia_drivers[other].probe) {
+                return false;
+            }
+        }
+    }
+    ++completed;
+
+    /*
+     * Five drivers here read something an earlier driver established, and each
+     * of them is only meaningful if that earlier driver has already run. The
+     * loop in nvidia_bind goes through the table in order, so those
+     * dependencies are the table's order, and this is where the order is
+     * written down rather than left as a comment nobody has to keep true.
+     */
+    {
+        static const struct { nvidia_probe_t after; nvidia_probe_t before; }
+            ordering[] = {
+            /* The mirror and the ROM window pick offsets from the identity. */
+            { probe_configuration_mirror, probe_master_control },
+            { probe_video_bios, probe_master_control },
+            /* Aliasing needs a window whose identity is known good. */
+            { probe_master_control_engines, probe_master_control },
+            /* The ROM declaration cross-checks the image the window read. */
+            { probe_expansion_rom, probe_video_bios },
+            /* The rate pair is checked against a counter known to move. */
+            { probe_timer_scale, probe_timer }
+        };
+        const size_t pairs = sizeof(ordering) / sizeof(ordering[0]);
+
+        for (size_t pair = 0U; pair < pairs; ++pair) {
+            size_t after = NVIDIA_DRIVER_COUNT;
+            size_t before = NVIDIA_DRIVER_COUNT;
+
+            for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+                if (nvidia_drivers[index].probe == ordering[pair].after) {
+                    after = index;
+                }
+                if (nvidia_drivers[index].probe == ordering[pair].before) {
+                    before = index;
+                }
+            }
+            if (after >= NVIDIA_DRIVER_COUNT ||
+                before >= NVIDIA_DRIVER_COUNT || before >= after) {
+                return false;
+            }
+        }
+    }
+    ++completed;
+
+    /*
+     * Every bit field this file decides something on is bounded by a limit
+     * that fits inside the mask it came from, and the three fields of the
+     * expansion ROM register cover that register exactly and do not overlap. A
+     * limit outside its own mask is a check that can never fire, and a
+     * reserved-bit mask that is wrong is a check that fires on the wrong bits.
+     */
+    if (PCI_POWER_VERSION_MAXIMUM > PCI_POWER_VERSION_MASK ||
+        PCI_MSI_COUNT_MAXIMUM > PCI_MSI_CONTROL_COUNT_MASK ||
+        PCI_EXPRESS_PAYLOAD_MAXIMUM > PCI_EXPRESS_PAYLOAD_MASK ||
+        PCI_EXPRESS_TYPE_LEGACY_ENDPOINT > PCI_EXPRESS_TYPE_MASK ||
+        PCI_EXPRESS_TYPE_INTEGRATED_ENDPOINT > PCI_EXPRESS_TYPE_MASK) {
+        return false;
+    }
+    if ((PCI_EXPANSION_ROM_ENABLE | PCI_EXPANSION_ROM_RESERVED_MASK |
+            PCI_EXPANSION_ROM_ADDRESS_MASK) != UINT32_MAX ||
+        (PCI_EXPANSION_ROM_ENABLE & PCI_EXPANSION_ROM_RESERVED_MASK) != 0U ||
+        (PCI_EXPANSION_ROM_ENABLE & PCI_EXPANSION_ROM_ADDRESS_MASK) != 0U ||
+        (PCI_EXPANSION_ROM_RESERVED_MASK &
+            PCI_EXPANSION_ROM_ADDRESS_MASK) != 0U) {
+        return false;
     }
     ++completed;
 
@@ -1749,6 +2317,11 @@ const char *nvidia_status_string(enum nvidia_status status)
         "NVIDIA board straps were refused",
         "NVIDIA memory apertures are not the published shape",
         "NVIDIA PCI Express link was not described",
+        "NVIDIA function is not a PCI Express endpoint",
+        "NVIDIA power management capability was refused",
+        "NVIDIA message interrupts are not in the state this kernel left them",
+        "NVIDIA expansion ROM declaration was refused",
+        "NVIDIA timer rate registers are degenerate",
         "NVIDIA timer did not advance",
         "NVIDIA video BIOS window is empty",
         "NVIDIA video BIOS image is malformed",

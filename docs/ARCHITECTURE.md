@@ -96,11 +96,12 @@ There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
 or general USB class stack. The exact FAT32 design and limits are in
 [`FAT32.md`](FAT32.md).
 
-`nvidia.c` is five bounded drivers for the register contracts an NVIDIA board
-publishes, written from envytools, Nouveau, Mesa/NVK and NVIDIA's own published
-material rather than from a datasheet that does not exist. Four of them read
-only; the fifth clears the ROM shadow bit the PROM window requires and proves
-it restored. The bytes that come out of that window are parsed in freestanding
+`nvidia.c` is fifteen bounded drivers for the register and configuration
+contracts an NVIDIA board publishes, written from envytools, Nouveau, Mesa/NVK
+and NVIDIA's own published material rather than from a datasheet that does not
+exist, and from the PCI and PCI Express specifications for the capabilities
+four of them cross-check against. Fourteen of them read only; the fifteenth
+clears the ROM shadow bit the PROM window requires and proves it restored. The bytes that come out of that window are parsed in freestanding
 Rust, never in C. Nothing here has run against NVIDIA silicon, and the header,
 the module and a build gate all say so. See [`NVIDIA.md`](NVIDIA.md).
 

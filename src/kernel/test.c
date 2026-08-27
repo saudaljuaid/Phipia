@@ -7580,10 +7580,10 @@ static const struct {
         sizeof(nvidia_published_encodings[0]))
 
 /*
- * The declared shape of the ten drivers, restated outside the driver so a
- * table that changed quietly has to change in two places. Seven map one
+ * The declared shape of the fifteen drivers, restated outside the driver so a
+ * table that changed quietly has to change in two places. Eight map one
  * register window each, one reads the aperture descriptions a claim produces,
- * two read configuration space and take nothing, and exactly one writes.
+ * six read configuration space and take nothing, and exactly one writes.
  */
 static const struct {
     uint8_t class_code;
@@ -7600,7 +7600,12 @@ static const struct {
     { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
     { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_APERTURE, false },
     { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
-    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false }
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false }
 };
 
 static void nvidia_require_pure_layer(void)
@@ -7749,7 +7754,7 @@ _Noreturn void kernel_test_complete_nvidia(void)
             /*
              * Absence has to be a refusal rather than an empty machine. This
              * scenario attaches display and HD Audio functions of exactly the
-             * classes the five drivers match on, from vendors that are not
+             * classes these drivers match on, from vendors that are not
              * NVIDIA, so "no function present" means every one of them was
              * turned down on the one field that decides it.
              */
