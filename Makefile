@@ -27,10 +27,11 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-nic-reset network-system-immutable network-missing-linux-echo \
 	network-missing-linux-uname network-missing-linux-cat network-files \
 	network-notes network-studio network-persistence network-socket-isolation \
-	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin
+	network-tcp-listen network-tcp-refused \
+	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 96
-EXPECTED_SHELL_ASSERTION_COUNT := 359
+EXPECTED_TEST_SCENARIO_COUNT := 99
+EXPECTED_SHELL_ASSERTION_COUNT := 392
 
 CC := gcc
 LD := ld
@@ -551,6 +552,80 @@ verify: toolchain lint
 		--exclude=driver.c; then \
 		echo 'driver matrix bind bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\baudio_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=audio.c; then \
+		echo 'HD Audio proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	# The one driver that lets a device write kernel memory has to withdraw
+	# that permission before it reclaims the memory. Sapote has no IOMMU, so
+	# the order is the whole guarantee: engines stopped, controller reset, bus
+	# mastering disabled, and only then the rings released.
+	@grep -Fq 'PCI_RESOURCE_STATUS_DMA_NOT_PREPARED' src/kernel/audio.c || \
+		{ echo 'the audio driver stopped proving the DMA guard'; exit 1; }
+	@stop=$$(grep -n 'mmio_write8(controller->registers, HDA_RIRBCTL, 0U);' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		reset=$$(grep -n 'mmio_write32(controller->registers, HDA_GCTL, 0U);' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		withdraw=$$(grep -n 'pci_claim_disable_bus_master' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		release=$$(grep -n 'dma_release(&controller->response_ring)' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		test -n "$$stop" && test -n "$$reset" && test -n "$$withdraw" && \
+		test -n "$$release" && test "$$stop" -lt "$$reset" && \
+		test "$$reset" -lt "$$withdraw" && \
+		test "$$withdraw" -lt "$$release" || \
+		{ echo 'audio teardown releases DMA before withdrawing bus mastering'; \
+		exit 1; }
+	@test "$$(grep -Ec 'pci_claim_enable_bus_master[[:space:]]*[(]' \
+		src/kernel/audio.c)" -eq 2 || \
+		{ echo 'the audio driver lost its bus-master negative control'; \
+		exit 1; }
+	# One receive buffer and one transmit buffer serve the whole stack, so a
+	# handler that answers the frame it is reading must never re-enter the
+	# pump. The guard is the only thing standing between an inbound segment
+	# that needs an unknown hardware address and a recursive service call that
+	# overwrites the frame its own caller is parsing.
+	@test "$$(grep -Ec '^enum network_status network_service\(void\)$$' \
+		src/kernel/network.c)" -eq 1 && \
+		grep -Fq 'if (runtime.servicing) {' src/kernel/network.c && \
+		grep -Fq 'runtime.servicing = true;' src/kernel/network.c && \
+		grep -Fq 'runtime.servicing = false;' src/kernel/network.c || \
+		{ echo 'the network pump lost its re-entrancy guard'; exit 1; }
+	@guard=$$(grep -n 'if (runtime.servicing) {' src/kernel/network.c \
+		| head -n 1 | cut -d: -f1); \
+		pump=$$(grep -n 'status = network_service_pump();' \
+		src/kernel/network.c | head -n 1 | cut -d: -f1); \
+		test -n "$$guard" && test -n "$$pump" && \
+		test "$$guard" -lt "$$pump" || \
+		{ echo 'the network pump runs before it checks the guard'; exit 1; }
+	@test "$$(grep -Ec '\(void\)network_service\(\)' \
+		src/kernel/network.c)" -ge 1 && \
+		grep -Fq '++runtime.public.statistics.arp_deferred;' \
+		src/kernel/network.c || \
+		{ echo 'the receive path no longer defers unresolved sends'; exit 1; }
+	# A segment nobody is listening for is answered, never swallowed, and a
+	# reset is never answered with a reset: that is what stops two closed
+	# ports from talking forever.
+	@grep -Fq 'if ((flags & TCP_FLAG_RST) != 0U ||' src/kernel/network.c || \
+		{ echo 'the TCP refusal lost its reset-for-reset guard'; exit 1; }
+	@test "$$(grep -Ec 'tcp_refuse[[:space:]]*[(]' \
+		src/kernel/network.c)" -eq 3 || \
+		{ echo 'the TCP refusal gained an unreviewed call site'; exit 1; }
+	# A passive open is bounded twice: by the listener's declared backlog and
+	# by the same connection table an active open draws from.
+	@grep -Fq '#define NETWORK_TCP_MAX_BACKLOG 4U' include/sapote/network.h
+	@grep -Fq 'if (tcp_pending_count(listener) >= listener->backlog) {' \
+		src/kernel/network.c || \
+		{ echo 'a passive open stopped honouring its backlog'; exit 1; }
+	@grep -Fq 'backlog > NETWORK_TCP_MAX_BACKLOG' src/kernel/network.c || \
+		{ echo 'a listener may now declare an unbounded backlog'; exit 1; }
+	# A listener owns the children nobody has accepted yet; closing it must
+	# refuse those peers rather than orphan their slots.
+	@grep -Fq 'tcp_release(child);' src/kernel/network.c && \
+		grep -Fq 'tcp_release_children(connection);' src/kernel/network.c && \
+		grep -Fq 'if (connection->backlog != 0U) {' src/kernel/network.c || \
+		{ echo 'closing a listener no longer reclaims its children'; exit 1; }
 	# The saved-context CPL3 entry belongs to the scheduler that saves the
 	# context. Anything else entering Ring 3 from a register set it did not
 	# authenticate would be a second, unreviewed user boundary.
@@ -945,6 +1020,8 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
 		studio) expected=213 ;; \
 		persistence) expected=215 ;; \
 		socket-isolation) expected=217 ;; \
+		tcp-listen) expected=219 ;; \
+		tcp-refused) expected=221 ;; \
 		*) echo 'unknown network scenario: network-$*'; exit 1 ;; \
 	esac; \
 	case '$*' in \
@@ -1030,10 +1107,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-cache) expected=145 ;; \
 		fat32-immutable) expected=147 ;; \
 		fat32-handles) expected=149 ;; \
-		multiprocess) expected=219 ;; \
-		multiprocess-slots) expected=221 ;; \
-		driver-matrix) expected=223 ;; \
-		driver-matrix-builtin) expected=225 ;; \
+		multiprocess) expected=223 ;; \
+		multiprocess-slots) expected=225 ;; \
+		driver-matrix) expected=227 ;; \
+		driver-matrix-builtin) expected=229 ;; \
+		audio) expected=231 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1051,6 +1129,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			driver-matrix) \
 				hardware='-nic none -device e1000,mac=52:54:00:AA:BB:01 -device e1000e,mac=52:54:00:AA:BB:02 -device rtl8139,mac=52:54:00:AA:BB:03 -device pcnet,mac=52:54:00:AA:BB:04 -device ich9-ahci -device ich9-intel-hda -device usb-ehci -vga std -device cirrus-vga,romfile= -device bochs-display,romfile=' ;; \
 			driver-matrix-builtin) hardware='' ;; \
+			audio) \
+				hardware='-device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=none0 -audiodev none,id=none0' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \

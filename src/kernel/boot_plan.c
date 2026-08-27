@@ -41,6 +41,7 @@
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
 #include <sapote/nvme.h>
+#include <sapote/audio.h>
 #include <sapote/driver.h>
 #include <sapote/multiprocess.h>
 #include <sapote/paging.h>
@@ -2390,6 +2391,158 @@ static void execute_driver_matrix_probe(
     result->proof_counter_count = 2U;
 }
 
+static void execute_audio_foundation(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    size_t completed = 0U;
+
+    if (!audio_foundation_self_test(&completed) ||
+        completed != AUDIO_CONTROLLED_CONTROLS) {
+        stage_failed(context, result, "bounded HD Audio controls failed");
+        return;
+    }
+    console_write("Sapote: HD Audio foundation controls ");
+    console_write_u64(completed);
+    console_putc('/');
+    console_write_u64(AUDIO_CONTROLLED_CONTROLS);
+    console_write(" passed\n");
+    boot_stage_result_succeed(descriptor, result);
+}
+
+static const enum boot_capability audio_proof_requirements[] = {
+    BOOT_CAPABILITY_PAGE_TABLES_INSTALLED,
+    BOOT_CAPABILITY_WRITE_XOR_EXECUTE_PROVED,
+    BOOT_CAPABILITY_PHYSICAL_FRAME_ALLOCATOR_AVAILABLE,
+    BOOT_CAPABILITY_HEAP_AVAILABLE,
+    BOOT_CAPABILITY_IDT_INSTALLED,
+    BOOT_CAPABILITY_INTERRUPT_CONTROLLERS_CONFIGURED,
+    BOOT_CAPABILITY_INTERRUPTS_ENABLED,
+    BOOT_CAPABILITY_TIMER_CALIBRATION_COMPLETE,
+    BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE,
+    BOOT_CAPABILITY_PCI_RESOURCE_OWNERSHIP_AVAILABLE,
+    BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE,
+    BOOT_CAPABILITY_AUDIO_FOUNDATION_AVAILABLE
+};
+
+_Static_assert(sizeof(audio_proof_requirements) /
+    sizeof(audio_proof_requirements[0]) == 12U,
+    "HD Audio proof prerequisite count changed");
+_Static_assert(sizeof(audio_proof_requirements) /
+    sizeof(audio_proof_requirements[0]) <= BOOT_STAGE_CAPABILITY_CAPACITY,
+    "HD Audio proof prerequisites exceed the descriptor bound");
+
+static bool audio_proof_dependencies_complete(
+    const struct boot_stage_descriptor *descriptor
+)
+{
+    return dependencies_complete(descriptor, audio_proof_requirements,
+        sizeof(audio_proof_requirements) /
+            sizeof(audio_proof_requirements[0]));
+}
+
+/*
+ * The codec conversation lets the controller write into kernel memory, so it
+ * runs where its scenario attaches the hardware rather than on every boot. A
+ * machine with no HD Audio controller is a machine this stage has nothing to
+ * do on, which is a decision rather than a failure.
+ */
+static void execute_audio_codec_proof(
+    struct boot_context *context,
+    const struct boot_stage_descriptor *descriptor,
+    struct boot_stage_result *result
+)
+{
+    struct boot_stage_descriptor missing_count;
+    struct boot_stage_descriptor missing_member;
+    struct audio_proof_result proof;
+    enum audio_status status;
+
+    if (!audio_proof_dependencies_complete(descriptor)) {
+        stage_failed(context, result,
+            "HD Audio proof prerequisite set is incomplete");
+        return;
+    }
+    missing_count = *descriptor;
+    --missing_count.required_capability_count;
+    missing_member = *descriptor;
+    missing_member.required_capabilities[
+        missing_member.required_capability_count - 1U] =
+            missing_member.required_capabilities[0];
+    if (audio_proof_dependencies_complete(&missing_count) ||
+        audio_proof_dependencies_complete(&missing_member)) {
+        stage_failed(context, result,
+            "HD Audio proof contract negative controls failed");
+        return;
+    }
+
+    if (context->test_scenario != KERNEL_TEST_AUDIO) {
+        console_write("Sapote: HD Audio controller absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+
+    status = audio_prove(&proof);
+    if (status == AUDIO_STATUS_ABSENT) {
+        console_write("Sapote: HD Audio controller absent\n");
+        boot_stage_result_skip(descriptor, result);
+        return;
+    }
+    if (status != AUDIO_STATUS_OK) {
+        console_write("Sapote: HD Audio proof violated invariant: ");
+        console_write(audio_status_string(status));
+        console_putc('\n');
+        stage_failed(context, result, audio_status_string(status));
+        return;
+    }
+    for (size_t index = 0U; index < AUDIO_MAX_CODECS; ++index) {
+        const struct audio_codec *codec = &proof.codecs[index];
+
+        if (!codec->identified) {
+            continue;
+        }
+        console_write("ST AUDIO codec ");
+        console_write_u64(codec->address);
+        console_write(" identity ");
+        console_write_hex(codec->vendor_device);
+        console_write(" revision ");
+        console_write_hex(codec->revision);
+        console_write(" nodes ");
+        console_write_u64(codec->first_group_node);
+        console_putc('+');
+        console_write_u64(codec->group_node_count);
+        console_write(codec->audio_function_group ?
+            " audio function group\n" : " other function group\n");
+    }
+    console_write("ST AUDIO controller version ");
+    console_write_hex(proof.version);
+    console_write(" streams out ");
+    console_write_u64(proof.output_streams);
+    console_write(" in ");
+    console_write_u64(proof.input_streams);
+    console_write(" rings ");
+    console_write_u64(proof.corb_entries);
+    console_putc('/');
+    console_write_u64(proof.rirb_entries);
+    console_write(" codecs ");
+    console_write_u64(proof.codecs_identified);
+    console_putc('/');
+    console_write_u64(proof.codecs_present);
+    console_write(" verbs ");
+    console_write_u64(proof.verbs_issued);
+    console_write(" responses ");
+    console_write_u64(proof.responses_received);
+    console_write(
+        " device wrote the response ring bus mastering withdrawn before "
+        "release teardown clean census equal\n");
+    boot_stage_result_succeed(descriptor, result);
+    result->proof_counters[0] = proof.responses_received;
+    result->proof_counters[1] = proof.codecs_identified;
+    result->proof_counter_count = 2U;
+}
+
 #define REQUIRED_STAGE(identifier, label, boot_phase, irreversible, function) \
     { \
         .id = identifier, \
@@ -2549,6 +2702,12 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_LINUX_UNAME_INSTALLED_PROOF,
         "installed static BusyBox uname proof", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_linux_uname_installed_proof),
+    REQUIRED_STAGE(BOOT_STAGE_AUDIO_FOUNDATION,
+        "bounded HD Audio foundation", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_audio_foundation),
+    OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_AUDIO_CODEC_PROOF,
+        "installed HD Audio codec proof", BOOT_PHASE_SERVICES,
+        BOOT_IRREVERSIBLE_NONE, execute_audio_codec_proof),
     REQUIRED_STAGE(BOOT_STAGE_DRIVER_MATRIX_FOUNDATION,
         "bounded PCI driver matrix foundation", BOOT_PHASE_SERVICES,
         BOOT_IRREVERSIBLE_NONE, execute_driver_matrix_foundation),
@@ -3177,6 +3336,33 @@ static bool declare_dependencies(
         descriptor->provided_capabilities[1] =
             BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE;
         descriptor->provided_capability_count = 2U;
+        break;
+    case BOOT_STAGE_AUDIO_FOUNDATION:
+        descriptor->required_capabilities[0] =
+            BOOT_CAPABILITY_PCI_ACCESS_AVAILABLE;
+        descriptor->required_capabilities[1] =
+            BOOT_CAPABILITY_DMA_FOUNDATION_AVAILABLE;
+        descriptor->required_capability_count = 2U;
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_AUDIO_FOUNDATION_AVAILABLE;
+        descriptor->provided_capability_count = 1U;
+        break;
+    case BOOT_STAGE_AUDIO_CODEC_PROOF:
+        for (size_t index = 0U;
+             index < sizeof(audio_proof_requirements) /
+                sizeof(audio_proof_requirements[0]); ++index) {
+            descriptor->required_capabilities[index] =
+                audio_proof_requirements[index];
+        }
+        descriptor->required_capability_count =
+            sizeof(audio_proof_requirements) /
+                sizeof(audio_proof_requirements[0]);
+        descriptor->provided_capabilities[0] =
+            BOOT_CAPABILITY_AUDIO_CODEC_PROOF_COMPLETE;
+        descriptor->provided_capability_count = 1U;
+        descriptor->skipped_capabilities[0] =
+            BOOT_CAPABILITY_AUDIO_CONTROLLER_ABSENT;
+        descriptor->skipped_capability_count = 1U;
         break;
     case BOOT_STAGE_DRIVER_MATRIX_FOUNDATION:
         descriptor->required_capabilities[0] =

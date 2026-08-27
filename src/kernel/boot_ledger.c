@@ -88,7 +88,9 @@ static const char *const stage_names[] = {
     "bounded multiprocess foundation",
     "installed multiprocess proof",
     "bounded PCI driver matrix foundation",
-    "installed PCI driver matrix probe"
+    "installed PCI driver matrix probe",
+    "bounded HD Audio foundation",
+    "installed HD Audio codec proof"
 };
 
 _Static_assert(sizeof(stage_names) / sizeof(stage_names[0]) ==
@@ -168,7 +170,10 @@ static const char *const capability_names[] = {
     "multiprocess installed proof complete",
     "PCI driver matrix foundation available",
     "PCI driver matrix probe complete",
-    "PCI driver matrix devices absent"
+    "PCI driver matrix devices absent",
+    "HD Audio foundation available",
+    "HD Audio codec proof complete",
+    "HD Audio controller absent"
 };
 
 _Static_assert(sizeof(capability_names) / sizeof(capability_names[0]) ==

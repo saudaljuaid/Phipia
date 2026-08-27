@@ -84,6 +84,14 @@ identifies its device against a property that specification guarantees, and
 releases everything. None of them enables bus mastering, so none of them can
 reach memory. See [`DRIVERS.md`](DRIVERS.md).
 
+`audio.c` is the exception and says so. High Definition Audio has no register a
+driver can ask a codec through, only two rings the controller reads and writes
+by bus-mastering DMA, so identifying a codec means letting the device write
+kernel memory. The rings are typed DMA allocations, bus mastering is refused
+while they still belong to the kernel, and it is withdrawn only after the
+engines are stopped and the controller is back in reset - before the memory is
+reclaimed, never after. See [`AUDIO.md`](AUDIO.md).
+
 There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
 or general USB class stack. The exact FAT32 design and limits are in
 [`FAT32.md`](FAT32.md).
@@ -97,10 +105,20 @@ descriptor or device-owned buffer. Reset invalidates sockets and caches before
 releasing device resources.
 
 `network.c` supplies bounded Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP and
-HTTP state machines. HTTP can stream through `fat32_fs.c` to the writable Data
-volume with synchronized temporary-file replacement. `network_syscall.c`
-validates complete user ranges and authenticates process generations for the
-experimental native ABI. The Terminal calls the same public kernel operations.
+HTTP state machines. TCP opens in both directions: a listener with a declared
+backlog draws its accepted connections from the same eight-slot table an
+outbound connection is drawn from, and a segment matching no connection and no
+listener is refused with a reset. HTTP can stream through `fat32_fs.c` to the
+writable Data volume with synchronized temporary-file replacement.
+`network_syscall.c` validates complete user ranges and authenticates process
+generations for the experimental native ABI. The Terminal calls the same public
+kernel operations.
+
+One receive buffer and one transmit buffer serve the whole stack, so the pump
+runs alone: `network_service` refuses recursive entry, and a send raised while a
+received frame is still being parsed resolves its hardware address from the
+cache or defers, never by pumping the device again. That ordering is what lets
+a handler answer the frame it is reading at all.
 
 The Boot Ledger records networking after time, heap, paging, PCI, dynamic
 vectors, DMA, interrupts and the closed boot proofs, and before First
@@ -180,5 +198,6 @@ journaled crash recovery, dynamic linker, signals, general descriptor table,
 broad hardware support, browser, or generally stable native userspace ABI. User
 scheduling is cooperative rather than preemptive, and there is no fork, exec,
 process identifier space or inter-process communication. The thirteen bounded
-drivers bind and identify their devices; none of them moves data. These are
-boundaries, not implied features.
+drivers bind and identify their devices; none of them moves data. The HD Audio
+driver identifies codecs and plays nothing. These are boundaries, not implied
+features.

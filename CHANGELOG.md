@@ -25,12 +25,30 @@
 - Added station addresses pinned on the host command line and required back out
   of four of those drivers, so a bind cannot be satisfied by a plausible value
   the driver did not fetch.
-- Added four typed Boot Ledger stages, four QEMU scenarios and a 96-scenario
+- Added an HD Audio driver that identifies every codec on the link over
+  bus-mastering command and response rings, refusing bus mastering before the
+  rings are prepared and withdrawing it before they are reclaimed, with the
+  teardown order enforced by the build.
+- Added a TCP passive open: `LISTEN` and `SYN_RECEIVED` states, a declared
+  backlog bounded at four, `network_tcp_listen` and `network_tcp_accept`,
+  listener-owned children reclaimed on close, and readiness reporting for a
+  connection waiting to be accepted.
+- Added a reset for TCP segments matching no connection and no listener, with
+  RFC 793 section 3.4 sequence numbers and no reset in answer to a reset.
+- Fixed a remote-triggerable buffer reuse: a handler answering the frame it was
+  parsing could reach an ARP wait that pumped the device again, overwriting the
+  receive and transmit buffers its own caller held. The pump now refuses
+  recursive entry and an unresolved send from the receive path defers to
+  retransmission instead.
+- Added six typed Boot Ledger stages, seven QEMU scenarios and a 99-scenario
   total contract.
 
 Explicit non-features: no preemptive user scheduling, no fork, exec, signals,
-process identifiers or inter-process communication; no driver here moves data,
-enables bus mastering, allocates DMA, or takes an interrupt.
+process identifiers or inter-process communication; the thirteen bounded
+drivers move no data, enable no bus mastering, allocate no DMA and take no
+interrupt; the HD Audio driver identifies codecs and plays nothing; a TCP
+listener has no background retransmission timer, no listen queue that outlives
+its caller, and no rate limit on refusals.
 
 ## 2.1.0 — Advanced Networking and Browser Foundation
 

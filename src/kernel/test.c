@@ -23,6 +23,7 @@
 #include <sapote/memory.h>
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
+#include <sapote/audio.h>
 #include <sapote/driver.h>
 #include <sapote/multiprocess.h>
 #include <sapote/nvme.h>
@@ -489,6 +490,12 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "network-socket-isolation")) {
         return KERNEL_TEST_NETWORK_SOCKET_ISOLATION;
     }
+    if (token_equals(value, length, "network-tcp-listen")) {
+        return KERNEL_TEST_NETWORK_TCP_LISTEN;
+    }
+    if (token_equals(value, length, "network-tcp-refused")) {
+        return KERNEL_TEST_NETWORK_TCP_REFUSED;
+    }
     if (token_equals(value, length, "multiprocess")) {
         return KERNEL_TEST_MULTIPROCESS;
     }
@@ -500,6 +507,9 @@ static enum kernel_test_scenario scenario_from_value(
     }
     if (token_equals(value, length, "driver-matrix-builtin")) {
         return KERNEL_TEST_DRIVER_MATRIX_BUILTIN;
+    }
+    if (token_equals(value, length, "audio")) {
+        return KERNEL_TEST_AUDIO;
     }
 
     return KERNEL_TEST_INVALID;
@@ -667,10 +677,13 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NETWORK_STUDIO: return UINT8_C(0x6A);
     case KERNEL_TEST_NETWORK_PERSISTENCE: return UINT8_C(0x6B);
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION: return UINT8_C(0x6C);
-    case KERNEL_TEST_MULTIPROCESS: return UINT8_C(0x6D);
-    case KERNEL_TEST_MULTIPROCESS_SLOTS: return UINT8_C(0x6E);
-    case KERNEL_TEST_DRIVER_MATRIX: return UINT8_C(0x6F);
-    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN: return UINT8_C(0x70);
+    case KERNEL_TEST_NETWORK_TCP_LISTEN: return UINT8_C(0x6D);
+    case KERNEL_TEST_NETWORK_TCP_REFUSED: return UINT8_C(0x6E);
+    case KERNEL_TEST_MULTIPROCESS: return UINT8_C(0x6F);
+    case KERNEL_TEST_MULTIPROCESS_SLOTS: return UINT8_C(0x70);
+    case KERNEL_TEST_DRIVER_MATRIX: return UINT8_C(0x71);
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN: return UINT8_C(0x72);
+    case KERNEL_TEST_AUDIO: return UINT8_C(0x73);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -759,9 +772,31 @@ bool kernel_test_linux_uname_exit_self_test(void)
         !linux_uname_exit_contract(UINT8_C(0x38));
 }
 
-static bool multiprocess_exit_contract(uint8_t value)
+/*
+ * The passive-open pair sits inside the networking block, so inserting a
+ * scenario shifts every later exit value. This contract is what makes that a
+ * refusal rather than a silent renumbering.
+ */
+static bool tcp_listen_exit_contract(uint8_t value)
 {
     return value == UINT8_C(0x6D);
+}
+
+bool kernel_test_tcp_listen_exit_self_test(void)
+{
+    return tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_TCP_LISTEN)) &&
+        !tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_TCP_REFUSED)) &&
+        !tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_SOCKET_ISOLATION)) &&
+        scenario_exit_value(KERNEL_TEST_NETWORK_TCP_REFUSED) ==
+            UINT8_C(0x6E);
+}
+
+static bool multiprocess_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x6F);
 }
 
 bool kernel_test_multiprocess_exit_self_test(void)
@@ -775,7 +810,7 @@ bool kernel_test_multiprocess_exit_self_test(void)
 
 static bool driver_matrix_exit_contract(uint8_t value)
 {
-    return value == UINT8_C(0x6F);
+    return value == UINT8_C(0x71);
 }
 
 bool kernel_test_driver_matrix_exit_self_test(void)
@@ -784,7 +819,21 @@ bool kernel_test_driver_matrix_exit_self_test(void)
             scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX)) &&
         !driver_matrix_exit_contract(
             scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN)) &&
-        !driver_matrix_exit_contract(UINT8_C(0x6D));
+        !driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS));
+}
+
+static bool audio_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x73);
+}
+
+bool kernel_test_audio_exit_self_test(void)
+{
+    return audio_exit_contract(scenario_exit_value(KERNEL_TEST_AUDIO)) &&
+        !audio_exit_contract(scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX)) &&
+        !audio_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -4575,9 +4624,12 @@ void kernel_test_run(
     case KERNEL_TEST_NETWORK_STUDIO:
     case KERNEL_TEST_NETWORK_PERSISTENCE:
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
     case KERNEL_TEST_MULTIPROCESS:
     case KERNEL_TEST_DRIVER_MATRIX:
     case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
+    case KERNEL_TEST_AUDIO:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -6550,6 +6602,303 @@ static void network_tcp_connect_close(bool expect_reset)
     }
 }
 
+/*
+ * The peer cannot know a port is open until this side says so, and it has no
+ * clock of its own: it answers frames. So a passive-open scenario announces
+ * its port over UDP and the peer opens a TCP connection back. The announcement
+ * also decides what the scenario proves. Sent to the gateway, it leaves the
+ * peer's hardware address unknown, so the acknowledgement to its SYN has to be
+ * deferred out of the receive path and retransmitted -- which is exactly the
+ * hazard the service guard exists for. Sent to the peer itself, the hardware
+ * address is known and a refusal can leave immediately.
+ */
+#define NETWORK_TEST_KNOCK_PORT UINT16_C(4243)
+#define NETWORK_TEST_KNOCK_SOURCE UINT16_C(50003)
+#define NETWORK_TEST_SECOND_KNOCK_SOURCE UINT16_C(50004)
+#define NETWORK_TEST_LISTEN_PORT UINT16_C(7777)
+#define NETWORK_TEST_CLOSED_PORT UINT16_C(7778)
+
+static const uint8_t network_listen_request[] = "SAPOTE LISTEN\n";
+static const uint8_t network_refusal_notice[] = "REFUSED";
+
+static network_handle network_announce_port(
+    uint32_t destination,
+    uint16_t announced,
+    uint16_t from_port
+)
+{
+    network_handle knock;
+    uint8_t message[6];
+
+    message[0] = (uint8_t)'S';
+    message[1] = (uint8_t)'A';
+    message[2] = (uint8_t)'P';
+    message[3] = (uint8_t)'L';
+    message[4] = (uint8_t)(announced >> 8U);
+    message[5] = (uint8_t)announced;
+    if (network_udp_open(NETWORK_TEST_OWNER, &knock) != NETWORK_STATUS_OK ||
+        network_udp_bind(NETWORK_TEST_OWNER, knock, from_port) !=
+            NETWORK_STATUS_OK ||
+        network_udp_send(NETWORK_TEST_OWNER, knock, destination,
+            NETWORK_TEST_KNOCK_PORT, message, sizeof(message),
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the listening port could not be announced");
+    }
+    return knock;
+}
+
+static void network_tcp_listen_controls(network_handle listener)
+{
+    network_handle stranger;
+    network_handle accepted = 0U;
+    uint8_t buffer[8];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t written = 0U;
+
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener, 0U, 1U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, 0U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, NETWORK_TCP_MAX_BACKLOG + 1U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER + 1U, listener,
+            NETWORK_TEST_LISTEN_PORT, 1U) != NETWORK_STATUS_WRONG_OWNER) {
+        kernel_test_fail("a listen outside its declared bounds was admitted");
+    }
+    if (network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted, &source,
+            &port, UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        accepted != 0U) {
+        kernel_test_fail("accept was admitted before listen");
+    }
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, 2U) != NETWORK_STATUS_OK ||
+        network_get_state().tcp_listeners != 1U) {
+        kernel_test_fail("the listening socket was refused its port");
+    }
+    if (network_tcp_open(NETWORK_TEST_OWNER, &stranger) != NETWORK_STATUS_OK ||
+        network_tcp_listen(NETWORK_TEST_OWNER, stranger,
+            NETWORK_TEST_LISTEN_PORT, 1U) != NETWORK_STATUS_PORT_IN_USE ||
+        network_close(NETWORK_TEST_OWNER, stranger) != NETWORK_STATUS_OK) {
+        kernel_test_fail("two sockets were allowed to listen on one port");
+    }
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_CLOSED_PORT, 1U) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_connect(NETWORK_TEST_OWNER, listener, NETWORK_TEST_HTTP,
+            80U, UINT64_C(1000000)) != NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_read(NETWORK_TEST_OWNER, listener, buffer,
+            sizeof(buffer), &length, UINT64_C(1000000)) !=
+            NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_write(NETWORK_TEST_OWNER, listener, network_welcome, 1U,
+            &written, UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_shutdown(NETWORK_TEST_OWNER, listener,
+            UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_accept(NETWORK_TEST_OWNER + 1U, listener, &accepted,
+            &source, &port, UINT64_C(1000000)) !=
+            NETWORK_STATUS_WRONG_OWNER) {
+        kernel_test_fail("a listening socket answered a client operation");
+    }
+}
+
+/*
+ * A second peer, deliberately never accepted. It proves the two halves of the
+ * listener's ownership: a completed connection waiting to be accepted is what
+ * `network_poll` calls acceptable, and closing the listener refuses that peer
+ * rather than orphaning its slot. The refusal is confirmed by the peer, which
+ * reports the reset back over UDP.
+ */
+static network_handle network_tcp_listen_unaccepted(network_handle listener)
+{
+    struct network_poll_request request;
+    struct network_poll_result result;
+    struct network_state before = network_get_state();
+    struct network_state after;
+    network_handle knock;
+    uint8_t received[16];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t ready = 0U;
+
+    knock = network_announce_port(NETWORK_TEST_HTTP, NETWORK_TEST_LISTEN_PORT,
+        NETWORK_TEST_SECOND_KNOCK_SOURCE);
+    request.handle = listener;
+    request.interests = NETWORK_READY_ACCEPTABLE;
+    if (network_poll(NETWORK_TEST_OWNER, &request, 1U, &result, 1U, &ready,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK || ready != 1U ||
+        (result.ready & NETWORK_READY_ACCEPTABLE) == 0U ||
+        (result.ready & NETWORK_READY_CONNECTED) != 0U ||
+        result.error != NETWORK_STATUS_OK) {
+        kernel_test_fail("a waiting connection was not reported acceptable");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 2U || after.tcp_listeners != 1U ||
+        after.statistics.tcp_passive_opens !=
+            before.statistics.tcp_passive_opens + 1U) {
+        kernel_test_fail("the second passive open was not counted once");
+    }
+    if (network_close(NETWORK_TEST_OWNER, listener) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the listener refused to close");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U) {
+        kernel_test_fail("closing a listener orphaned the peer it produced");
+    }
+    if (after.statistics.tcp_refusals !=
+            before.statistics.tcp_refusals + 1U) {
+        kernel_test_fail("the unaccepted peer was dropped rather than refused");
+    }
+    if (network_udp_receive(NETWORK_TEST_OWNER, knock, &source, &port,
+            received, sizeof(received), &length,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK ||
+        source != NETWORK_TEST_HTTP || port != NETWORK_TEST_KNOCK_PORT ||
+        length != sizeof(network_refusal_notice) - 1U ||
+        !network_bytes_equal(received, network_refusal_notice, length)) {
+        kernel_test_fail("the refused peer never saw the reset");
+    }
+    return knock;
+}
+
+static void network_tcp_listen_scenario(void)
+{
+    network_handle listener;
+    network_handle knock;
+    network_handle accepted = 0U;
+    struct network_state before;
+    struct network_state after;
+    uint8_t received[64];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t written = 0U;
+    enum network_status status;
+
+    if (!kernel_test_tcp_listen_exit_self_test()) {
+        kernel_test_fail("the passive-open exit contract drifted");
+    }
+    network_require_dhcp();
+    if (network_tcp_open(NETWORK_TEST_OWNER, &listener) !=
+            NETWORK_STATUS_OK) {
+        kernel_test_fail("listening socket allocation failed");
+    }
+    network_tcp_listen_controls(listener);
+    before = network_get_state();
+    knock = network_announce_port(NETWORK_TEST_GATEWAY,
+        NETWORK_TEST_LISTEN_PORT, NETWORK_TEST_KNOCK_SOURCE);
+    status = network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted,
+        &source, &port, UINT64_C(10000000000));
+    if (status != NETWORK_STATUS_OK || accepted == 0U ||
+        source != NETWORK_TEST_HTTP || port == 0U) {
+        kernel_test_fail("the peer's connection was not accepted");
+    }
+    after = network_get_state();
+    if (after.statistics.tcp_passive_opens !=
+            before.statistics.tcp_passive_opens + 1U) {
+        kernel_test_fail("the accepted connection was not a passive open");
+    }
+    if (after.statistics.arp_deferred <= before.statistics.arp_deferred) {
+        kernel_test_fail("the receive path did not defer its unresolved send");
+    }
+    if (after.statistics.tcp_retransmissions <=
+            before.statistics.tcp_retransmissions) {
+        kernel_test_fail("the deferred acknowledgement was never retransmitted");
+    }
+    if (after.tcp_connections != 2U || after.tcp_listeners != 1U) {
+        kernel_test_fail("the passive open did not cost exactly one slot");
+    }
+    if (network_tcp_read(NETWORK_TEST_OWNER, accepted, received,
+            sizeof(received), &length,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        length != sizeof(network_listen_request) - 1U ||
+        !network_bytes_equal(received, network_listen_request, length)) {
+        kernel_test_fail("the accepted connection lost the peer's request");
+    }
+    if (network_tcp_write(NETWORK_TEST_OWNER, accepted, network_welcome,
+            sizeof(network_welcome) - 1U, &written,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        written != sizeof(network_welcome) - 1U) {
+        kernel_test_fail("the accepted connection could not answer its peer");
+    }
+    status = network_tcp_read(NETWORK_TEST_OWNER, accepted, received,
+        sizeof(received), &length, NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+    if (status != NETWORK_STATUS_CONNECTION_CLOSED || length != 0U) {
+        kernel_test_fail("the peer's close was not reported to the reader");
+    }
+    if (network_tcp_shutdown(NETWORK_TEST_OWNER, accepted,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the accepted connection did not close cleanly");
+    }
+    if (network_close(NETWORK_TEST_OWNER, accepted) != NETWORK_STATUS_OK ||
+        network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the accepted connection did not release cleanly");
+    }
+    knock = network_tcp_listen_unaccepted(listener);
+    if (network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("passive-open teardown failed");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U ||
+        after.udp_sockets != 0U || after.timers != 0U) {
+        kernel_test_fail("a passive open left endpoints behind");
+    }
+    if (network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted, &source,
+            &port, UINT64_C(1000000)) != NETWORK_STATUS_STALE_HANDLE) {
+        kernel_test_fail("a closed listener still accepted connections");
+    }
+}
+
+static void network_tcp_refused_scenario(void)
+{
+    network_handle knock;
+    struct network_state before;
+    struct network_state after;
+    uint8_t received[16];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+
+    if (!kernel_test_tcp_listen_exit_self_test()) {
+        kernel_test_fail("the passive-open exit contract drifted");
+    }
+    network_require_dhcp();
+    before = network_get_state();
+    /*
+     * Announced to the peer itself, so the peer's hardware address is resolved
+     * before its SYN arrives and the refusal can leave the receive path at
+     * once. Nothing is listening on the announced port.
+     */
+    knock = network_announce_port(NETWORK_TEST_HTTP, NETWORK_TEST_CLOSED_PORT,
+        NETWORK_TEST_KNOCK_SOURCE);
+    if (network_udp_receive(NETWORK_TEST_OWNER, knock, &source, &port,
+            received, sizeof(received), &length,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK ||
+        source != NETWORK_TEST_HTTP || port != NETWORK_TEST_KNOCK_PORT ||
+        length != sizeof(network_refusal_notice) - 1U ||
+        !network_bytes_equal(received, network_refusal_notice, length)) {
+        kernel_test_fail("the peer did not report a reset from a closed port");
+    }
+    after = network_get_state();
+    if (after.statistics.tcp_refusals != before.statistics.tcp_refusals + 1U) {
+        kernel_test_fail("a SYN to a closed port was not refused exactly once");
+    }
+    if (after.statistics.tcp_accepted != before.statistics.tcp_accepted) {
+        kernel_test_fail("a refused SYN was counted as an accepted segment");
+    }
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U) {
+        kernel_test_fail("a refused SYN consumed a connection slot");
+    }
+    if (network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("refusal teardown failed");
+    }
+    after = network_get_state();
+    if (after.udp_sockets != 0U || after.timers != 0U) {
+        kernel_test_fail("a refusal left endpoints behind");
+    }
+}
+
 static void network_udp_scenario(bool isolate)
 {
     network_handle first;
@@ -6639,7 +6988,7 @@ static void network_linux_cat_twice(void)
 _Noreturn void kernel_test_complete_network(void)
 {
     if (active_scenario < KERNEL_TEST_NETWORK_NIC_DISCOVERY ||
-        active_scenario > KERNEL_TEST_NETWORK_SOCKET_ISOLATION) {
+        active_scenario > KERNEL_TEST_NETWORK_TCP_REFUSED) {
         kernel_test_fail("network completion used outside its scenario");
     }
     cpu_interrupt_enable();
@@ -6929,6 +7278,12 @@ _Noreturn void kernel_test_complete_network(void)
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         network_udp_scenario(true);
         break;
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+        network_tcp_listen_scenario();
+        break;
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
+        network_tcp_refused_scenario();
+        break;
     default:
         kernel_test_fail("unreachable network scenario");
     }
@@ -7090,6 +7445,79 @@ _Noreturn void kernel_test_complete_driver_matrix(void)
                     "a driver did not read its device's real station address");
             }
         }
+    }
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_audio(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct audio_proof_result proof = audio_get_proof_result();
+    uint32_t identified = 0U;
+
+    if (active_scenario != KERNEL_TEST_AUDIO) {
+        kernel_test_fail("audio completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger, BOOT_STAGE_AUDIO_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_AUDIO_CODEC_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != proof.responses_received ||
+        receipt->proof_counters[1] != proof.codecs_identified ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_CODEC_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_CONTROLLER_ABSENT) ||
+        !kernel_test_audio_exit_self_test()) {
+        kernel_test_fail("HD Audio receipt is invalid");
+    }
+    if (proof.controls != AUDIO_CONTROLLED_CONTROLS ||
+        (proof.version >> 8U) != 1U || proof.capability == 0U ||
+        proof.output_streams == 0U || proof.corb_entries == 0U ||
+        proof.rirb_entries == 0U || proof.codecs_present == 0U ||
+        proof.codecs_identified != proof.codecs_present ||
+        proof.verbs_issued == 0U ||
+        proof.responses_received != proof.verbs_issued ||
+        !proof.controller_reset || !proof.rings_running ||
+        !proof.audio_function_group_found ||
+        !proof.device_wrote_response_ring ||
+        !proof.bus_master_withdrawn_before_release ||
+        !proof.teardown_complete || !proof.resource_census_equal ||
+        !audio_resources_released()) {
+        kernel_test_fail("HD Audio proof is inconsistent");
+    }
+    for (size_t index = 0U; index < AUDIO_MAX_CODECS; ++index) {
+        const struct audio_codec *codec = &proof.codecs[index];
+
+        if (!codec->identified) {
+            continue;
+        }
+        ++identified;
+        if (codec->address != index || codec->vendor_device == 0U ||
+            (codec->vendor_device >> 16U) == 0U ||
+            codec->vendor_device == UINT32_C(0xFFFFFFFF) ||
+            codec->first_group_node == 0U || codec->group_node_count == 0U) {
+            kernel_test_fail("a codec did not identify itself");
+        }
+    }
+    if (identified != proof.codecs_identified) {
+        kernel_test_fail("the recorded codec count is inconsistent");
+    }
+    /*
+     * Nothing this side of the link produces a codec identity, and no other
+     * scenario reaches this device. The bounded proof leaves no allocation,
+     * no claim and no bus master behind.
+     */
+    if (dma_get_state().active_allocations != 0U ||
+        pci_resource_get_state().bus_masters != 0U ||
+        pci_resource_get_state().active_claims != 0U) {
+        kernel_test_fail("the HD Audio proof left the machine holding memory");
     }
     kernel_test_pass();
 }
@@ -7340,6 +7768,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "network-persistence";
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         return "network-socket-isolation";
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+        return "network-tcp-listen";
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
+        return "network-tcp-refused";
     case KERNEL_TEST_MULTIPROCESS:
         return "multiprocess";
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -7348,6 +7780,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "driver-matrix";
     case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
         return "driver-matrix-builtin";
+    case KERNEL_TEST_AUDIO:
+        return "audio";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

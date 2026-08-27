@@ -2,7 +2,7 @@
 
 # Networking
 
-Sapote 2.1.0 has a bounded IPv4 networking foundation for one modern
+Sapote 2.2.0 has a bounded IPv4 networking foundation for one modern
 `virtio-net-pci` device under QEMU. Packets cross the normal PCI claim, mapped
 BAR, MSI-X, split virtqueue, DMA-ownership, protocol, syscall or Terminal, and
 FAT32/NVMe paths. The deterministic peer is a host-side Ethernet endpoint; it
@@ -51,15 +51,83 @@ Stale handles cannot alias a later device generation.
 - DNS supports bounded A and CNAME resolution, compression pointers with a
   16-pointer loop bound, four CNAME follows, 512-byte messages, eight cached
   entries, negative answers, TTL expiry, and configuration/device generations.
-- TCP provides eight active connections, 8,192 receive bytes and one 1,460-byte
+- TCP provides eight connections, 8,192 receive bytes and one 1,460-byte
   retransmission segment per connection, four retransmissions, checked sequence
-  and acknowledgement state, FIN close, RST handling, polling, cancellation,
-  and owner/generation isolation. It is deliberately not a full RFC-complete
-  congestion-control implementation.
+  and acknowledgement state, active and passive open, FIN close, RST handling
+  in both directions, polling, cancellation, and owner/generation isolation. It
+  is deliberately not a full RFC-complete congestion-control implementation.
 - HTTP/1.1 accepts `http://` URLs only. It bounds headers to 4,096 bytes and 32
   fields, supports `Content-Length`, chunked transfer, and four redirects, and
   rejects conflicting framing, malformed chunks/status/header lines, redirect
   loops, unsupported schemes, truncation, and bodies above 16 MiB.
+
+## Passive open
+
+Until 2.2.0 Sapote could only be a TCP client. It can now also be the side that
+waits. A socket enters `LISTEN` on one port with a declared backlog of at most
+four; a SYN arriving for that port with no connection already matching its
+four-tuple produces a child connection in `SYN_RECEIVED`, drawn from the same
+eight-slot table an outbound connection is drawn from, and `network_tcp_accept`
+hands it over once the peer's acknowledgement completes the handshake.
+
+Three properties are worth stating plainly, because each of them is a bound
+rather than a promise:
+
+- **A listener costs nothing while nobody accepts.** A handshake completes on
+  any pump -- the peer's acknowledgement is an inbound segment like any other --
+  but *retransmission and reaping* of half-open children happen only inside
+  `network_tcp_accept`. A peer that opens a connection and vanishes therefore
+  leaves nothing durable behind, and a listener whose peer's hardware address is
+  unknown makes progress only while an accept is outstanding. That is
+  deliberate; there is no background timer wheel in this release.
+- **Closing a listener refuses its children.** A child nobody accepted belongs
+  to the listener, and closing the listener resets those peers and reclaims
+  their slots. A child already accepted is an independent connection with its
+  own handle and is left alone.
+- **The backlog is checked before a slot is taken, not after.** A SYN beyond
+  the declared backlog, or beyond the connection table, is refused with a reset
+  rather than queued.
+
+`network_poll` reports a listener as `NETWORK_READY_ACCEPTABLE` when a
+completed connection is waiting, and never as connected or writable.
+
+The `network-tcp-listen` scenario proves both halves. Its first peer is
+accepted, sends bytes, receives bytes, closes, and is closed. Its second peer is
+deliberately never accepted: the listener is polled until it reports the waiting
+connection as acceptable, then closed, and the peer reports the reset it
+received back over UDP. Nothing is left allocated afterwards.
+
+## Closed ports are answered
+
+A TCP segment that matches no connection and no listener is now answered with a
+reset instead of being dropped in silence, with the sequence numbers RFC 793
+section 3.4 specifies. A reset is never answered with a reset -- that is the
+rule that stops two closed ports from talking to each other forever -- and a
+refusal is only sent when the stack is configured and the peer is unicast.
+
+There is no rate limit on refusals beyond the one segment in, one segment out
+that the receive loop already imposes and the transmit queue's own refusal when
+it is full. That is a deliberate non-claim: this is not a stack hardened against
+a flood, and a token bucket would need its own evidence rather than a comment.
+
+## The pump runs alone
+
+One receive buffer and one transmit buffer serve the whole stack. A handler
+that answers the frame it is reading -- an ICMP echo, a TCP acknowledgement, a
+refusal, the acknowledgement to a passive open's SYN -- reaches a send, and a
+send that needs an unknown hardware address used to wait for the ARP reply by
+pumping the device again, from inside the loop that owned the buffer being
+parsed. That is a remote-triggerable buffer reuse: any peer whose hardware
+address had expired could arrange it with one echo request.
+
+`network_service` now refuses recursive entry, and while it holds,
+`arp_resolve` turns its wait into a single ARP request and reports
+`NETWORK_STATUS_WOULD_BLOCK`. The send does not happen; the caller's
+retransmission carries it once the reply lands. The `network-tcp-listen`
+scenario is arranged to take exactly that path -- it announces its port to the
+gateway, so the peer's hardware address is still unknown when the peer's SYN
+arrives -- and requires the deferral, the retransmission and the completed
+handshake all to be visible in the statistics.
 
 HTTP downloads use a temporary FAT32 path and synchronized replacement. A
 failed transfer removes its temporary state; the previous destination remains
@@ -121,8 +189,10 @@ met.
 DHCP, ARP, ICMP, UDP, DNS, TCP, and HTTP behavior. Its negative modes cover
 silence/timeouts, NAK, NXDOMAIN, truncation, CNAME, bad checksum, ARP conflict,
 TCP reset/retransmission, HTTP chunking/redirect/truncation/malformed framing,
-redirect loops, and malformed floods. It writes classic PCAP with deterministic
-packet timestamps.
+redirect loops, and malformed floods. Two modes reverse the roles: the guest
+announces a port over UDP and the peer opens a TCP connection *to* it, either to
+a port Sapote is listening on or to one it deliberately is not. It writes
+classic PCAP with deterministic packet timestamps.
 
 `tools/network_packet_audit.py` independently reconstructs the captured
 Ethernet frames and requires traffic in both directions plus ARP, IPv4, ICMP,

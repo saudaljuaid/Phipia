@@ -27,7 +27,7 @@ The ledger makes those claims explicit and executable.
 
 ## Model
 
-The current bounded model supports 53 descriptors and receipts, with fixed
+The current bounded model supports 55 descriptors and receipts, with fixed
 capability sets per descriptor. The planner rejects duplicate IDs, missing or
 duplicate providers, dependency cycles, capacity overflow, invalid phases, and
 unsafe irreversible ordering before it runs a stage.

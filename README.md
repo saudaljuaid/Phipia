@@ -61,15 +61,20 @@ interactive `linux cat` profiles remain available.
 - Thirteen bounded drivers that bind, reset and identify real Intel, Realtek,
   AMD, Cirrus Logic and Bochs Display Interface devices through the typed PCI
   substrate.
+- An HD Audio driver that talks to codecs over bus-mastering command and
+  response rings, with bus mastering withdrawn before the rings are reclaimed.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
 - Modern virtio-net PCI/MSI-X/DMA with bounded Ethernet, ARP, IPv4, ICMP,
   UDP, DHCP, DNS, TCP, HTTP/1.1, and streamed FAT32 downloads.
+- TCP in both directions: an outbound connection, and a bounded passive open
+  that accepts a peer connecting in, with segments for closed ports refused by
+  a reset rather than dropped.
 - An experimental versioned native networking syscall boundary with checked
   user ranges, authenticated process generations, polling, cancellation, time,
   and bounded random bytes.
 - First Environment, a framebuffer console, networking and filesystem
-  commands, and 96 QEMU scenarios.
+  commands, and 99 QEMU scenarios.
 - SapStudio's deterministic editor foundation, mirrored at upstream commit
   `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
   timeline trim/save, and bounded BMP frame export.
@@ -110,11 +115,16 @@ fixed four-application shell rather than a general window manager. FAT32 support
 is one bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files,
 no journal, and a clean-sync persistence contract. Networking is intentionally
 IPv4-only and supports one modern emulated virtio-net device; it has no IPv6,
-TLS, firewall, routing, Wi-Fi, physical-hardware claim, or browser.
+TLS, firewall, routing, Wi-Fi, physical-hardware claim, or browser. A TCP
+listener makes progress only while an accept is outstanding: there is no
+background retransmission timer, no listen queue that survives a caller, and no
+concurrent server loop.
 Multiprocessing is cooperative and kernel-created: there is no preemptive user scheduling, no
 fork, exec, signals, process identifiers or inter-process communication. The
 thirteen bounded drivers bind, reset and identify their devices; none of them
-moves data, enables bus mastering, allocates DMA, or takes an interrupt.
+moves data, enables bus mastering, allocates DMA, or takes an interrupt. The
+HD Audio driver identifies codecs over DMA rings but plays nothing: there is no
+stream descriptor, format negotiation, widget graph, mixer or capture.
 General process services, an IOMMU, and broad hardware coverage remain future
 work. Version 2.2.0 is not a claim of POSIX compliance, a general VFS,
 production crash consistency, multi-user security, broad Linux compatibility,
@@ -130,6 +140,7 @@ secure Internet access, or a generally stable userspace ABI.
 - [Networking](docs/NETWORKING.md) — virtio-net, protocol, syscall, and test bounds
 - [Several processes](docs/MULTIPROCESS.md) — private address spaces, the round robin, and its bounds
 - [Bounded drivers](docs/DRIVERS.md) — the thirteen devices Sapote binds and identifies
+- [HD Audio](docs/AUDIO.md) — codec conversation over DMA rings, and the order that makes it safe
 - [Browser port plan](docs/BROWSER_PORT.md) — concrete future engine work and gaps
 - [TLS evaluation](docs/TLS_EVALUATION.md) — prerequisites and explicit non-claims
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles

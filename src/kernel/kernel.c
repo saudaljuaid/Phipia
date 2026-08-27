@@ -176,10 +176,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_driver_matrix();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_AUDIO) {
+        kernel_test_complete_audio();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=
-            KERNEL_TEST_NETWORK_SOCKET_ISOLATION) {
+            KERNEL_TEST_NETWORK_TCP_REFUSED) {
         kernel_test_complete_network();
     }
 
