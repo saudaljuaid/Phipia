@@ -30,6 +30,7 @@
 #include "qemu/timer.h"
 #include "qapi/error.h"
 #include "hw/pci/pci_device.h"
+#include "hw/pci/pcie.h"
 #include "hw/qdev-properties.h"
 #include "migration/vmstate.h"
 
@@ -50,17 +51,33 @@ OBJECT_DECLARE_SIMPLE_TYPE(SapoteNvidiaState, SAPOTE_NVIDIA_MODEL)
 /* Nouveau nvkm/subdev/bios/shadowrom.c */
 #define NV_PROM_BASE             0x300000
 #define NV_PROM_BYTES            0x10000
+/* envytools hw/pmc.txt: the engine enable mask and its interrupt registers. */
+#define NV_PMC_INTR_0            0x000100
+#define NV_PMC_INTR_EN_0         0x000140
+#define NV_PMC_ENABLE            0x000200
+/* Nouveau nvkm/subdev/devinit: the board strap register. */
+#define NV_PEXTDEV_BOOT_0        0x101000
 
 #define SAPOTE_NVIDIA_BAR_BYTES  (16 * MiB)
+/*
+ * The framebuffer aperture beside the register window. It is prefetchable and
+ * the register window is not, which is the distinction a driver checking the
+ * shape of these apertures is checking for.
+ */
+#define SAPOTE_NVIDIA_FB_BYTES   (256 * MiB)
 #define NVIDIA_VENDOR_ID         0x10DE
 
 struct SapoteNvidiaState {
     PCIDevice parent_obj;
     MemoryRegion registers;
+    MemoryRegion framebuffer;
 
     /* Pinned by the caller so the driver is checked against outside values. */
     uint32_t boot0;
     uint32_t boot1;
+    uint32_t straps;
+    uint32_t enable;
+    uint32_t subsystem;
     char *vbios_path;
 
     uint32_t shadow;
@@ -112,6 +129,14 @@ static uint64_t sapote_nvidia_read(void *opaque, hwaddr addr, unsigned size)
         return state->boot0;
     case NV_PMC_BOOT_1:
         return state->boot1;
+    case NV_PMC_ENABLE:
+        return state->enable;
+    case NV_PMC_INTR_EN_0:
+        return 0;
+    case NV_PMC_INTR_0:
+        return 0;
+    case NV_PEXTDEV_BOOT_0:
+        return state->straps;
     case NV_PTIMER_TIME_0:
         return (uint32_t)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     case NV_PTIMER_TIME_1:
@@ -165,6 +190,17 @@ static void sapote_nvidia_realize(PCIDevice *dev, Error **errp)
         g_free(contents);
     }
 
+    /*
+     * The board this chip is soldered to. NVIDIA sells the silicon to add-in
+     * board partners, so the subsystem identity is theirs; it is a property
+     * here so a driver reading it is checked against a value pinned outside
+     * both the driver and this model.
+     */
+    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID,
+                 (uint16_t)state->subsystem);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID,
+                 (uint16_t)(state->subsystem >> 16));
+
     /* Powers up with the shadow enabled, which is what makes it worth a bit. */
     state->shadow = NV_ROM_SHADOW_BIT;
 
@@ -174,11 +210,36 @@ static void sapote_nvidia_realize(PCIDevice *dev, Error **errp)
                           SAPOTE_NVIDIA_BAR_BYTES);
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY |
                      PCI_BASE_ADDRESS_MEM_TYPE_32, &state->registers);
+
+    /*
+     * Reading a register can change it, so the window above is not
+     * prefetchable. The framebuffer is memory and is, and it is 64-bit
+     * because it is larger than a 32-bit aperture is worth spending.
+     */
+    memory_region_init_ram(&state->framebuffer, OBJECT(state),
+                           "sapote-nvidia-model/framebuffer",
+                           SAPOTE_NVIDIA_FB_BYTES, &error_fatal);
+    pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_MEMORY |
+                     PCI_BASE_ADDRESS_MEM_TYPE_64 |
+                     PCI_BASE_ADDRESS_MEM_PREFETCH, &state->framebuffer);
+
+    /*
+     * Every NVIDIA graphics part made this century is a PCI Express endpoint,
+     * so the model is one too: a driver that asks how wide its link is gets a
+     * real capability structure to read rather than a fabricated answer.
+     */
+    if (pcie_endpoint_cap_init(dev, 0) < 0) {
+        error_setg(errp, "could not install the PCI Express capability");
+        return;
+    }
 }
 
 static Property sapote_nvidia_properties[] = {
     DEFINE_PROP_UINT32("boot0", SapoteNvidiaState, boot0, 0x134000A1),
     DEFINE_PROP_UINT32("boot1", SapoteNvidiaState, boot1, 0x00000000),
+    DEFINE_PROP_UINT32("straps", SapoteNvidiaState, straps, 0x0000042C),
+    DEFINE_PROP_UINT32("enable", SapoteNvidiaState, enable, 0x11111111),
+    DEFINE_PROP_UINT32("subsystem", SapoteNvidiaState, subsystem, 0x87651043),
     DEFINE_PROP_STRING("vbios", SapoteNvidiaState, vbios_path),
     DEFINE_PROP_END_OF_LIST(),
 };
@@ -204,7 +265,7 @@ static const TypeInfo sapote_nvidia_info = {
     .instance_size = sizeof(SapoteNvidiaState),
     .class_init = sapote_nvidia_class_init,
     .interfaces = (InterfaceInfo[]) {
-        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { INTERFACE_PCIE_DEVICE },
         { },
     },
 };

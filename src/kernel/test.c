@@ -7579,17 +7579,28 @@ static const struct {
     (sizeof(nvidia_published_encodings) / \
         sizeof(nvidia_published_encodings[0]))
 
-/* The declared shape of the five drivers, restated outside the driver. */
+/*
+ * The declared shape of the ten drivers, restated outside the driver so a
+ * table that changed quietly has to change in two places. Seven map one
+ * register window each, one reads the aperture descriptions a claim produces,
+ * two read configuration space and take nothing, and exactly one writes.
+ */
 static const struct {
     uint8_t class_code;
     uint8_t subclass;
+    enum nvidia_access access;
     bool writes_registers;
 } nvidia_declared_drivers[NVIDIA_DRIVER_COUNT] = {
-    { UINT8_C(0x03), UINT8_C(0xFF), false },
-    { UINT8_C(0x03), UINT8_C(0xFF), false },
-    { UINT8_C(0x03), UINT8_C(0xFF), false },
-    { UINT8_C(0x03), UINT8_C(0xFF), true },
-    { UINT8_C(0x04), UINT8_C(0x03), false }
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, true },
+    { UINT8_C(0x04), UINT8_C(0x03), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_APERTURE, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false }
 };
 
 static void nvidia_require_pure_layer(void)
@@ -7615,6 +7626,9 @@ static void nvidia_require_pure_layer(void)
                 nvidia_declared_drivers[index].class_code ||
             nvidia_driver_subclass(index) !=
                 nvidia_declared_drivers[index].subclass ||
+            nvidia_driver_access(index) !=
+                nvidia_declared_drivers[index].access ||
+            nvidia_driver_interface(index) != UINT8_C(0xFF) ||
             nvidia_driver_writes_registers(index) !=
                 nvidia_declared_drivers[index].writes_registers) {
             kernel_test_fail("an NVIDIA driver is not the one declared");
@@ -7796,10 +7810,26 @@ _Noreturn void kernel_test_complete_nvidia(void)
                     continue;
                 }
                 if (entry->vendor_id != NVIDIA_VENDOR_ID ||
-                    entry->register_reads == 0U ||
                     (entry->register_writes != 0U &&
                         !nvidia_driver_writes_registers(index))) {
                     kernel_test_fail("a bound NVIDIA driver broke its bounds");
+                }
+                /*
+                 * The aperture driver reads the BAR descriptions a claim
+                 * produced and touches no register at all, which is a
+                 * stronger statement than "it read something" and is worth
+                 * asserting as exactly zero. Everything else has to have
+                 * actually asked the device a question.
+                 */
+                if (nvidia_driver_access(index) ==
+                        NVIDIA_ACCESS_APERTURE) {
+                    if (entry->register_reads != 0U ||
+                        entry->register_writes != 0U) {
+                        kernel_test_fail(
+                            "the NVIDIA aperture driver touched a register");
+                    }
+                } else if (entry->register_reads == 0U) {
+                    kernel_test_fail("a bound NVIDIA driver read nothing");
                 }
             }
             if (!probe.identity.recognized) {

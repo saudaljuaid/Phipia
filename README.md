@@ -63,10 +63,13 @@ interactive `linux cat` profiles remain available.
   substrate.
 - An HD Audio driver that talks to codecs over bus-mastering command and
   response rings, with bus mastering withdrawn before the rings are reclaimed.
-- Five bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK and
-  NVIDIA's published material, with a freestanding Rust VBIOS validator. They
-  have never run against NVIDIA silicon; what is proved is the decode, the
-  parser and the refusal of every function that is not NVIDIA's.
+- Ten bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK and
+  NVIDIA's published material, with a freestanding Rust VBIOS validator. Seven
+  map a register window, one reads only aperture descriptions, two read
+  configuration space and take nothing. They have never run against NVIDIA
+  silicon; what is proved is the decode, the parser, the refusal of every
+  function that is not NVIDIA's, and an end-to-end bind against a device
+  model.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
 - Modern virtio-net PCI/MSI-X/DMA with bounded Ethernet, ARP, IPv4, ICMP,
@@ -129,8 +132,8 @@ thirteen bounded drivers bind, reset and identify their devices; none of them
 moves data, enables bus mastering, allocates DMA, or takes an interrupt. The
 HD Audio driver identifies codecs over DMA rings but plays nothing: there is no
 stream descriptor, format negotiation, widget graph, mixer or capture.
-The five NVIDIA drivers read five register contracts and are not a graphics
-driver: no mode setting, no framebuffer programming, no channel, no command
+The ten NVIDIA drivers read ten register and configuration contracts and are
+not a graphics driver: no mode setting, no framebuffer programming, no channel, no command
 submission, and no hardware has ever run them.
 General process services, an IOMMU, and broad hardware coverage remain future
 work. Version 2.2.0 is not a claim of POSIX compliance, a general VFS,

@@ -44,8 +44,8 @@
 /* PCI-SIG vendor identifier assigned to NVIDIA Corporation. */
 #define NVIDIA_VENDOR_ID UINT16_C(0x10DE)
 
-#define NVIDIA_DRIVER_COUNT 5U
-#define NVIDIA_CONTROLLED_CONTROLS 14U
+#define NVIDIA_DRIVER_COUNT 10U
+#define NVIDIA_CONTROLLED_CONTROLS 18U
 
 /*
  * The PROM window is a 64 KiB aperture on every part that has one, and a
@@ -68,6 +68,10 @@ enum nvidia_status {
     NVIDIA_STATUS_REGISTER_WINDOW,
     NVIDIA_STATUS_ENDIANNESS,
     NVIDIA_STATUS_IDENTITY,
+    NVIDIA_STATUS_APERTURE_ALIASED,
+    NVIDIA_STATUS_STRAPS,
+    NVIDIA_STATUS_APERTURE,
+    NVIDIA_STATUS_LINK,
     NVIDIA_STATUS_TIMER_STOPPED,
     NVIDIA_STATUS_ROM_ABSENT,
     NVIDIA_STATUS_ROM_MALFORMED,
@@ -178,10 +182,23 @@ struct nvidia_result {
     struct nvidia_driver_probe probes[NVIDIA_DRIVER_COUNT];
 };
 
+/* How a driver reaches its function. */
+enum nvidia_access {
+    /* Claim the function and map one BAR uncached. */
+    NVIDIA_ACCESS_MEMORY = 0,
+    /* Claim the function for its BAR descriptions, but map nothing. */
+    NVIDIA_ACCESS_APERTURE,
+    /* Configuration space only: no claim, no mapping, no register window. */
+    NVIDIA_ACCESS_CONFIGURATION,
+    NVIDIA_ACCESS_COUNT
+};
+
 size_t nvidia_driver_count(void);
 const char *nvidia_driver_name(size_t index);
 uint8_t nvidia_driver_class(size_t index);
 uint8_t nvidia_driver_subclass(size_t index);
+uint8_t nvidia_driver_interface(size_t index);
+enum nvidia_access nvidia_driver_access(size_t index);
 bool nvidia_driver_writes_registers(size_t index);
 
 /* Pure, hardware-free, and checked on every boot. */

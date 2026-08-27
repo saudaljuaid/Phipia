@@ -32,7 +32,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	nvidia nvidia-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 101
-EXPECTED_SHELL_ASSERTION_COUNT := 404
+EXPECTED_SHELL_ASSERTION_COUNT := 407
 
 CC := gcc
 LD := ld
@@ -601,10 +601,19 @@ verify: toolchain lint
 	# Five drivers, and exactly one of them may write a register: the video
 	# BIOS window needs the ROM shadow bit cleared, and nothing else here has
 	# any business changing a live graphics part.
-	@grep -Fq '#define NVIDIA_DRIVER_COUNT 5U' include/sapote/nvidia.h
+	@grep -Fq '#define NVIDIA_DRIVER_COUNT 10U' include/sapote/nvidia.h
 	@test "$$(grep -Ec '^        \.name = "NVIDIA ' src/kernel/nvidia.c)" \
-		-eq 5 || \
-		{ echo 'the NVIDIA table does not declare five drivers'; exit 1; }
+		-eq 10 || \
+		{ echo 'the NVIDIA table does not declare ten drivers'; exit 1; }
+	# Seven map a window, one reads aperture descriptions, two read
+	# configuration space and take nothing at all.
+	@test "$$(grep -Ec '\.access = NVIDIA_ACCESS_MEMORY' \
+		src/kernel/nvidia.c)" -eq 7 && \
+		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_APERTURE' \
+		src/kernel/nvidia.c)" -eq 1 && \
+		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_CONFIGURATION' \
+		src/kernel/nvidia.c)" -eq 2 || \
+		{ echo 'the NVIDIA access census changed'; exit 1; }
 	@test "$$(grep -Ec '\.writes_registers = true' src/kernel/nvidia.c)" \
 		-eq 1 || \
 		{ echo 'the NVIDIA drivers gained a second register writer'; \

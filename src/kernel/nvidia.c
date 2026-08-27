@@ -110,6 +110,52 @@
 #define NV_PBUS_PCI_NV_20_ROM_SHADOW UINT32_C(0x00000001)
 
 /*
+ * envytools, hw/pmc.txt: the engine enable mask and the two interrupt
+ * registers beside it. What any particular bit means changes with the part, so
+ * this kernel reports these rather than asserting on them; what it does assert
+ * is that the aperture answers with distinct registers at distinct offsets
+ * instead of mirroring one value, which is the difference between a decoded
+ * window and a window that merely accepts reads.
+ */
+#define NV_PMC_INTR_0 UINT64_C(0x000100)
+#define NV_PMC_INTR_EN_0 UINT64_C(0x000140)
+#define NV_PMC_ENABLE UINT64_C(0x000200)
+
+/*
+ * Nouveau, nvkm/subdev/devinit and nvkm/subdev/clk: the board's strap register.
+ * It carries how the board was wired -- among other things which crystal feeds
+ * the clock tree -- and the bit assignments move between generations, so this
+ * driver reports the register and decodes nothing it cannot stand behind.
+ */
+#define NV_PEXTDEV_BOOT_0 UINT64_C(0x101000)
+
+/*
+ * PCI Express Base Specification, the capability structure at the offset PCI
+ * enumeration already found: link capabilities at +0x0C and link status at
+ * +0x12. Every NVIDIA graphics part made this century is a PCI Express
+ * endpoint, so a function claiming to be one that cannot describe its own link
+ * is not one.
+ */
+#define PCI_EXPRESS_LINK_CAPABILITIES UINT16_C(0x0C)
+#define PCI_EXPRESS_LINK_STATUS UINT16_C(0x12)
+#define PCI_EXPRESS_LINK_WIDTH_SHIFT 4U
+#define PCI_EXPRESS_LINK_WIDTH_MASK UINT32_C(0x3F)
+#define PCI_EXPRESS_LINK_SPEED_MASK UINT32_C(0x0F)
+
+/*
+ * PCI Local Bus Specification 3.0 section 6.2.1: a type-0 header carries the
+ * identity of the board the chip is soldered to, which for a graphics part is
+ * not the same organisation as the chip's own vendor. NVIDIA sells the silicon
+ * to add-in-board partners, so the subsystem vendor is theirs and the
+ * subsystem device is the model of card.
+ */
+#define PCI_SUBSYSTEM_IDENTITY UINT16_C(0x2C)
+
+/* The graphics aperture NVIDIA parts publish beside their register window. */
+#define NVIDIA_REGISTER_APERTURE_MINIMUM UINT64_C(0x1000000)
+#define NVIDIA_FRAMEBUFFER_BAR 1U
+
+/*
  * How much of the PROM window is read. A legal image declares its own length,
  * and the structures this kernel reads -- the expansion ROM header, the PCIR
  * data structure and the BIT table -- are near the front of every image the
@@ -163,8 +209,11 @@ struct nvidia_driver_record {
     uint8_t class_code;
     /* NVIDIA_MATCH_ANY accepts either display subclass. */
     uint8_t subclass;
+    /* NVIDIA_MATCH_ANY accepts any programming interface. */
+    uint8_t programming_interface;
     uint8_t bar_index;
     uint32_t minimum_register_bytes;
+    enum nvidia_access access;
     bool writes_registers;
     nvidia_probe_t probe;
 };
@@ -700,6 +749,264 @@ static enum nvidia_status probe_hd_audio(
 }
 
 /*
+ * Driver five. The board's strap register says how this particular card was
+ * wired rather than what part is on it, and the bit assignments move between
+ * generations, so this driver decodes nothing it cannot stand behind: it reads
+ * the register, reports it, and requires only that the aperture answered with a
+ * real register rather than an open bus or a mirror of offset zero.
+ */
+static enum nvidia_status probe_boot_straps(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t straps;
+    uint32_t boot0;
+
+    (void)record;
+    (void)function;
+    (void)claim;
+    if (register_bytes < NV_PEXTDEV_BOOT_0 + 4U) {
+        return NVIDIA_STATUS_REGISTER_WINDOW;
+    }
+    straps = mmio_read32(registers, NV_PEXTDEV_BOOT_0);
+    boot0 = mmio_read32(registers, NV_PMC_BOOT_0);
+    probe->identity = straps;
+    probe->detail = boot0;
+    if (straps == UINT32_MAX) {
+        return NVIDIA_STATUS_STRAPS;
+    }
+    /*
+     * An aperture that answers every offset with the same value is not
+     * decoding, and would make every other driver here believe whatever the
+     * first register happened to say.
+     */
+    if (straps == boot0) {
+        return NVIDIA_STATUS_APERTURE_ALIASED;
+    }
+    if (current_identity.recognized && boot0 != current_identity.boot0) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver six. The engine enable mask and the two interrupt registers beside
+ * it. What any one bit means changes with the part, so none of them is asserted
+ * on; what is asserted is that this is the same device driver zero identified,
+ * answering the same way through a second claim and a second mapping, and that
+ * its register window decodes distinct offsets.
+ */
+static enum nvidia_status probe_master_control_engines(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t enable;
+    uint32_t interrupt_enable;
+    uint32_t interrupts;
+    uint32_t boot0;
+
+    (void)record;
+    (void)function;
+    (void)claim;
+    if (register_bytes < NV_PMC_ENABLE + 4U) {
+        return NVIDIA_STATUS_REGISTER_WINDOW;
+    }
+    boot0 = mmio_read32(registers, NV_PMC_BOOT_0);
+    enable = mmio_read32(registers, NV_PMC_ENABLE);
+    interrupt_enable = mmio_read32(registers, NV_PMC_INTR_EN_0);
+    interrupts = mmio_read32(registers, NV_PMC_INTR_0);
+    probe->identity = ((uint64_t)enable << 32U) | interrupt_enable;
+    probe->detail = interrupts;
+    if (enable == UINT32_MAX) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    if (enable == boot0) {
+        return NVIDIA_STATUS_APERTURE_ALIASED;
+    }
+    /*
+     * The same part, claimed and mapped a second time, still says who it is.
+     * A device that answers differently across two bindings is not one device.
+     */
+    if (current_identity.recognized && boot0 != current_identity.boot0) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver seven. Not a register driver at all: it reads the apertures the
+ * function publishes through the typed substrate and checks their shape. An
+ * NVIDIA graphics part puts its register window in BAR0 and its framebuffer
+ * aperture in BAR1, and the two differ in exactly the way the PCI
+ * specification lets a device declare: the register window is not
+ * prefetchable, because reads of it have side effects, and the framebuffer
+ * aperture is, because they do not. This driver maps nothing.
+ */
+static enum nvidia_status probe_memory_apertures(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    const struct pci_bar_description *window;
+    const struct pci_bar_description *aperture;
+
+    (void)record;
+    (void)function;
+    (void)registers;
+    (void)register_bytes;
+    if (claim == NULL) {
+        return NVIDIA_STATUS_CLAIM_FAILURE;
+    }
+    window = pci_claim_bar(claim, 0U);
+    aperture = pci_claim_bar(claim, NVIDIA_FRAMEBUFFER_BAR);
+    if (window == NULL || aperture == NULL) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    probe->identity = aperture->size;
+    probe->detail = window->size;
+    if (!window->implemented || !aperture->implemented) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    if (window->kind != PCI_BAR_MEMORY_32 &&
+        window->kind != PCI_BAR_MEMORY_64) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    if (aperture->kind != PCI_BAR_MEMORY_32 &&
+        aperture->kind != PCI_BAR_MEMORY_64) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    if (window->size < NVIDIA_REGISTER_APERTURE_MINIMUM) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    /*
+     * Reading a register can change it, so the window may never be
+     * prefetchable. The framebuffer is memory and is.
+     */
+    if (window->prefetchable || !aperture->prefetchable) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    if (aperture->size < window->size) {
+        return NVIDIA_STATUS_APERTURE;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver eight. Configuration space only, and the one driver here that claims
+ * nothing at all. Every NVIDIA graphics part made this century is a PCI
+ * Express endpoint, so it carries the Express capability and that capability
+ * describes the link it is actually running on. A function that cannot say how
+ * wide its own link is has not been understood.
+ */
+static enum nvidia_status probe_express_link(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t capabilities = 0U;
+    uint32_t status = 0U;
+    uint32_t negotiated_width;
+    uint32_t maximum_width;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if (function->express_offset == 0U) {
+        return NVIDIA_STATUS_LINK;
+    }
+    if (!configuration_dword(function,
+            (uint16_t)(function->express_offset +
+                PCI_EXPRESS_LINK_CAPABILITIES), &capabilities) ||
+        !configuration_dword(function,
+            (uint16_t)((function->express_offset +
+                PCI_EXPRESS_LINK_STATUS) & ~UINT16_C(3)), &status)) {
+        return NVIDIA_STATUS_LINK;
+    }
+    status >>= 16U;
+    probe->identity = status;
+    probe->detail = capabilities;
+    maximum_width = (capabilities >> PCI_EXPRESS_LINK_WIDTH_SHIFT) &
+        PCI_EXPRESS_LINK_WIDTH_MASK;
+    negotiated_width = (status >> PCI_EXPRESS_LINK_WIDTH_SHIFT) &
+        PCI_EXPRESS_LINK_WIDTH_MASK;
+    if (maximum_width == 0U || negotiated_width == 0U ||
+        negotiated_width > maximum_width) {
+        return NVIDIA_STATUS_LINK;
+    }
+    if ((capabilities & PCI_EXPRESS_LINK_SPEED_MASK) == 0U) {
+        return NVIDIA_STATUS_LINK;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
+ * Driver nine. Configuration space only, like driver eight, and the last fact
+ * about the part that is not about the chip: which board it is on. NVIDIA
+ * sells this silicon to add-in-board partners, so a card's subsystem vendor is
+ * theirs rather than NVIDIA's, and the subsystem device is the model of card.
+ *
+ * Sapote already drives xHCI properly, so the USB host controller such a board
+ * also carries is deliberately not a second, lesser driver here.
+ */
+static enum nvidia_status probe_board_identity(
+    const struct nvidia_driver_record *record,
+    const struct pci_function *function,
+    const struct pci_device_claim *claim,
+    volatile uint8_t *registers,
+    uint64_t register_bytes,
+    struct nvidia_driver_probe *probe
+)
+{
+    uint32_t subsystem = 0U;
+    uint32_t identity = 0U;
+
+    (void)record;
+    (void)claim;
+    (void)registers;
+    (void)register_bytes;
+    if (!configuration_dword(function, PCI_SUBSYSTEM_IDENTITY, &subsystem) ||
+        !configuration_dword(function, 0U, &identity)) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    probe->identity = subsystem;
+    probe->detail = identity;
+    /*
+     * A board that reports no subsystem at all, or an open bus, has not
+     * answered. Every other value is a real partner identifier and this kernel
+     * has no business having opinions about which ones exist.
+     */
+    if (subsystem == 0U || subsystem == UINT32_MAX ||
+        (subsystem & UINT32_C(0xFFFF)) == 0U ||
+        (subsystem & UINT32_C(0xFFFF)) == UINT32_C(0xFFFF)) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    /* The chip under the board is still the one enumeration found. */
+    if ((identity & UINT32_C(0xFFFF)) != NVIDIA_VENDOR_ID) {
+        return NVIDIA_STATUS_IDENTITY;
+    }
+    return NVIDIA_STATUS_OK;
+}
+
+/*
  * The order matters exactly once: driver zero establishes which side of the
  * NV50 boundary the part is on, and drivers one and three pick their register
  * offsets from that.
@@ -709,8 +1016,10 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .name = "NVIDIA GPU master control",
         .class_code = NVIDIA_CLASS_DISPLAY,
         .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
         .bar_index = 0U,
         .minimum_register_bytes = UINT32_C(0x1000),
+        .access = NVIDIA_ACCESS_MEMORY,
         .writes_registers = false,
         .probe = probe_master_control
     },
@@ -718,8 +1027,10 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .name = "NVIDIA GPU configuration mirror",
         .class_code = NVIDIA_CLASS_DISPLAY,
         .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
         .bar_index = 0U,
         .minimum_register_bytes = UINT32_C(0x89000),
+        .access = NVIDIA_ACCESS_MEMORY,
         .writes_registers = false,
         .probe = probe_configuration_mirror
     },
@@ -727,8 +1038,10 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .name = "NVIDIA GPU timer",
         .class_code = NVIDIA_CLASS_DISPLAY,
         .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
         .bar_index = 0U,
         .minimum_register_bytes = UINT32_C(0xA000),
+        .access = NVIDIA_ACCESS_MEMORY,
         .writes_registers = false,
         .probe = probe_timer
     },
@@ -736,8 +1049,10 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .name = "NVIDIA GPU video BIOS",
         .class_code = NVIDIA_CLASS_DISPLAY,
         .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
         .bar_index = 0U,
         .minimum_register_bytes = UINT32_C(0x302000),
+        .access = NVIDIA_ACCESS_MEMORY,
         .writes_registers = true,
         .probe = probe_video_bios
     },
@@ -745,10 +1060,67 @@ static const struct nvidia_driver_record nvidia_drivers[NVIDIA_DRIVER_COUNT] = {
         .name = "NVIDIA HD Audio function",
         .class_code = NVIDIA_CLASS_MULTIMEDIA,
         .subclass = NVIDIA_SUBCLASS_HD_AUDIO,
+        .programming_interface = NVIDIA_MATCH_ANY,
         .bar_index = 0U,
         .minimum_register_bytes = UINT32_C(0x100),
+        .access = NVIDIA_ACCESS_MEMORY,
         .writes_registers = false,
         .probe = probe_hd_audio
+    },
+    {
+        .name = "NVIDIA GPU boot straps",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = 0U,
+        .minimum_register_bytes = UINT32_C(0x102000),
+        .access = NVIDIA_ACCESS_MEMORY,
+        .writes_registers = false,
+        .probe = probe_boot_straps
+    },
+    {
+        .name = "NVIDIA GPU master control engines",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = 0U,
+        .minimum_register_bytes = UINT32_C(0x1000),
+        .access = NVIDIA_ACCESS_MEMORY,
+        .writes_registers = false,
+        .probe = probe_master_control_engines
+    },
+    {
+        .name = "NVIDIA GPU memory apertures",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_APERTURE,
+        .writes_registers = false,
+        .probe = probe_memory_apertures
+    },
+    {
+        .name = "NVIDIA GPU PCI Express link",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_express_link
+    },
+    {
+        .name = "NVIDIA GPU board identity",
+        .class_code = NVIDIA_CLASS_DISPLAY,
+        .subclass = NVIDIA_MATCH_ANY,
+        .programming_interface = NVIDIA_MATCH_ANY,
+        .bar_index = UINT8_MAX,
+        .minimum_register_bytes = 0U,
+        .access = NVIDIA_ACCESS_CONFIGURATION,
+        .writes_registers = false,
+        .probe = probe_board_identity
     }
 };
 
@@ -791,6 +1163,10 @@ static bool subclass_matches(
     const struct pci_function *function
 )
 {
+    if (record->programming_interface != NVIDIA_MATCH_ANY &&
+        function->prog_if != record->programming_interface) {
+        return false;
+    }
     if (record->subclass != NVIDIA_MATCH_ANY) {
         return function->subclass == record->subclass;
     }
@@ -836,9 +1212,32 @@ static enum nvidia_status bind_one(
     probe->subclass = function->subclass;
     probe->present = true;
 
+    /*
+     * A driver that reads only configuration space takes nothing at all: no
+     * claim, no mapping, no command-register change. Sapote has no IOMMU, and
+     * the cheapest way to be sure a driver cannot reach memory is for it never
+     * to have been given a window.
+     */
+    if (record->access == NVIDIA_ACCESS_CONFIGURATION) {
+        status = record->probe(record, function, NULL, NULL, 0U, probe);
+        probe->register_reads = register_reads - reads_before;
+        probe->register_writes = register_writes - writes_before;
+        probe->bound = status == NVIDIA_STATUS_OK;
+        return status;
+    }
+
     zero_bytes(&claim, sizeof(claim));
     if (pci_claim_device(function, &claim) != PCI_RESOURCE_STATUS_OK) {
         return NVIDIA_STATUS_CLAIM_FAILURE;
+    }
+    /*
+     * The aperture driver wants the BAR descriptions the claim produced and
+     * nothing else. Claiming sizes them; mapping is a separate decision and it
+     * declines to make it.
+     */
+    if (record->access == NVIDIA_ACCESS_APERTURE) {
+        status = record->probe(record, function, &claim, NULL, 0U, probe);
+        goto release;
     }
     if (pci_claim_map_bar(&claim, record->bar_index, &region) !=
             PCI_RESOURCE_STATUS_OK || region == NULL) {
@@ -897,6 +1296,22 @@ uint8_t nvidia_driver_subclass(size_t index)
         return UINT8_MAX;
     }
     return nvidia_drivers[index].subclass;
+}
+
+uint8_t nvidia_driver_interface(size_t index)
+{
+    if (index >= NVIDIA_DRIVER_COUNT) {
+        return UINT8_MAX;
+    }
+    return nvidia_drivers[index].programming_interface;
+}
+
+enum nvidia_access nvidia_driver_access(size_t index)
+{
+    if (index >= NVIDIA_DRIVER_COUNT) {
+        return NVIDIA_ACCESS_COUNT;
+    }
+    return nvidia_drivers[index].access;
 }
 
 bool nvidia_driver_writes_registers(size_t index)
@@ -1123,6 +1538,97 @@ bool nvidia_foundation_self_test(size_t *completed_tests)
     }
     ++completed;
 
+    /*
+     * Every driver's access mode agrees with what it declares. A driver that
+     * maps a window has to name which one; a driver that maps nothing must not
+     * name one at all, because a BAR index that is quietly ignored is a window
+     * nobody decided to open.
+     */
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        const struct nvidia_driver_record *record = &nvidia_drivers[index];
+
+        if (record->access >= NVIDIA_ACCESS_COUNT) {
+            return false;
+        }
+        if (record->access == NVIDIA_ACCESS_MEMORY) {
+            if (record->bar_index == UINT8_MAX ||
+                record->minimum_register_bytes == 0U) {
+                return false;
+            }
+        } else if (record->bar_index != UINT8_MAX ||
+            record->minimum_register_bytes != 0U) {
+            return false;
+        }
+    }
+    ++completed;
+
+    /*
+     * The table's access census, stated here so a driver cannot quietly change
+     * how much of the machine it takes: seven map one window each, one reads
+     * the aperture descriptions a claim produces, two read configuration space
+     * and take nothing at all, and only a driver with a window may write.
+     */
+    {
+        size_t memory = 0U;
+        size_t apertures = 0U;
+        size_t configuration = 0U;
+
+        for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+            const struct nvidia_driver_record *record = &nvidia_drivers[index];
+
+            switch (record->access) {
+            case NVIDIA_ACCESS_MEMORY: ++memory; break;
+            case NVIDIA_ACCESS_APERTURE: ++apertures; break;
+            case NVIDIA_ACCESS_CONFIGURATION: ++configuration; break;
+            default: return false;
+            }
+            if (record->access != NVIDIA_ACCESS_MEMORY &&
+                record->writes_registers) {
+                return false;
+            }
+        }
+        if (memory != 7U || apertures != 1U || configuration != 2U) {
+            return false;
+        }
+    }
+    ++completed;
+
+    /*
+     * No driver here pins a programming interface. The matcher supports it
+     * because classes that need it exist, and this control is what keeps an
+     * unused field from drifting into a silent wildcard: every record says
+     * NVIDIA_MATCH_ANY on purpose.
+     */
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        if (nvidia_drivers[index].programming_interface != NVIDIA_MATCH_ANY) {
+            return false;
+        }
+    }
+    ++completed;
+
+    /* Every status this module can return has its own message. */
+    for (int outer = 0; outer < (int)NVIDIA_STATUS_COUNT; ++outer) {
+        const char *left = nvidia_status_string((enum nvidia_status)outer);
+
+        if (left == NULL) {
+            return false;
+        }
+        for (int inner = 0; inner < outer; ++inner) {
+            const char *right =
+                nvidia_status_string((enum nvidia_status)inner);
+            size_t position = 0U;
+
+            while (left[position] != '\0' && right[position] != '\0' &&
+                left[position] == right[position]) {
+                ++position;
+            }
+            if (left[position] == right[position]) {
+                return false;
+            }
+        }
+    }
+    ++completed;
+
     *completed_tests = completed;
     return completed == NVIDIA_CONTROLLED_CONTROLS;
 }
@@ -1239,6 +1745,10 @@ const char *nvidia_status_string(enum nvidia_status status)
         "NVIDIA register window is too small",
         "NVIDIA register aperture is big-endian",
         "NVIDIA device identity was refused",
+        "NVIDIA register aperture answers every offset alike",
+        "NVIDIA board straps were refused",
+        "NVIDIA memory apertures are not the published shape",
+        "NVIDIA PCI Express link was not described",
         "NVIDIA timer did not advance",
         "NVIDIA video BIOS window is empty",
         "NVIDIA video BIOS image is malformed",

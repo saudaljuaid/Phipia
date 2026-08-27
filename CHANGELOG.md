@@ -40,11 +40,15 @@
   receive and transmit buffers its own caller held. The pump now refuses
   recursive entry and an unresolved send from the receive path defers to
   retransmission instead.
-- Added five bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK,
-  NVIDIA's open kernel modules and the PCI Firmware Specification: the master
-  control identity decode, the configuration-space mirror cross-check, the
-  timer, the video BIOS window and the HD Audio function. Exactly one of them
-  writes a register, and it proves the write reversed.
+- Added ten bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK,
+  NVIDIA's open kernel modules and the PCI and PCI Express specifications: the
+  master control identity decode, the configuration-space mirror cross-check,
+  the timer, the video BIOS window, the HD Audio function, the board straps,
+  the engine enable mask, the memory aperture shape, the PCI Express link and
+  the add-in-board subsystem identity. Seven map one register window each, one
+  reads only the aperture descriptions a claim produces and touches no
+  register at all, and two read configuration space and take nothing. Exactly
+  one of the ten writes a register, and it proves the write reversed.
 - Added a freestanding Rust VBIOS validator with sixteen controls, and a
   synthesised reference image stated three independent times in C, Rust and
   Python with the build comparing all three.
