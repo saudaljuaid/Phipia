@@ -11,7 +11,7 @@ PINNED = {
     "assets/sapote-logo-source.png": "90f1c5613af4eaa817bbf69b151fc2e387ba45873643cc7c220bb471423c6663",
     "build/logo.srl": "cae1b3979144f528e5245697474397b881c9ed234838821d5ea4625065562b5e",
     "build/wallpaper.spw": "1154a4b9a8feccdd4a422e07e9794c4b610a2bf467ef9a6fa9985d1d4707ec1d",
-    "assets/sapstudio-icon.png": "c5d706b274132b5fcaf0bb016d0da56ddd1dc54b417709364874ad1a58611eb5",
+    "assets/sapstudio-icon.png": "466ab943da6ca035c88988d8bf819625e46ca85a5fe11a2a39b7f34f2e3e1df7",
     "build/sapstudio-icon.srl": "0e30ba0bfd43ee19ecbef903ae2bf05cab4c0f1e9e28e0c9233907ff6f3bcddd",
     "assets/settings-icon-dock.png": "29bbd3bf688a4eb7ae7c67ef8b9bdbe7c8d101f6694485c585d74e6cd36bbc7f",
     "build/settings-icon.srl": "646fcc71ffb1e621d6a2e828405a1dfcea9930aff50062755fb34698d2c813ba",
