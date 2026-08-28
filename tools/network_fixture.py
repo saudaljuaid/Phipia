@@ -25,6 +25,17 @@ HTTP_IP = ipaddress.IPv4Address("10.0.2.20").packed
 BROADCAST_IP = b"\xff" * 4
 WELCOME = b"hello from the Sapote network\n"
 
+# Sapote announces a port it is listening on, or one it deliberately is not,
+# over UDP; this peer then opens a TCP connection *to* the guest. The guest is
+# the server in those two scenarios, which is the only way to exercise a
+# passive open from outside.
+KNOCK_PORT = 4243
+KNOCK_MAGIC = b"SAPL"
+LISTEN_REQUEST = b"SAPOTE LISTEN\n"
+REFUSAL_NOTICE = b"REFUSED"
+CLIENT_PORT = 50100
+CLIENT_ISN = 0x71000000
+
 
 def checksum(data: bytes) -> int:
     if len(data) & 1:
@@ -134,6 +145,19 @@ class PcapWriter:
 
 
 @dataclass
+class ClientSession:
+    """A connection this peer opens to the guest, rather than the reverse."""
+
+    local_port: int
+    remote_port: int
+    send_next: int
+    receive_next: int = 0
+    established: bool = False
+    reply_seen: bool = False
+    finished: bool = False
+
+
+@dataclass
 class TcpPeer:
     client_port: int
     client_next: int
@@ -152,6 +176,10 @@ class Fixture:
         self.identity = 100
         self.tcp_peers: dict[int, TcpPeer] = {}
         self.dropped_syn: set[int] = set()
+        self.session: ClientSession | None = None
+        self.session_count = 0
+        self.knock: tuple[bytes, int] | None = None
+        self.reset_seen = False
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
                                   socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -309,6 +337,76 @@ class Fixture:
         peer.server_next = (peer.server_next + len(payload) +
                             (1 if flags & 0x03 else 0)) & 0xFFFFFFFF
 
+    def send_client(self, session: ClientSession, flags: int,
+                    payload: bytes = b"") -> None:
+        options = b"\x02\x04\x05\xb4" if flags & 0x02 else b""
+        segment = tcp(HTTP_IP, GUEST_IP, session.local_port,
+                      session.remote_port, session.send_next,
+                      session.receive_next, flags, payload, options)
+        self.send_ipv4(GUEST_MAC, HTTP_IP, GUEST_IP, 6, segment)
+        session.send_next = (session.send_next + len(payload) +
+                             (1 if flags & 0x03 else 0)) & 0xFFFFFFFF
+
+    def handle_knock(self, source_ip: bytes, source_port: int,
+                     payload: bytes) -> None:
+        if self.mode not in ("tcp-listen", "tcp-refused"):
+            return
+        if len(payload) != 6 or payload[:4] != KNOCK_MAGIC:
+            return
+        if self.session is not None and not self.session.finished:
+            return
+        target = struct.unpack_from("!H", payload, 4)[0]
+        if target == 0:
+            return
+        # A fresh local port per announcement, so a late segment from the
+        # previous connection can never be mistaken for this one.
+        self.knock = (source_ip, source_port)
+        self.session = ClientSession(CLIENT_PORT + self.session_count, target,
+                                     CLIENT_ISN)
+        self.session_count += 1
+        self.send_client(self.session, 0x02)
+
+    def notify_knock(self, message: bytes) -> None:
+        if self.knock is None:
+            return
+        source_ip, source_port = self.knock
+        datagram = udp(HTTP_IP, source_ip, KNOCK_PORT, source_port, message)
+        self.send_ipv4(GUEST_MAC, HTTP_IP, source_ip, 17, datagram)
+
+    def handle_client(self, segment: bytes) -> None:
+        session = self.session
+        assert session is not None
+        sequence, acknowledgement = struct.unpack_from("!II", segment, 4)
+        offset = (segment[12] >> 4) * 4
+        flags = segment[13]
+        payload = segment[offset:]
+        if flags & 0x04:
+            self.reset_seen = True
+            session.finished = True
+            self.notify_knock(REFUSAL_NOTICE)
+            return
+        if not session.established:
+            if flags & 0x12 != 0x12 or acknowledgement != session.send_next:
+                return
+            session.receive_next = (sequence + 1) & 0xFFFFFFFF
+            session.established = True
+            self.send_client(session, 0x10)
+            self.send_client(session, 0x18, LISTEN_REQUEST)
+            return
+        if payload:
+            if sequence != session.receive_next:
+                return
+            session.receive_next = (sequence + len(payload)) & 0xFFFFFFFF
+            self.send_client(session, 0x10)
+            if payload == WELCOME:
+                session.reply_seen = True
+                self.send_client(session, 0x11)
+            return
+        if flags & 0x01:
+            session.receive_next = (sequence + 1) & 0xFFFFFFFF
+            self.send_client(session, 0x10)
+            session.finished = True
+
     def handle_tcp(self, source_ip: bytes, destination_ip: bytes,
                    segment: bytes) -> None:
         if len(segment) < 20 or destination_ip != HTTP_IP:
@@ -317,7 +415,14 @@ class Fixture:
             "!HHII", segment, 0)
         offset = (segment[12] >> 4) * 4
         flags = segment[13]
-        if destination_port != 80 or offset < 20 or offset > len(segment):
+        if offset < 20 or offset > len(segment):
+            return
+        session = self.session
+        if session is not None and destination_port == session.local_port and \
+                source_port == session.remote_port:
+            self.handle_client(segment)
+            return
+        if destination_port != 80:
             return
         payload = segment[offset:]
         peer = self.tcp_peers.get(source_port)
@@ -361,6 +466,8 @@ class Fixture:
                 self.handle_dhcp(source_ip, body)
             elif destination_port == 53 and destination_ip == DNS_IP:
                 self.handle_dns(source_ip, source_port, body)
+            elif destination_port == KNOCK_PORT:
+                self.handle_knock(source_ip, source_port, body)
             elif destination_port == 4242 and destination_ip == HTTP_IP and \
                     self.mode != "silent":
                 answer = udp(HTTP_IP, source_ip, 4242, source_port, body)
@@ -407,7 +514,15 @@ def self_test() -> int:
     packet = ipv4(GATEWAY_IP, GUEST_IP, 1, b"\x00" * 8)
     assert checksum(packet[:20]) == 0
     assert len(arp_reply(GUEST_MAC, GUEST_IP, GATEWAY_IP)) == 42
-    print("network fixture self-test: 4/4 passed")
+    knock = KNOCK_MAGIC + struct.pack("!H", 7777)
+    assert len(knock) == 6 and struct.unpack_from("!H", knock, 4)[0] == 7777
+    session = ClientSession(CLIENT_PORT, 7777, CLIENT_ISN)
+    segment = tcp(HTTP_IP, GUEST_IP, session.local_port, session.remote_port,
+                  session.send_next, session.receive_next, 0x02,
+                  options=b"\x02\x04\x05\xb4")
+    pseudo = HTTP_IP + GUEST_IP + struct.pack("!BBH", 0, 6, len(segment))
+    assert checksum(pseudo + segment) == 0 and segment[13] == 0x02
+    print("network fixture self-test: 6/6 passed")
     return 0
 
 
@@ -423,7 +538,7 @@ def main() -> int:
         "ipv4-bad-checksum", "arp-conflict", "tcp-reset", "tcp-retransmit",
         "http-chunked", "http-redirect",
         "http-truncated", "http-malformed", "http-redirect-loop",
-        "malformed-flood"))
+        "malformed-flood", "tcp-listen", "tcp-refused"))
     parser.add_argument("--capture", type=Path, default=Path("build/network.pcap"))
     parser.add_argument("--ready", type=Path)
     parser.add_argument("--self-test", action="store_true")

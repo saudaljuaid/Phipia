@@ -791,7 +791,9 @@ static bool frame_return_shape_valid(
         frame->cs == CPU_GDT_USER_CODE_SELECTOR &&
         frame->ss == CPU_GDT_USER_DATA_SELECTOR &&
         (frame->rflags & UINT64_C(2)) != 0U &&
-        (frame->rflags & ~LINUX_USER_RFLAGS_ALLOWED) == 0U &&
+        (frame->rflags &
+            ~(LINUX_USER_RFLAGS_ALLOWED |
+                CPU_RFLAGS_PROCESSOR_BOOKKEEPING)) == 0U &&
         canonical_user(frame->rip) &&
         frame->rip >= context->executable_start + 2U &&
         frame->rip < context->executable_end &&

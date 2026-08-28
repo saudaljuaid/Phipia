@@ -33,6 +33,12 @@ types, and installed W^X checks. Kernel mappings remain supervisor-only.
 ELF image is RX/R, writable state and stack are RW/NX, the stack has a guard
 page, and teardown restores the kernel CR3 before releasing user resources.
 
+`paging.c` holds `PAGING_PROCESS_SPACE_SLOTS` such hierarchies at once rather
+than one. Every private operation resolves the caller's token to a slot, a
+space and its identity-alias narrowings share an index, and a narrowing may
+only be undone while it is the newest one owned - which is what stops one
+process's teardown from freeing a split page table another still has a leaf in.
+
 ## Interrupts, clocks, and scheduling
 
 The IDT and assembly stubs preserve same-privilege and CPL3 frames. ACPI MADT
@@ -44,8 +50,15 @@ preemption, the TSC supplies a second calibrated counter, and `clock.c` exposes
 one monotonic time source. `timer.c` builds bounded deadlines on it.
 
 `thread.c` provides guarded kernel stacks, a small scheduler, and preemption.
-Sapote remains single-core and has no userspace scheduler or general process
-service.
+Sapote remains single-core.
+
+`multiprocess.c` adds a bounded user scheduler above them: up to four processes
+exist at once, each with its own hierarchy, image, stack, generation and saved
+CPL3 register set, and the processor goes to each runnable one in turn. A
+process leaves through the same reviewed gate the Ring 3 proof uses, with its
+whole register set saved on the way out and loaded again on the way back. The
+schedule is cooperative and a faulting process is terminated without disturbing
+its neighbours. See [`MULTIPROCESS.md`](MULTIPROCESS.md).
 
 ## Devices and storage
 
@@ -64,9 +77,33 @@ The current device boundaries are deliberately small:
 - FAT16: retained read-only compatibility proofs for historical releases;
 - PS/2: keyboard and three-byte pointer input for the shell and First Light.
 
+`driver.c` adds thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus
+Logic and Bochs Display Interface devices. Each binds through the same typed
+claim and mapping substrate, performs the reset its specification defines,
+identifies its device against a property that specification guarantees, and
+releases everything. None of them enables bus mastering, so none of them can
+reach memory. See [`DRIVERS.md`](DRIVERS.md).
+
+`audio.c` is the exception and says so. High Definition Audio has no register a
+driver can ask a codec through, only two rings the controller reads and writes
+by bus-mastering DMA, so identifying a codec means letting the device write
+kernel memory. The rings are typed DMA allocations, bus mastering is refused
+while they still belong to the kernel, and it is withdrawn only after the
+engines are stopped and the controller is back in reset - before the memory is
+reclaimed, never after. See [`AUDIO.md`](AUDIO.md).
+
 There is no Unix VFS, journal, hotplug framework, physical-device passthrough,
 or general USB class stack. The exact FAT32 design and limits are in
 [`FAT32.md`](FAT32.md).
+
+`nvidia.c` is fifteen bounded drivers for the register and configuration
+contracts an NVIDIA board publishes, written from envytools, Nouveau, Mesa/NVK
+and NVIDIA's own published material rather than from a datasheet that does not
+exist, and from the PCI and PCI Express specifications for the capabilities
+four of them cross-check against. Fourteen of them read only; the fifteenth
+clears the ROM shadow bit the PROM window requires and proves it restored. The bytes that come out of that window are parsed in freestanding
+Rust, never in C. Nothing here has run against NVIDIA silicon, and the header,
+the module and a build gate all say so. See [`NVIDIA.md`](NVIDIA.md).
 
 ## Networking
 
@@ -77,10 +114,20 @@ descriptor or device-owned buffer. Reset invalidates sockets and caches before
 releasing device resources.
 
 `network.c` supplies bounded Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP and
-HTTP state machines. HTTP can stream through `fat32_fs.c` to the writable Data
-volume with synchronized temporary-file replacement. `network_syscall.c`
-validates complete user ranges and authenticates process generations for the
-experimental native ABI. The Terminal calls the same public kernel operations.
+HTTP state machines. TCP opens in both directions: a listener with a declared
+backlog draws its accepted connections from the same eight-slot table an
+outbound connection is drawn from, and a segment matching no connection and no
+listener is refused with a reset. HTTP can stream through `fat32_fs.c` to the
+writable Data volume with synchronized temporary-file replacement.
+`network_syscall.c` validates complete user ranges and authenticates process
+generations for the experimental native ABI. The Terminal calls the same public
+kernel operations.
+
+One receive buffer and one transmit buffer serve the whole stack, so the pump
+runs alone: `network_service` refuses recursive entry, and a send raised while a
+received frame is still being parsed resolves its hardware address from the
+cache or defers, never by pumping the device again. That ordering is what lets
+a handler answer the frame it is reading at all.
 
 The Boot Ledger records networking after time, heap, paging, PCI, dynamic
 vectors, DMA, interrupts and the closed boot proofs, and before First
@@ -89,6 +136,13 @@ decision; malformed initialization is a failed stage. See
 [`NETWORKING.md`](NETWORKING.md).
 
 ## Userspace boundaries
+
+Four places authenticate a register set arriving from CPL3: the Ring 3 proof,
+the multiprocess trap, the context that trap saves, and the Linux syscall
+boundary. All four discard `CPU_RFLAGS_PROCESSOR_BOOKKEEPING` before checking
+what is left. RF is the processor's own note about the trap rather than
+something the program chose, and a kernel that authenticates it as user state
+refuses legal returns on any processor that sets it.
 
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
 private interrupt gate. Separately, the Linux compatibility boundary programs
@@ -157,5 +211,9 @@ keeping milestone diaries in the active documentation set.
 
 Sapote has no SMP, IPv6, TLS, firewall, routing, Wi-Fi, IOMMU, general VFS,
 journaled crash recovery, dynamic linker, signals, general descriptor table,
-broad hardware support, browser, or generally stable native userspace ABI.
-These are boundaries, not implied features.
+broad hardware support, browser, or generally stable native userspace ABI. User
+scheduling is cooperative rather than preemptive, and there is no fork, exec,
+process identifier space or inter-process communication. The thirteen bounded
+drivers bind and identify their devices; none of them moves data. The HD Audio
+driver identifies codecs and plays nothing. These are boundaries, not implied
+features.

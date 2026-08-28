@@ -26,10 +26,13 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-http-nested network-http-replace network-http-disk-full \
 	network-nic-reset network-system-immutable network-missing-linux-echo \
 	network-missing-linux-uname network-missing-linux-cat network-files \
-	network-notes network-studio network-persistence network-socket-isolation
+	network-notes network-studio network-persistence network-socket-isolation \
+	network-tcp-listen network-tcp-refused \
+	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
+	nvidia nvidia-builtin
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 92
-EXPECTED_SHELL_ASSERTION_COUNT := 359
+EXPECTED_TEST_SCENARIO_COUNT := 101
+EXPECTED_SHELL_ASSERTION_COUNT := 410
 
 CC := gcc
 LD := ld
@@ -56,6 +59,7 @@ RUST_LINUX_UNAME_ELF64_TEST := $(BUILD_DIR)/linux-uname-elf64-tests
 RUST_LINUX_CAT_FAT16_TEST := $(BUILD_DIR)/linux-cat-fat16-tests
 RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
+RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
@@ -420,6 +424,21 @@ verify: toolchain lint
 	$(RUSTC) --edition 2024 --test -D warnings src/rust/elf64.rs \
 		-o $(RUST_ELF64_TEST)
 	$(RUST_ELF64_TEST)
+	# Bytes from an NVIDIA board's ROM are bytes from outside, so the parser
+	# is Rust's and its controls run on the host as well as in the kernel.
+	$(RUSTC) --edition 2024 --test -D warnings src/rust/nvbios.rs \
+		-o $(RUST_NVBIOS_TEST)
+	$(RUST_NVBIOS_TEST)
+	$(PYTHON) tools/nvidia_vbios_image.py --self-test
+	# The kernel's reference VBIOS table, the Rust validator that parses it,
+	# and the Python record that rebuilds it are three independent statements
+	# of the same 1,024 bytes.
+	$(PYTHON) tools/check-nvidia-vbios.py
+	# The kernel's multiprocess executable table, the Rust profile that
+	# validates it, and the Python record that rebuilds it are three
+	# independent statements of the same 256 bytes. Any two disagreeing is a
+	# build failure rather than a program that quietly does something else.
+	$(PYTHON) tools/check-multiprocess-image.py
 	@test "$(words $(TEST_SCENARIOS))" -eq \
 		'$(EXPECTED_TEST_SCENARIO_COUNT)'
 	@grep -Fq '#define SHELL_PROMPT "sap> "' src/kernel/shell.c
@@ -485,6 +504,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_elf64_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_parse$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
 		echo 'safe Rust retained a reachable bounds-panic path'; exit 1; \
 	fi
@@ -533,6 +554,218 @@ verify: toolchain lint
 		--exclude=process.c; then \
 		echo 'process proof bypasses the Boot Ledger'; exit 1; \
 	fi
+	@if grep -ERn '\bmultiprocess_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=multiprocess.c; then \
+		echo 'multiprocess proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -ERn '\bdriver_matrix_bind[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=driver.c; then \
+		echo 'driver matrix bind bypasses the Boot Ledger'; exit 1; \
+	fi
+	@if grep -ERn '\baudio_prove[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=audio.c; then \
+		echo 'HD Audio proof bypasses the Boot Ledger'; exit 1; \
+	fi
+	# The one driver that lets a device write kernel memory has to withdraw
+	# that permission before it reclaims the memory. Sapote has no IOMMU, so
+	# the order is the whole guarantee: engines stopped, controller reset, bus
+	# mastering disabled, and only then the rings released.
+	@grep -Fq 'PCI_RESOURCE_STATUS_DMA_NOT_PREPARED' src/kernel/audio.c || \
+		{ echo 'the audio driver stopped proving the DMA guard'; exit 1; }
+	@stop=$$(grep -n 'mmio_write8(controller->registers, HDA_RIRBCTL, 0U);' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		reset=$$(grep -n 'mmio_write32(controller->registers, HDA_GCTL, 0U);' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		withdraw=$$(grep -n 'pci_claim_disable_bus_master' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		release=$$(grep -n 'dma_release(&controller->response_ring)' \
+		src/kernel/audio.c | head -n 1 | cut -d: -f1); \
+		test -n "$$stop" && test -n "$$reset" && test -n "$$withdraw" && \
+		test -n "$$release" && test "$$stop" -lt "$$reset" && \
+		test "$$reset" -lt "$$withdraw" && \
+		test "$$withdraw" -lt "$$release" || \
+		{ echo 'audio teardown releases DMA before withdrawing bus mastering'; \
+		exit 1; }
+	@test "$$(grep -Ec 'pci_claim_enable_bus_master[[:space:]]*[(]' \
+		src/kernel/audio.c)" -eq 2 || \
+		{ echo 'the audio driver lost its bus-master negative control'; \
+		exit 1; }
+	@if grep -ERn '\bnvidia_bind[[:space:]]*[(]' \
+		src/kernel --include='*.c' --exclude=boot_plan.c \
+		--exclude=nvidia.c; then \
+		echo 'NVIDIA probe bypasses the Boot Ledger'; exit 1; \
+	fi
+	# Fifteen drivers, and exactly one of them may write a register: the video
+	# BIOS window needs the ROM shadow bit cleared, and nothing else here has
+	# any business changing a live graphics part.
+	@grep -Fq '#define NVIDIA_DRIVER_COUNT 15U' include/sapote/nvidia.h
+	@test "$$(grep -Ec '^        \.name = "NVIDIA ' src/kernel/nvidia.c)" \
+		-eq 15 || \
+		{ echo 'the NVIDIA table does not declare fifteen drivers'; exit 1; }
+	# Eight map a window, one reads aperture descriptions, six read
+	# configuration space and take nothing at all.
+	@test "$$(grep -Ec '\.access = NVIDIA_ACCESS_MEMORY' \
+		src/kernel/nvidia.c)" -eq 8 && \
+		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_APERTURE' \
+		src/kernel/nvidia.c)" -eq 1 && \
+		test "$$(grep -Ec '\.access = NVIDIA_ACCESS_CONFIGURATION' \
+		src/kernel/nvidia.c)" -eq 6 || \
+		{ echo 'the NVIDIA access census changed'; exit 1; }
+	@test "$$(grep -Ec '\.writes_registers = true' src/kernel/nvidia.c)" \
+		-eq 1 || \
+		{ echo 'the NVIDIA drivers gained a second register writer'; \
+		exit 1; }
+	@test "$$(grep -Ec 'mmio_write32[[:space:]]*[(]' \
+		src/kernel/nvidia.c)" -eq 3 || \
+		{ echo 'an NVIDIA driver gained an unreviewed register write'; \
+		exit 1; }
+	# The one write is reversible and is proved reversed, not assumed.
+	@save=$$(grep -n 'saved = mmio_read32(registers, shadow);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		restore=$$(grep -n 'mmio_write32(registers, shadow, saved);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		verify=$$(grep -n 'restored = mmio_read32(registers, shadow);' \
+		src/kernel/nvidia.c | head -n 1 | cut -d: -f1); \
+		test -n "$$save" && test -n "$$restore" && test -n "$$verify" && \
+		test "$$save" -lt "$$restore" && test "$$restore" -lt "$$verify" || \
+		{ echo 'the NVIDIA ROM shadow bit is not proved restored'; exit 1; }
+	# No driver here may reach memory: Sapote has no IOMMU.
+	@if grep -En \
+		'pci_claim_enable_bus_master|dma_(allocate|mark_initialized|transfer_to_device|transfer_to_cpu|release)' \
+		src/kernel/nvidia.c; then \
+		echo 'an NVIDIA driver reached for bus-mastering DMA'; exit 1; \
+	fi
+	@if grep -En 'pci_config_write_(port|ecam)' src/kernel/nvidia.c; then \
+		echo 'an NVIDIA driver wrote configuration space'; exit 1; \
+	fi
+	# C never parses a VBIOS byte; the freestanding Rust validator does.
+	@grep -Fq 'sapote_nvbios_parse(' src/kernel/nvidia.c || \
+		{ echo 'the NVIDIA driver stopped using the Rust VBIOS boundary'; \
+		exit 1; }
+	@grep -Fq 'NOTHING HERE HAS BEEN RUN AGAINST NVIDIA SILICON' \
+		include/sapote/nvidia.h || \
+		{ echo 'the NVIDIA hardware-testing limit was dropped'; exit 1; }
+	# Five drivers read what an earlier driver established, and the table's
+	# order is those dependencies. The control that states them pair by pair is
+	# what keeps a reordered table from silently producing a weaker result.
+	@grep -Fq '#define NVIDIA_CONTROLLED_CONTROLS 21U' include/sapote/nvidia.h
+	@test "$$(grep -Ec '^            \{ probe_[a-z_]+, probe_[a-z_]+ \}' \
+		src/kernel/nvidia.c)" -eq 5 || \
+		{ echo 'the NVIDIA driver ordering control changed shape'; exit 1; }
+	# A capability the enumeration could not reach must be a named refusal, not
+	# a field decoded out of the capability before it.
+	@grep -Fq '(header & UINT32_C(0xFF)) != PCI_CAPABILITY_EXPRESS' \
+		src/kernel/nvidia.c || \
+		{ echo 'the NVIDIA Express driver stopped checking its capability'; \
+		exit 1; }
+	# RF is the processor's bookkeeping about a trap, not state the program
+	# chose, so every CPL3 boundary discards it rather than authenticating it.
+	# A boundary that forgot would refuse a legal return on any processor that
+	# sets the bit -- which is the difference between QEMU 8.2 and 9.1.
+	@for file in src/kernel/multiprocess.c src/kernel/process.c \
+		src/kernel/linux_syscall.c; do \
+		grep -Fq 'CPU_RFLAGS_PROCESSOR_BOOKKEEPING' "$$file" || \
+			{ echo "$$file authenticates processor bookkeeping as user state"; \
+			exit 1; }; \
+	done
+	@grep -Fq '#define CPU_RFLAGS_PROCESSOR_BOOKKEEPING UINT64_C(0x00010000)' \
+		include/sapote/cpu.h || \
+		{ echo 'the processor-bookkeeping flag set moved'; exit 1; }
+	# The saved context is normalised, not merely checked: nothing hands the
+	# bit back to a process through an IRETQ.
+	@grep -Fq 'context->rflags = authenticated_user_rflags(frame->rflags);' \
+		src/kernel/multiprocess.c || \
+		{ echo 'a saved user context keeps the processor bookkeeping bit'; \
+		exit 1; }
+	# One receive buffer and one transmit buffer serve the whole stack, so a
+	# handler that answers the frame it is reading must never re-enter the
+	# pump. The guard is the only thing standing between an inbound segment
+	# that needs an unknown hardware address and a recursive service call that
+	# overwrites the frame its own caller is parsing.
+	@test "$$(grep -Ec '^enum network_status network_service\(void\)$$' \
+		src/kernel/network.c)" -eq 1 && \
+		grep -Fq 'if (runtime.servicing) {' src/kernel/network.c && \
+		grep -Fq 'runtime.servicing = true;' src/kernel/network.c && \
+		grep -Fq 'runtime.servicing = false;' src/kernel/network.c || \
+		{ echo 'the network pump lost its re-entrancy guard'; exit 1; }
+	@guard=$$(grep -n 'if (runtime.servicing) {' src/kernel/network.c \
+		| head -n 1 | cut -d: -f1); \
+		pump=$$(grep -n 'status = network_service_pump();' \
+		src/kernel/network.c | head -n 1 | cut -d: -f1); \
+		test -n "$$guard" && test -n "$$pump" && \
+		test "$$guard" -lt "$$pump" || \
+		{ echo 'the network pump runs before it checks the guard'; exit 1; }
+	@test "$$(grep -Ec '\(void\)network_service\(\)' \
+		src/kernel/network.c)" -ge 1 && \
+		grep -Fq '++runtime.public.statistics.arp_deferred;' \
+		src/kernel/network.c || \
+		{ echo 'the receive path no longer defers unresolved sends'; exit 1; }
+	# A segment nobody is listening for is answered, never swallowed, and a
+	# reset is never answered with a reset: that is what stops two closed
+	# ports from talking forever.
+	@grep -Fq 'if ((flags & TCP_FLAG_RST) != 0U ||' src/kernel/network.c || \
+		{ echo 'the TCP refusal lost its reset-for-reset guard'; exit 1; }
+	@test "$$(grep -Ec 'tcp_refuse[[:space:]]*[(]' \
+		src/kernel/network.c)" -eq 3 || \
+		{ echo 'the TCP refusal gained an unreviewed call site'; exit 1; }
+	# A passive open is bounded twice: by the listener's declared backlog and
+	# by the same connection table an active open draws from.
+	@grep -Fq '#define NETWORK_TCP_MAX_BACKLOG 4U' include/sapote/network.h
+	@grep -Fq 'if (tcp_pending_count(listener) >= listener->backlog) {' \
+		src/kernel/network.c || \
+		{ echo 'a passive open stopped honouring its backlog'; exit 1; }
+	@grep -Fq 'backlog > NETWORK_TCP_MAX_BACKLOG' src/kernel/network.c || \
+		{ echo 'a listener may now declare an unbounded backlog'; exit 1; }
+	# A listener owns the children nobody has accepted yet; closing it must
+	# refuse those peers rather than orphan their slots.
+	@grep -Fq 'tcp_release(child);' src/kernel/network.c && \
+		grep -Fq 'tcp_release_children(connection);' src/kernel/network.c && \
+		grep -Fq 'if (connection->backlog != 0U) {' src/kernel/network.c || \
+		{ echo 'closing a listener no longer reclaims its children'; exit 1; }
+	# The saved-context CPL3 entry belongs to the scheduler that saves the
+	# context. Anything else entering Ring 3 from a register set it did not
+	# authenticate would be a second, unreviewed user boundary.
+	@test "$$(grep -ERh '\bprocess_enter_user_context[[:space:]]*[(]' \
+		src/kernel --include='*.c' | wc -l)" -eq 1 && \
+		grep -Fq 'process_enter_user_context(&process->context);' \
+			src/kernel/multiprocess.c || \
+		{ echo 'saved-context user entry escaped the scheduler'; exit 1; }
+	@test "$$(grep -Ec 'multiprocess_trap_interrupt[[:space:]]*[(]' \
+		src/kernel/multiprocess.c)" -eq 1 && \
+		grep -Fq 'interrupt_process_gate_arm(multiprocess_trap_interrupt,' \
+		src/kernel/multiprocess.c || \
+		{ echo 'multiprocess trap handler has an unexpected call site'; \
+		exit 1; }
+	# Thirteen drivers, and no driver may enable bus mastering: Sapote has no
+	# IOMMU, so a register-only driver is one that cannot reach memory at all.
+	@grep -Fq '#define DRIVER_MATRIX_CAPACITY 13U' include/sapote/driver.h
+	@test "$$(grep -Ec '^        \.name = ' src/kernel/driver.c)" -eq 13 || \
+		{ echo 'the driver matrix does not declare thirteen drivers'; \
+		exit 1; }
+	# The station addresses the scenario asserts are the ones the host hands
+	# QEMU on its command line. A driver that invented them, cached them, or
+	# read the wrong device would have to invent these exact four.
+	@for mac in 01 02 03 04; do \
+		grep -Fq "mac=52:54:00:AA:BB:$$mac" Makefile || \
+			{ echo "driver scenario lost a pinned station address"; \
+			exit 1; }; \
+		grep -Fq "UINT64_C(0x$${mac}BBAA005452)" src/kernel/test.c || \
+			{ echo "the kernel lost a pinned station address"; exit 1; }; \
+	done
+	@if grep -En \
+		'pci_claim_enable_bus_master|dma_(allocate|mark_initialized|transfer_to_device|transfer_to_cpu|release)' \
+		src/kernel/driver.c; then \
+		echo 'a bounded driver reached for bus-mastering DMA'; exit 1; \
+	fi
+	@if grep -En 'pci_config_write_(port|ecam)' src/kernel/driver.c; then \
+		echo 'a bounded driver wrote configuration space'; exit 1; \
+	fi
+	@grep -Fq '#define PAGING_PROCESS_SPACE_SLOTS 4U' include/sapote/paging.h
+	@grep -Fq 'newest_owned_alias_order()' src/kernel/paging.c || \
+		{ echo 'private alias restores lost their ordering guard'; exit 1; }
 	@if grep -ERn '\blinux_abi_installed_prove[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=boot_plan.c \
 		--exclude=linux_abi.c; then \
@@ -886,6 +1119,8 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
 		studio) expected=213 ;; \
 		persistence) expected=215 ;; \
 		socket-isolation) expected=217 ;; \
+		tcp-listen) expected=219 ;; \
+		tcp-refused) expected=221 ;; \
 		*) echo 'unknown network scenario: network-$*'; exit 1 ;; \
 	esac; \
 	case '$*' in \
@@ -971,6 +1206,13 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-cache) expected=145 ;; \
 		fat32-immutable) expected=147 ;; \
 		fat32-handles) expected=149 ;; \
+		multiprocess) expected=223 ;; \
+		multiprocess-slots) expected=225 ;; \
+		driver-matrix) expected=227 ;; \
+		driver-matrix-builtin) expected=229 ;; \
+		audio) expected=231 ;; \
+		nvidia) expected=233 ;; \
+		nvidia-builtin) expected=235 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -985,6 +1227,19 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			pci-ecam) \
 				hardware='-machine q35 -device pcie-root-port,id=rp0,chassis=1 -device e1000e,bus=rp0 -device e1000e' ;; \
 			device-windows) hardware='-machine q35' ;; \
+			driver-matrix) \
+				hardware='-nic none -device e1000,mac=52:54:00:AA:BB:01 -device e1000e,mac=52:54:00:AA:BB:02 -device rtl8139,mac=52:54:00:AA:BB:03 -device pcnet,mac=52:54:00:AA:BB:04 -device ich9-ahci -device ich9-intel-hda -device usb-ehci -vga std -device cirrus-vga,romfile= -device bochs-display,romfile=' ;; \
+			driver-matrix-builtin) hardware='' ;; \
+			audio) \
+				hardware='-device ich9-intel-hda,id=hda -device hda-duplex,bus=hda.0,audiodev=none0 -audiodev none,id=none0' ;; \
+			# No emulator models an NVIDIA part, so the nvidia scenario \
+			# attaches display and HD Audio functions of exactly the classes \
+			# these drivers match on, from vendors that are not NVIDIA. \
+			# That turns "no function present" from an empty machine into a \
+			# refusal with something to refuse. \
+			nvidia) \
+				hardware='-vga std -device cirrus-vga,romfile= -device bochs-display,romfile= -device ich9-intel-hda' ;; \
+			nvidia-builtin) hardware='' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \

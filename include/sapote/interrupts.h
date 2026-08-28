@@ -124,6 +124,16 @@ enum interrupt_status interrupt_process_gate_validate(
 enum interrupt_status interrupt_process_gate_disarm(
     struct interrupt_process_gate *gate
 );
+/*
+ * Return an entered-and-returned gate to armed without touching the interrupt
+ * descriptor. The Ring 3 proof entered CPL3 once and tore the gate down, so it
+ * never needed this; a scheduler that gives the processor back to a suspended
+ * process crosses the same gate on every switch, and re-arming through disarm
+ * and arm would rewrite the descriptor on every one of them.
+ */
+enum interrupt_status interrupt_process_gate_rearm(
+    struct interrupt_process_gate *gate
+);
 enum interrupt_status interrupt_request_kernel_resume(
     const struct interrupt_frame *frame,
     uintptr_t resume_stack

@@ -18,6 +18,7 @@ use crate::font;
 use crate::linux_elf64;
 use crate::linux_fat16;
 use crate::logo::{self, Format, Status};
+use crate::nvbios;
 use crate::wallpaper;
 use crate::ui_font;
 
@@ -42,6 +43,21 @@ const _: () = {
     assert!(core::mem::offset_of!(linux_fat16::Chain, file_bytes) == 5124);
     assert!(core::mem::offset_of!(linux_fat16::Chain, final_cluster_bytes) == 5128);
     assert!(core::mem::offset_of!(linux_fat16::Chain, valid) == 5132);
+
+    assert!(core::mem::size_of::<nvbios::Image>() == 24);
+    assert!(core::mem::align_of::<nvbios::Image>() == 4);
+    assert!(core::mem::offset_of!(nvbios::Image, image_bytes) == 0);
+    assert!(core::mem::offset_of!(nvbios::Image, pcir_offset) == 4);
+    assert!(core::mem::offset_of!(nvbios::Image, bit_offset) == 8);
+    assert!(core::mem::offset_of!(nvbios::Image, vendor_id) == 12);
+    assert!(core::mem::offset_of!(nvbios::Image, device_id) == 14);
+    assert!(core::mem::offset_of!(nvbios::Image, class_code) == 16);
+    assert!(core::mem::offset_of!(nvbios::Image, subclass) == 17);
+    assert!(core::mem::offset_of!(nvbios::Image, programming_interface) == 18);
+    assert!(core::mem::offset_of!(nvbios::Image, code_type) == 19);
+    assert!(core::mem::offset_of!(nvbios::Image, bit_tokens) == 20);
+    assert!(core::mem::offset_of!(nvbios::Image, bit_token_bytes) == 21);
+    assert!(core::mem::offset_of!(nvbios::Image, last_image) == 22);
 
     assert!(core::mem::size_of::<linux_fat16::Payload>() == 40);
     assert!(core::mem::align_of::<linux_fat16::Payload>() == 4);
@@ -1453,6 +1469,115 @@ pub unsafe extern "C" fn sapote_elf64_parse(
     // SAFETY: the caller promises this one readable range; null was refused.
     let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
     match elf64::parse(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            elf64_status_code(elf64::Status::Ok)
+        }
+        Err(status) => elf64_status_code(status),
+    }
+}
+
+/// Run all host-independent multiprocess ELF64 parser mutation families.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_multiprocess_elf64_self_test() -> u32 {
+    elf64::self_test_multiprocess()
+}
+
+/// Run every VBIOS parser control and report how many passed.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_nvbios_self_test() -> u32 {
+    nvbios::self_test() as u32
+}
+
+/// How many controls a complete VBIOS parser self-test runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_nvbios_controls() -> u32 {
+    nvbios::ROBUSTNESS_CONTROLS as u32
+}
+
+/// Copy the synthesised reference VBIOS image out for the caller to compare.
+///
+/// The kernel keeps its own copy of these bytes; writing Rust's copy through
+/// this boundary is how the two are held to being the same image rather than
+/// two images that merely parse.
+///
+/// # Safety
+///
+/// `out` must address `capacity` writable, non-aliased bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_nvbios_reference(
+    out: *mut u8,
+    capacity: usize,
+) -> usize {
+    let reference = nvbios::reference();
+
+    if out.is_null() || capacity < reference.len() {
+        return 0;
+    }
+    // SAFETY: the caller promises this writable range and null was refused.
+    let destination = unsafe {
+        core::slice::from_raw_parts_mut(out, reference.len())
+    };
+    destination.copy_from_slice(&reference);
+    reference.len()
+}
+
+/// Validate one VBIOS image read out of an NVIDIA PROM window.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` must
+/// address one writable `nvbios::Image`.  The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_nvbios_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut nvbios::Image,
+) -> i32 {
+    if out.is_null() {
+        return nvbios::Status::Length as i32;
+    }
+    // SAFETY: the caller promises one writable output and null was refused.
+    unsafe { *out = nvbios::Image::default() };
+    if input.is_null() {
+        return nvbios::Status::Length as i32;
+    }
+    // SAFETY: the caller promises this one readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match nvbios::parse(bytes) {
+        Ok(value) => {
+            // SAFETY: the validated output pointer still names one value.
+            unsafe { *out = value };
+            nvbios::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
+/// Parse one CPU-owned multiprocess ELF file into pointer-free facts.
+///
+/// # Safety
+///
+/// `input` must address `input_len` readable, non-aliased bytes and `out` must
+/// address one writable `elf64::ValidatedImage`.  The ranges must not overlap.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_multiprocess_elf64_parse(
+    input: *const u8,
+    input_len: usize,
+    out: *mut elf64::ValidatedImage,
+) -> i32 {
+    if out.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises one writable output and null was refused.
+    unsafe { *out = elf64::ValidatedImage::invalid() };
+    if input.is_null() {
+        return elf64_status_code(elf64::Status::NullArgument);
+    }
+    // SAFETY: the caller promises this one readable range; null was refused.
+    let bytes = unsafe { core::slice::from_raw_parts(input, input_len) };
+    match elf64::parse_multiprocess(bytes) {
         Ok(value) => {
             // SAFETY: the validated output pointer still names one value.
             unsafe { *out = value };
