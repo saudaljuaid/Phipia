@@ -2,7 +2,7 @@
 
 # Changelog
 
-## 2.2.0 — Several Processes and Thirteen Bounded Drivers
+## 2.2.0 — Several Processes, Thirty-Two Bounded Drivers and HD Audio
 
 - Replaced the one-process-ever address-space model with up to four private
   hierarchies live at once, each with its own image, stack, generation and
