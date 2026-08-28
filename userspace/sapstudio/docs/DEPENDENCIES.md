@@ -26,7 +26,7 @@ made here against the vendored source.
 
 | Verdict | Meaning |
 | --- | --- |
-| **Adopt** | Intended for the tree at the named milestone. |
+| **Adopt** | Intended for the tree when the related feature is implemented. |
 | **Candidate** | Likely, pending an evaluation the policy defines. |
 | **Watch** | Revisit when a platform capability or the project's needs change. |
 | **Reference** | Used on the host to build fixtures or check conformance; never linked into a shipping artefact. |
@@ -286,7 +286,7 @@ Sapote has no GPU, so this is a CPU story for the foreseeable future.
 | `tiny-skia` | Rust | BSD-3-Clause | T1 | **Adopt (leading)** | A port of Skia's CPU raster pipeline in safe Rust, `no_std` with `alloc`. It is the single highest-value graphics dependency available to this project. |
 | `zeno` | Rust | MIT / Apache-2.0 | T0 | Candidate | Very small `no_std` path rasteriser, if `tiny-skia` proves too large. |
 | `lyon` | Rust | MIT / Apache-2.0 | T1 | Watch | Tessellation matters for GPU rendering, which does not exist here yet. |
-| `embedded-graphics` | Rust | MIT / Apache-2.0 | T0 | **Adopt (early)** | Primitives, text, and framebuffer targets with no allocator. The fastest route to something on screen at milestone M1. |
+| `embedded-graphics` | Rust | MIT / Apache-2.0 | T0 | **Adopt (early)** | Primitives, text, and framebuffer targets with no allocator. A direct route to an initial native interface. |
 | `resvg` / `usvg` | Rust | MPL-2.0 | T1 | Candidate | SVG import for titles and graphics, rendering through `tiny-skia`. |
 | `kurbo` | Rust | MIT / Apache-2.0 | T1 | Candidate | See section 7. |
 | Skia | C++ | BSD-3-Clause | T2 | Reject | An enormous hosted build system. `tiny-skia` exists precisely to avoid this. |
@@ -448,32 +448,33 @@ semantics (R-12.7) or things no library can supply to a freestanding target.
 | A library that duplicates the product's core semantics | R-12.7. |
 | Telemetry, crash reporting, auto-update, licence checking | The charter's non-goals. |
 
-## 29. The minimum set for the first four milestones
+## 29. Candidate dependency sets
 
 Everything above is a survey. This is the actual shopping list, and it is
 short on purpose.
 
-| Milestone | Dependencies |
+| Area | Dependencies |
 | --- | --- |
-| **M1 — first pixel** | `libm`, `bytemuck`, `arrayvec`, `heapless`, `embedded-graphics`. An allocator is not yet required. |
-| **M2 — the model** | Add `slotmap`, `hashbrown`, `rlsf`, `serde`, `postcard`, `blake3`, `sha2`. Host-only: `proptest`, `cargo-fuzz`, `criterion`, `miri`, `cargo-deny`. |
-| **M3 — first frames** | Add `tiny-skia`, `ttf-parser`, `hound`, `dasp`, `lz4_flex`, `miniz_oxide`, `png`. |
-| **M4 — first cut** | Add `zune-jpeg`, `rubato`, `ebur128`, `biquad`, `microfft`, `exr`. |
+| **Native interface** | `libm`, `bytemuck`, `arrayvec`, `heapless`, `embedded-graphics`. An allocator is not yet required. |
+| **Project model** | `slotmap`, `hashbrown`, `rlsf`, `serde`, `postcard`, `blake3`, `sha2`. Host-only: `proptest`, `cargo-fuzz`, `criterion`, `miri`, `cargo-deny`. |
+| **Frame pipeline** | `tiny-skia`, `ttf-parser`, `hound`, `dasp`, `lz4_flex`, `miniz_oxide`, `png`. |
+| **Editing and export** | `zune-jpeg`, `rubato`, `ebur128`, `biquad`, `microfft`, `exr`. |
 
 Twenty-two libraries to a working cut. Every one of them is safe Rust, every
 one is compatible with GPL-3.0-only, and not one of them requires a capability
 Sapote is not already asked for in
 [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md).
 
-### What actually happened at M1 and M2
+### What the current implementation uses
 
 Fewer than the list expected, which is worth recording rather than quietly
 correcting. The time model, the project model, undo and redo, the generational
-store, the bounded growth helpers, the M1 heap, and the freestanding runtime
+store, the bounded growth helpers, the initial heap, and the freestanding
+runtime
 were all written with **no dependencies at all** — not one line of third-party
 code in the tree.
 
-Three of the M1 and M2 entries turned out to be things this project must own
+Three early entries turned out to be things this project must own
 anyway: `slotmap`'s job is done by `sapstudio_model::Store`, because a
 generational store that refuses a stale identifier by name is thirty lines and
 is the shape the rest of the model is built on; `rlsf`'s job is done for now by
@@ -492,8 +493,8 @@ in it should be a decision someone made and can read, and its decoder's bounds
 should be the model's own capacities rather than whatever a derive happened to
 allow.
 
-The frame types, the pool, the test patterns, and the `SPRW` mezzanine went
-the same way at M3: all four were on the "writes itself" list already, and
+The frame types, the pool, the test patterns, and the `SPRW` mezzanine followed
+the same path: all four were on the "writes itself" list already, and
 building them confirmed why. A frame's description is the product's semantics;
 a pool's eviction order has to be deterministic in a way no general cache
 promises; and the mezzanine is the format SapStudio owns end to end.
@@ -506,7 +507,7 @@ a list once predicted them. `sha2` will be evaluated against this project's own
 implementation when the gate can be run; the vectors decide it, not the fact
 that one of them is a dependency.
 
-The C and C++ entries in this document begin to matter at M5 and later, when
+The C and C++ entries in this document begin to matter when
 `SAP-04` makes assembly-backed codecs worth their boundary — and each will
 arrive under R-3.4's terms: after a Rust implementation exists, bit-exact with
 it, measured against it, and sealed behind the one ABI crate.

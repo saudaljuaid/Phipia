@@ -143,5 +143,5 @@ to duplicate something the application must own.
 | Every file carries an SPDX identifier | `reuse` |
 | Two clean builds are byte-identical | the build itself |
 
-The tools named here are written at the milestone that first needs them, and
+The tools named here are written when a feature first needs them, and
 are listed now so that no dependency arrives before the gate that judges it.

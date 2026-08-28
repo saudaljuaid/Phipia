@@ -64,10 +64,9 @@ The current kernel lacks several services a browser engine normally assumes:
   storage;
 - robust crash containment, watchdogs, per-process quotas, and update delivery.
 
-The first executable milestone is therefore an offline, pinned HTML/CSS fixture
-rendered in a private process with no networking. The second is plain HTTP from
-the deterministic peer. Internet URLs, JavaScript, downloads, and HTTPS are
-separate later milestones with their own negative controls.
+The first executable target is an offline, pinned HTML/CSS fixture rendered in
+a private process with no networking. Plain HTTP against the offline peer comes
+next. Internet URLs, JavaScript, downloads, and HTTPS remain separate projects.
 
 ## Acceptance sequence
 

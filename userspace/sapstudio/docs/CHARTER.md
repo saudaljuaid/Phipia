@@ -100,7 +100,7 @@ under a licence incompatible with GPL-3.0-only.
 | [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md) | How a dependency enters the tree, and how it leaves. |
 | [`PLATFORM_CONTRACT.md`](PLATFORM_CONTRACT.md) | What SapStudio needs from Sapote, and what is proven to work today. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The planned crate map and the shape of the data model. |
-| [`ROADMAP.md`](ROADMAP.md) | Milestones, smallest first. |
+| [`ROADMAP.md`](ROADMAP.md) | Current priorities and release criteria. |
 | [`VERIFICATION.md`](VERIFICATION.md) | What counts as evidence. |
 | [`BRAND.md`](BRAND.md) | The mark, the palette, the naming, the voice. |
 | [`GLOSSARY.md`](GLOSSARY.md) | Editing vocabulary, defined exactly enough to implement. |
