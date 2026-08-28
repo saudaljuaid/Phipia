@@ -4,17 +4,23 @@
 #include <stdint.h>
 
 #include <sapote/boot_ledger.h>
+#include <sapote/camera.h>
+#include <sapote/clock.h>
+#include <sapote/console.h>
 #include <sapote/cpu.h>
+#include <sapote/dock3d.h>
 #include <sapote/framebuffer.h>
 #include <sapote/fat32_fs.h>
 #include <sapote/heap.h>
 #include <sapote/logo.h>
 #include <sapote/memory.h>
+#include <sapote/network.h>
 #include <sapote/pci.h>
 #include <sapote/pointer.h>
 #include <sapote/screen.h>
 #include <sapote/studio_icon.h>
 #include <sapote/thread.h>
+#include <sapote/timer.h>
 #include <sapote/ui.h>
 #include <sapote/ui_font.h>
 #include <sapote/wallpaper.h>
@@ -24,26 +30,26 @@
 #define UI_MAX_WIDTH 1920U
 #define UI_MAX_HEIGHT 1200U
 #define UI_LOGO_WIDTH 280U
-#define UI_LOGO_HEIGHT 258U
+#define UI_LOGO_HEIGHT 278U
 #define UI_LOGO_PIXELS (UI_LOGO_WIDTH * UI_LOGO_HEIGHT)
 #define UI_LOGO_BITMAP_SCALE 1U
 #define UI_CURSOR_SOURCE_WIDTH 27U
 #define UI_CURSOR_SOURCE_HEIGHT 37U
 #define UI_MENU_HEIGHT 24U
+#define UI_MENU_TELEMETRY_MAX_WIDTH 384U
 #define UI_WORKSPACE_MENU_WIDTH 132U
 #define UI_WORKSPACE_MENU_HEIGHT 202U
 #define UI_HERO_MAX_WIDTH 640U
 #define UI_HERO_HEIGHT 388U
 #define UI_HERO_TITLE_HEIGHT 24U
-#define UI_DOCK_WIDTH 444U
-#define UI_DOCK_ITEM_WIDTH 88U
-#define UI_DOCK_ITEM_HEIGHT 116U
+#define UI_DOCK_WIDTH 496U
+#define UI_DOCK_ITEM_WIDTH 70U
+#define UI_DOCK_ITEM_HEIGHT 98U
 #define UI_DOCK_GAP 8U
-#define UI_DOCK_PADDING 34U
-#define UI_DOCK_HEIGHT 126U
-#define UI_FONT_ASCENT 12U
+#define UI_DOCK_PADDING 18U
+#define UI_DOCK_HEIGHT 110U
+#define UI_FONT_ASCENT 15U
 #define UI_FONT_DESCENT 4U
-#define UI_FONT_ADVANCE 8U
 #define UI_PANEL_TITLE_HEIGHT 26U
 #define UI_STUDIO_MAX_CLIPS 6U
 #define UI_STUDIO_PATH_BYTES 64U
@@ -53,14 +59,38 @@
 #define UI_STUDIO_BMP_HEADER_BYTES 54U
 #define UI_STUDIO_BMP_MAX_WIDTH 1920U
 #define UI_STUDIO_BMP_MAX_HEIGHT 1080U
+#define UI_CAMERA_CAPTURE_WIDTH 320U
+#define UI_CAMERA_CAPTURE_HEIGHT 180U
+#define UI_CAMERA_BMP_HEADER_BYTES 54U
+#define UI_SETTINGS_CATEGORY_COUNT 12U
+#define UI_WALLPAPER_COUNT 14U
+#define UI_CAMERA_SCENE_WIDTH 704U
+#define UI_CAMERA_SCENE_HEIGHT 424U
+#define UI_SPRING_TARGET 65536
+#define UI_SPRING_FRAME_NS UINT64_C(16000000)
+#define UI_REDRAW_DIAGNOSTIC_TILE 16U
+#define UI_REDRAW_DIAGNOSTIC_COLUMNS \
+    ((UI_MAX_WIDTH + UI_REDRAW_DIAGNOSTIC_TILE - 1U) / \
+        UI_REDRAW_DIAGNOSTIC_TILE)
+#define UI_REDRAW_DIAGNOSTIC_ROWS \
+    ((UI_MAX_HEIGHT + UI_REDRAW_DIAGNOSTIC_TILE - 1U) / \
+        UI_REDRAW_DIAGNOSTIC_TILE)
 
 static const char label_files[] = "Files";
 static const char label_terminal[] = "Terminal";
 static const char label_notes[] = "Notes";
 static const char label_studio[] = "SapStudio";
+static const char label_camera[] = "Camera";
+static const char label_settings[] = "Settings";
 
 static struct ui_state state;
 static struct surface *canvas;
+static struct ui_rect panel_home;
+static struct ui_rect panel_windows[UI_PANEL_COUNT];
+static bool panel_open[UI_PANEL_COUNT];
+static enum ui_panel_id panel_order[UI_PANEL_COUNT - 1U];
+static size_t panel_order_count;
+static uint8_t panel_cascade;
 static struct ui_event event_queue[UI_EVENT_QUEUE_CAPACITY];
 static size_t event_count;
 static uint32_t logo_pixels[UI_LOGO_PIXELS];
@@ -72,7 +102,30 @@ static uint32_t studio_icon_pixels[80U * 80U];
 static uint8_t studio_icon_alpha[80U * 80U];
 static uint32_t studio_icon_width;
 static uint32_t studio_icon_height;
+static uint32_t settings_icon_pixels[80U * 80U];
+static uint8_t settings_icon_alpha[80U * 80U];
+static uint32_t settings_icon_width;
+static uint32_t settings_icon_height;
+static uint32_t files_icon_pixels[80U * 80U];
+static uint8_t files_icon_alpha[80U * 80U];
+static uint32_t files_icon_width;
+static uint32_t files_icon_height;
+static uint32_t terminal_icon_pixels[80U * 80U];
+static uint8_t terminal_icon_alpha[80U * 80U];
+static uint32_t terminal_icon_width;
+static uint32_t terminal_icon_height;
+static uint32_t camera_icon_pixels[80U * 80U];
+static uint8_t camera_icon_alpha[80U * 80U];
+static uint32_t camera_icon_width;
+static uint32_t camera_icon_height;
+static uint32_t settings_category_icon_pixels[256U * 192U];
+static uint8_t settings_category_icon_alpha[256U * 192U];
+static uint32_t settings_category_icon_width;
+static uint32_t settings_category_icon_height;
 static uint32_t wallpaper_pixels[1024U * 768U];
+static uint32_t camera_scene_pixels[
+    UI_CAMERA_SCENE_WIDTH * UI_CAMERA_SCENE_HEIGHT
+];
 static struct sapfs_list_entry file_entries[12U];
 static size_t file_entry_count;
 static char file_directory[SAPFS_MAX_PATH + 1U] = ".";
@@ -97,8 +150,94 @@ static uint8_t studio_clip_count;
 static uint8_t studio_selected_clip = UINT8_MAX;
 static bool studio_dirty;
 static char studio_status[64U] = "Project ready";
-static const char *self_test_failure = "First Environment UI self-test not run";
+static int8_t settings_page = -1;
+static bool dock_dark;
+static bool dock_magnification = true;
+static bool dock_reflections = true;
+static bool dock_labels = true;
+static bool menu_glass = true;
+static bool window_high_contrast;
+static bool keyboard_focus_wrap = true;
+static bool keyboard_focus_indicator = true;
+static bool cursor_large;
+static bool cursor_dark = true;
+static bool spring_motion = true;
+static bool window_shadows = true;
+static bool window_bevels = true;
+static bool window_title_gradient = true;
+static uint8_t desktop_wallpaper;
+static uint32_t camera_capture_count;
+static bool camera_frame_available;
+static uint64_t camera_seen_generation;
+static char camera_status[64U] = "No camera connected";
+static uint8_t camera_bmp_row[UI_CAMERA_CAPTURE_WIDTH * 3U];
+static uint32_t camera_preview_row[UI_MAX_WIDTH];
+static uint32_t settings_wallpaper_thumbnail_pixels[128U * 72U];
+static uint32_t dock_backdrop_pixels[UI_MAX_WIDTH * 48U];
+static uint64_t redraw_tile_hashes[
+    UI_REDRAW_DIAGNOSTIC_COLUMNS * UI_REDRAW_DIAGNOSTIC_ROWS
+];
+static volatile bool panel_spring_active;
+static volatile bool panel_spring_force_settle;
+static volatile uint64_t panel_spring_timer_id;
+static int32_t panel_spring_position;
+static int32_t panel_spring_velocity;
+static uint64_t panel_spring_last_ns;
+static struct ui_rect panel_spring_origin;
+static volatile bool dock_spring_active;
+static uint64_t dock_spring_last_ns;
+static struct dock3d_state dock_model;
+static bool panel_drag_active;
+static enum ui_panel_id panel_drag_panel;
+static struct ui_point panel_drag_anchor;
+static struct ui_rect panel_drag_origin;
+static const char *self_test_failure = "Sapote Redwood UI self-test not run";
 static const char *event_queue_failure = "UI event queue self-test not run";
+static const char *installed_proof_failure =
+    "Sapote Redwood installed proof not run";
+
+static enum ui_status draw_button(
+    struct ui_rect button,
+    struct ui_rect damage,
+    const char *label
+);
+static enum ui_status draw_circle(
+    uint32_t center_x,
+    uint32_t center_y,
+    uint32_t radius,
+    struct ui_rect damage,
+    uint32_t pixel
+);
+static struct ui_rect camera_preview_rect(void);
+
+static void panel_spring_timer_wake(uint64_t deadline_ns, void *context);
+
+static bool panel_spring_schedule_wake(uint64_t now)
+{
+    uint64_t identifier = 0U;
+    const uint64_t deadline = now + UI_SPRING_FRAME_NS;
+
+    if (deadline < now || timer_arm(deadline, panel_spring_timer_wake,
+            NULL, &identifier) != TIMER_STATUS_OK) {
+        return false;
+    }
+    panel_spring_timer_id = identifier;
+    return true;
+}
+
+static void panel_spring_timer_wake(uint64_t deadline_ns, void *context)
+{
+    (void)deadline_ns;
+    (void)context;
+    panel_spring_timer_id = 0U;
+    if (panel_spring_active || dock_spring_active) {
+        /* The shell continuously calls ui_flush(), so a wake-up failure is
+         * not a reason to jump either spring to its final pose.  Leaving the
+         * springs active preserves their rendered intermediate frames while
+         * ui_flush() advances them from the monotonic clock. */
+        (void)panel_spring_schedule_wake(clock_monotonic_ns());
+    }
+}
 
 static const uint32_t cursor_outer[UI_CURSOR_SOURCE_HEIGHT] = {
     UINT32_C(0xE0000000), UINT32_C(0xF0000000), UINT32_C(0xFC000000),
@@ -254,13 +393,115 @@ static struct surface_rect surface_rect_of(struct ui_rect rectangle)
     };
 }
 
+static uint32_t dock_fixed_pixel(int32_t value)
+{
+    return value <= 0 ? 0U : dock3d_round_pixel(value);
+}
+
+static void dock_sync_layout(void)
+{
+    const uint32_t surface_width = state.layout.surface.width;
+    const uint32_t surface_height = state.layout.surface.height;
+    const int32_t resting_cell = dock_model.icon + dock_model.gap;
+    const int32_t resting_width = resting_cell *
+        (int32_t)UI_DOCK_ITEM_COUNT;
+    const int32_t resting_x =
+        (int32_t)(surface_width * DOCK3D_ONE / 2U) - resting_width / 2;
+    const uint32_t stable_hit_top = dock_fixed_pixel(dock_model.baseline -
+        (int32_t)((int64_t)dock_model.icon * dock_model.magnification /
+            DOCK3D_ONE));
+    uint32_t visual_top = surface_height;
+
+    for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
+        const struct dock3d_item_state *model = &dock_model.items[index];
+        const int32_t base_size = (int32_t)(((int64_t)dock_model.icon *
+            model->scale) / DOCK3D_ONE);
+        const int32_t width_factor = DOCK3D_ONE + (int32_t)(
+            (int64_t)model->press * 3277 / DOCK3D_ONE);
+        const int32_t height_factor = DOCK3D_ONE - (int32_t)(
+            (int64_t)model->press * 5243 / DOCK3D_ONE);
+        const int32_t width_fixed = (int32_t)(
+            (int64_t)base_size * width_factor / DOCK3D_ONE);
+        const int32_t height_fixed = (int32_t)(
+            (int64_t)base_size * height_factor / DOCK3D_ONE);
+        const int32_t x_fixed = model->center_x - width_fixed / 2;
+        const int32_t y_fixed = dock_model.baseline - height_fixed +
+            dock3d_bounce_offset(&dock_model, index);
+        const int32_t hit_x_fixed = resting_x +
+            (int32_t)index * resting_cell;
+        const int32_t hit_right_fixed = hit_x_fixed + resting_cell;
+        uint32_t icon_x = dock_fixed_pixel(x_fixed);
+        uint32_t icon_y = dock_fixed_pixel(y_fixed);
+        uint32_t icon_width = dock_fixed_pixel(width_fixed);
+        uint32_t icon_height = dock_fixed_pixel(height_fixed);
+        uint32_t hit_x = dock_fixed_pixel(hit_x_fixed);
+        uint32_t hit_right = dock_fixed_pixel(hit_right_fixed);
+        uint32_t hit_width = hit_right > hit_x ? hit_right - hit_x : 1U;
+
+        if (icon_x >= surface_width) {
+            icon_x = surface_width - 1U;
+        }
+        if (icon_y >= surface_height) {
+            icon_y = surface_height - 1U;
+        }
+        if (icon_width > surface_width - icon_x) {
+            icon_width = surface_width - icon_x;
+        }
+        if (icon_height > surface_height - icon_y) {
+            icon_height = surface_height - icon_y;
+        }
+        if (hit_x >= surface_width) {
+            hit_x = surface_width - 1U;
+        }
+        if (hit_right > surface_width) {
+            hit_right = surface_width;
+        }
+        hit_width = hit_right > hit_x ? hit_right - hit_x : 1U;
+        if (hit_width > surface_width - hit_x) {
+            hit_width = surface_width - hit_x;
+        }
+        state.layout.dock_items[index].icon_bounds = (struct ui_rect){
+            icon_x, icon_y, icon_width, icon_height
+        };
+        state.layout.dock_items[index].bounds = (struct ui_rect){
+            hit_x, stable_hit_top, hit_width,
+            surface_height - stable_hit_top
+        };
+        if (icon_y < visual_top) {
+            visual_top = icon_y;
+        }
+    }
+
+    const uint32_t panel_x = dock_fixed_pixel(dock_model.panel_x);
+    const uint32_t panel_y = dock_fixed_pixel(dock_model.panel_y);
+    uint32_t panel_width = dock_fixed_pixel(dock_model.panel_width);
+    const uint32_t padding = dock_fixed_pixel(dock_model.icon) / 2U + 8U;
+    uint32_t dock_left = panel_x > padding ? panel_x - padding : 0U;
+    uint32_t dock_right = panel_x + panel_width + padding;
+    uint32_t dock_top = visual_top > 62U ? visual_top - 62U : 0U;
+
+    if (dock_right > surface_width) {
+        dock_right = surface_width;
+    }
+    if (panel_width > surface_width - panel_x) {
+        panel_width = surface_width - panel_x;
+    }
+    if (panel_y < dock_top) {
+        dock_top = panel_y;
+    }
+    state.layout.dock = (struct ui_rect){
+        dock_left, dock_top, dock_right - dock_left,
+        surface_height - dock_top
+    };
+}
+
 static struct ui_rect dock_bounds_for(
     const struct ui_layout *layout,
     enum ui_element_id element
 )
 {
     if (layout == NULL || element < UI_ELEMENT_DOCK_FILES ||
-        element > UI_ELEMENT_DOCK_STUDIO) {
+        element > UI_ELEMENT_DOCK_SETTINGS) {
         return (struct ui_rect){ 0U, 0U, 0U, 0U };
     }
     const struct ui_rect item =
@@ -279,13 +520,80 @@ static struct ui_rect dock_bounds_for(
     return (struct ui_rect){ left, top, right - left, bottom - top };
 }
 
+static struct ui_rect dock_visual_bounds(const struct ui_layout *layout)
+{
+    if (layout == NULL) {
+        return (struct ui_rect){ 0U, 0U, 0U, 0U };
+    }
+    const uint32_t top = layout->dock.y > 12U ? layout->dock.y - 12U : 0U;
+
+    return (struct ui_rect){ 0U, top, layout->surface.width,
+        layout->surface.height - top };
+}
+
 static enum ui_panel_id panel_for_element(enum ui_element_id element)
 {
     if (element < UI_ELEMENT_DOCK_FILES ||
-        element > UI_ELEMENT_DOCK_STUDIO) {
+        element > UI_ELEMENT_DOCK_SETTINGS) {
         return UI_PANEL_NONE;
     }
     return state.layout.dock_items[(size_t)element - 1U].panel;
+}
+
+static void install_panel_geometry(enum ui_panel_id panel)
+{
+    const struct ui_rect window = panel > UI_PANEL_NONE &&
+        panel < UI_PANEL_COUNT ? panel_windows[panel] : panel_home;
+
+    state.layout.panel = window;
+    state.layout.panel_client = (struct ui_rect){
+        window.x + 10U, window.y + 38U,
+        window.width - 20U, window.height - 48U
+    };
+    state.layout.panel_title_baseline = window.y + 22U;
+    state.layout.panel_text_baseline = state.layout.panel_client.y +
+        UI_FONT_ASCENT;
+}
+
+static void remove_panel_from_order(enum ui_panel_id panel)
+{
+    for (size_t index = 0U; index < panel_order_count; ++index) {
+        if (panel_order[index] != panel) {
+            continue;
+        }
+        for (size_t next = index + 1U; next < panel_order_count; ++next) {
+            panel_order[next - 1U] = panel_order[next];
+        }
+        --panel_order_count;
+        return;
+    }
+}
+
+static void bring_panel_to_front(enum ui_panel_id panel)
+{
+    remove_panel_from_order(panel);
+    if (panel_order_count < UI_PANEL_COUNT - 1U) {
+        panel_order[panel_order_count++] = panel;
+    }
+}
+
+static enum ui_panel_id front_panel(void)
+{
+    return panel_order_count == 0U ? UI_PANEL_NONE :
+        panel_order[panel_order_count - 1U];
+}
+
+static enum ui_panel_id panel_at_point(struct ui_point point)
+{
+    for (size_t index = panel_order_count; index > 0U; --index) {
+        const enum ui_panel_id panel = panel_order[index - 1U];
+
+        if (panel_open[panel] &&
+                rect_contains_point(panel_windows[panel], point)) {
+            return panel;
+        }
+    }
+    return UI_PANEL_NONE;
 }
 
 static bool baseline_fits(struct ui_rect rectangle, uint32_t baseline)
@@ -332,17 +640,20 @@ enum ui_status ui_layout_build(
 
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
-        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
+        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_SETTINGS
     };
     static const char *const labels[UI_DOCK_ITEM_COUNT] = {
-        label_files, label_terminal, label_notes, label_studio
+        label_files, label_terminal, label_notes, label_studio,
+        label_camera, label_settings
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL, UI_ACTION_OPEN_NOTES,
-        UI_ACTION_OPEN_STUDIO
+        UI_ACTION_OPEN_STUDIO, UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
+        UI_PANEL_CAMERA, UI_PANEL_SETTINGS
     };
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -354,12 +665,12 @@ enum ui_status ui_layout_build(
             .label = labels[index],
             .bounds = { x, layout->dock.y + 1U,
                 UI_DOCK_ITEM_WIDTH, UI_DOCK_ITEM_HEIGHT },
-            .icon_bounds = { x + 4U, layout->dock.y + 18U, 80U, 80U },
+            .icon_bounds = { x + 6U, layout->dock.y + 18U, 58U, 58U },
             .action = actions[index],
             .panel = panels[index]
         };
     }
-    layout->dock_label_baseline = layout->dock.y + 18U;
+    layout->dock_label_baseline = layout->dock.y + 16U;
 
     panel_width = width - 80U < 860U ? width - 80U : 860U;
     panel_height = layout->dock.y - 56U;
@@ -443,8 +754,15 @@ enum ui_status ui_layout_validate(const struct ui_layout *layout)
             return UI_STATUS_DUPLICATE_ELEMENT_ID;
         }
         seen[item->id] = true;
+        /*
+         * A magnified 3D Dock icon deliberately grows beyond its stable hit
+         * lane.  Both rectangles must remain inside the Dock envelope, but
+         * the artwork is not required to remain inside the (non-overlapping)
+         * input lane.  Requiring that containment made the installed proof
+         * reject every legitimate live hover frame.
+         */
         if (validate_rect(item->bounds, layout->dock) != UI_STATUS_OK ||
-            validate_rect(item->icon_bounds, item->bounds) != UI_STATUS_OK) {
+            validate_rect(item->icon_bounds, layout->dock) != UI_STATUS_OK) {
             return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
         }
         for (size_t other = index + 1U; other < UI_DOCK_ITEM_COUNT; ++other) {
@@ -455,7 +773,7 @@ enum ui_status ui_layout_validate(const struct ui_layout *layout)
         }
     }
     for (enum ui_element_id id = UI_ELEMENT_DOCK_FILES;
-         id <= UI_ELEMENT_DOCK_STUDIO; id = (enum ui_element_id)(id + 1)) {
+         id <= UI_ELEMENT_DOCK_SETTINGS; id = (enum ui_element_id)(id + 1)) {
         if (!seen[id]) {
             return UI_STATUS_BAD_ELEMENT;
         }
@@ -533,6 +851,20 @@ static enum ui_status draw_wallpaper(struct ui_rect damage)
 {
     const struct ui_rect clipped = rect_intersection(state.layout.surface,
         damage);
+
+    if (clipped.width == 0U || clipped.height == 0U) {
+        return UI_STATUS_OK;
+    }
+    if (state.layout.surface.width == 1024U &&
+            state.layout.surface.height == 768U) {
+        const uint32_t *source = &wallpaper_pixels[
+            (size_t)clipped.y * 1024U + clipped.x
+        ];
+        return surface_blit(canvas, clipped.x, clipped.y, source,
+            clipped.width, clipped.height,
+            1024U * SURFACE_BYTES_PER_PIXEL) == SURFACE_STATUS_OK ?
+                UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
+    }
 
     for (uint32_t y = 0U; y < clipped.height; ++y) {
         const uint32_t target_y = clipped.y + y;
@@ -695,6 +1027,114 @@ static enum ui_status draw_text(
     return UI_STATUS_OK;
 }
 
+static enum ui_status draw_alpha_subimage(
+    struct ui_rect bounds,
+    struct ui_rect damage,
+    const uint32_t *pixels,
+    const uint8_t *alpha_pixels,
+    uint32_t source_width,
+    uint32_t source_height,
+    struct ui_rect source_bounds
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+    uint32_t source_right;
+    uint32_t source_bottom;
+
+    if (pixels == NULL || alpha_pixels == NULL || source_width == 0U ||
+        source_height == 0U || bounds.width == 0U || bounds.height == 0U ||
+        !rect_end(source_bounds, &source_right, &source_bottom) ||
+        source_right > source_width || source_bottom > source_height) {
+        return UI_STATUS_NULL_ARGUMENT;
+    }
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        const uint32_t local_y = clipped.y - bounds.y + y;
+        const uint64_t denominator_y = bounds.height > 1U ?
+            (uint64_t)bounds.height - 1U : 1U;
+        const uint64_t scaled_y = (uint64_t)local_y *
+            (source_bounds.height > 1U ? source_bounds.height - 1U : 0U);
+        const uint32_t source_y = source_bounds.y +
+            (uint32_t)(scaled_y / denominator_y);
+        const uint32_t next_y = source_y + 1U < source_bottom ?
+            source_y + 1U : source_y;
+        const uint64_t fraction_y = scaled_y % denominator_y;
+
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - bounds.x + x;
+            const uint64_t denominator_x = bounds.width > 1U ?
+                (uint64_t)bounds.width - 1U : 1U;
+            const uint64_t scaled_x = (uint64_t)local_x *
+                (source_bounds.width > 1U ? source_bounds.width - 1U : 0U);
+            const uint32_t source_x = source_bounds.x +
+                (uint32_t)(scaled_x / denominator_x);
+            const uint32_t next_x = source_x + 1U < source_right ?
+                source_x + 1U : source_x;
+            const uint64_t fraction_x = scaled_x % denominator_x;
+            const size_t samples[4U] = {
+                (size_t)source_y * source_width + source_x,
+                (size_t)source_y * source_width + next_x,
+                (size_t)next_y * source_width + source_x,
+                (size_t)next_y * source_width + next_x
+            };
+            const uint64_t weights[4U] = {
+                (denominator_x - fraction_x) *
+                    (denominator_y - fraction_y),
+                fraction_x * (denominator_y - fraction_y),
+                (denominator_x - fraction_x) * fraction_y,
+                fraction_x * fraction_y
+            };
+            const uint64_t denominator = denominator_x * denominator_y;
+            uint64_t alpha_sum = 0U;
+            uint8_t alpha;
+            uint32_t pixel = 0U;
+
+            for (size_t sample = 0U; sample < 4U; ++sample) {
+                alpha_sum += (uint64_t)alpha_pixels[samples[sample]] *
+                    weights[sample];
+            }
+            alpha = (uint8_t)((alpha_sum + denominator / 2U) /
+                denominator);
+
+            if (alpha == 0U) {
+                continue;
+            }
+            static const uint8_t channels = 3U;
+            const uint8_t shifts[3U] = { logo_red_shift,
+                logo_green_shift, logo_blue_shift };
+            uint32_t background;
+
+            if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                    &background) != SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+            for (uint8_t channel = 0U; channel < channels; ++channel) {
+                const uint8_t shift = shifts[channel];
+                const uint32_t background_value =
+                    (background >> shift) & UINT32_C(0xFF);
+                uint64_t premultiplied_sum = 0U;
+
+                for (size_t sample = 0U; sample < 4U; ++sample) {
+                    const uint32_t foreground_value =
+                        (pixels[samples[sample]] >> shift) & UINT32_C(0xFF);
+                    premultiplied_sum += (uint64_t)foreground_value *
+                        alpha_pixels[samples[sample]] * weights[sample];
+                }
+                const uint32_t premultiplied = (uint32_t)(
+                    (premultiplied_sum + denominator / 2U) / denominator);
+                const uint32_t value = (premultiplied +
+                    background_value * (UINT8_MAX - alpha) + 127U) /
+                        UINT8_MAX;
+                pixel |= (value > UINT8_MAX ? UINT8_MAX : value) << shift;
+            }
+            if (surface_pixel(canvas, clipped.x + x, clipped.y + y, pixel) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
 static enum ui_status draw_alpha_image(
     struct ui_rect bounds,
     struct ui_rect damage,
@@ -704,63 +1144,9 @@ static enum ui_status draw_alpha_image(
     uint32_t source_height
 )
 {
-    const struct ui_rect clipped = rect_intersection(bounds, damage);
-
-    if (pixels == NULL || alpha_pixels == NULL || source_width == 0U ||
-        source_height == 0U || bounds.width == 0U || bounds.height == 0U) {
-        return UI_STATUS_NULL_ARGUMENT;
-    }
-    for (uint32_t y = 0U; y < clipped.height; ++y) {
-        for (uint32_t x = 0U; x < clipped.width; ++x) {
-            const uint32_t source_x = (uint32_t)(
-                (uint64_t)(clipped.x - bounds.x + x) * source_width /
-                    bounds.width
-            );
-            const uint32_t source_y = (uint32_t)(
-                (uint64_t)(clipped.y - bounds.y + y) * source_height /
-                    bounds.height
-            );
-            const size_t source = (size_t)source_y * source_width + source_x;
-            const uint8_t alpha = alpha_pixels[source];
-            uint32_t pixel = pixels[source];
-
-            if (alpha == 0U) {
-                continue;
-            }
-            if (alpha != UINT8_MAX) {
-                static const uint8_t channels = 3U;
-                const uint8_t shifts[3U] = { logo_red_shift,
-                    logo_green_shift, logo_blue_shift };
-                uint32_t background;
-
-                if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
-                        &background) != SURFACE_STATUS_OK) {
-                    return UI_STATUS_SURFACE_FAILURE;
-                }
-                pixel = 0U;
-                for (uint8_t channel = 0U; channel < channels; ++channel) {
-                    const uint8_t shift = shifts[channel];
-                    const uint32_t foreground_value =
-                        (pixels[source] >> shift) & UINT32_C(0xFF);
-                    const uint32_t background_value =
-                        (background >> shift) & UINT32_C(0xFF);
-                    uint32_t value = foreground_value +
-                        (background_value * (UINT8_MAX - alpha) + 127U) /
-                            UINT8_MAX;
-
-                    if (value > UINT8_MAX) {
-                        value = UINT8_MAX;
-                    }
-                    pixel |= value << shift;
-                }
-            }
-            if (surface_pixel(canvas, clipped.x + x, clipped.y + y, pixel) !=
-                    SURFACE_STATUS_OK) {
-                return UI_STATUS_SURFACE_FAILURE;
-            }
-        }
-    }
-    return UI_STATUS_OK;
+    return draw_alpha_subimage(bounds, damage, pixels, alpha_pixels,
+        source_width, source_height,
+        (struct ui_rect){ 0U, 0U, source_width, source_height });
 }
 
 static enum ui_status draw_logo_color(
@@ -810,76 +1196,30 @@ static enum ui_status draw_icon(
 )
 {
     (void)pixel;
-    enum ui_status status = translucent_fill((struct ui_rect){
-        bounds.x + 4U, bounds.y + 5U, bounds.width - 4U,
-        bounds.height - 3U }, damage, state.theme.shadow, 110U);
+    enum ui_status status = UI_STATUS_OK;
 
-    if (id == UI_ELEMENT_DOCK_FILES) {
-        const struct ui_rect tab = { bounds.x + 5U, bounds.y + 7U,
-            bounds.width * 5U / 11U, bounds.height / 3U };
-        const struct ui_rect folder = { bounds.x + 3U, bounds.y + 16U,
-            bounds.width - 6U, bounds.height - 20U };
-        const uint32_t logo_width = bounds.width * 5U / 12U;
-        const uint32_t logo_height = logo_width * UI_LOGO_HEIGHT /
-            UI_LOGO_WIDTH;
-        const struct ui_rect mark = {
-            bounds.x + (bounds.width - logo_width) / 2U,
-            folder.y + (folder.height - logo_height) / 2U + 2U,
-            logo_width, logo_height
-        };
+    if (id == UI_ELEMENT_DOCK_FILES || id == UI_ELEMENT_DOCK_TERMINAL) {
+        const bool files = id == UI_ELEMENT_DOCK_FILES;
+        const uint32_t *icon_pixels = files ?
+            files_icon_pixels : terminal_icon_pixels;
+        const uint8_t *icon_alpha = files ?
+            files_icon_alpha : terminal_icon_alpha;
+        const uint32_t source_width = files ?
+            files_icon_width : terminal_icon_width;
+        const uint32_t source_height = files ?
+            files_icon_height : terminal_icon_height;
+        uint32_t mark_width = bounds.width;
+        uint32_t mark_height = mark_width * source_height / source_width;
 
-        if (status == UI_STATUS_OK) {
-            status = gradient_rect(tab, damage, 0xC7U, 0xE5U, 0xF5U,
-                0x6BU, 0xA9U, 0xCBU);
+        if (mark_height > bounds.height) {
+            mark_height = bounds.height;
+            mark_width = mark_height * source_width / source_height;
         }
-        if (status == UI_STATUS_OK) {
-            status = gradient_rect(folder, damage, 0xB6U, 0xDCU, 0xF0U,
-                0x4FU, 0x8CU, 0xB4U);
-        }
-        if (status == UI_STATUS_OK) {
-            status = stroke_clipped(folder, damage, 2U,
-                framebuffer_pack(0x3CU, 0x65U, 0x79U));
-        }
-        if (status == UI_STATUS_OK) {
-            status = draw_logo_color(mark, damage);
-        }
-    } else if (id == UI_ELEMENT_DOCK_TERMINAL) {
-        const struct ui_rect shell = { bounds.x + 2U, bounds.y + 2U,
-            bounds.width - 4U, bounds.height - 5U };
-        const struct ui_rect screen = { shell.x + 7U, shell.y + 8U,
-            shell.width - 14U, shell.height - 19U };
-
-        if (status == UI_STATUS_OK) {
-            status = gradient_rect(shell, damage, 0xF6U, 0xF9U, 0xF9U,
-                0x7DU, 0x8CU, 0x91U);
-        }
-        if (status == UI_STATUS_OK) {
-            status = stroke_clipped(shell, damage, 2U,
-                framebuffer_pack(0x51U, 0x5EU, 0x62U));
-        }
-        if (status == UI_STATUS_OK) {
-            status = gradient_rect(screen, damage, 0x43U, 0x4AU, 0x4CU,
-                0x06U, 0x09U, 0x0AU);
-        }
-        if (status == UI_STATUS_OK) {
-            status = stroke_clipped(screen, damage, 2U, state.theme.ink);
-        }
-        for (uint32_t step = 0U; step < 3U && status == UI_STATUS_OK;
-             ++step) {
-            status = fill_clipped((struct ui_rect){ screen.x + 10U + step * 3U,
-                screen.y + 12U + step * 3U, 5U, 3U }, damage,
-                state.theme.white);
-            if (status == UI_STATUS_OK) {
-                status = fill_clipped((struct ui_rect){
-                    screen.x + 10U + step * 3U,
-                    screen.y + 24U - step * 3U, 5U, 3U }, damage,
-                    state.theme.white);
-            }
-        }
-        if (status == UI_STATUS_OK) {
-            status = fill_clipped((struct ui_rect){ screen.x + 29U,
-                screen.y + 28U, 18U, 3U }, damage, state.theme.white);
-        }
+        status = draw_alpha_image((struct ui_rect){
+            bounds.x + (bounds.width - mark_width) / 2U,
+            bounds.y + (bounds.height - mark_height) / 2U,
+            mark_width, mark_height
+        }, damage, icon_pixels, icon_alpha, source_width, source_height);
     } else if (id == UI_ELEMENT_DOCK_NOTES) {
         const struct ui_rect page = { bounds.x + 7U, bounds.y + 4U,
             bounds.width - 14U, bounds.height - 8U };
@@ -925,6 +1265,28 @@ static enum ui_status draw_icon(
             mark_width, mark_height
         }, damage, studio_icon_pixels, studio_icon_alpha,
             studio_icon_width, studio_icon_height);
+    } else if (id == UI_ELEMENT_DOCK_CAMERA ||
+            id == UI_ELEMENT_DOCK_SETTINGS) {
+        const uint32_t *icon_pixels = id == UI_ELEMENT_DOCK_CAMERA ?
+            camera_icon_pixels : settings_icon_pixels;
+        const uint8_t *icon_alpha = id == UI_ELEMENT_DOCK_CAMERA ?
+            camera_icon_alpha : settings_icon_alpha;
+        const uint32_t source_width = id == UI_ELEMENT_DOCK_CAMERA ?
+            camera_icon_width : settings_icon_width;
+        const uint32_t source_height = id == UI_ELEMENT_DOCK_CAMERA ?
+            camera_icon_height : settings_icon_height;
+        uint32_t mark_width = bounds.width;
+        uint32_t mark_height = mark_width * source_height / source_width;
+
+        if (mark_height > bounds.height) {
+            mark_height = bounds.height;
+            mark_width = mark_height * source_width / source_height;
+        }
+        status = draw_alpha_image((struct ui_rect){
+            bounds.x + (bounds.width - mark_width) / 2U,
+            bounds.y + (bounds.height - mark_height) / 2U,
+            mark_width, mark_height
+        }, damage, icon_pixels, icon_alpha, source_width, source_height);
     } else {
         status = UI_STATUS_BAD_ELEMENT;
     }
@@ -947,7 +1309,7 @@ static enum ui_status draw_window_title(
     struct ui_rect damage,
     uint32_t baseline,
     const char *label,
-    bool close_box
+    bool active
 )
 {
     const uint32_t label_x = centered_text_x(title, label);
@@ -955,33 +1317,51 @@ static enum ui_status draw_window_title(
     enum ui_status status = ui_font_text_width(label, &label_width) ==
         UI_FONT_STATUS_OK ? UI_STATUS_OK : UI_STATUS_FONT_FAILURE;
 
-    if (status == UI_STATUS_OK) {
+    if (status == UI_STATUS_OK && window_title_gradient && active) {
         status = gradient_rect(title, damage, 0xF4U, 0xF7U, 0xF7U,
             0x99U, 0xA5U, 0xAAU);
+    } else if (status == UI_STATUS_OK && window_title_gradient) {
+        status = gradient_rect(title, damage, 0xE4U, 0xE7U, 0xE8U,
+            0xAFU, 0xB6U, 0xB9U);
+    } else if (status == UI_STATUS_OK) {
+        status = fill_clipped(title, damage,
+            framebuffer_pack(0xC6U, 0xCCU, 0xCEU));
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped((struct ui_rect){
             title.x, title.y + title.height - 1U, title.width, 1U
         }, damage, state.theme.ink);
     }
-    if (close_box) {
+    {
         const struct ui_rect close = {
             title.x + 6U, title.y + 4U, 18U, 18U
         };
 
-        status = gradient_rect(close, damage, 0xF6U, 0x8AU, 0x82U,
-            0xBCU, 0x2FU, 0x2AU);
+        /* Keep the close control recognisably red on background windows too.
+         * A compact traffic-light treatment reads much more cleanly than the
+         * old square button and never collapses into a grey X. */
+        status = draw_circle(close.x + 9U, close.y + 9U, 8U, damage,
+            framebuffer_pack(active ? 0x9EU : 0xA8U,
+                active ? 0x22U : 0x48U, active ? 0x1EU : 0x44U));
         if (status == UI_STATUS_OK) {
-            status = stroke_clipped(close, damage, 1U, state.theme.ink);
+            status = draw_circle(close.x + 9U, close.y + 9U, 7U, damage,
+                framebuffer_pack(active ? 0xF4U : 0xD9U,
+                    active ? 0x5BU : 0x6CU, active ? 0x52U : 0x67U));
         }
-        for (uint32_t step = 0U; step < 8U && status == UI_STATUS_OK;
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(close.x + 6U, close.y + 5U, 2U, damage,
+                framebuffer_pack(0xFFU, 0xC5U, 0xBEU));
+        }
+        for (uint32_t step = 0U; step < 6U && status == UI_STATUS_OK;
              ++step) {
-            status = fill_clipped((struct ui_rect){ close.x + 5U + step,
-                close.y + 5U + step, 2U, 2U }, damage, state.theme.white);
+            const uint32_t mark = active ? state.theme.white :
+                framebuffer_pack(0x7FU, 0x27U, 0x24U);
+
+            status = fill_clipped((struct ui_rect){ close.x + 6U + step,
+                close.y + 6U + step, 1U, 1U }, damage, mark);
             if (status == UI_STATUS_OK) {
-                status = fill_clipped((struct ui_rect){ close.x + 12U - step,
-                    close.y + 5U + step, 2U, 2U }, damage,
-                    state.theme.white);
+                status = fill_clipped((struct ui_rect){ close.x + 11U - step,
+                    close.y + 6U + step, 1U, 1U }, damage, mark);
             }
         }
     }
@@ -994,7 +1374,243 @@ static enum ui_status draw_window_title(
 
 static bool panel_is_active_for(enum ui_element_id element)
 {
-    return panel_for_element(element) == state.active_panel;
+    const enum ui_panel_id panel = panel_for_element(element);
+
+    return panel > UI_PANEL_NONE && panel < UI_PANEL_COUNT &&
+        panel_open[panel];
+}
+
+static enum ui_status draw_dock_radial(
+    uint32_t center_x,
+    uint32_t center_y,
+    uint32_t radius_x,
+    uint32_t radius_y,
+    struct ui_rect damage,
+    uint32_t pixel,
+    uint8_t maximum_alpha
+)
+{
+    if (radius_x == 0U || radius_y == 0U) {
+        return UI_STATUS_OK;
+    }
+    const int32_t left = (int32_t)center_x - (int32_t)radius_x;
+    const int32_t top = (int32_t)center_y - (int32_t)radius_y;
+    const uint64_t radius_x_squared = (uint64_t)radius_x * radius_x;
+    const uint64_t radius_y_squared = (uint64_t)radius_y * radius_y;
+
+    for (uint32_t row = 0U; row <= radius_y * 2U; ++row) {
+        const int32_t y = top + (int32_t)row;
+
+        if (y < 0 || (uint32_t)y >= state.layout.surface.height) {
+            continue;
+        }
+        for (uint32_t column = 0U; column <= radius_x * 2U; ++column) {
+            const int32_t x = left + (int32_t)column;
+            const int64_t dx = (int64_t)x - center_x;
+            const int64_t dy = (int64_t)y - center_y;
+            const uint64_t distance = (uint64_t)(dx * dx) *
+                radius_y_squared + (uint64_t)(dy * dy) * radius_x_squared;
+            const uint64_t limit = radius_x_squared * radius_y_squared;
+
+            if (x < 0 || (uint32_t)x >= state.layout.surface.width ||
+                    distance >= limit ||
+                    !rect_contains_point(damage, (struct ui_point){ x, y })) {
+                continue;
+            }
+            const uint8_t alpha = (uint8_t)(
+                (uint64_t)maximum_alpha * (limit - distance) / limit);
+            uint32_t under;
+
+            if (surface_read_pixel(canvas, (uint32_t)x, (uint32_t)y,
+                    &under) != SURFACE_STATUS_OK ||
+                    surface_pixel(canvas, (uint32_t)x, (uint32_t)y,
+                        blend_packed(under, pixel, alpha)) !=
+                        SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static uint8_t dock_icon_alpha_at(
+    enum ui_element_id id,
+    uint32_t local_x,
+    uint32_t local_y,
+    uint32_t width,
+    uint32_t height
+)
+{
+    const uint8_t *alpha = NULL;
+    uint32_t source_width = 0U;
+    uint32_t source_height = 0U;
+
+    if (id == UI_ELEMENT_DOCK_FILES) {
+        alpha = files_icon_alpha;
+        source_width = files_icon_width;
+        source_height = files_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_TERMINAL) {
+        alpha = terminal_icon_alpha;
+        source_width = terminal_icon_width;
+        source_height = terminal_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_STUDIO) {
+        alpha = studio_icon_alpha;
+        source_width = studio_icon_width;
+        source_height = studio_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_CAMERA) {
+        alpha = camera_icon_alpha;
+        source_width = camera_icon_width;
+        source_height = camera_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_SETTINGS) {
+        alpha = settings_icon_alpha;
+        source_width = settings_icon_width;
+        source_height = settings_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_NOTES) {
+        return local_x >= 7U && local_x + 7U < width && local_y >= 4U &&
+            local_y + 4U < height ? UINT8_MAX : 0U;
+    }
+    if (alpha == NULL || width == 0U || height == 0U ||
+            source_width == 0U || source_height == 0U) {
+        return 0U;
+    }
+    uint32_t source_x = local_x * source_width / width;
+    uint32_t source_y = local_y * source_height / height;
+    if (source_x >= source_width) {
+        source_x = source_width - 1U;
+    }
+    if (source_y >= source_height) {
+        source_y = source_height - 1U;
+    }
+    return alpha[(size_t)source_y * source_width + source_x];
+}
+
+static enum ui_status draw_dock_reflection(
+    const struct ui_dock_item *item,
+    struct ui_rect icon,
+    struct ui_rect damage
+)
+{
+    const uint32_t baseline = dock_fixed_pixel(dock_model.baseline);
+    const uint32_t panel_height = dock_fixed_pixel(dock_model.panel_height);
+    const uint32_t dock_center = dock_fixed_pixel(dock_model.center_x);
+    const uint32_t icon_bottom = icon.y + icon.height;
+    const uint32_t lift = baseline > icon_bottom ? baseline - icon_bottom : 0U;
+
+    if (!dock_reflections || panel_height <= lift + 1U ||
+            icon.width == 0U || icon.height == 0U) {
+        return UI_STATUS_OK;
+    }
+    uint32_t reflection_height = icon.height * 66U / 100U;
+    if (reflection_height > panel_height - lift) {
+        reflection_height = panel_height - lift;
+    }
+    for (uint32_t row = 0U; row < reflection_height; ++row) {
+        const uint32_t source_local_y = icon.height - 1U -
+            row * icon.height / reflection_height;
+        const uint32_t source_y = icon.y + source_local_y;
+        const uint32_t destination_y = baseline + lift + row;
+        const uint32_t depth = destination_y > baseline ?
+            destination_y - baseline : 0U;
+        const uint32_t flare = 1000U +
+            55U * depth / (panel_height == 0U ? 1U : panel_height);
+        const uint32_t fade = 117U * (reflection_height - row) /
+            reflection_height;
+
+        if (destination_y >= state.layout.surface.height) {
+            break;
+        }
+        for (uint32_t column = 0U; column < icon.width; ++column) {
+            const uint8_t artwork_alpha = dock_icon_alpha_at(item->id,
+                column, source_local_y, icon.width, icon.height);
+            if (artwork_alpha == 0U) {
+                continue;
+            }
+            const uint32_t source_x = icon.x + column;
+            const int64_t offset = (int64_t)source_x - dock_center;
+            const int64_t warped = (int64_t)dock_center +
+                offset * flare / 1000;
+            if (warped < 0 || warped >= state.layout.surface.width ||
+                    !rect_contains_point(damage, (struct ui_point){
+                        (int32_t)warped, (int32_t)destination_y })) {
+                continue;
+            }
+            uint32_t source;
+            uint32_t under;
+            const uint8_t alpha = (uint8_t)(
+                (uint32_t)fade * artwork_alpha / UINT8_MAX);
+            if (surface_read_pixel(canvas, source_x, source_y, &source) !=
+                    SURFACE_STATUS_OK ||
+                    surface_read_pixel(canvas, (uint32_t)warped,
+                        destination_y, &under) != SURFACE_STATUS_OK ||
+                    surface_pixel(canvas, (uint32_t)warped, destination_y,
+                        blend_packed(under, source, alpha)) !=
+                        SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static enum ui_status draw_dock_tooltip(
+    size_t item_index,
+    const struct ui_dock_item *item,
+    struct ui_rect icon,
+    struct ui_rect damage
+)
+{
+    if (!dock_labels || dock_model.tooltip_item != (int)item_index ||
+            dock_model.tooltip <= 655) {
+        return UI_STATUS_OK;
+    }
+    uint32_t label_width;
+    if (ui_font_text_width(item->label, &label_width) != UI_FONT_STATUS_OK) {
+        return UI_STATUS_FONT_FAILURE;
+    }
+    const uint32_t padding = 10U;
+    const uint32_t bubble_width = label_width + padding * 2U;
+    const uint32_t bubble_height = 24U;
+    uint32_t center = icon.x + icon.width / 2U;
+    uint32_t bubble_x = center > bubble_width / 2U ?
+        center - bubble_width / 2U : 6U;
+    const uint32_t slide = (uint32_t)(
+        (int64_t)(DOCK3D_ONE - dock_model.tooltip) * 6 / DOCK3D_ONE);
+    uint32_t bubble_y = icon.y > bubble_height + 14U + slide ?
+        icon.y - bubble_height - 14U - slide : 2U;
+    if (bubble_x + bubble_width > state.layout.surface.width - 6U) {
+        bubble_x = state.layout.surface.width - 6U - bubble_width;
+    }
+    const uint8_t alpha = (uint8_t)(
+        (int64_t)dock_model.tooltip * 247 / DOCK3D_ONE);
+    enum ui_status status = UI_STATUS_OK;
+    for (uint32_t row = 0U; row < bubble_height &&
+            status == UI_STATUS_OK; ++row) {
+        const uint32_t edge = row < 4U ? 4U - row :
+            (row + 4U >= bubble_height ? row + 4U - bubble_height + 1U : 0U);
+        status = translucent_fill((struct ui_rect){
+            bubble_x + edge, bubble_y + row,
+            bubble_width - edge * 2U, 1U
+        }, damage, framebuffer_pack(0xF2U, 0xF2U, 0xF5U), alpha);
+    }
+    if (status == UI_STATUS_OK) {
+        for (uint32_t row = 0U; row < 7U; ++row) {
+            const uint32_t half = 6U - row;
+            status = translucent_fill((struct ui_rect){
+                center - half, bubble_y + bubble_height + row,
+                half * 2U + 1U, 1U
+            }, damage, framebuffer_pack(0xF2U, 0xF2U, 0xF5U), alpha);
+            if (status != UI_STATUS_OK) {
+                break;
+            }
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text((struct ui_rect){ bubble_x, bubble_y,
+            bubble_width, bubble_height }, damage, bubble_x + padding,
+            bubble_y + 17U, item->label, framebuffer_pack(0x17U, 0x17U,
+                0x1AU));
+    }
+    return status;
 }
 
 static enum ui_status draw_dock_item(
@@ -1003,80 +1619,41 @@ static enum ui_status draw_dock_item(
 )
 {
     const bool active = panel_is_active_for(item->id);
-    const bool hovered = state.hover == item->id;
-    const bool focused = state.focus == item->id;
-    const bool pressed = state.pressed == item->id;
-    const bool adjacent = state.hover >= UI_ELEMENT_DOCK_FILES &&
-        state.hover <= UI_ELEMENT_DOCK_STUDIO && !hovered &&
-        (state.hover + 1 == item->id || item->id + 1 == state.hover);
+    const size_t item_index = (size_t)(item - state.layout.dock_items);
     struct ui_rect icon = item->icon_bounds;
+    const uint32_t center_x = icon.x + icon.width / 2U;
+    const uint32_t baseline = dock_fixed_pixel(dock_model.baseline);
+    const uint32_t panel_height = dock_fixed_pixel(dock_model.panel_height);
+    const uint32_t icon_bottom = icon.y + icon.height;
+    const uint32_t lift = baseline > icon_bottom ? baseline - icon_bottom : 0U;
+    const uint8_t shadow_alpha = (uint8_t)(115U *
+        (lift < icon.height ? icon.height - lift : 0U) /
+        (icon.height == 0U ? 1U : icon.height));
+    enum ui_status status = draw_dock_radial(center_x,
+        baseline + panel_height * 11U / 100U,
+        icon.width * 46U / 100U, panel_height * 30U / 100U,
+        damage, state.theme.shadow, shadow_alpha);
 
-    if (hovered) {
-        icon.x -= 8U;
-        icon.y -= 13U;
-        icon.width += 16U;
-        icon.height += 16U;
-    } else if (adjacent) {
-        icon.x -= 3U;
-        icon.y -= 5U;
-        icon.width += 6U;
-        icon.height += 6U;
-    } else if (pressed) {
-        /* Keep pressed icons on the front plane of the glass shelf. */
-        icon.y -= 1U;
-    }
-
-    enum ui_status status = draw_icon(item->id, icon, damage,
-        state.theme.ink);
     if (status == UI_STATUS_OK) {
-        const uint32_t reflection_height = 18U;
-
-        for (uint32_t row = 0U; row < reflection_height &&
-             status == UI_STATUS_OK; ++row) {
-            const uint32_t source_y = icon.y + icon.height - 1U - row * 2U;
-            const uint32_t destination_y = icon.y + icon.height + 1U + row;
-            const uint8_t alpha = (uint8_t)(72U - row * 4U);
-
-            if (destination_y >= state.layout.surface.height) {
-                break;
-            }
-            for (uint32_t x = 0U; x < icon.width; ++x) {
-                uint32_t source;
-                uint32_t under;
-
-                if (!rect_contains_point(damage, (struct ui_point){
-                        (int32_t)(icon.x + x), (int32_t)destination_y })) {
-                    continue;
-                }
-                if (surface_read_pixel(canvas, icon.x + x, source_y,
-                        &source) != SURFACE_STATUS_OK ||
-                    surface_read_pixel(canvas, icon.x + x, destination_y,
-                        &under) != SURFACE_STATUS_OK ||
-                    surface_pixel(canvas, icon.x + x, destination_y,
-                        blend_packed(under, source, alpha)) !=
-                        SURFACE_STATUS_OK) {
-                    status = UI_STATUS_SURFACE_FAILURE;
-                    break;
-                }
-            }
-        }
+        status = draw_icon(item->id, icon, damage,
+        state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_dock_reflection(item, icon, damage);
     }
     if (status == UI_STATUS_OK && active) {
-        status = fill_clipped((struct ui_rect){
-            item->bounds.x + item->bounds.width / 2U - 5U,
-            item->bounds.y + 110U, 10U, 4U }, damage, state.theme.white);
-    }
-    if (status == UI_STATUS_OK &&
-        (hovered || (focused && !state.pointer_present))) {
-        const struct ui_rect bubble = { item->bounds.x + 8U,
-            item->bounds.y - 24U, item->bounds.width - 16U, 21U };
-
-        status = translucent_fill(bubble, damage, state.theme.shadow, 210U);
+        const uint32_t light_y = baseline + panel_height * 34U / 100U;
+        const uint32_t radius = icon.width * 52U / 1000U + 1U;
+        status = draw_dock_radial(center_x, light_y, radius * 4U,
+            radius * 3U, damage, framebuffer_pack(0xD8U, 0xF2U, 0xFFU),
+            180U);
         if (status == UI_STATUS_OK) {
-            status = draw_text(bubble, damage,
-                centered_text_x(bubble, item->label), bubble.y + 15U,
-                item->label, state.theme.white);
+            status = draw_circle(center_x, light_y, radius, damage,
+                framebuffer_pack(0xEEU, 0xF8U, 0xFFU));
         }
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_dock_tooltip(item_index, item, icon, damage);
     }
     return status;
 }
@@ -2334,6 +2911,945 @@ static enum sapfs_status studio_export(void)
     return status;
 }
 
+static struct ui_rect settings_back_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+
+    return (struct ui_rect){ client.x + 10U, client.y + 8U, 76U, 26U };
+}
+
+static struct ui_rect settings_category_rect(size_t index)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t cell_width = (client.width - 64U) / 4U;
+
+    return (struct ui_rect){ client.x + 32U + (uint32_t)(index % 4U) * cell_width,
+        client.y + 58U + (uint32_t)(index / 4U) * 132U,
+        cell_width - 16U, 106U };
+}
+
+static struct ui_rect settings_appearance_rect(bool dark)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t width = 240U;
+    const uint32_t gap = 44U;
+    const uint32_t total = width * 2U + gap;
+
+    return (struct ui_rect){ client.x + (client.width - total) / 2U +
+        (dark ? width + gap : 0U), client.y + 96U, width, 188U };
+}
+
+static struct ui_rect settings_wallpaper_rect(size_t index)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t gap = 8U;
+    const uint32_t width = (client.width - 32U - gap * 6U) / 7U;
+
+    return (struct ui_rect){ client.x + 16U + (uint32_t)(index % 7U) *
+        (width + gap), client.y + 62U + (uint32_t)(index / 7U) * 104U,
+        width, 92U };
+}
+
+static struct ui_rect settings_option_rect(size_t index)
+{
+    const struct ui_rect client = state.layout.panel_client;
+
+    return (struct ui_rect){ client.x + 76U,
+        client.y + 86U + (uint32_t)index * 66U,
+        client.width - 152U, 52U };
+}
+
+static size_t settings_interactive_option_count(size_t page)
+{
+    if (page == 2U || page == 10U) {
+        return 3U;
+    }
+    if (page == 3U || page == 4U || page == 5U) {
+        return 2U;
+    }
+    if (page == 6U) {
+        return 1U;
+    }
+    return 0U;
+}
+
+static enum ui_status draw_settings_row(
+    size_t index,
+    struct ui_rect damage,
+    const char *label,
+    const char *value,
+    bool interactive,
+    bool enabled
+)
+{
+    const struct ui_rect row = settings_option_rect(index);
+    const struct ui_rect value_box = { row.x + row.width - 128U,
+        row.y + 11U, 108U, 30U };
+    enum ui_status status = gradient_rect(row, damage,
+        0xFFU, 0xFFU, 0xFFU, 0xE4U, 0xE7U, 0xE8U);
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(row, damage, 1U,
+            framebuffer_pack(0xA0U, 0xA5U, 0xA7U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(row, damage, row.x + 17U, row.y + 33U,
+            label, state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = interactive ?
+            gradient_rect(value_box, damage,
+                enabled ? 0x8DU : 0xEEU,
+                enabled ? 0xBFU : 0xEFU,
+                enabled ? 0xD3U : 0xEFU,
+                enabled ? 0x4DU : 0xC8U,
+                enabled ? 0x8EU : 0xCCU,
+                enabled ? 0xAAU : 0xCEU) :
+            fill_clipped(value_box, damage,
+                framebuffer_pack(0xF4U, 0xF5U, 0xF5U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(value_box, damage, 1U,
+            framebuffer_pack(0x8BU, 0x91U, 0x93U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(value_box, damage,
+            centered_text_x(value_box, value), value_box.y + 20U,
+            value, state.theme.ink);
+    }
+    return status;
+}
+
+static enum ui_status draw_settings_control_page(
+    size_t page,
+    struct ui_rect damage
+)
+{
+    enum ui_status status = UI_STATUS_OK;
+
+    if (page == 2U) {
+        status = draw_settings_row(0U, damage, "Magnification",
+            dock_magnification ? "On" : "Off", true, dock_magnification);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Reflections",
+                dock_reflections ? "On" : "Off", true, dock_reflections);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "Hover labels",
+                dock_labels ? "On" : "Off", true, dock_labels);
+        }
+        return status;
+    }
+    if (page == 3U) {
+        status = draw_settings_row(0U, damage, "Menu bar glass",
+            menu_glass ? "Glass" : "Solid", true, menu_glass);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Window contrast",
+                window_high_contrast ? "High" : "Standard", true,
+                window_high_contrast);
+        }
+        return status;
+    }
+    if (page == 4U) {
+        status = draw_settings_row(0U, damage, "Dock focus wrapping",
+            keyboard_focus_wrap ? "On" : "Off", true,
+            keyboard_focus_wrap);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Keyboard focus label",
+                keyboard_focus_indicator ? "On" : "Off", true,
+                keyboard_focus_indicator);
+        }
+        return status;
+    }
+    if (page == 5U) {
+        status = draw_settings_row(0U, damage, "Cursor size",
+            cursor_large ? "Large" : "Classic", true, cursor_large);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Cursor contrast",
+                cursor_dark ? "Dark" : "Light", true, cursor_dark);
+        }
+        return status;
+    }
+    if (page == 6U) {
+        status = draw_settings_row(0U, damage, "Fluid window motion",
+            spring_motion ? "Full" : "Reduced", true, spring_motion);
+        return status;
+    }
+    if (page == 7U) {
+        const struct network_state network = network_get_state();
+        char address[32] = "Not configured";
+        const char *source = "None";
+
+        if (network.configuration.configured) {
+            size_t at = 0U;
+            const uint32_t ipv4 = network.configuration.address;
+            address[0] = '\0';
+            at = append_u64(address, sizeof(address), at, ipv4 & 0xFFU);
+            at = append_text(address, sizeof(address), at, ".");
+            at = append_u64(address, sizeof(address), at,
+                (ipv4 >> 8U) & 0xFFU);
+            at = append_text(address, sizeof(address), at, ".");
+            at = append_u64(address, sizeof(address), at,
+                (ipv4 >> 16U) & 0xFFU);
+            at = append_text(address, sizeof(address), at, ".");
+            (void)append_u64(address, sizeof(address), at,
+                (ipv4 >> 24U) & 0xFFU);
+        }
+        if (network.configuration.source == NETWORK_CONFIGURATION_DHCP) {
+            source = "DHCP";
+        } else if (network.configuration.source ==
+                NETWORK_CONFIGURATION_STATIC) {
+            source = "Static";
+        }
+        status = draw_settings_row(0U, damage, "virtio-net link",
+            network.active ? "Active" : "Unavailable", false,
+            network.active);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Configuration",
+                source, false, false);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "IPv4 address",
+                address, false, false);
+        }
+        return status;
+    }
+    if (page == 8U) {
+        const struct sapfs_drive_info system = sapfs_drive(SAPFS_VOLUME_SYSTEM);
+        const struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
+        char data_free[32] = "Unavailable";
+
+        if (data.present) {
+            size_t at = 0U;
+            data_free[0] = '\0';
+            at = append_u64(data_free, sizeof(data_free), at,
+                data.free_bytes / (1024U * 1024U));
+            (void)append_text(data_free, sizeof(data_free), at, " MiB free");
+        }
+        status = draw_settings_row(0U, damage, "System volume",
+            system.mounted ? "Mounted / read-only" : "Unavailable",
+            false, false);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Data volume",
+                data.mounted ? "Mounted / writable" : "Unavailable",
+                false, false);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "Capacity",
+                data_free, false, false);
+        }
+        return status;
+    }
+    if (page == 9U) {
+        const struct camera_frame_info camera = camera_get_info();
+        char geometry[32] = "No signal";
+
+        if (camera.connected) {
+            size_t at = append_u64(geometry, sizeof(geometry), 0U,
+                camera.width);
+            at = append_text(geometry, sizeof(geometry), at, " x ");
+            (void)append_u64(geometry, sizeof(geometry), at, camera.height);
+        }
+        status = draw_settings_row(0U, damage, "Camera device",
+            camera.connected ? "Connected" : "Not connected", false,
+            camera.connected);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Live frame",
+                geometry, false, false);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "Capture pipeline",
+                "RGB888 / BMP", false, false);
+        }
+        return status;
+    }
+    if (page == 10U) {
+        status = draw_settings_row(0U, damage, "Window shadows",
+            window_shadows ? "On" : "Off", true, window_shadows);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Window bevels",
+                window_bevels ? "On" : "Off", true, window_bevels);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "Title gradients",
+                window_title_gradient ? "On" : "Off", true,
+                window_title_gradient);
+        }
+        return status;
+    }
+    if (page == 11U) {
+        status = draw_settings_row(0U, damage, "Kernel",
+            "Sapote 2.2.0 dev", false, false);
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(1U, damage, "Interface",
+                "Sapote Redwood", false, false);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_row(2U, damage, "Rendering",
+                "RGB565 / Inter", false, false);
+        }
+        return status;
+    }
+    return UI_STATUS_BAD_ELEMENT;
+}
+
+static enum ui_status draw_settings_category_icon(
+    size_t index,
+    struct ui_rect icon,
+    struct ui_rect damage,
+    const uint8_t colour[3U]
+)
+{
+    (void)colour;
+    if (index >= UI_SETTINGS_CATEGORY_COUNT) {
+        return UI_STATUS_BAD_ELEMENT;
+    }
+    return draw_alpha_subimage(icon, damage, settings_category_icon_pixels,
+        settings_category_icon_alpha, settings_category_icon_width,
+        settings_category_icon_height,
+        (struct ui_rect){ (uint32_t)(index % 4U) * 64U,
+            (uint32_t)(index / 4U) * 64U, 64U, 64U });
+#if 0
+    enum ui_status status = gradient_rect(icon, damage,
+        0xFAU, 0xFAU, 0xFAU, colour[0U], colour[1U], colour[2U]);
+    const uint32_t white = state.theme.white;
+    const uint32_t ink = state.theme.ink;
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(icon, damage, 1U,
+            framebuffer_pack(0x7AU, 0x7FU, 0x82U));
+    }
+    if (index == 0U) {
+        static const uint8_t swatches[4U][3U] = {
+            { 0xD9U, 0x55U, 0x4FU }, { 0xE6U, 0xC4U, 0x62U },
+            { 0x68U, 0xA9U, 0xC5U }, { 0x94U, 0x7BU, 0xB4U }
+        };
+        for (size_t swatch = 0U; swatch < 4U && status == UI_STATUS_OK;
+             ++swatch) {
+            status = fill_clipped((struct ui_rect){ icon.x + 7U +
+                (uint32_t)(swatch % 2U) * 21U, icon.y + 7U +
+                (uint32_t)(swatch / 2U) * 21U, 18U, 18U }, damage,
+                framebuffer_pack(swatches[swatch][0U], swatches[swatch][1U],
+                    swatches[swatch][2U]));
+        }
+    } else if (index == 1U || index == 3U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 8U, icon.y + 8U,
+                38U, 27U }, damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 11U,
+                icon.y + 11U, 32U, 21U }, damage,
+                index == 1U ? framebuffer_pack(0x41U, 0x86U, 0xA2U) : white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 25U,
+                icon.y + 35U, 4U, 8U }, damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 17U,
+                icon.y + 43U, 20U, 3U }, damage, ink);
+        }
+    } else if (index == 2U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 7U,
+                icon.y + 38U, 40U, 5U }, damage, ink);
+        }
+        for (uint32_t item = 0U; item < 4U && status == UI_STATUS_OK; ++item) {
+            status = fill_clipped((struct ui_rect){ icon.x + 10U + item * 10U,
+                icon.y + 22U, 7U, 15U }, damage,
+                item == 2U ? state.theme.accent_red : white);
+        }
+    } else if (index == 4U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 6U,
+                icon.y + 13U, 42U, 29U }, damage, ink);
+        }
+        for (uint32_t row = 0U; row < 3U && status == UI_STATUS_OK; ++row) {
+            for (uint32_t key = 0U; key < 6U && status == UI_STATUS_OK; ++key) {
+                status = fill_clipped((struct ui_rect){ icon.x + 9U + key * 6U,
+                    icon.y + 16U + row * 8U, 4U, 5U }, damage, white);
+            }
+        }
+    } else if (index == 5U) {
+        for (uint32_t row = 0U; row < 28U && status == UI_STATUS_OK; ++row) {
+            const uint32_t width = row < 20U ? row / 2U + 2U : 5U;
+            status = fill_clipped((struct ui_rect){ icon.x + 15U,
+                icon.y + 8U + row, width, 1U }, damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 24U,
+                icon.y + 29U, 4U, 14U }, damage, ink);
+        }
+    } else if (index == 6U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 8U,
+                icon.y + 21U, 10U, 14U }, damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 18U,
+                icon.y + 16U, 9U, 24U }, damage, ink);
+        }
+        for (uint32_t wave = 0U; wave < 3U && status == UI_STATUS_OK; ++wave) {
+            status = fill_clipped((struct ui_rect){ icon.x + 31U + wave * 5U,
+                icon.y + 19U - wave * 3U, 2U, 18U + wave * 6U },
+                damage, white);
+        }
+    } else if (index == 7U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 12U,
+                icon.y + 26U, 30U, 3U }, damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 26U,
+                icon.y + 12U, 3U, 30U }, damage, white);
+        }
+        const struct ui_rect nodes[3U] = {
+            { icon.x + 7U, icon.y + 21U, 11U, 11U },
+            { icon.x + 23U, icon.y + 7U, 11U, 11U },
+            { icon.x + 36U, icon.y + 34U, 11U, 11U }
+        };
+        for (size_t node = 0U; node < 3U && status == UI_STATUS_OK; ++node) {
+            status = fill_clipped(nodes[node], damage, ink);
+        }
+    } else if (index == 8U) {
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 8U,
+                icon.y + 10U, 38U, 34U }, damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 12U,
+                icon.y + 14U, 30U, 22U }, damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 35U,
+                icon.y + 39U, 6U, 3U }, damage, state.theme.accent_green);
+        }
+    } else if (index == 9U) {
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(icon.x + 27U, icon.y + 27U, 19U,
+                damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(icon.x + 27U, icon.y + 27U, 16U,
+                damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 26U,
+                icon.y + 15U, 3U, 13U }, damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 27U,
+                icon.y + 26U, 10U, 3U }, damage, ink);
+        }
+    } else if (index == 10U) {
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(icon.x + 27U, icon.y + 28U, 18U,
+                damage, white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(icon.x + 27U, icon.y + 28U, 14U,
+                damage, ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ icon.x + 25U,
+                icon.y + 6U, 5U, 23U }, damage, white);
+        }
+    } else if (index == 11U && status == UI_STATUS_OK) {
+        status = draw_circle(icon.x + 27U, icon.y + 27U, 19U,
+            damage, white);
+        if (status == UI_STATUS_OK) {
+            status = draw_text(icon, damage, centered_text_x(icon, "i"),
+                icon.y + 35U, "i", ink);
+        }
+    }
+    return status;
+#endif
+}
+
+static enum ui_status draw_settings_preview(
+    struct ui_rect card,
+    struct ui_rect damage,
+    bool dark
+)
+{
+    const struct ui_rect screen = { card.x + 18U, card.y + 18U,
+        card.width - 36U, 122U };
+    enum ui_status status = gradient_rect(card, damage,
+        0xF8U, 0xF8U, 0xF8U, 0xCFU, 0xD1U, 0xD2U);
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(card, damage, dock_dark == dark ? 3U : 1U,
+            dock_dark == dark ? state.theme.accent_teal :
+                framebuffer_pack(0x7BU, 0x80U, 0x82U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = gradient_rect(screen, damage, 0x3AU, 0x75U, 0x91U,
+            0x09U, 0x22U, 0x38U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = translucent_fill((struct ui_rect){ screen.x + 28U,
+            screen.y + screen.height - 22U, screen.width - 56U, 18U },
+            damage, dark ? framebuffer_pack(0x18U, 0x1AU, 0x1CU) :
+                framebuffer_pack(0xD7U, 0xDCU, 0xDEU), 230U);
+    }
+    for (uint32_t icon = 0U; icon < 5U && status == UI_STATUS_OK; ++icon) {
+        status = fill_clipped((struct ui_rect){ screen.x + 40U + icon * 25U,
+            screen.y + screen.height - 19U, 15U, 13U }, damage,
+            icon == 3U ? state.theme.accent_red : state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(card, damage, centered_text_x(card,
+            dark ? "Dark" : "Light"), card.y + 170U,
+            dark ? "Dark" : "Light", state.theme.ink);
+    }
+    return status;
+}
+
+static enum ui_status draw_settings_wallpaper_choice(
+    size_t index,
+    struct ui_rect damage,
+    const char *label
+)
+{
+    const struct ui_rect tile = settings_wallpaper_rect(index);
+    const struct ui_rect preview = { tile.x + 3U, tile.y + 3U,
+        tile.width - 6U, 62U };
+    const struct ui_rect clipped = rect_intersection(preview, damage);
+    enum ui_status status = UI_STATUS_OK;
+
+    if (index >= UI_WALLPAPER_COUNT || preview.width > 128U ||
+        preview.height > 72U) {
+        return UI_STATUS_BAD_ELEMENT;
+    }
+    if (clipped.width != 0U && clipped.height != 0U) {
+        if (sapote_wallpaper_decode((uint32_t)index,
+                settings_wallpaper_thumbnail_pixels, 128U * 72U,
+                preview.width, preview.height, logo_red_shift,
+                logo_green_shift, logo_blue_shift) != WALLPAPER_STATUS_OK) {
+            return UI_STATUS_WALLPAPER_FAILURE;
+        }
+        for (uint32_t y = 0U; y < clipped.height &&
+             status == UI_STATUS_OK; ++y) {
+            for (uint32_t x = 0U; x < clipped.width; ++x) {
+                const uint32_t source_x = clipped.x - preview.x + x;
+                const uint32_t source_y = clipped.y - preview.y + y;
+                if (surface_pixel(canvas, clipped.x + x, clipped.y + y,
+                        settings_wallpaper_thumbnail_pixels[source_y *
+                            preview.width + source_x]) != SURFACE_STATUS_OK) {
+                    status = UI_STATUS_SURFACE_FAILURE;
+                    break;
+                }
+            }
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(preview, damage,
+            desktop_wallpaper == index ? 3U : 1U,
+            desktop_wallpaper == index ? state.theme.accent_teal :
+                framebuffer_pack(0x78U, 0x7FU, 0x82U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(tile, damage, centered_text_x(tile, label),
+            tile.y + 84U, label, state.theme.ink);
+    }
+    return status;
+}
+
+static enum ui_status draw_settings_app(struct ui_rect damage)
+{
+    static const char *const categories[UI_SETTINGS_CATEGORY_COUNT] = {
+        "Appearance", "Desktop", "Dock", "Displays",
+        "Keyboard", "Pointer", "Performance", "Network",
+        "Storage", "Camera", "Windows", "About"
+    };
+    static const uint8_t colours[UI_SETTINGS_CATEGORY_COUNT][3U] = {
+        { 0x68U, 0xA9U, 0xC5U }, { 0x58U, 0x8CU, 0xB7U },
+        { 0x9AU, 0xA0U, 0xA4U }, { 0x6EU, 0x8CU, 0xB2U },
+        { 0xD0U, 0xD1U, 0xC8U }, { 0xE7U, 0xE7U, 0xE2U },
+        { 0x94U, 0x7BU, 0xB4U }, { 0x64U, 0xA3U, 0x83U },
+        { 0xD1U, 0xACU, 0x58U }, { 0xB9U, 0x8BU, 0x52U },
+        { 0x7DU, 0x8FU, 0xA2U }, { 0xD9U, 0x55U, 0x4FU }
+    };
+    const struct ui_rect client = state.layout.panel_client;
+    enum ui_status status = fill_clipped(client, damage,
+        framebuffer_pack(0xEEU, 0xEFU, 0xEFU));
+
+    if (settings_page < 0) {
+        if (status == UI_STATUS_OK) {
+            status = draw_text(client, damage,
+                centered_text_x(client, "Settings"), client.y + 29U,
+                "Settings", state.theme.ink);
+        }
+        for (size_t index = 0U; index < UI_SETTINGS_CATEGORY_COUNT &&
+             status == UI_STATUS_OK; ++index) {
+            const struct ui_rect tile = settings_category_rect(index);
+            const struct ui_rect icon = { tile.x + (tile.width - 54U) / 2U,
+                tile.y + 4U, 54U, 54U };
+
+            status = draw_settings_category_icon(index, icon, damage,
+                colours[index]);
+            if (status == UI_STATUS_OK) {
+                status = draw_text(tile, damage,
+                    centered_text_x(tile, categories[index]), tile.y + 82U,
+                    categories[index], state.theme.ink);
+            }
+        }
+        return status;
+    }
+
+    const size_t page = (size_t)settings_page;
+    if (status == UI_STATUS_OK) {
+        status = draw_button(settings_back_rect(), damage, "< All");
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(client, damage,
+            centered_text_x(client, categories[page]), client.y + 31U,
+            categories[page], state.theme.ink);
+    }
+    if (page == 0U) {
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_preview(settings_appearance_rect(false),
+                damage, false);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_settings_preview(settings_appearance_rect(true),
+                damage, true);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_text(client, damage, client.x + 56U,
+                client.y + 330U, "Appearance changes the 3D dock colour only.",
+                state.theme.ink);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_text(client, damage, client.x + 56U,
+                client.y + 358U,
+                "Geometry, reflections and magnification stay identical.",
+                state.theme.title_inactive);
+        }
+        return status;
+    }
+
+    if (page == 1U) {
+        static const char *const wallpapers[UI_WALLPAPER_COUNT] = {
+            "Nebula", "Stars", "Milky Way", "Reflection", "Falls",
+            "River", "Dunes", "Aurora", "Fjord", "Golden Mist",
+            "Yosemite", "Alpine", "Tropics", "Ocean"
+        };
+        if (status == UI_STATUS_OK) {
+            status = draw_text(client, damage, client.x + 18U,
+                client.y + 52U, "Choose a wallpaper", state.theme.ink);
+        }
+        for (size_t index = 0U; index < UI_WALLPAPER_COUNT &&
+             status == UI_STATUS_OK; ++index) {
+            status = draw_settings_wallpaper_choice(index, damage,
+                wallpapers[index]);
+        }
+        return status;
+    }
+
+    return status == UI_STATUS_OK ?
+        draw_settings_control_page(page, damage) : status;
+}
+
+static bool select_desktop_wallpaper(uint8_t index)
+{
+    if (index >= UI_WALLPAPER_COUNT ||
+        sapote_wallpaper_decode(index, wallpaper_pixels, 1024U * 768U,
+            1024U, 768U, logo_red_shift, logo_green_shift,
+            logo_blue_shift) != WALLPAPER_STATUS_OK) {
+        return false;
+    }
+    desktop_wallpaper = index;
+    return true;
+}
+
+static bool camera_refresh_frame(void)
+{
+    const struct camera_frame_info current = camera_get_info();
+    struct camera_frame_info snapshot;
+
+    if (!current.connected) {
+        camera_frame_available = false;
+        camera_seen_generation = current.generation;
+        (void)copy_string(camera_status, sizeof(camera_status),
+            "No camera connected");
+        return false;
+    }
+    if (camera_frame_available &&
+            current.generation == camera_seen_generation) {
+        return true;
+    }
+    if (camera_snapshot(camera_scene_pixels,
+            UI_CAMERA_SCENE_WIDTH * UI_CAMERA_SCENE_HEIGHT,
+            UI_CAMERA_SCENE_WIDTH, UI_CAMERA_SCENE_HEIGHT,
+            logo_red_shift, logo_green_shift, logo_blue_shift,
+            &snapshot) != CAMERA_STATUS_OK) {
+        camera_frame_available = false;
+        (void)copy_string(camera_status, sizeof(camera_status),
+            "Camera frame unavailable");
+        return false;
+    }
+    camera_frame_available = true;
+    camera_seen_generation = snapshot.generation;
+    (void)copy_string(camera_status, sizeof(camera_status),
+        "Camera ready");
+    return true;
+}
+
+static uint32_t camera_frame_pixel(
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height
+)
+{
+    if (!camera_frame_available || width == 0U || height == 0U) {
+        return framebuffer_pack(0x16U, 0x19U, 0x1CU);
+    }
+    const uint32_t source_x = x * UI_CAMERA_SCENE_WIDTH / width;
+    const uint32_t source_y = y * UI_CAMERA_SCENE_HEIGHT / height;
+
+    return camera_scene_pixels[(size_t)source_y * UI_CAMERA_SCENE_WIDTH +
+        source_x];
+}
+
+static struct ui_rect camera_preview_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+
+    return (struct ui_rect){ client.x + 12U, client.y + 12U,
+        client.width - 24U, client.height - 102U };
+}
+
+static struct ui_rect camera_capture_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+
+    return (struct ui_rect){ client.x + client.width / 2U - 27U,
+        client.y + client.height - 78U, 54U, 54U };
+}
+
+static struct ui_rect camera_controls_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const struct ui_rect preview = camera_preview_rect();
+
+    return (struct ui_rect){ client.x, preview.y + preview.height + 4U,
+        client.width,
+        client.y + client.height - preview.y - preview.height - 4U };
+}
+
+static enum sapfs_status camera_capture(void)
+{
+    static const char scratch[] = "CAMTEMP.BMP";
+    char output[] = "PHOTO00.BMP";
+    uint8_t header[UI_CAMERA_BMP_HEADER_BYTES] = { 0U };
+    const uint32_t row_stride = UI_CAMERA_CAPTURE_WIDTH * 3U;
+    const uint32_t file_bytes = UI_CAMERA_BMP_HEADER_BYTES +
+        row_stride * UI_CAMERA_CAPTURE_HEIGHT;
+    sapfs_handle handle = 0U;
+    enum sapfs_status status = SAPFS_STATUS_FULL;
+    bool output_found = false;
+    struct camera_frame_info frame;
+
+    if (camera_snapshot(camera_scene_pixels,
+            UI_CAMERA_SCENE_WIDTH * UI_CAMERA_SCENE_HEIGHT,
+            UI_CAMERA_CAPTURE_WIDTH, UI_CAMERA_CAPTURE_HEIGHT,
+            logo_red_shift, logo_green_shift, logo_blue_shift,
+            &frame) != CAMERA_STATUS_OK) {
+        camera_frame_available = false;
+        (void)copy_string(camera_status, sizeof(camera_status),
+            "Connect a camera before taking a photo");
+        return SAPFS_STATUS_NOT_FOUND;
+    }
+
+    for (uint32_t number = 0U; number < 100U; ++number) {
+        struct sapfs_stat stat;
+        output[5U] = (char)('0' + number / 10U);
+        output[6U] = (char)('0' + number % 10U);
+        status = sapfs_stat_path(SAPFS_VOLUME_DATA, output, &stat);
+        if (status == SAPFS_STATUS_NOT_FOUND) {
+            status = SAPFS_STATUS_OK;
+            output_found = true;
+            break;
+        }
+    }
+    if (!output_found || status != SAPFS_STATUS_OK) {
+        (void)copy_string(camera_status, sizeof(camera_status),
+            "Photo library is full");
+        return status;
+    }
+    header[0U] = 'B'; header[1U] = 'M';
+    studio_store_u32(header, 2U, file_bytes);
+    studio_store_u32(header, 10U, UI_CAMERA_BMP_HEADER_BYTES);
+    studio_store_u32(header, 14U, 40U);
+    studio_store_u32(header, 18U, UI_CAMERA_CAPTURE_WIDTH);
+    studio_store_u32(header, 22U, UI_CAMERA_CAPTURE_HEIGHT);
+    studio_store_u16(header, 26U, 1U);
+    studio_store_u16(header, 28U, 24U);
+    studio_store_u32(header, 34U, row_stride * UI_CAMERA_CAPTURE_HEIGHT);
+    status = studio_remove_if_present(scratch);
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_create(SAPFS_VOLUME_DATA, scratch);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_open(SAPFS_VOLUME_DATA, scratch,
+            SAPFS_ACCESS_WRITE, &handle);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = studio_write_all(handle, header, sizeof(header));
+    }
+    for (uint32_t row = 0U; row < UI_CAMERA_CAPTURE_HEIGHT &&
+         status == SAPFS_STATUS_OK; ++row) {
+        const uint32_t source_y = UI_CAMERA_CAPTURE_HEIGHT - 1U - row;
+        for (uint32_t x = 0U; x < UI_CAMERA_CAPTURE_WIDTH; ++x) {
+            const uint32_t pixel = camera_scene_pixels[
+                (size_t)source_y * UI_CAMERA_CAPTURE_WIDTH + x];
+            const size_t destination = (size_t)x * 3U;
+            camera_bmp_row[destination] =
+                (uint8_t)(pixel >> logo_blue_shift);
+            camera_bmp_row[destination + 1U] =
+                (uint8_t)(pixel >> logo_green_shift);
+            camera_bmp_row[destination + 2U] =
+                (uint8_t)(pixel >> logo_red_shift);
+        }
+        status = studio_write_all(handle, camera_bmp_row, row_stride);
+    }
+    if (handle != 0U) {
+        const enum sapfs_status close_status = sapfs_close(handle);
+        if (status == SAPFS_STATUS_OK && close_status != SAPFS_STATUS_OK) {
+            status = close_status;
+        }
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_rename(SAPFS_VOLUME_DATA, scratch, output);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        status = sapfs_sync(SAPFS_VOLUME_DATA);
+    }
+    if (status == SAPFS_STATUS_OK) {
+        ++camera_capture_count;
+        size_t at = append_text(camera_status, sizeof(camera_status), 0U,
+            "Saved ");
+        (void)append_text(camera_status, sizeof(camera_status), at, output);
+        (void)files_refresh();
+    } else {
+        (void)studio_remove_if_present(scratch);
+        (void)copy_string(camera_status, sizeof(camera_status),
+            "Capture failed / no partial photo retained");
+    }
+    camera_frame_available = false;
+    return status;
+}
+
+static enum ui_status draw_circle(
+    uint32_t center_x,
+    uint32_t center_y,
+    uint32_t radius,
+    struct ui_rect damage,
+    uint32_t pixel
+)
+{
+    enum ui_status status = UI_STATUS_OK;
+    const uint64_t radius_squared = (uint64_t)radius * radius;
+
+    for (int32_t y = -(int32_t)radius; y <= (int32_t)radius &&
+         status == UI_STATUS_OK; ++y) {
+        for (int32_t x = -(int32_t)radius; x <= (int32_t)radius; ++x) {
+            if ((uint64_t)(x * x + y * y) > radius_squared) {
+                continue;
+            }
+            status = fill_clipped((struct ui_rect){
+                (uint32_t)((int32_t)center_x + x),
+                (uint32_t)((int32_t)center_y + y), 1U, 1U
+            }, damage, pixel);
+            if (status != UI_STATUS_OK) {
+                break;
+            }
+        }
+    }
+    return status;
+}
+
+static enum ui_status draw_camera_app(struct ui_rect damage)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const struct ui_rect preview = camera_preview_rect();
+    const struct ui_rect clipped = rect_intersection(preview, damage);
+    const struct ui_rect controls = camera_controls_rect();
+    const struct ui_rect capture = camera_capture_rect();
+    enum ui_status status = fill_clipped(client, damage,
+        framebuffer_pack(0xD7U, 0xD9U, 0xDAU));
+
+    (void)camera_refresh_frame();
+
+    for (uint32_t y = 0U; y < clipped.height && status == UI_STATUS_OK; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - preview.x + x;
+            const uint32_t local_y = clipped.y - preview.y + y;
+            camera_preview_row[x] = camera_frame_pixel(local_x, local_y,
+                preview.width, preview.height);
+        }
+        if (surface_blit(canvas, clipped.x, clipped.y + y,
+                camera_preview_row, clipped.width, 1U,
+                clipped.width * SURFACE_BYTES_PER_PIXEL) !=
+                    SURFACE_STATUS_OK) {
+            status = UI_STATUS_SURFACE_FAILURE;
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(preview, damage, 1U,
+            framebuffer_pack(0x4CU, 0x51U, 0x54U));
+    }
+    if (status == UI_STATUS_OK && !camera_frame_available) {
+        status = draw_text(preview, damage,
+            centered_text_x(preview, "No camera connected"),
+            preview.y + preview.height / 2U,
+            "No camera connected", framebuffer_pack(0xD4U, 0xD8U, 0xDAU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = gradient_rect(controls, damage, 0xF7U, 0xF7U, 0xF7U,
+            0xC1U, 0xC4U, 0xC6U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_circle(capture.x + capture.width / 2U,
+            capture.y + capture.height / 2U, 26U, damage,
+            framebuffer_pack(0xF8U, 0xF8U, 0xF8U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_circle(capture.x + capture.width / 2U,
+            capture.y + capture.height / 2U, 20U, damage,
+            state.theme.accent_red);
+    }
+    if (status == UI_STATUS_OK) {
+        const uint32_t center_x = capture.x + capture.width / 2U;
+        const uint32_t center_y = capture.y + capture.height / 2U;
+        status = fill_clipped((struct ui_rect){ center_x - 11U,
+            center_y - 7U, 22U, 15U }, damage, state.theme.white);
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped((struct ui_rect){ center_x - 6U,
+                center_y - 10U, 9U, 4U }, damage, state.theme.white);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(center_x, center_y, 5U, damage,
+                state.theme.accent_red);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_circle(center_x, center_y, 2U, damage,
+                state.theme.white);
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(controls, damage, controls.x + 18U,
+            controls.y + 36U, camera_status, state.theme.ink);
+    }
+    return status;
+}
+
 static struct ui_rect file_entry_rect(size_t index)
 {
     const struct ui_rect client = state.layout.panel_client;
@@ -2391,41 +3907,40 @@ static enum ui_status draw_files_app(struct ui_rect damage)
             0xE8U, 0xEAU, 0xEAU, 0xB5U, 0xB8U, 0xBAU);
     }
     const struct ui_rect buttons[] = {
-        { toolbar.x + 10U, toolbar.y + 8U, 56U, 26U },
-        { toolbar.x + 76U, toolbar.y + 8U, 88U, 26U },
-        { toolbar.x + 174U, toolbar.y + 8U, 104U, 26U },
-        { toolbar.x + toolbar.width - 156U, toolbar.y + 8U, 68U, 26U },
-        { toolbar.x + toolbar.width - 78U, toolbar.y + 8U, 68U, 26U }
+        { toolbar.x + 10U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 44U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 88U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 120U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 152U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 184U, toolbar.y + 8U, 32U, 26U },
+        { toolbar.x + 226U, toolbar.y + 8U, 38U, 26U }
     };
     static const char *const labels[] = {
-        "< Up", "New File", "New Folder", "Refresh", "Sync"
+        "<", ">", "[]", "##", "=", "|||", "*"
     };
 
-    for (size_t index = 0U; index < 5U && status == UI_STATUS_OK; ++index) {
+    for (size_t index = 0U; index < 7U && status == UI_STATUS_OK; ++index) {
         status = draw_button(buttons[index], damage, labels[index]);
     }
     if (status == UI_STATUS_OK) {
-        const struct ui_rect location_field = { toolbar.x + 294U,
-            toolbar.y + 8U, toolbar.width - 460U, 26U };
-        char location[SAPFS_MAX_PATH + 16U];
-        size_t at = append_text(location, sizeof(location), 0U,
-            "Data  >  ");
-
-        if (strings_equal(file_directory, ".")) {
-            (void)append_text(location, sizeof(location), at, "Home");
-        } else {
-            (void)append_text(location, sizeof(location), at, file_directory);
-        }
-        status = fill_clipped(location_field, damage, state.theme.white);
+        const struct ui_rect search = { toolbar.x + toolbar.width - 166U,
+            toolbar.y + 8U, 156U, 26U };
+        status = fill_clipped(search, damage, state.theme.white);
         if (status == UI_STATUS_OK) {
-            status = stroke_clipped(location_field, damage, 1U,
+            status = stroke_clipped(search, damage, 1U,
                 framebuffer_pack(0x76U, 0x7CU, 0x80U));
         }
         if (status == UI_STATUS_OK) {
-            status = draw_text(location_field, damage,
-                location_field.x + 10U, location_field.y + 18U,
-                location, state.theme.ink);
+            status = draw_text(search, damage, search.x + 10U,
+                search.y + 18U, "Search", state.theme.title_inactive);
         }
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(toolbar, damage,
+            centered_text_x(toolbar, strings_equal(file_directory, ".") ?
+                "Data Home" : file_directory), toolbar.y + 26U,
+            strings_equal(file_directory, ".") ? "Data Home" : file_directory,
+            state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 12U,
@@ -2446,27 +3961,55 @@ static enum ui_status draw_files_app(struct ui_rect damage)
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 12U,
-            sidebar.y + 88U, "PLACES", state.theme.title_inactive);
+            sidebar.y + 88U, "SHARED", state.theme.title_inactive);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 116U, "Data Home", state.theme.ink);
+            sidebar.y + 116U, "Sapote", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 142U, "Open Folder", state.theme.ink);
+            sidebar.y + 154U, "PLACES", state.theme.title_inactive);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 12U,
-            sidebar.y + 184U, "VOLUME", state.theme.title_inactive);
+            sidebar.y + 182U, "Desktop", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 212U, "FAT32", state.theme.ink);
+            sidebar.y + 208U, "Documents", state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
         status = draw_text(sidebar, damage, sidebar.x + 28U,
-            sidebar.y + 238U, "Read / Write", state.theme.accent_green);
+            sidebar.y + 234U, "Downloads", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 260U, "Applications", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 286U, "Notes", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 312U, "Pictures", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 12U,
+            sidebar.y + 352U, "SEARCH FOR", state.theme.title_inactive);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 380U, "Today", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 406U, "Yesterday", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(sidebar, damage, sidebar.x + 28U,
+            sidebar.y + 432U, "All Files", state.theme.ink);
     }
     for (size_t index = 0U; index < file_entry_count &&
          index < 12U && status == UI_STATUS_OK; ++index) {
@@ -2533,41 +4076,59 @@ static enum ui_status draw_files_app(struct ui_rect damage)
 static enum ui_status draw_notes_app(struct ui_rect damage)
 {
     const struct ui_rect client = state.layout.panel_client;
-    const struct ui_rect toolbar = { client.x, client.y, client.width, 42U };
-    const struct ui_rect paper = { client.x + 24U, client.y + 54U,
-        client.width - 48U, client.height - 84U };
-    enum ui_status status = gradient_rect(toolbar, damage,
-        0xF0U, 0xF2U, 0xF2U, 0xB4U, 0xBEU, 0xC1U);
+    const uint32_t sidebar_width = 154U;
+    const struct ui_rect sidebar = { client.x, client.y, sidebar_width,
+        client.height };
+    const struct ui_rect paper = { client.x + sidebar_width + 1U, client.y,
+        client.width - sidebar_width - 1U, client.height };
+    const struct ui_rect search = { sidebar.x + 8U, sidebar.y + 8U,
+        sidebar.width - 16U, 24U };
+    const struct ui_rect selected = { sidebar.x + 5U, sidebar.y + 40U,
+        sidebar.width - 10U, 34U };
+    enum ui_status status = gradient_rect(sidebar, damage,
+        0xF3U, 0xF3U, 0xF1U, 0xD5U, 0xD6U, 0xD3U);
 
     if (status == UI_STATUS_OK) {
-        status = draw_button((struct ui_rect){ toolbar.x + 10U,
-            toolbar.y + 8U, 72U, 26U }, damage, "Save");
-    }
-    if (status == UI_STATUS_OK) {
-        char title[SAPFS_MAX_PATH + 16U];
-        size_t at = append_text(title, sizeof(title), 0U, "Editing / ");
-        (void)append_text(title, sizeof(title), at, note_path);
-        status = draw_text(toolbar, damage, toolbar.x + 98U,
-            toolbar.y + 26U, title, state.theme.ink);
-    }
-    if (status == UI_STATUS_OK) {
-        status = fill_clipped(drop_shadow_draw_rect(paper, 5U), damage,
-            state.theme.shadow);
-    }
-    if (status == UI_STATUS_OK) {
         status = fill_clipped(paper, damage,
-            framebuffer_pack(0xFFU, 0xFEU, 0xF4U));
+            framebuffer_pack(0xFFU, 0xFDU, 0xC9U));
     }
     if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ paper.x + 42U, paper.y,
-            2U, paper.height }, damage,
-            framebuffer_pack(0xE8U, 0x86U, 0x86U));
+        status = fill_clipped((struct ui_rect){ paper.x, paper.y, 1U,
+            paper.height }, damage, framebuffer_pack(0x8AU, 0x8AU, 0x82U));
     }
-    for (uint32_t y = paper.y + 28U; y < paper.y + paper.height &&
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(search, damage, state.theme.white);
+    }
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(search, damage, 1U,
+            framebuffer_pack(0x9AU, 0x9EU, 0x9CU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(search, damage, search.x + 8U, search.y + 17U,
+            "Search", state.theme.title_inactive);
+    }
+    if (status == UI_STATUS_OK) {
+        status = gradient_rect(selected, damage,
+            0xFFU, 0xFFU, 0xFFU, 0xE7U, 0xE8U, 0xE5U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(selected, damage, selected.x + 6U,
+            selected.y + 17U, note_path, state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(paper, damage, paper.x + 18U, paper.y + 25U,
+            note_path, state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped((struct ui_rect){ paper.x + 12U, paper.y + 34U,
+            paper.width - 24U, 1U }, damage,
+            framebuffer_pack(0xD8U, 0xCFU, 0x92U));
+    }
+    for (uint32_t y = paper.y + 60U; y < paper.y + paper.height - 28U &&
          status == UI_STATUS_OK; y += 22U) {
         status = fill_clipped((struct ui_rect){ paper.x + 10U, y,
             paper.width - 20U, 1U }, damage,
-            framebuffer_pack(0xC5U, 0xD9U, 0xDFU));
+            framebuffer_pack(0xD6U, 0xD1U, 0xA7U));
     }
     size_t source = 0U;
     uint32_t line = 0U;
@@ -2583,17 +4144,9 @@ static enum ui_status draw_notes_app(struct ui_rect damage)
             ++source;
         }
         text[count] = '\0';
-        status = draw_text(paper, damage, paper.x + 54U,
-            paper.y + 24U + line * 22U, text, state.theme.ink);
+        status = draw_text(paper, damage, paper.x + 18U,
+            paper.y + 56U + line * 22U, text, state.theme.ink);
         ++line;
-    }
-    if (status == UI_STATUS_OK) {
-        char status_line[96U];
-        size_t at = append_text(status_line, sizeof(status_line), 0U,
-            note_dirty ? "Unsaved / " : "Saved / ");
-        (void)append_text(status_line, sizeof(status_line), at, app_status);
-        status = draw_text(client, damage, client.x + 12U,
-            client.y + client.height - 8U, status_line, state.theme.ink);
     }
     return status;
 }
@@ -2919,15 +4472,132 @@ static enum ui_status draw_studio_app(struct ui_rect damage)
     return status;
 }
 
-static enum ui_status draw_panel(struct ui_rect damage)
+static uint32_t spring_interpolate(
+    uint32_t origin,
+    uint32_t target,
+    int32_t position
+)
+{
+    int32_t bounded = position;
+    if (bounded < 0) {
+        bounded = 0;
+    } else if (bounded > 72000) {
+        bounded = 72000;
+    }
+    int64_t result = (int64_t)origin +
+        ((int64_t)target - (int64_t)origin) * bounded / UI_SPRING_TARGET;
+    if (result < 0) {
+        result = 0;
+    } else if (result > UINT32_MAX) {
+        result = UINT32_MAX;
+    }
+    return (uint32_t)result;
+}
+
+static bool spring_advance_to(
+    int32_t *position,
+    int32_t *velocity,
+    int32_t target
+)
+{
+    if (position == NULL || velocity == NULL) {
+        return false;
+    }
+    /* A 72/88 spring reaches the target in roughly 190 ms at 60 Hz: quick
+     * enough to feel light, with one small, bounded overshoot for character. */
+    const int64_t force = ((int64_t)target - *position) * 72 -
+        (int64_t)*velocity * 88;
+    *velocity += (int32_t)(force / 128);
+    *position += *velocity;
+    const int64_t distance = (int64_t)target - *position;
+    const int64_t speed = *velocity;
+    if ((distance < 0 ? -distance : distance) < 96 &&
+        (speed < 0 ? -speed : speed) < 96) {
+        *position = target;
+        *velocity = 0;
+        return true;
+    }
+    return false;
+}
+
+static bool spring_advance(int32_t *position, int32_t *velocity)
+{
+    return spring_advance_to(position, velocity, UI_SPRING_TARGET);
+}
+
+static void begin_dock_spring(void)
+{
+    if (!dock_spring_active) {
+        dock_spring_last_ns = clock_monotonic_ns();
+    }
+    dock_spring_active = true;
+    if (timer_is_started() && panel_spring_timer_id == 0U) {
+        (void)panel_spring_schedule_wake(dock_spring_last_ns);
+    }
+}
+
+static struct ui_rect spring_panel_rect(void)
+{
+    const struct ui_rect target = state.layout.panel;
+    struct ui_rect panel = {
+        spring_interpolate(panel_spring_origin.x, target.x,
+            panel_spring_position),
+        spring_interpolate(panel_spring_origin.y, target.y,
+            panel_spring_position),
+        spring_interpolate(panel_spring_origin.width, target.width,
+            panel_spring_position),
+        spring_interpolate(panel_spring_origin.height, target.height,
+            panel_spring_position)
+    };
+
+    /* A deliberate spring overshoot may grow a cascaded window a few pixels
+     * beyond the framebuffer.  Keep the animated shell inside the surface so
+     * every clipped font and surface operation retains valid bounds. */
+    if (panel.x >= state.layout.surface.width) {
+        panel.x = state.layout.surface.width - 1U;
+    }
+    if (panel.y >= state.layout.surface.height) {
+        panel.y = state.layout.surface.height - 1U;
+    }
+    if (panel.width > state.layout.surface.width - panel.x) {
+        panel.width = state.layout.surface.width - panel.x;
+    }
+    if (panel.height > state.layout.surface.height - panel.y) {
+        panel.height = state.layout.surface.height - panel.y;
+    }
+    return panel;
+}
+
+static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
 {
     enum ui_status status;
 
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_STATUS_OK;
     }
-    status = fill_clipped(drop_shadow_draw_rect(state.layout.panel, 6U),
-        damage, state.theme.shadow);
+    if (focused && panel_spring_active) {
+        const struct ui_rect panel = spring_panel_rect();
+        status = window_shadows ?
+            fill_clipped(drop_shadow_draw_rect(panel, 6U), damage,
+                state.theme.shadow) : UI_STATUS_OK;
+        if (status == UI_STATUS_OK) {
+            status = fill_clipped(panel, damage, state.theme.window_face);
+        }
+        if (status == UI_STATUS_OK && panel.width >= 4U && panel.height >= 4U) {
+            status = stroke_clipped(panel, damage, 1U, state.theme.ink);
+        }
+        if (status == UI_STATUS_OK && panel.width >= 48U &&
+                panel.height >= UI_PANEL_TITLE_HEIGHT + 4U) {
+            status = draw_window_title((struct ui_rect){ panel.x + 4U,
+                panel.y + 4U, panel.width - 8U, UI_PANEL_TITLE_HEIGHT },
+                damage, panel.y + 22U, ui_panel_name(state.active_panel),
+                true);
+        }
+        return status;
+    }
+    status = window_shadows ?
+        fill_clipped(drop_shadow_draw_rect(state.layout.panel, 6U),
+            damage, state.theme.shadow) : UI_STATUS_OK;
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.panel, damage,
             state.theme.window_face);
@@ -2936,7 +4606,7 @@ static enum ui_status draw_panel(struct ui_rect damage)
         status = stroke_clipped(state.layout.panel, damage, 1U,
             state.theme.ink);
     }
-    if (status == UI_STATUS_OK) {
+    if (status == UI_STATUS_OK && window_bevels) {
         status = bevel_clipped((struct ui_rect){ state.layout.panel.x + 1U,
             state.layout.panel.y + 1U, state.layout.panel.width - 2U,
             state.layout.panel.height - 2U }, damage, true);
@@ -2946,15 +4616,17 @@ static enum ui_status draw_panel(struct ui_rect damage)
             state.layout.panel.x + 4U, state.layout.panel.y + 4U,
             state.layout.panel.width - 8U, UI_PANEL_TITLE_HEIGHT
         }, damage, state.layout.panel_title_baseline,
-            ui_panel_name(state.active_panel), true);
+            ui_panel_name(state.active_panel), focused);
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped(state.layout.panel_client, damage,
             state.active_panel == UI_PANEL_TERMINAL ||
             state.active_panel == UI_PANEL_STUDIO ?
-            framebuffer_pack(0x08U, 0x10U, 0x12U) : state.theme.white);
+            framebuffer_pack(0x08U, 0x10U, 0x12U) :
+            (window_high_contrast ? framebuffer_pack(0xFFU, 0xFFU, 0xFFU) :
+                state.theme.white));
     }
-    if (status == UI_STATUS_OK) {
+    if (status == UI_STATUS_OK && window_bevels) {
         status = bevel_clipped(state.layout.panel_client, damage, false);
     }
     if (status != UI_STATUS_OK) {
@@ -2980,7 +4652,51 @@ static enum ui_status draw_panel(struct ui_rect damage)
     if (state.active_panel == UI_PANEL_STUDIO) {
         return draw_studio_app(damage);
     }
+    if (state.active_panel == UI_PANEL_CAMERA) {
+        return draw_camera_app(damage);
+    }
+    if (state.active_panel == UI_PANEL_SETTINGS) {
+        return draw_settings_app(damage);
+    }
     return UI_STATUS_BAD_PANEL;
+}
+
+static enum ui_status draw_panel(struct ui_rect damage)
+{
+    const enum ui_panel_id focused = state.active_panel;
+    const struct ui_rect saved_panel = state.layout.panel;
+    const struct ui_rect saved_client = state.layout.panel_client;
+    const uint32_t saved_title_baseline = state.layout.panel_title_baseline;
+    const uint32_t saved_text_baseline = state.layout.panel_text_baseline;
+    enum ui_status status = UI_STATUS_OK;
+
+    for (size_t index = 0U; index < panel_order_count &&
+         status == UI_STATUS_OK; ++index) {
+        const enum ui_panel_id panel = panel_order[index];
+
+        if (!panel_open[panel]) {
+            continue;
+        }
+        state.active_panel = panel;
+        install_panel_geometry(panel);
+        status = draw_one_panel(damage, panel == focused);
+    }
+    state.active_panel = focused;
+    state.layout.panel = saved_panel;
+    state.layout.panel_client = saved_client;
+    state.layout.panel_title_baseline = saved_title_baseline;
+    state.layout.panel_text_baseline = saved_text_baseline;
+    return status;
+}
+
+static uint32_t cursor_draw_width(void)
+{
+    return cursor_large ? 24U : UI_CURSOR_WIDTH;
+}
+
+static uint32_t cursor_draw_height(void)
+{
+    return cursor_large ? 33U : UI_CURSOR_HEIGHT;
 }
 
 static struct ui_rect cursor_rect_for(struct ui_point point)
@@ -3002,8 +4718,8 @@ static struct ui_rect cursor_rect_for(struct ui_point point)
     if (y >= state.layout.surface.height) {
         y = state.layout.surface.height - 1U;
     }
-    width = UI_CURSOR_WIDTH;
-    height = UI_CURSOR_HEIGHT;
+    width = cursor_draw_width();
+    height = cursor_draw_height();
     if (width > state.layout.surface.width - x) {
         width = state.layout.surface.width - x;
     }
@@ -3013,14 +4729,37 @@ static struct ui_rect cursor_rect_for(struct ui_point point)
     return (struct ui_rect){ x, y, width, height };
 }
 
+static struct ui_rect cursor_damage_rect_for(struct ui_point point)
+{
+    const struct ui_rect cursor = cursor_rect_for(point);
+
+    if (cursor.width == 0U || cursor.height == 0U) {
+        return cursor;
+    }
+    const uint32_t left = cursor.x >= 3U ? cursor.x - 3U : 0U;
+    const uint32_t top = cursor.y >= 3U ? cursor.y - 3U : 0U;
+    uint32_t right = cursor.x + cursor.width + 3U;
+    uint32_t bottom = cursor.y + cursor.height + 3U;
+
+    if (right > state.layout.surface.width) {
+        right = state.layout.surface.width;
+    }
+    if (bottom > state.layout.surface.height) {
+        bottom = state.layout.surface.height;
+    }
+    return (struct ui_rect){ left, top, right - left, bottom - top };
+}
+
 static bool cursor_mask_contains(
     const uint32_t *mask,
     uint32_t x,
-    uint32_t y
+    uint32_t y,
+    uint32_t width,
+    uint32_t height
 )
 {
-    const uint32_t source_x = x * UI_CURSOR_SOURCE_WIDTH / UI_CURSOR_WIDTH;
-    const uint32_t source_y = y * UI_CURSOR_SOURCE_HEIGHT / UI_CURSOR_HEIGHT;
+    const uint32_t source_x = x * UI_CURSOR_SOURCE_WIDTH / width;
+    const uint32_t source_y = y * UI_CURSOR_SOURCE_HEIGHT / height;
 
     return (mask[source_y] & (UINT32_C(0x80000000) >> source_x)) != 0U;
 }
@@ -3036,11 +4775,14 @@ static enum ui_status draw_cursor(struct ui_rect damage)
         for (uint32_t x = 0U; x < cursor.width; ++x) {
             uint32_t pixel;
 
-            if (!cursor_mask_contains(cursor_outer, x, y)) {
+            if (!cursor_mask_contains(cursor_outer, x, y,
+                    cursor.width, cursor.height)) {
                 continue;
             }
-            pixel = cursor_mask_contains(cursor_inner, x, y) ?
-                state.theme.ink : state.theme.white;
+            pixel = cursor_mask_contains(cursor_inner, x, y,
+                cursor.width, cursor.height) ?
+                (cursor_dark ? state.theme.ink : state.theme.white) :
+                (cursor_dark ? state.theme.white : state.theme.ink);
             if (surface_pixel(canvas, cursor.x + x, cursor.y + y, pixel) !=
                 SURFACE_STATUS_OK) {
                 return UI_STATUS_SURFACE_FAILURE;
@@ -3057,54 +4799,204 @@ static enum ui_status draw_desktop_pattern(struct ui_rect damage)
 
 static enum ui_status draw_dock_shelf(struct ui_rect damage)
 {
-    const struct ui_rect dock = state.layout.dock;
-    const struct ui_rect shelf = { dock.x + 26U, dock.y + 80U,
-        dock.width - 52U, 42U };
-    enum ui_status status = translucent_fill((struct ui_rect){ shelf.x + 5U,
-        shelf.y + 6U, shelf.width - 10U, shelf.height - 7U }, damage,
-        state.theme.shadow, 150U);
+    const uint32_t surface_width = state.layout.surface.width;
+    const uint32_t surface_height = state.layout.surface.height;
+    const uint32_t panel_x = dock_fixed_pixel(dock_model.panel_x);
+    const uint32_t panel_y = dock_fixed_pixel(dock_model.panel_y);
+    const uint32_t panel_width = dock_fixed_pixel(dock_model.panel_width);
+    uint32_t panel_height = dock_fixed_pixel(dock_model.panel_height);
+    const uint32_t center_x = dock_fixed_pixel(dock_model.center_x);
 
-    for (uint32_t row = 0U; row < 36U && status == UI_STATUS_OK; ++row) {
-        const uint32_t inset = (35U - row) * 16U / 35U;
-        const uint8_t shade = (uint8_t)(218U - row * 2U);
-        const struct ui_rect strip = { shelf.x + inset,
-            shelf.y + row, shelf.width - inset * 2U, 1U };
+    if (panel_height == 0U || panel_y >= surface_height ||
+            panel_width == 0U) {
+        return UI_STATUS_OK;
+    }
+    if (panel_height > 48U) {
+        panel_height = 48U;
+    }
+    if (!rects_intersect((struct ui_rect){ 0U,
+            panel_y > 18U ? panel_y - 18U : 0U,
+            surface_width, surface_height -
+                (panel_y > 18U ? panel_y - 18U : 0U) }, damage)) {
+        return UI_STATUS_OK;
+    }
 
-        status = translucent_fill(strip, damage,
-            framebuffer_pack(shade, (uint8_t)(shade + 5U),
-                (uint8_t)(shade + 8U)), row < 9U ? 152U : 218U);
+    /* Snapshot the real composited desktop before laying down glass.  A
+     * compact nine-tap blur sampled from this cache is the freestanding
+     * counterpart of upstream 3d-dock's three-pass Cairo frost surface. */
+    for (uint32_t row = 0U; row < panel_height; ++row) {
+        const uint32_t source_y = panel_y + row < surface_height ?
+            panel_y + row : surface_height - 1U;
+        for (uint32_t x = 0U; x < surface_width; ++x) {
+            if (surface_read_pixel(canvas, x, source_y,
+                    &dock_backdrop_pixels[(size_t)row * surface_width + x]) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
     }
-    if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ shelf.x + 16U,
-            shelf.y, shelf.width - 32U, 2U }, damage,
-            state.theme.white);
+
+    for (uint32_t row = 0U; row < panel_height; ++row) {
+        const uint32_t flare_total = panel_width * 55U * row /
+            (1000U * (panel_height == 0U ? 1U : panel_height));
+        const uint32_t left = panel_x > flare_total / 2U ?
+            panel_x - flare_total / 2U : 0U;
+        uint32_t right = panel_x + panel_width + flare_total / 2U;
+        if (right > surface_width) {
+            right = surface_width;
+        }
+        for (uint32_t x = left; x < right; ++x) {
+            const uint32_t y = panel_y + row;
+            if (y >= surface_height || !rect_contains_point(damage,
+                    (struct ui_point){ (int32_t)x, (int32_t)y })) {
+                continue;
+            }
+            uint32_t sums[3U] = { 0U, 0U, 0U };
+            uint32_t samples = 0U;
+            for (int32_t sample_y = -2; sample_y <= 2; sample_y += 2) {
+                int32_t cached_y = (int32_t)row + sample_y;
+                if (cached_y < 0) {
+                    cached_y = 0;
+                } else if ((uint32_t)cached_y >= panel_height) {
+                    cached_y = (int32_t)panel_height - 1;
+                }
+                for (int32_t sample_x = -3; sample_x <= 3;
+                        sample_x += 3) {
+                    int32_t cached_x = (int32_t)x + sample_x;
+                    if (cached_x < 0) {
+                        cached_x = 0;
+                    } else if ((uint32_t)cached_x >= surface_width) {
+                        cached_x = (int32_t)surface_width - 1;
+                    }
+                    const uint32_t pixel = dock_backdrop_pixels[
+                        (size_t)cached_y * surface_width + (uint32_t)cached_x];
+                    sums[0U] += (pixel >> logo_red_shift) & 0xFFU;
+                    sums[1U] += (pixel >> logo_green_shift) & 0xFFU;
+                    sums[2U] += (pixel >> logo_blue_shift) & 0xFFU;
+                    samples += 1U;
+                }
+            }
+            uint32_t frosted = framebuffer_pack((uint8_t)(sums[0U] / samples),
+                (uint8_t)(sums[1U] / samples),
+                (uint8_t)(sums[2U] / samples));
+            const uint8_t wash_alpha = dock_dark ?
+                (uint8_t)(68U - row * 20U / panel_height) :
+                (uint8_t)(107U - row * 56U / panel_height);
+            const uint32_t wash = dock_dark ?
+                framebuffer_pack(0x18U, 0x1AU, 0x1EU) :
+                framebuffer_pack(0xF7U, 0xF8U, 0xFFU);
+            frosted = blend_packed(frosted, wash, wash_alpha);
+            frosted = blend_packed(frosted,
+                framebuffer_pack(0U, 0U, 0U),
+                (uint8_t)(41U * row / panel_height));
+            if (surface_pixel(canvas, x, y, frosted) != SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
     }
-    if (status == UI_STATUS_OK) {
-        status = translucent_fill((struct ui_rect){ shelf.x + 2U,
-            shelf.y + 36U, shelf.width - 4U, 4U }, damage,
-            framebuffer_pack(0x32U, 0x3BU, 0x40U), 230U);
+
+    /* Soft back-edge glow, then the hard centre-hot specular line. */
+    const uint32_t glow_height = dock_fixed_pixel(dock_model.icon) * 26U /
+        100U;
+    for (uint32_t row = 0U; row < glow_height; ++row) {
+        const uint32_t y = panel_y > glow_height - row ?
+            panel_y - glow_height + row : 0U;
+        const uint8_t vertical_alpha = (uint8_t)(28U * (row + 1U) /
+            (glow_height == 0U ? 1U : glow_height));
+        for (uint32_t x = panel_x; x < panel_x + panel_width &&
+                x < surface_width; ++x) {
+            const uint32_t distance = x > center_x ? x - center_x :
+                center_x - x;
+            const uint32_t half = panel_width / 2U;
+            const uint8_t edge = distance < half ?
+                (uint8_t)(UINT8_MAX * (half - distance) /
+                    (half == 0U ? 1U : half)) : 0U;
+            if (rect_contains_point(damage, (struct ui_point){
+                    (int32_t)x, (int32_t)y })) {
+                uint32_t under;
+                if (surface_read_pixel(canvas, x, y, &under) !=
+                        SURFACE_STATUS_OK ||
+                        surface_pixel(canvas, x, y, blend_packed(under,
+                            state.theme.white,
+                            (uint8_t)((uint32_t)vertical_alpha * edge /
+                                UINT8_MAX))) != SURFACE_STATUS_OK) {
+                    return UI_STATUS_SURFACE_FAILURE;
+                }
+            }
+        }
     }
-    if (status == UI_STATUS_OK) {
-        status = fill_clipped((struct ui_rect){ shelf.x + 10U,
-            shelf.y + 35U, shelf.width - 20U, 1U }, damage,
-            framebuffer_pack(0xD5U, 0xE4U, 0xE8U));
+    for (uint32_t x = panel_x; x < panel_x + panel_width &&
+            x < surface_width; ++x) {
+        const uint32_t distance = x > center_x ? x - center_x :
+            center_x - x;
+        const uint32_t half = panel_width / 2U;
+        const uint8_t alpha = distance < half ?
+            (uint8_t)(26U + 198U * (half - distance) /
+                (half == 0U ? 1U : half)) : 26U;
+        if (rect_contains_point(damage, (struct ui_point){
+                (int32_t)x, (int32_t)panel_y })) {
+            uint32_t under;
+            if (surface_read_pixel(canvas, x, panel_y, &under) !=
+                    SURFACE_STATUS_OK ||
+                    surface_pixel(canvas, x, panel_y, blend_packed(under,
+                        state.theme.white, alpha)) != SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
     }
-    return status;
+    return UI_STATUS_OK;
 }
 
 static enum ui_status draw_menu_brand(struct ui_rect damage)
 {
+    const char *const application = state.active_panel == UI_PANEL_NONE ?
+        "Finder" : ui_panel_name(state.active_panel);
+    char uptime[40] = "";
+    size_t at = append_text(uptime, sizeof(uptime), 0U,
+        "Wi-Fi   100%   Up ");
     enum ui_status status = draw_logo_color((struct ui_rect){ 8U, 3U,
         18U, 17U }, damage);
+
+    (void)append_u64(uptime, sizeof(uptime), at,
+        clock_monotonic_ns() / UINT64_C(60000000000));
     if (status == UI_STATUS_OK) {
         status = draw_text(state.layout.menu_bar, damage, 34U,
-            state.layout.menu_baseline, "Sapote First Environment",
-            state.theme.white);
+            state.layout.menu_baseline, application, state.theme.ink);
     }
     if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 142U,
+            state.layout.menu_baseline, "File", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 184U,
+            state.layout.menu_baseline, "Edit", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 228U,
+            state.layout.menu_baseline, "View", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 274U,
+            state.layout.menu_baseline, "Go", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 306U,
+            state.layout.menu_baseline, "Window", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(state.layout.menu_bar, damage, 378U,
+            state.layout.menu_baseline, "Help", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        uint32_t width = 0U;
+
+        if (ui_font_text_width(uptime, &width) != UI_FONT_STATUS_OK ||
+                width + 10U > state.layout.surface.width) {
+            return UI_STATUS_FONT_FAILURE;
+        }
         status = draw_text(state.layout.menu_bar, damage,
-            state.layout.surface.width - 134U, state.layout.menu_baseline,
-            "Sapote 2.1.0", state.theme.white);
+            state.layout.surface.width - width - 10U,
+            state.layout.menu_baseline, uptime, state.theme.ink);
     }
     return status;
 }
@@ -3114,18 +5006,24 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
     enum ui_status status = draw_desktop_pattern(damage);
 
     if (status == UI_STATUS_OK) {
-        status = translucent_fill(state.layout.menu_bar, damage,
-            state.theme.shadow, 210U);
+        status = menu_glass ?
+            gradient_rect(state.layout.menu_bar, damage,
+                0xF8U, 0xFAU, 0xFBU, 0xA9U, 0xB3U, 0xB8U) :
+            fill_clipped(state.layout.menu_bar, damage,
+                framebuffer_pack(0xD2U, 0xD6U, 0xD8U));
     }
     if (status == UI_STATUS_OK) {
         status = fill_clipped((struct ui_rect){
             state.layout.menu_bar.x,
             state.layout.menu_bar.y + state.layout.menu_bar.height - 1U,
             state.layout.menu_bar.width, 1U
-        }, damage, framebuffer_pack(0x8AU, 0xAEU, 0xB8U));
+        }, damage, framebuffer_pack(0x65U, 0x6BU, 0x6EU));
     }
     if (status == UI_STATUS_OK) {
         status = draw_menu_brand(damage);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_panel(damage);
     }
     if (status == UI_STATUS_OK) {
         status = draw_dock_shelf(damage);
@@ -3133,9 +5031,6 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT &&
          status == UI_STATUS_OK; ++index) {
         status = draw_dock_item(&state.layout.dock_items[index], damage);
-    }
-    if (status == UI_STATUS_OK) {
-        status = draw_panel(damage);
     }
     if (status == UI_STATUS_OK) {
         status = draw_cursor(damage);
@@ -3159,13 +5054,123 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
 static uint64_t surface_hash(void)
 {
     uint64_t hash = UINT64_C(0xCBF29CE484222325);
-    const size_t count = (size_t)canvas->width * (size_t)canvas->height;
+    const uint32_t telemetry_x = canvas->width >
+        UI_MENU_TELEMETRY_MAX_WIDTH ?
+        canvas->width - UI_MENU_TELEMETRY_MAX_WIDTH : 0U;
 
-    for (size_t index = 0U; index < count; ++index) {
-        hash ^= canvas->pixels[index];
-        hash *= UINT64_C(0x100000001B3);
+    for (uint32_t y = 0U; y < canvas->height; ++y) {
+        for (uint32_t x = 0U; x < canvas->width; ++x) {
+            /*
+             * The right menu strip contains live uptime telemetry.  A minute
+             * boundary between an interaction frame and the installed proof
+             * is expected to change those glyphs and is not stale damage.
+             * Keep the stable hash over every other desktop pixel, including
+             * the brand, menus, windows, cursor, wallpaper, and complete Dock.
+             */
+            if (y < state.layout.menu_bar.height && x >= telemetry_x) {
+                continue;
+            }
+            hash ^= canvas->pixels[(size_t)y * canvas->width + x];
+            hash *= UINT64_C(0x100000001B3);
+        }
     }
     return hash;
+}
+
+static uint64_t surface_tile_hash(uint32_t tile_x, uint32_t tile_y)
+{
+    uint64_t hash = UINT64_C(0xCBF29CE484222325);
+    const uint32_t telemetry_x = canvas->width >
+        UI_MENU_TELEMETRY_MAX_WIDTH ?
+        canvas->width - UI_MENU_TELEMETRY_MAX_WIDTH : 0U;
+    uint32_t right = tile_x + UI_REDRAW_DIAGNOSTIC_TILE;
+    uint32_t bottom = tile_y + UI_REDRAW_DIAGNOSTIC_TILE;
+
+    if (right > canvas->width) {
+        right = canvas->width;
+    }
+    if (bottom > canvas->height) {
+        bottom = canvas->height;
+    }
+    for (uint32_t y = tile_y; y < bottom; ++y) {
+        for (uint32_t x = tile_x; x < right; ++x) {
+            if (y < state.layout.menu_bar.height && x >= telemetry_x) {
+                continue;
+            }
+            hash ^= canvas->pixels[(size_t)y * canvas->width + x];
+            hash *= UINT64_C(0x100000001B3);
+        }
+    }
+    return hash;
+}
+
+static void snapshot_redraw_tiles(void)
+{
+    const uint32_t columns = (canvas->width +
+        UI_REDRAW_DIAGNOSTIC_TILE - 1U) / UI_REDRAW_DIAGNOSTIC_TILE;
+    const uint32_t rows = (canvas->height +
+        UI_REDRAW_DIAGNOSTIC_TILE - 1U) / UI_REDRAW_DIAGNOSTIC_TILE;
+
+    for (uint32_t row = 0U; row < rows; ++row) {
+        for (uint32_t column = 0U; column < columns; ++column) {
+            redraw_tile_hashes[(size_t)row * columns + column] =
+                surface_tile_hash(column * UI_REDRAW_DIAGNOSTIC_TILE,
+                    row * UI_REDRAW_DIAGNOSTIC_TILE);
+        }
+    }
+}
+
+static void report_redraw_tile_mismatch(void)
+{
+    const uint32_t columns = (canvas->width +
+        UI_REDRAW_DIAGNOSTIC_TILE - 1U) / UI_REDRAW_DIAGNOSTIC_TILE;
+    const uint32_t rows = (canvas->height +
+        UI_REDRAW_DIAGNOSTIC_TILE - 1U) / UI_REDRAW_DIAGNOSTIC_TILE;
+    uint32_t minimum_column = columns;
+    uint32_t minimum_row = rows;
+    uint32_t maximum_column = 0U;
+    uint32_t maximum_row = 0U;
+    uint32_t changed = 0U;
+
+    for (uint32_t row = 0U; row < rows; ++row) {
+        for (uint32_t column = 0U; column < columns; ++column) {
+            if (redraw_tile_hashes[(size_t)row * columns + column] ==
+                    surface_tile_hash(column * UI_REDRAW_DIAGNOSTIC_TILE,
+                        row * UI_REDRAW_DIAGNOSTIC_TILE)) {
+                continue;
+            }
+            if (column < minimum_column) {
+                minimum_column = column;
+            }
+            if (column > maximum_column) {
+                maximum_column = column;
+            }
+            if (row < minimum_row) {
+                minimum_row = row;
+            }
+            if (row > maximum_row) {
+                maximum_row = row;
+            }
+            ++changed;
+        }
+    }
+    console_serial_write("RW REDRAW changed tiles ");
+    console_serial_write_u64(changed);
+    if (changed != 0U) {
+        console_serial_write(" bounds ");
+        console_serial_write_u64((uint64_t)minimum_column *
+            UI_REDRAW_DIAGNOSTIC_TILE);
+        console_serial_write(",");
+        console_serial_write_u64((uint64_t)minimum_row *
+            UI_REDRAW_DIAGNOSTIC_TILE);
+        console_serial_write(" ");
+        console_serial_write_u64((uint64_t)(maximum_column -
+            minimum_column + 1U) * UI_REDRAW_DIAGNOSTIC_TILE);
+        console_serial_write("x");
+        console_serial_write_u64((uint64_t)(maximum_row - minimum_row + 1U) *
+            UI_REDRAW_DIAGNOSTIC_TILE);
+    }
+    console_serial_write("\n");
 }
 
 enum ui_status ui_construct(bool pointer_present)
@@ -3174,6 +5179,7 @@ enum ui_status ui_construct(bool pointer_present)
     uint32_t logo_height;
     uint32_t wallpaper_width;
     uint32_t wallpaper_height;
+    uint32_t wallpaper_frames;
     const struct framebuffer_state framebuffer = framebuffer_get_state();
 
     if (state.initialized) {
@@ -3194,6 +5200,7 @@ enum ui_status ui_construct(bool pointer_present)
         canvas = NULL;
         return status;
     }
+    panel_home = state.layout.panel;
     if (sapote_logo_geometry(&logo_width, &logo_height) != LOGO_STATUS_OK ||
         logo_width != UI_LOGO_WIDTH || logo_height != UI_LOGO_HEIGHT ||
         sapote_logo_decode(logo_pixels, UI_LOGO_PIXELS,
@@ -3220,10 +5227,75 @@ enum ui_status ui_construct(bool pointer_present)
         canvas = NULL;
         return UI_STATUS_STUDIO_ICON_FAILURE;
     }
-    if (sapote_wallpaper_geometry(&wallpaper_width, &wallpaper_height) !=
-            WALLPAPER_STATUS_OK || wallpaper_width != 1024U ||
-        wallpaper_height != 768U ||
-        sapote_wallpaper_decode(wallpaper_pixels, 1024U * 768U,
+    if (sapote_settings_icon_geometry(&settings_icon_width,
+            &settings_icon_height) != LOGO_STATUS_OK ||
+        settings_icon_width == 0U || settings_icon_width > 80U ||
+        settings_icon_height == 0U || settings_icon_height > 80U ||
+        sapote_settings_icon_decode(settings_icon_pixels,
+            (size_t)settings_icon_width * settings_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_settings_icon_decode_alpha(settings_icon_alpha,
+            (size_t)settings_icon_width * settings_icon_height) !=
+                LOGO_STATUS_OK ||
+        sapote_camera_icon_geometry(&camera_icon_width,
+            &camera_icon_height) != LOGO_STATUS_OK ||
+        camera_icon_width == 0U || camera_icon_width > 80U ||
+        camera_icon_height == 0U || camera_icon_height > 80U ||
+        sapote_camera_icon_decode(camera_icon_pixels,
+            (size_t)camera_icon_width * camera_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_camera_icon_decode_alpha(camera_icon_alpha,
+            (size_t)camera_icon_width * camera_icon_height) !=
+                LOGO_STATUS_OK) {
+        canvas = NULL;
+        return UI_STATUS_APP_ICON_FAILURE;
+    }
+    if (sapote_files_icon_geometry(&files_icon_width,
+            &files_icon_height) != LOGO_STATUS_OK ||
+        files_icon_width == 0U || files_icon_width > 80U ||
+        files_icon_height == 0U || files_icon_height > 80U ||
+        sapote_files_icon_decode(files_icon_pixels,
+            (size_t)files_icon_width * files_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_files_icon_decode_alpha(files_icon_alpha,
+            (size_t)files_icon_width * files_icon_height) != LOGO_STATUS_OK ||
+        sapote_terminal_icon_geometry(&terminal_icon_width,
+            &terminal_icon_height) != LOGO_STATUS_OK ||
+        terminal_icon_width == 0U || terminal_icon_width > 80U ||
+        terminal_icon_height == 0U || terminal_icon_height > 80U ||
+        sapote_terminal_icon_decode(terminal_icon_pixels,
+            (size_t)terminal_icon_width * terminal_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_terminal_icon_decode_alpha(terminal_icon_alpha,
+            (size_t)terminal_icon_width * terminal_icon_height) !=
+                LOGO_STATUS_OK) {
+        canvas = NULL;
+        return UI_STATUS_APP_ICON_FAILURE;
+    }
+    if (sapote_settings_category_icons_geometry(
+            &settings_category_icon_width,
+            &settings_category_icon_height) != LOGO_STATUS_OK ||
+        settings_category_icon_width != 256U ||
+        settings_category_icon_height != 192U ||
+        sapote_settings_category_icons_decode(settings_category_icon_pixels,
+            256U * 192U, framebuffer.red_position,
+            framebuffer.green_position, framebuffer.blue_position, 0U) !=
+                LOGO_STATUS_OK ||
+        sapote_settings_category_icons_decode_alpha(
+            settings_category_icon_alpha, 256U * 192U) != LOGO_STATUS_OK) {
+        canvas = NULL;
+        return UI_STATUS_APP_ICON_FAILURE;
+    }
+    if (sapote_wallpaper_geometry(&wallpaper_width, &wallpaper_height,
+            &wallpaper_frames) != WALLPAPER_STATUS_OK ||
+        wallpaper_width != 1024U || wallpaper_height != 768U ||
+        wallpaper_frames != UI_WALLPAPER_COUNT ||
+        sapote_wallpaper_decode(0U, wallpaper_pixels, 1024U * 768U,
+            1024U, 768U,
             framebuffer.red_position, framebuffer.green_position,
             framebuffer.blue_position) != WALLPAPER_STATUS_OK) {
         canvas = NULL;
@@ -3236,8 +5308,34 @@ enum ui_status ui_construct(bool pointer_present)
     state.hover = UI_ELEMENT_NONE;
     state.pressed = UI_ELEMENT_NONE;
     state.active_panel = UI_PANEL_NONE;
+    panel_order_count = 0U;
+    panel_cascade = 0U;
+    for (size_t index = 0U; index < UI_PANEL_COUNT; ++index) {
+        panel_open[index] = false;
+        panel_windows[index] = panel_home;
+    }
+    install_panel_geometry(UI_PANEL_NONE);
     state.ledger_pass = false;
     terminal_welcomed = false;
+    settings_page = -1;
+    dock_dark = false;
+    desktop_wallpaper = 0U;
+    camera_capture_count = 0U;
+    camera_frame_available = false;
+    camera_seen_generation = 0U;
+    camera_initialize();
+    panel_spring_active = false;
+    panel_spring_force_settle = false;
+    panel_spring_timer_id = 0U;
+    panel_spring_position = UI_SPRING_TARGET;
+    panel_spring_velocity = 0;
+    panel_spring_last_ns = 0U;
+    dock_spring_active = false;
+    dock_spring_last_ns = 0U;
+    panel_drag_active = false;
+    panel_drag_panel = UI_PANEL_NONE;
+    panel_drag_anchor = (struct ui_point){ 0, 0 };
+    panel_drag_origin = panel_home;
     event_count = 0U;
 
     if (pointer_present) {
@@ -3253,6 +5351,11 @@ enum ui_status ui_construct(bool pointer_present)
     } else {
         state.pointer = (struct ui_point){ 0, 0 };
     }
+    dock3d_initialize(&dock_model, 58U, framebuffer.width,
+        framebuffer.height);
+    dock3d_set_pointer(&dock_model, state.pointer.x, state.pointer.y,
+        pointer_present, dock_magnification);
+    dock_sync_layout();
 
     if (screen_set_palette(0x08U, 0x10U, 0x12U,
             0x9DU, 0xD7U, 0xA3U) != SCREEN_STATUS_OK ||
@@ -3433,14 +5536,16 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
 
 static enum ui_element_id next_focus(enum ui_element_id current, bool previous)
 {
-    if (current < UI_ELEMENT_DOCK_FILES || current > UI_ELEMENT_DOCK_STUDIO) {
+    if (current < UI_ELEMENT_DOCK_FILES || current > UI_ELEMENT_DOCK_SETTINGS) {
         return UI_ELEMENT_DOCK_FILES;
     }
     if (previous) {
-        return current == UI_ELEMENT_DOCK_FILES ? UI_ELEMENT_DOCK_STUDIO :
+        return current == UI_ELEMENT_DOCK_FILES ?
+            (keyboard_focus_wrap ? UI_ELEMENT_DOCK_SETTINGS : current) :
             (enum ui_element_id)(current - 1);
     }
-    return current == UI_ELEMENT_DOCK_STUDIO ? UI_ELEMENT_DOCK_FILES :
+    return current == UI_ELEMENT_DOCK_SETTINGS ?
+        (keyboard_focus_wrap ? UI_ELEMENT_DOCK_FILES : current) :
         (enum ui_element_id)(current + 1);
 }
 
@@ -3450,28 +5555,24 @@ static enum ui_status set_panel(
 )
 {
     const enum ui_panel_id old_panel = state.active_panel;
+    bool opening = false;
 
     if (panel < UI_PANEL_NONE || panel >= UI_PANEL_COUNT || damage == NULL) {
         return UI_STATUS_BAD_PANEL;
     }
+    panel_drag_active = false;
     if (old_panel == panel) {
         return UI_STATUS_OK;
     }
-    if (old_panel == UI_PANEL_NOTES && note_dirty) {
-        if (note_save() != SAPFS_STATUS_OK) {
-            *damage = rect_union(*damage, state.layout.panel);
-            return UI_STATUS_OK;
-        }
+    if (panel == UI_PANEL_NONE && old_panel == UI_PANEL_NOTES && note_dirty &&
+            note_save() != SAPFS_STATUS_OK) {
+        *damage = rect_union(*damage, state.layout.panel);
+        return UI_STATUS_OK;
     }
-    if (old_panel == UI_PANEL_STUDIO && studio_dirty) {
-        if (studio_save() != SAPFS_STATUS_OK) {
-            *damage = rect_union(*damage, state.layout.panel);
-            return UI_STATUS_OK;
-        }
-    }
-    if (old_panel != UI_PANEL_NONE || panel != UI_PANEL_NONE) {
-        *damage = rect_union(*damage,
-            drop_shadow_bounds(state.layout.panel, 6U));
+    if (panel == UI_PANEL_NONE && old_panel == UI_PANEL_STUDIO &&
+            studio_dirty && studio_save() != SAPFS_STATUS_OK) {
+        *damage = rect_union(*damage, state.layout.panel);
+        return UI_STATUS_OK;
     }
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
         if (state.layout.dock_items[index].panel == old_panel ||
@@ -3481,29 +5582,89 @@ static enum ui_status set_panel(
                     state.layout.dock_items[index].id));
         }
     }
-    state.active_panel = panel;
-    state.renders.panel_transitions += 1U;
+    if (panel_spring_timer_id != 0U) {
+        (void)timer_cancel((uint64_t)panel_spring_timer_id);
+        panel_spring_timer_id = 0U;
+    }
+    panel_spring_force_settle = false;
+    if (panel == UI_PANEL_NONE) {
+        if (old_panel != UI_PANEL_NONE) {
+            panel_open[old_panel] = false;
+            remove_panel_from_order(old_panel);
+        }
+        state.active_panel = front_panel();
+        install_panel_geometry(state.active_panel);
+        panel_spring_active = false;
+        panel_spring_position = UI_SPRING_TARGET;
+        panel_spring_velocity = 0;
+    } else {
+        opening = !panel_open[panel];
+        if (opening) {
+            const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
+            const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
 
-    if (panel == UI_PANEL_FILES) {
+            panel_windows[panel] = (struct ui_rect){
+                panel_home.x + offset_x, panel_home.y + offset_y,
+                panel_home.width, panel_home.height
+            };
+            panel_cascade = (uint8_t)((panel_cascade + 1U) %
+                (UI_PANEL_COUNT - 1U));
+            panel_open[panel] = true;
+        }
+        bring_panel_to_front(panel);
+        state.active_panel = panel;
+        install_panel_geometry(panel);
+    }
+    state.renders.panel_transitions += 1U;
+    *damage = rect_union(*damage, state.layout.surface);
+
+    if (panel != UI_PANEL_NONE && opening && spring_motion) {
+        const size_t dock_index = (size_t)panel - 1U;
+        panel_spring_origin = state.layout.dock_items[dock_index].icon_bounds;
+        panel_spring_active = true;
+        panel_spring_position = 0;
+        panel_spring_velocity = 0;
+        panel_spring_last_ns = clock_monotonic_ns();
+        if (timer_is_started()) {
+            (void)panel_spring_schedule_wake(panel_spring_last_ns);
+        }
+    } else if (panel != UI_PANEL_NONE) {
+        panel_spring_active = false;
+        panel_spring_position = UI_SPRING_TARGET;
+        panel_spring_velocity = 0;
+    }
+    if (dock_spring_active && panel_spring_timer_id == 0U &&
+            timer_is_started()) {
+        (void)panel_spring_schedule_wake(clock_monotonic_ns());
+    }
+
+    if (opening && panel == UI_PANEL_FILES) {
         (void)files_refresh();
-    } else if (panel == UI_PANEL_NOTES) {
+    } else if (opening && panel == UI_PANEL_NOTES) {
         (void)note_load();
-    } else if (panel == UI_PANEL_STUDIO) {
+    } else if (opening && panel == UI_PANEL_STUDIO) {
         (void)studio_load();
     }
 
-    if (panel == UI_PANEL_TERMINAL) {
-        if (screen_set_viewport(surface_rect_of(state.layout.panel_client),
-                true) != SCREEN_STATUS_OK) {
+    if (panel_open[UI_PANEL_TERMINAL]) {
+        const struct ui_rect terminal = panel_windows[UI_PANEL_TERMINAL];
+        const struct ui_rect terminal_client = {
+            terminal.x + 10U, terminal.y + 38U,
+            terminal.width - 20U, terminal.height - 48U
+        };
+
+        if (screen_set_viewport(surface_rect_of(terminal_client), true) !=
+                SCREEN_STATUS_OK) {
             return UI_STATUS_SCREEN_FAILURE;
         }
-        if (!terminal_welcomed) {
+        if (opening && panel == UI_PANEL_TERMINAL && !terminal_welcomed) {
             if (screen_clear() != SCREEN_STATUS_OK ||
                 screen_write("Sapote terminal\n"
                     "Type help for commands. Type fetch for system identity.\n"
                     "\nsap> ") != SCREEN_STATUS_OK) {
                 return UI_STATUS_SCREEN_FAILURE;
             }
+            console_serial_write("Sapote: Redwood Terminal opened\n");
             terminal_welcomed = true;
         }
     } else if (screen_set_visible(false) != SCREEN_STATUS_OK) {
@@ -3514,10 +5675,12 @@ static enum ui_status set_panel(
 
 static enum ui_element_id active_hit(struct ui_point point)
 {
-    enum ui_element_id hit = UI_ELEMENT_NONE;
+    const int dock_hit = dock3d_hit(&dock_model, point.x, point.y);
+    enum ui_element_id hit = dock_hit >= 0 ?
+        (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
+        UI_ELEMENT_NONE;
 
-    if (ui_hit_test(&state.layout, point, &hit) != UI_STATUS_OK ||
-        hit != UI_ELEMENT_NONE) {
+    if (hit != UI_ELEMENT_NONE) {
         return hit;
     }
     if (state.active_panel == UI_PANEL_NONE) {
@@ -3531,24 +5694,19 @@ static enum ui_element_id active_hit(struct ui_point point)
     const struct ui_rect client = state.layout.panel_client;
     if (state.active_panel == UI_PANEL_FILES) {
         const struct ui_rect buttons[] = {
-            { client.x + 10U, client.y + 8U, 56U, 26U },
-            { client.x + 76U, client.y + 8U, 88U, 26U },
-            { client.x + 174U, client.y + 8U, 104U, 26U },
-            { client.x + client.width - 156U, client.y + 8U, 68U, 26U },
-            { client.x + client.width - 78U, client.y + 8U, 68U, 26U }
+            { client.x + 10U, client.y + 8U, 32U, 26U },
+            { client.x + 226U, client.y + 8U, 38U, 26U }
         };
         static const enum ui_element_id ids[] = {
-            UI_ELEMENT_FILES_UP, UI_ELEMENT_FILES_NEW_FILE,
-            UI_ELEMENT_FILES_NEW_FOLDER, UI_ELEMENT_FILES_REFRESH,
-            UI_ELEMENT_FILES_SYNC
+            UI_ELEMENT_FILES_UP, UI_ELEMENT_FILES_REFRESH
         };
-        for (size_t index = 0U; index < 5U; ++index) {
+        for (size_t index = 0U; index < 2U; ++index) {
             if (rect_contains_point(buttons[index], point)) {
                 return ids[index];
             }
         }
-        if (rect_contains_point((struct ui_rect){ client.x + 8U,
-                client.y + 46U + 94U, 170U, 28U }, point)) {
+        if (rect_contains_point((struct ui_rect){ client.x + 4U,
+                client.y + 75U, 182U, 28U }, point)) {
             return UI_ELEMENT_FILES_ROOT;
         }
         for (size_t index = 0U; index < file_entry_count && index < 12U;
@@ -3557,10 +5715,6 @@ static enum ui_element_id active_hit(struct ui_point point)
                 return (enum ui_element_id)(UI_ELEMENT_FILES_ENTRY_0 + index);
             }
         }
-    } else if (state.active_panel == UI_PANEL_NOTES &&
-        rect_contains_point((struct ui_rect){ client.x + 10U,
-            client.y + 8U, 72U, 26U }, point)) {
-        return UI_ELEMENT_NOTES_SAVE;
     } else if (state.active_panel == UI_PANEL_STUDIO) {
         static const enum ui_element_id ids[] = {
             UI_ELEMENT_STUDIO_NEW, UI_ELEMENT_STUDIO_IMPORT,
@@ -3576,8 +5730,112 @@ static enum ui_element_id active_hit(struct ui_point point)
         if (rect_contains_point(studio_timeline_rect(), point)) {
             return UI_ELEMENT_STUDIO_TIMELINE;
         }
+    } else if (state.active_panel == UI_PANEL_SETTINGS) {
+        if (settings_page < 0) {
+            for (size_t index = 0U; index < UI_SETTINGS_CATEGORY_COUNT;
+                 ++index) {
+                if (rect_contains_point(settings_category_rect(index), point)) {
+                    return (enum ui_element_id)(
+                        UI_ELEMENT_SETTINGS_CATEGORY_0 + index);
+                }
+            }
+        } else {
+            if (rect_contains_point(settings_back_rect(), point)) {
+                return UI_ELEMENT_SETTINGS_BACK;
+            }
+            if (settings_page == 0 &&
+                    rect_contains_point(settings_appearance_rect(false), point)) {
+                return UI_ELEMENT_SETTINGS_APPEARANCE_LIGHT;
+            }
+            if (settings_page == 0 &&
+                    rect_contains_point(settings_appearance_rect(true), point)) {
+                return UI_ELEMENT_SETTINGS_APPEARANCE_DARK;
+            }
+            if (settings_page == 1) {
+                for (size_t index = 0U; index < UI_WALLPAPER_COUNT; ++index) {
+                    if (rect_contains_point(settings_wallpaper_rect(index),
+                            point)) {
+                        return (enum ui_element_id)(
+                            UI_ELEMENT_SETTINGS_WALLPAPER_0 + index);
+                    }
+                }
+            }
+            const size_t option_count = settings_interactive_option_count(
+                (size_t)settings_page);
+            for (size_t index = 0U; index < option_count; ++index) {
+                if (rect_contains_point(settings_option_rect(index), point)) {
+                    return (enum ui_element_id)(
+                        UI_ELEMENT_SETTINGS_OPTION_0 + index);
+                }
+            }
+        }
+    } else if (state.active_panel == UI_PANEL_CAMERA) {
+        if (rect_contains_point(camera_capture_rect(), point)) {
+            return UI_ELEMENT_CAMERA_CAPTURE;
+        }
     }
     return UI_ELEMENT_NONE;
+}
+
+static bool panel_title_contains(struct ui_rect panel, struct ui_point point)
+{
+    if (panel.width <= 42U || panel.height <= UI_PANEL_TITLE_HEIGHT + 4U) {
+        return false;
+    }
+    return rect_contains_point((struct ui_rect){
+        panel.x + 34U, panel.y + 4U,
+        panel.width - 38U, UI_PANEL_TITLE_HEIGHT
+    }, point);
+}
+
+static enum ui_status drag_panel_to(
+    struct ui_point point,
+    struct ui_rect *damage
+)
+{
+    if (!panel_drag_active || panel_drag_panel <= UI_PANEL_NONE ||
+            panel_drag_panel >= UI_PANEL_COUNT || damage == NULL) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    const struct ui_rect old_window = panel_windows[panel_drag_panel];
+    const int64_t delta_x = (int64_t)point.x -
+        (int64_t)panel_drag_anchor.x;
+    const int64_t delta_y = (int64_t)point.y -
+        (int64_t)panel_drag_anchor.y;
+    int64_t next_x = (int64_t)panel_drag_origin.x + delta_x;
+    int64_t next_y = (int64_t)panel_drag_origin.y + delta_y;
+    const int64_t maximum_x = state.layout.surface.width > old_window.width ?
+        (int64_t)(state.layout.surface.width - old_window.width) : 0;
+    int64_t maximum_y = state.layout.surface.height > old_window.height ?
+        (int64_t)(state.layout.surface.height - old_window.height) :
+        (int64_t)UI_MENU_HEIGHT;
+
+    if (maximum_y < (int64_t)UI_MENU_HEIGHT) {
+        maximum_y = (int64_t)UI_MENU_HEIGHT;
+    }
+    if (next_x < 0) {
+        next_x = 0;
+    } else if (next_x > maximum_x) {
+        next_x = maximum_x;
+    }
+    if (next_y < (int64_t)UI_MENU_HEIGHT) {
+        next_y = (int64_t)UI_MENU_HEIGHT;
+    } else if (next_y > maximum_y) {
+        next_y = maximum_y;
+    }
+    panel_windows[panel_drag_panel].x = (uint32_t)next_x;
+    panel_windows[panel_drag_panel].y = (uint32_t)next_y;
+    install_panel_geometry(panel_drag_panel);
+    *damage = rect_union(*damage, rect_union(
+        drop_shadow_draw_rect(old_window, 6U),
+        drop_shadow_draw_rect(panel_windows[panel_drag_panel], 6U)));
+
+    if (panel_drag_panel == UI_PANEL_TERMINAL &&
+            screen_set_viewport(surface_rect_of(state.layout.panel_client),
+                true) != SCREEN_STATUS_OK) {
+        return UI_STATUS_SCREEN_FAILURE;
+    }
+    return UI_STATUS_OK;
 }
 
 static enum ui_status activate_element(
@@ -3586,7 +5844,11 @@ static enum ui_status activate_element(
 )
 {
     if (element >= UI_ELEMENT_DOCK_FILES &&
-        element <= UI_ELEMENT_DOCK_STUDIO) {
+        element <= UI_ELEMENT_DOCK_SETTINGS) {
+        dock3d_launch(&dock_model,
+            (size_t)(element - UI_ELEMENT_DOCK_FILES));
+        begin_dock_spring();
+        *damage = rect_union(*damage, dock_visual_bounds(&state.layout));
         return set_panel(panel_for_element(element), damage);
     }
     if (element == UI_ELEMENT_WINDOW_CLOSE) {
@@ -3628,8 +5890,6 @@ static enum ui_status activate_element(
             (void)note_load();
             return set_panel(UI_PANEL_NOTES, damage);
         }
-    } else if (element == UI_ELEMENT_NOTES_SAVE) {
-        (void)note_save();
     } else if (element == UI_ELEMENT_STUDIO_NEW) {
         studio_reset(true);
     } else if (element == UI_ELEMENT_STUDIO_IMPORT) {
@@ -3675,6 +5935,79 @@ static enum ui_status activate_element(
         if (studio_selected_clip == UINT8_MAX) {
             studio_set_status("Playhead moved");
         }
+    } else if (element == UI_ELEMENT_SETTINGS_BACK) {
+        settings_page = -1;
+    } else if (element >= UI_ELEMENT_SETTINGS_CATEGORY_0 &&
+            element <= UI_ELEMENT_SETTINGS_CATEGORY_11) {
+        settings_page = (int8_t)(element - UI_ELEMENT_SETTINGS_CATEGORY_0);
+    } else if (element == UI_ELEMENT_SETTINGS_APPEARANCE_LIGHT ||
+            element == UI_ELEMENT_SETTINGS_APPEARANCE_DARK) {
+        dock_dark = element == UI_ELEMENT_SETTINGS_APPEARANCE_DARK;
+        *damage = rect_union(*damage, dock_visual_bounds(&state.layout));
+    } else if (element >= UI_ELEMENT_SETTINGS_OPTION_0 &&
+            element <= UI_ELEMENT_SETTINGS_OPTION_2) {
+        const size_t option = (size_t)(
+            element - UI_ELEMENT_SETTINGS_OPTION_0);
+        if (settings_page == 2) {
+            if (option == 0U) {
+                dock_magnification = !dock_magnification;
+                begin_dock_spring();
+            } else if (option == 1U) {
+                dock_reflections = !dock_reflections;
+            } else {
+                dock_labels = !dock_labels;
+            }
+            *damage = rect_union(*damage, dock_visual_bounds(&state.layout));
+        } else if (settings_page == 3 && option < 2U) {
+            if (option == 0U) {
+                menu_glass = !menu_glass;
+                *damage = rect_union(*damage, state.layout.menu_bar);
+            } else {
+                window_high_contrast = !window_high_contrast;
+            }
+        } else if (settings_page == 4 && option < 2U) {
+            if (option == 0U) {
+                keyboard_focus_wrap = !keyboard_focus_wrap;
+            } else {
+                keyboard_focus_indicator = !keyboard_focus_indicator;
+                *damage = rect_union(*damage,
+                    dock_visual_bounds(&state.layout));
+            }
+        } else if (settings_page == 5 && option < 2U) {
+            const struct ui_rect old_cursor =
+                cursor_damage_rect_for(state.pointer);
+            if (option == 0U) {
+                cursor_large = !cursor_large;
+            } else {
+                cursor_dark = !cursor_dark;
+            }
+            *damage = rect_union(*damage, old_cursor);
+            *damage = rect_union(*damage,
+                cursor_damage_rect_for(state.pointer));
+        } else if (settings_page == 6 && option < 1U) {
+            spring_motion = !spring_motion;
+        } else if (settings_page == 10) {
+            if (option == 0U) {
+                window_shadows = !window_shadows;
+            } else if (option == 1U) {
+                window_bevels = !window_bevels;
+            } else {
+                window_title_gradient = !window_title_gradient;
+            }
+        } else {
+            return UI_STATUS_BAD_ELEMENT;
+        }
+    } else if (element >= UI_ELEMENT_SETTINGS_WALLPAPER_0 &&
+            element <= UI_ELEMENT_SETTINGS_WALLPAPER_13) {
+        const uint8_t index = (uint8_t)(
+            element - UI_ELEMENT_SETTINGS_WALLPAPER_0);
+        if (!select_desktop_wallpaper(index)) {
+            return UI_STATUS_WALLPAPER_FAILURE;
+        }
+        *damage = state.layout.surface;
+    } else if (element == UI_ELEMENT_CAMERA_CAPTURE) {
+        (void)camera_capture();
+        return UI_STATUS_OK;
     } else {
         return UI_STATUS_BAD_ELEMENT;
     }
@@ -3723,42 +6056,104 @@ static enum ui_status apply_event(
         return UI_STATUS_NULL_ARGUMENT;
     }
     if (event->type == UI_EVENT_POINTER_MOVEMENT) {
-        const struct ui_rect old_cursor = cursor_rect_for(state.pointer);
+        const struct ui_rect old_cursor = cursor_damage_rect_for(state.pointer);
         const enum ui_element_id old_hover = state.hover;
 
         state.pointer = event->point;
-        const struct ui_rect new_cursor = cursor_rect_for(state.pointer);
+        dock3d_set_pointer(&dock_model, state.pointer.x, state.pointer.y,
+            state.pointer_present, dock_magnification);
+        dock_sync_layout();
+        const struct ui_rect new_cursor = cursor_damage_rect_for(state.pointer);
         *damage = rect_union(*damage, rect_union(old_cursor, new_cursor));
-        if (ui_hit_test(&state.layout, state.pointer, &hit) != UI_STATUS_OK) {
-            return UI_STATUS_HIT_TEST_AMBIGUOUS;
+        if (panel_drag_active) {
+            state.hover = UI_ELEMENT_NONE;
+            state.renders.cursor_moves += 1U;
+            if (old_hover >= UI_ELEMENT_DOCK_FILES &&
+                    old_hover <= UI_ELEMENT_DOCK_SETTINGS) {
+                *damage = rect_union(*damage,
+                    dock_visual_bounds(&state.layout));
+                begin_dock_spring();
+            }
+            return drag_panel_to(state.pointer, damage);
         }
+        const int dock_hit = dock3d_hit(&dock_model,
+            state.pointer.x, state.pointer.y);
+        hit = dock_hit >= 0 ?
+            (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_hit) :
+            UI_ELEMENT_NONE;
         state.hover = hit;
         state.renders.cursor_moves += 1U;
+        if (dock_model.pointer_in ||
+                (old_hover >= UI_ELEMENT_DOCK_FILES &&
+                    old_hover <= UI_ELEMENT_DOCK_SETTINGS)) {
+            *damage = rect_union(*damage,
+                dock_visual_bounds(&state.layout));
+            begin_dock_spring();
+        }
         if (old_hover != hit) {
+            /* A hover changes the enlarged icon, both neighbours, its label,
+             * and the reflection.  Invalidate the complete visual envelope so
+             * no cursor or magnification fragments can survive a fast move. */
             *damage = rect_union(*damage,
-                dock_bounds_for(&state.layout, old_hover));
-            *damage = rect_union(*damage,
-                dock_bounds_for(&state.layout, hit));
+                dock_visual_bounds(&state.layout));
+            begin_dock_spring();
             state.renders.dock_state_changes += 1U;
         }
     } else if (event->type == UI_EVENT_POINTER_BUTTON_PRESS &&
         event->button == UI_POINTER_BUTTON_LEFT) {
+        enum ui_element_id dock_hit = UI_ELEMENT_NONE;
+
+        const int dock_index = dock3d_hit(&dock_model,
+            event->point.x, event->point.y);
+        dock_hit = dock_index >= 0 ?
+            (enum ui_element_id)(UI_ELEMENT_DOCK_FILES + dock_index) :
+            UI_ELEMENT_NONE;
+        if (dock_hit == UI_ELEMENT_NONE) {
+            const enum ui_panel_id clicked = panel_at_point(event->point);
+
+            if (clicked != UI_PANEL_NONE && clicked != state.active_panel) {
+                const enum ui_status focus_status = set_panel(clicked,
+                    damage);
+
+                if (focus_status != UI_STATUS_OK) {
+                    return focus_status;
+                }
+            }
+        }
         hit = active_hit(event->point);
+        if (hit == UI_ELEMENT_NONE && state.active_panel != UI_PANEL_NONE &&
+                !panel_spring_active &&
+                panel_title_contains(state.layout.panel, event->point)) {
+            panel_drag_active = true;
+            panel_drag_panel = state.active_panel;
+            panel_drag_anchor = event->point;
+            panel_drag_origin = panel_windows[state.active_panel];
+        }
         state.pressed = hit;
-        *damage = rect_union(*damage,
-            hit >= UI_ELEMENT_DOCK_FILES && hit <= UI_ELEMENT_DOCK_STUDIO ?
-            dock_bounds_for(&state.layout, hit) : state.layout.panel);
+        if (hit >= UI_ELEMENT_DOCK_FILES &&
+                hit <= UI_ELEMENT_DOCK_SETTINGS) {
+            *damage = rect_union(*damage,
+                dock_bounds_for(&state.layout, hit));
+        }
         state.renders.dock_state_changes += 1U;
     } else if (event->type == UI_EVENT_POINTER_BUTTON_RELEASE &&
         event->button == UI_POINTER_BUTTON_LEFT) {
         const enum ui_element_id pressed = state.pressed;
 
+        if (panel_drag_active) {
+            panel_drag_active = false;
+            panel_drag_panel = UI_PANEL_NONE;
+            state.pressed = UI_ELEMENT_NONE;
+            state.renders.dock_state_changes += 1U;
+            return UI_STATUS_OK;
+        }
         hit = active_hit(event->point);
         state.pressed = UI_ELEMENT_NONE;
-        *damage = rect_union(*damage,
-            pressed >= UI_ELEMENT_DOCK_FILES &&
-                pressed <= UI_ELEMENT_DOCK_STUDIO ?
-            dock_bounds_for(&state.layout, pressed) : state.layout.panel);
+        if (pressed >= UI_ELEMENT_DOCK_FILES &&
+                pressed <= UI_ELEMENT_DOCK_SETTINGS) {
+            *damage = rect_union(*damage,
+                dock_bounds_for(&state.layout, pressed));
+        }
         if (pressed != UI_ELEMENT_NONE && pressed == hit) {
             const enum ui_status status = activate_element(pressed, damage);
 
@@ -3817,6 +6212,9 @@ enum ui_status ui_process_events(void)
             return status;
         }
     }
+    /* Pointer input does not advance the window spring.  Keep its ordinary
+     * pointer/Dock damage local; ui_flush() owns geometry changes and restores
+     * the exact union of the previous and next spring shells. */
     if (damage.width == 0U || damage.height == 0U) {
         return UI_STATUS_OK;
     }
@@ -3833,6 +6231,81 @@ enum ui_status ui_flush(void)
 
     if (!state.active) {
         return UI_STATUS_NOT_ACTIVE;
+    }
+    if (panel_spring_force_settle) {
+        const struct ui_rect old_panel = drop_shadow_draw_rect(
+            spring_panel_rect(), 6U);
+        panel_spring_force_settle = false;
+        panel_spring_active = false;
+        panel_spring_position = UI_SPRING_TARGET;
+        panel_spring_velocity = 0;
+        damage = rect_union(old_panel, drop_shadow_draw_rect(
+            state.layout.panel, 6U));
+    } else if (panel_spring_active) {
+        const uint64_t now = clock_monotonic_ns();
+
+        if (now - panel_spring_last_ns >= UI_SPRING_FRAME_NS) {
+            const struct ui_rect old_panel = drop_shadow_draw_rect(
+                spring_panel_rect(), 6U);
+            uint64_t frames = (now - panel_spring_last_ns) /
+                UI_SPRING_FRAME_NS;
+            bool settled = false;
+
+            /* Present the motion instead of silently consuming a whole spring
+             * during one slow virtual-machine frame. */
+            if (frames > 4U) {
+                frames = 4U;
+            }
+            for (uint64_t frame = 0U; frame < frames && !settled; ++frame) {
+                settled = spring_advance(&panel_spring_position,
+                    &panel_spring_velocity);
+            }
+            panel_spring_last_ns = now;
+            if (settled) {
+                panel_spring_active = false;
+                if (!dock_spring_active && panel_spring_timer_id != 0U) {
+                    (void)timer_cancel((uint64_t)panel_spring_timer_id);
+                    panel_spring_timer_id = 0U;
+                }
+            }
+            damage = rect_union(damage, rect_union(old_panel,
+                drop_shadow_draw_rect(spring_panel_rect(), 6U)));
+        }
+    }
+    if (dock_spring_active) {
+        const uint64_t now = clock_monotonic_ns();
+
+        if (now - dock_spring_last_ns >= UI_SPRING_FRAME_NS) {
+            uint64_t frames = (now - dock_spring_last_ns) /
+                UI_SPRING_FRAME_NS;
+            const struct ui_rect old_dock =
+                dock_visual_bounds(&state.layout);
+
+            if (frames > 8U) {
+                frames = 8U;
+            }
+            dock3d_advance(&dock_model, (uint32_t)frames,
+                dock_magnification);
+            dock_sync_layout();
+            dock_spring_last_ns = now;
+            if (!dock3d_animating(&dock_model)) {
+                dock_spring_active = false;
+                if (!panel_spring_active && panel_spring_timer_id != 0U) {
+                    (void)timer_cancel((uint64_t)panel_spring_timer_id);
+                    panel_spring_timer_id = 0U;
+                }
+            }
+            damage = rect_union(damage, rect_union(old_dock,
+                dock_visual_bounds(&state.layout)));
+        }
+    }
+    if (panel_open[UI_PANEL_CAMERA] &&
+            camera_get_info().generation != camera_seen_generation) {
+        const enum ui_panel_id focused = state.active_panel;
+
+        install_panel_geometry(UI_PANEL_CAMERA);
+        damage = rect_union(damage, camera_preview_rect());
+        install_panel_geometry(focused);
     }
     ledger = boot_ledger_installed();
     const bool pass = ledger != NULL && ledger->executed && !ledger->degraded &&
@@ -3897,7 +6370,8 @@ static uint64_t synthetic_render_hash(bool active)
     }
     for (uint32_t y = 0U; y < UI_CURSOR_HEIGHT && y + 4U < 32U; ++y) {
         for (uint32_t x = 0U; x < UI_CURSOR_WIDTH && x + 44U < 64U; ++x) {
-            if (cursor_mask_contains(cursor_outer, x, y)) {
+            if (cursor_mask_contains(cursor_outer, x, y,
+                    UI_CURSOR_WIDTH, UI_CURSOR_HEIGHT)) {
                 pixels[(y + 4U) * 64U + x + 44U] = ink;
             }
         }
@@ -3976,7 +6450,7 @@ bool ui_self_test(void)
     enum ui_element_id hit;
     enum ui_status status;
 
-    self_test_failure = "First Environment UI self-test passed";
+    self_test_failure = "Sapote Redwood UI self-test passed";
     if (!ui_font_self_test()) {
         self_test_failure = "UI font suite rejected its valid fixture";
         return false;
@@ -4055,10 +6529,31 @@ bool ui_self_test(void)
         return false;
     }
     if (next_focus(UI_ELEMENT_DOCK_FILES, true) !=
-            UI_ELEMENT_DOCK_STUDIO ||
-        next_focus(UI_ELEMENT_DOCK_STUDIO, false) !=
+            UI_ELEMENT_DOCK_SETTINGS ||
+        next_focus(UI_ELEMENT_DOCK_SETTINGS, false) !=
             UI_ELEMENT_DOCK_FILES) {
         self_test_failure = "keyboard focus wrap is invalid";
+        return false;
+    }
+    int32_t spring_position = 0;
+    int32_t spring_velocity = 0;
+    bool spring_overshot = false;
+    bool spring_settled = false;
+    for (size_t frame = 0U; frame < 64U && !spring_settled; ++frame) {
+        spring_settled = spring_advance(&spring_position, &spring_velocity);
+        spring_overshot = spring_overshot || spring_position > UI_SPRING_TARGET;
+    }
+    if (!spring_settled || !spring_overshot ||
+        spring_position != UI_SPRING_TARGET || spring_velocity != 0) {
+        self_test_failure = "bounded spring window animation is invalid";
+        return false;
+    }
+    if (!dock3d_self_test()) {
+        self_test_failure = dock3d_self_test_failure();
+        return false;
+    }
+    if (!camera_self_test()) {
+        self_test_failure = "bounded camera frame broker is invalid";
         return false;
     }
     if (!event_queue_self_test()) {
@@ -4069,7 +6564,7 @@ bool ui_self_test(void)
     const uint64_t stable = synthetic_render_hash(false);
     if (stable != UINT64_C(0xCD65C2C6A1DC2975) ||
         stable == synthetic_render_hash(true)) {
-        self_test_failure = "synthetic First Environment render hash is invalid";
+        self_test_failure = "synthetic Sapote Redwood render hash is invalid";
         return false;
     }
     return true;
@@ -4083,13 +6578,21 @@ const char *ui_self_test_failure(void)
 enum ui_status ui_verify_installed(struct ui_proof *proof)
 {
     if (proof == NULL) {
+        installed_proof_failure =
+            "Sapote Redwood installed proof received no result buffer";
         return UI_STATUS_NULL_ARGUMENT;
     }
     if (!state.active || canvas == NULL || !ui_font_is_verified() ||
-        ui_layout_validate(&state.layout) != UI_STATUS_OK ||
         state.focus <= UI_ELEMENT_NONE || state.focus >= UI_ELEMENT_COUNT ||
         state.hover >= UI_ELEMENT_COUNT || state.pressed >= UI_ELEMENT_COUNT ||
         state.active_panel >= UI_PANEL_COUNT) {
+        installed_proof_failure =
+            "Sapote Redwood installed UI state is invalid";
+        return UI_STATUS_INSTALLED_PROOF_FAILURE;
+    }
+    if (ui_layout_validate(&state.layout) != UI_STATUS_OK) {
+        installed_proof_failure =
+            "Sapote Redwood live Dock layout is invalid";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     if (state.pointer_present) {
@@ -4099,6 +6602,8 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
             pointer.bound_height != canvas->height || state.pointer.x < 0 ||
             state.pointer.y < 0 || (uint32_t)state.pointer.x >= canvas->width ||
             (uint32_t)state.pointer.y >= canvas->height) {
+            installed_proof_failure =
+                "Sapote Redwood pointer installation is invalid";
             return UI_STATUS_INSTALLED_PROOF_FAILURE;
         }
     }
@@ -4115,6 +6620,8 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         state.theme.accent_violet != framebuffer_pack(0x94U, 0x7BU, 0xB4U) ||
         state.theme.shadow != framebuffer_pack(0x05U, 0x0CU, 0x12U) ||
         state.theme.window_face != framebuffer_pack(0xD9U, 0xDFU, 0xE0U)) {
+        installed_proof_failure =
+            "Sapote Redwood theme installation is invalid";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -4124,16 +6631,24 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
                 (enum ui_action)(index + 1U) ||
             state.layout.dock_items[index].panel !=
                 (enum ui_panel_id)(index + 1U)) {
+            installed_proof_failure =
+                "Sapote Redwood Dock action metadata is invalid";
             return UI_STATUS_INSTALLED_PROOF_FAILURE;
         }
     }
 
     const uint64_t first_hash = surface_hash();
+    snapshot_redraw_tiles();
     if (render_region(state.layout.surface, true) != UI_STATUS_OK) {
+        installed_proof_failure =
+            "Sapote Redwood full redraw failed";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     const uint64_t second_hash = surface_hash();
     if (first_hash != second_hash) {
+        report_redraw_tile_mismatch();
+        installed_proof_failure =
+            "Sapote Redwood full redraw is not idempotent";
         return UI_STATUS_INSTALLED_PROOF_FAILURE;
     }
     state.stable_render_hash = second_hash;
@@ -4151,13 +6666,20 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         .ledger_fingerprint = ledger == NULL ? 0U : ledger->fingerprint,
         .render_hash = second_hash
     };
+    installed_proof_failure = "Sapote Redwood installed proof passed";
     return UI_STATUS_OK;
+}
+
+const char *ui_installed_proof_failure(void)
+{
+    return installed_proof_failure;
 }
 
 const char *ui_panel_name(enum ui_panel_id panel)
 {
     static const char *const names[] = {
-        "None", "Files", "Terminal", "Notes", "SapStudio"
+        "None", "Files", "Terminal", "Notes", "SapStudio",
+        "Camera", "Settings"
     };
 
     if ((size_t)panel >= sizeof(names) / sizeof(names[0])) {
@@ -4183,6 +6705,12 @@ const char *ui_element_name(enum ui_element_id element)
     if (element == UI_ELEMENT_DOCK_STUDIO) {
         return "SapStudio";
     }
+    if (element == UI_ELEMENT_DOCK_CAMERA) {
+        return "Camera";
+    }
+    if (element == UI_ELEMENT_DOCK_SETTINGS) {
+        return "Settings";
+    }
     return element < UI_ELEMENT_COUNT ? "application control" :
         "unknown element";
 }
@@ -4192,10 +6720,10 @@ const char *ui_status_string(enum ui_status status)
     static const char *const messages[] = {
         "ok",
         "null UI argument",
-        "First Environment is already initialized",
-        "First Environment is not initialized",
-        "First Environment is not active",
-        "unsupported First Environment framebuffer geometry",
+        "Sapote Redwood is already initialized",
+        "Sapote Redwood is not initialized",
+        "Sapote Redwood is not active",
+        "unsupported Sapote Redwood framebuffer geometry",
         "UI rectangle arithmetic overflowed",
         "UI rectangle lies outside its surface",
         "duplicate UI element identifier",
@@ -4212,10 +6740,11 @@ const char *ui_status_string(enum ui_status status)
         "cached surface rendering failed",
         "canonical logo rendering failed",
         "SapStudio icon rendering failed",
+        "application icon rendering failed",
         "desktop wallpaper rendering failed",
         "application filesystem operation failed",
         "terminal viewport rendering failed",
-        "installed First Environment proof failed"
+        "installed Sapote Redwood proof failed"
     };
 
     _Static_assert(sizeof(messages) / sizeof(messages[0]) ==

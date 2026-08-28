@@ -19,12 +19,12 @@ import fat32_image
 
 
 def load_capture_support():
-    path = Path(__file__).with_name("capture-first-environment.py")
+    path = Path(__file__).with_name("capture-redwood.py")
     specification = importlib.util.spec_from_file_location(
         "sapote_capture_support", path
     )
     if specification is None or specification.loader is None:
-        raise RuntimeError("First Environment capture support is unavailable")
+        raise RuntimeError("Sapote Redwood capture support is unavailable")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -106,6 +106,18 @@ class Pointer:
             self.y += dy
             time.sleep(0.02)
         time.sleep(0.10)
+
+    def rehome(self) -> None:
+        """Clamp guest and script coordinates to the same top-left origin."""
+        for _ in range(14):
+            self.qmp.execute("input-send-event", {"events": [
+                {"type": "rel", "data": {"axis": "x", "value": -80}},
+                {"type": "rel", "data": {"axis": "y", "value": -80}},
+            ]})
+            time.sleep(0.02)
+        self.x = 0
+        self.y = 0
+        time.sleep(0.15)
 
     def click(self) -> None:
         self.qmp.execute("input-send-event", {"events": [{
@@ -247,6 +259,7 @@ def main() -> int:
         qmp = support.Qmp(qmp_port)
         support.wait_serial(serial, (support.PROOF_LINE, support.PROMPT))
         pointer = Pointer(qmp)
+        pointer.rehome()
         events: set[str] = set()
         frames: list[Path] = []
         capture_times: list[float] = []
@@ -258,11 +271,18 @@ def main() -> int:
             while time.monotonic() - started < args.seconds:
                 elapsed = time.monotonic() - started
                 if elapsed >= 0.50 and "terminal_hover" not in events:
-                    pointer.move_to(464, 696)
+                    # Dock artwork magnifies and eases, but input uses fixed
+                    # resting lanes.  Files is lane 0 and Terminal is lane 1;
+                    # its 1024x768 resting center is x=411.  Clicking the old
+                    # animated-artwork coordinate (x=464) now selects Notes.
+                    pointer.move_to(411, 696)
                     events.add("terminal_hover")
                 elif elapsed >= 1.50 and "terminal_open" not in events:
                     pointer.click()
-                    time.sleep(0.35)
+                    support.wait_serial(
+                        serial, (b"Sapote: Redwood Terminal opened",),
+                        timeout=5.0,
+                    )
                     support.capture_png(
                         qmp, work, output,
                         "Sapote-v2.1.0-networking-terminal-open",

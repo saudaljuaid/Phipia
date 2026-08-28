@@ -47,9 +47,45 @@ pub struct Layer {
     media: MediaId,
     source: i64,
     opacity: Rational,
-    grade: Option<crate::media::Digest>,
+    grade: Option<Graded>,
     mask: Option<crate::mask::Mask>,
+    transform: Option<crate::transform::Transform>,
+    fade: (Rational, Rational),
     wipe: Option<Revealed>,
+}
+
+/// A look on a layer, and how far the picture has travelled towards it.
+///
+/// Two fields rather than a digest and a rational beside it, and the reason is
+/// the same one [`Revealed`] is a pair: a strength means nothing without a
+/// look to be the strength *of*, so a layer with no grade has no strength
+/// either, rather than a neutral one that a reader has to know to ignore.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Graded {
+    look: crate::media::Digest,
+    strength: Rational,
+}
+
+impl Graded {
+    /// Which look.
+    #[must_use]
+    pub const fn look(self) -> crate::media::Digest {
+        self.look
+    }
+
+    /// How far from ungraded to graded, from none of the look to all of it.
+    ///
+    /// One for a clip nobody has animated, which is a grade applied the way a
+    /// grade has always been applied. Resolved here rather than handed out as
+    /// a curve, exactly as the framing and the shape are: by the time a layer
+    /// describes a frame, an animation has already become the number it reads
+    /// at that moment, and a renderer that had to be told about curves would
+    /// need a clock — and a node that depends on a clock is a node whose cache
+    /// key is a lie.
+    #[must_use]
+    pub const fn strength(self) -> Rational {
+        self.strength
+    }
 }
 
 /// The incoming side of a wipe, and how far its edge has travelled.
@@ -96,14 +132,14 @@ impl Layer {
         self.media
     }
 
-    /// The look on the clip this came from, if it has one.
+    /// The look on the clip this came from, if it has one, and how much of it.
     ///
     /// Carried up from the clip rather than looked up here, because the stack
     /// answers what is on each track and a table is not on a track — it is
     /// something a renderer will have to fetch, by the same digest, from the
     /// same place it fetches frames.
     #[must_use]
-    pub const fn grade(&self) -> Option<crate::media::Digest> {
+    pub const fn grade(&self) -> Option<Graded> {
         self.grade
     }
 
@@ -127,6 +163,43 @@ impl Layer {
     #[must_use]
     pub const fn mask(&self) -> Option<&crate::mask::Mask> {
         self.mask.as_ref()
+    }
+
+    /// Where the clip this came from sits in the frame, if it was moved.
+    #[must_use]
+    pub const fn transform(&self) -> Option<crate::transform::Transform> {
+        self.transform
+    }
+
+    /// How much of this layer its *own* fade is letting through.
+    ///
+    /// Separate from [`Layer::opacity`], and deliberately. Opacity is what the
+    /// track and any transition at a cut are doing; this is what the clip
+    /// itself is doing, and the two multiply. Keeping them apart is what lets
+    /// a test tell a clip that fades up from black apart from one halfway
+    /// through a dissolve — and what lets the sound side use this without
+    /// having to know what a picture track's opacity lane is.
+    #[must_use]
+    pub const fn fade(&self) -> Rational {
+        self.fade.0
+    }
+
+    /// Where that fade has got to by the *next* frame.
+    ///
+    /// A frame of picture is a moment and one number answers it; a frame of
+    /// sound is two thousand samples and a fade may be somewhere different at
+    /// each. So the pair is the same half-open shape the fader's ramp uses —
+    /// this frame's value, and the value the next frame's first sample gets —
+    /// and consecutive blocks tile a fade rather than repeating one value at
+    /// every seam.
+    ///
+    /// It is the **clip's own** fade one tick on, not whatever the timeline
+    /// shows there. A clip that simply ends is not a clip fading out, and
+    /// reading the next frame off the track would have made every unfaded clip
+    /// duck to silence over its last block. It did, until a test said so.
+    #[must_use]
+    pub const fn fade_arriving(&self) -> Rational {
+        self.fade.1
     }
 
     /// The wipe revealing this layer, if it is the incoming side of one.
@@ -238,19 +311,23 @@ impl Sequence {
                         .ticks()
                         .checked_sub(track.item_start(item)?.ticks())
                         .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
-                    let source = clip
-                        .source_start()
-                        .checked_add(offset)
-                        .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+                    let source = clip.source_at(offset)?;
                     push_bounded(
                         &mut stack,
                         Layer {
                             track: index,
                             media: clip.media(),
                             source,
-                            opacity: opacity.checked_mul(animated)?,
-                            grade: clip.grade(),
-                            mask: clip.mask().cloned(),
+                            opacity: opacity
+                                .checked_mul(animated)?
+                                .checked_mul(clip.opacity_at(offset)?)?,
+                            grade: graded(clip, offset)?,
+                            mask: clip.mask_at(offset)?,
+                            transform: framing(clip, offset)?,
+                            fade: (
+                                clip.fade_at(offset)?,
+                                clip.fade_at(offset.saturating_add(1))?,
+                            ),
                             wipe: revealed,
                         },
                         MAX_LAYERS,
@@ -266,19 +343,26 @@ impl Sequence {
                 // A gap is transparent, so whatever is beneath shows through.
                 continue;
             };
-            let source = clip
-                .source_start()
-                .checked_add(offset)
-                .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+            let source = clip.source_at(offset)?;
             push_bounded(
                 &mut stack,
                 Layer {
                     track: index,
                     media: clip.media(),
                     source,
-                    opacity: animated,
-                    grade: clip.grade(),
-                    mask: clip.mask().cloned(),
+                    // The track's automation and the clip's own, multiplied.
+                    // Three things can decide what is on screen at once -- a
+                    // track fading, a clip fading, a dissolve at the cut --
+                    // and any one of them replacing the others would throw
+                    // away a decision somebody made.
+                    opacity: animated.checked_mul(clip.opacity_at(offset)?)?,
+                    grade: graded(clip, offset)?,
+                    mask: clip.mask_at(offset)?,
+                    transform: framing(clip, offset)?,
+                    fade: (
+                        clip.fade_at(offset)?,
+                        clip.fade_at(offset.saturating_add(1))?,
+                    ),
                     wipe: None,
                 },
                 MAX_LAYERS,
@@ -286,6 +370,46 @@ impl Sequence {
         }
         Ok(stack)
     }
+}
+
+/// The look on a clip at an instant `offset` ticks into it, and how far on.
+///
+/// The strength is read even when the curve is absent, because the absent
+/// answer is one rather than nothing: a graded clip nobody animated is a
+/// clip with all of its look on it.
+fn graded(clip: &crate::Clip, offset: i64) -> Result<Option<Graded>> {
+    let Some(look) = clip.grade() else {
+        return Ok(None);
+    };
+    Ok(Some(Graded {
+        look,
+        strength: clip.grade_strength_at(offset)?,
+    }))
+}
+
+/// Where a clip sits at an instant `offset` ticks into it.
+///
+/// The stack hands out a *resolved* transform rather than a base and an
+/// animation beside it, and that is the whole reason animating a clip needed
+/// no change to the renderer at all: by the time a frame is described, a
+/// motion has already become the framing it reads at that moment. A renderer
+/// that had to be told about curves would need a clock, and a node that
+/// depends on a clock is a node whose cache key is a lie.
+///
+/// The offset may be negative here, in a transition's handles, and that is
+/// meant: a curve holds its first value before its first keyframe, so a clip
+/// dissolving in reads the framing it was going to start at rather than an
+/// extrapolation of where it came from.
+fn framing(clip: &crate::Clip, offset: i64) -> Result<Option<crate::transform::Transform>> {
+    let Some(base) = clip.transform() else {
+        return Ok(None);
+    };
+    let Some(motion) = clip.motion() else {
+        return Ok(Some(base));
+    };
+    let (scale, across, down, turn) =
+        motion.at(Instant::new(offset, clip.duration().timebase()))?;
+    Ok(Some(base.moved_by(scale, across, down, turn)?))
 }
 
 /// Where a dissolve begins, relative to the cut it sits on.

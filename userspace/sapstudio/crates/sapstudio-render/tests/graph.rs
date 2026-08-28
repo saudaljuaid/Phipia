@@ -474,3 +474,105 @@ fn two_patterns_are_two_nodes() {
     }
     assert_eq!(identities.len(), 5, "five patterns, five identities");
 }
+
+#[test]
+fn a_transform_node_is_named_by_its_pivot_as_well() {
+    // The anchor was in the identity and nothing asked it to be. A control
+    // that hashed the across component twice — so two pivots differing only
+    // down the frame collide — changed no test at all, which is a coverage
+    // report rather than a finding about the code.
+    //
+    // Both axes are varied here, separately, because that is the axis the
+    // control moved and a fixture that only varied one could not see it.
+    // Premultiplied and with coverage, because the resampler requires both --
+    // averaging straight samples across an edge is what puts a dark fringe on
+    // a keyed title, and it refuses rather than doing it.
+    let described = FrameDescription::square(
+        Geometry::new(16, 9).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription::srgb_full(),
+        None,
+        Some(sapstudio_media::AlphaState::Premultiplied),
+    )
+    .expect("a description");
+    let mut graph = Graph::new();
+    let base = graph
+        .add(Node::Pattern {
+            // A checkerboard rather than bars, and the first version of this
+            // test used bars and could not see half of what it asserts: bars
+            // are constant *down* the frame, so moving the pivot down changed
+            // no pixel and the comparison passed vacuously. Which is the same
+            // fixture lesson this project has recorded eight times, met here
+            // while writing a test *for* a control that had found a gap.
+            pattern: TestPattern::Checkerboard { square: 3 },
+            description: described,
+        })
+        .expect("a node");
+    let linear = [
+        sapstudio_core::Rational::new(2, 1).expect("a rational"),
+        sapstudio_core::Rational::ZERO,
+        sapstudio_core::Rational::ZERO,
+        sapstudio_core::Rational::new(2, 1).expect("a rational"),
+    ];
+    let half = sapstudio_core::Rational::new(1, 2).expect("a rational");
+    let quarter = sapstudio_core::Rational::new(1, 4).expect("a rational");
+    let mut identities = std::vec::Vec::new();
+    for anchor in [
+        (half, half),
+        // Differs across only.
+        (quarter, half),
+        // Differs down only, which is the one the control crossed out.
+        (half, quarter),
+    ] {
+        let id = graph
+            .add(Node::Transform {
+                input: base,
+                linear,
+                offset: (
+                    sapstudio_core::Rational::ZERO,
+                    sapstudio_core::Rational::ZERO,
+                ),
+                anchor,
+                bilinear: false,
+            })
+            .expect("a node");
+        identities.push(graph.identity(id).expect("an identity"));
+    }
+    assert_ne!(
+        identities[0], identities[1],
+        "two pivots differing across the frame share a cache key"
+    );
+    assert_ne!(
+        identities[0], identities[2],
+        "two pivots differing down the frame share a cache key"
+    );
+    assert_ne!(identities[1], identities[2]);
+
+    // And the three really are three pictures, so the identities above are
+    // distinguishing things that differ rather than things that happen to.
+    let mut pool = pool();
+    let mut pictures = std::vec::Vec::new();
+    for anchor in [(half, half), (quarter, half), (half, quarter)] {
+        let id = graph
+            .add(Node::Transform {
+                input: base,
+                linear,
+                offset: (
+                    sapstudio_core::Rational::ZERO,
+                    sapstudio_core::Rational::ZERO,
+                ),
+                anchor,
+                bilinear: false,
+            })
+            .expect("a node");
+        pictures.push(
+            graph
+                .evaluate(id, &mut pool, &mut NoMedia)
+                .expect("a frame")
+                .to_packed()
+                .expect("bytes"),
+        );
+    }
+    assert_ne!(pictures[0], pictures[1], "the pivot changed nothing across");
+    assert_ne!(pictures[0], pictures[2], "the pivot changed nothing down");
+}

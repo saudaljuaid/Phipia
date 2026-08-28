@@ -20,13 +20,13 @@ from pathlib import Path
 
 PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
 USERLAND_LINES = {
-    "uname": b"FL USERLAND launch completed successfully uname ordinal 1",
-    "cat": b"FL USERLAND launch completed successfully cat ordinal 1",
+    "uname": b"RW USERLAND launch completed successfully uname ordinal 1",
+    "cat": b"RW USERLAND launch completed successfully cat ordinal 1",
 }
 CAT_FOREGROUND_LINE = (
-    b"FL USERLAND cat foreground launch yielded to First Light"
+    b"RW USERLAND cat foreground launch yielded to Sapote Redwood"
 )
-CAT_STDOUT_LINE = b"FL CAT userspace stdout accepted"
+CAT_STDOUT_LINE = b"RW CAT userspace stdout accepted"
 COMMAND_SECONDS = 13.0
 CAT_INPUT_SECONDS = 15.0
 CAT_EOF_SECONDS = 17.0

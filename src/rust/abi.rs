@@ -101,17 +101,23 @@ pub(crate) fn panic() -> ! {
 /// The Makefile points `SAPOTE_LOGO_BLOB` at it; there is no committed copy.
 static LOGO: &[u8] = include_bytes!(env!("SAPOTE_LOGO_BLOB"));
 static STUDIO_ICON: &[u8] = include_bytes!(env!("SAPOTE_STUDIO_ICON_BLOB"));
+static SETTINGS_ICON: &[u8] = include_bytes!(env!("SAPOTE_SETTINGS_ICON_BLOB"));
+static FILES_ICON: &[u8] = include_bytes!(env!("SAPOTE_FILES_ICON_BLOB"));
+static TERMINAL_ICON: &[u8] = include_bytes!(env!("SAPOTE_TERMINAL_ICON_BLOB"));
+static CAMERA_ICON: &[u8] = include_bytes!(env!("SAPOTE_CAMERA_ICON_BLOB"));
+static SETTINGS_CATEGORY_ICONS: &[u8] =
+    include_bytes!(env!("SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB"));
 
-/// The deterministic indexed desktop wallpaper built from the committed PNG.
+/// The deterministic RGB565 wallpaper collection built from committed PNGs.
 static WALLPAPER: &[u8] = include_bytes!(env!("SAPOTE_WALLPAPER_BLOB"));
 
-/// Run the SPW1 decoder's production-asset and bounded refusal checks.
+/// Run the SPW3 decoder's production-asset and bounded refusal checks.
 #[unsafe(no_mangle)]
 pub extern "C" fn sapote_wallpaper_self_test() -> i32 {
     i32::from(wallpaper::self_test(WALLPAPER))
 }
 
-/// Return the exact byte length of the built-in SPW1 image.
+/// Return the exact byte length of the built-in SPW3 collection.
 #[unsafe(no_mangle)]
 pub extern "C" fn sapote_wallpaper_size() -> usize {
     WALLPAPER.len()
@@ -125,8 +131,9 @@ pub extern "C" fn sapote_wallpaper_size() -> usize {
 pub unsafe extern "C" fn sapote_wallpaper_geometry(
     width: *mut u32,
     height: *mut u32,
+    frames: *mut u32,
 ) -> i32 {
-    if width.is_null() || height.is_null() {
+    if width.is_null() || height.is_null() || frames.is_null() {
         return wallpaper::Status::NullArgument as i32;
     }
     match wallpaper::geometry(WALLPAPER) {
@@ -135,6 +142,7 @@ pub unsafe extern "C" fn sapote_wallpaper_geometry(
             unsafe {
                 *width = geometry.width;
                 *height = geometry.height;
+                *frames = geometry.frames;
             }
             wallpaper::Status::Ok as i32
         }
@@ -148,8 +156,11 @@ pub unsafe extern "C" fn sapote_wallpaper_geometry(
 /// `out` must point to `out_pixels` writable, aligned, non-aliased `u32`s.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sapote_wallpaper_decode(
+    frame: u32,
     out: *mut u32,
     out_pixels: usize,
+    out_width: u32,
+    out_height: u32,
     red_shift: u8,
     green_shift: u8,
     blue_shift: u8,
@@ -160,7 +171,9 @@ pub unsafe extern "C" fn sapote_wallpaper_decode(
     // SAFETY: the checked C contract above is exactly this slice's contract.
     let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
     let format = wallpaper::Format { red_shift, green_shift, blue_shift };
-    match wallpaper::decode(WALLPAPER, pixels, &format) {
+    match wallpaper::decode(
+        WALLPAPER, frame, pixels, out_width, out_height, &format
+    ) {
         Ok(_) => wallpaper::Status::Ok as i32,
         Err(status) => status as i32,
     }
@@ -338,6 +351,241 @@ pub unsafe extern "C" fn sapote_studio_icon_decode_alpha(
     }
 }
 
+unsafe fn app_icon_geometry(icon: &[u8], width: *mut u32, height: *mut u32) -> i32 {
+    if width.is_null() || height.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    match logo::geometry(icon) {
+        Ok(geometry) => {
+            // SAFETY: both writable pointers were checked above.
+            unsafe {
+                *width = geometry.width;
+                *height = geometry.height;
+            }
+            status_code(Status::Ok)
+        }
+        Err(status) => status_code(status),
+    }
+}
+
+unsafe fn app_icon_decode(
+    icon: &[u8],
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    if out.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    // SAFETY: the caller supplies the writable extent and null was refused.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    let format = Format { red_shift, green_shift, blue_shift, background };
+    match logo::decode(icon, pixels, &format) {
+        Ok(_) => status_code(Status::Ok),
+        Err(status) => status_code(status),
+    }
+}
+
+unsafe fn app_icon_decode_alpha(icon: &[u8], out: *mut u8, out_pixels: usize) -> i32 {
+    if out.is_null() {
+        return status_code(Status::NullArgument);
+    }
+    // SAFETY: the caller supplies the writable extent and null was refused.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(out, out_pixels) };
+    match logo::decode_alpha(icon, pixels) {
+        Ok(_) => status_code(Status::Ok),
+        Err(status) => status_code(status),
+    }
+}
+
+/// Read the exact classic Settings icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(SETTINGS_ICON, width, height) }
+}
+
+/// Decode the exact classic Settings icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(SETTINGS_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the exact classic Settings icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(SETTINGS_ICON, out, out_pixels) }
+}
+
+/// Read the checked Files icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_files_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(FILES_ICON, width, height) }
+}
+
+/// Decode the checked Files icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_files_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(FILES_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the checked Files icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_files_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(FILES_ICON, out, out_pixels) }
+}
+
+/// Read the checked Terminal icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_terminal_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(TERMINAL_ICON, width, height) }
+}
+
+/// Decode the checked Terminal icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_terminal_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(TERMINAL_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the checked Terminal icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_terminal_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(TERMINAL_ICON, out, out_pixels) }
+}
+
+/// Read the checked Settings category sprite geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_category_icons_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(SETTINGS_CATEGORY_ICONS, width, height) }
+}
+
+/// Decode the Settings category sprite.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_category_icons_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(SETTINGS_CATEGORY_ICONS, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the Settings category sprite alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_settings_category_icons_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(SETTINGS_CATEGORY_ICONS, out, out_pixels) }
+}
+
+/// Read the exact classic Camera icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_camera_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(CAMERA_ICON, width, height) }
+}
+
+/// Decode the exact classic Camera icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_camera_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(CAMERA_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the exact classic Camera icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_camera_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(CAMERA_ICON, out, out_pixels) }
+}
+
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build
 /// time. The Makefile points `SAPOTE_FONT_BLOB` at it; there is no committed
 /// copy of the blob, only the ASCII art it is built from.
@@ -415,20 +663,20 @@ pub unsafe extern "C" fn sapote_font_glyph(code: u32, out: *mut u8, out_len: usi
     }
 }
 
-/// Build-packed Spleen 12x24 glyphs. No BDF parser enters the kernel image.
+/// Build-packed antialiased Inter glyphs. No TrueType parser enters the kernel.
 static UI_FONT: &[u8] = include_bytes!(env!("SAPOTE_UI_FONT_BLOB"));
 
 fn ui_font_status_code(status: ui_font::Status) -> i32 {
     status as i32
 }
 
-/// Run the SUF1 parser's synthetic acceptance and refusal tests.
+/// Run the SUF2 parser's synthetic acceptance and refusal tests.
 #[unsafe(no_mangle)]
 pub extern "C" fn sapote_ui_font_self_test() -> i32 {
     i32::from(ui_font::self_test())
 }
 
-/// Return the byte length of the built-in SUF1 asset.
+/// Return the byte length of the built-in SUF2 asset.
 #[unsafe(no_mangle)]
 pub extern "C" fn sapote_ui_font_size() -> usize {
     UI_FONT.len()
@@ -461,7 +709,7 @@ pub unsafe extern "C" fn sapote_ui_font_geometry(metrics: *mut ui_font::Geometry
     }
 }
 
-/// Copy one glyph from the built-in SUF1 body into a caller-owned buffer.
+/// Copy one glyph alpha bitmap from SUF2 into a caller-owned buffer.
 ///
 /// # Safety
 ///
@@ -475,6 +723,25 @@ pub unsafe extern "C" fn sapote_ui_font_glyph(code: u32, out: *mut u8, out_len: 
     let bytes = unsafe { core::slice::from_raw_parts_mut(out, out_len) };
     match ui_font::glyph(UI_FONT, code, bytes) {
         Ok(_) => ui_font_status_code(ui_font::Status::Ok),
+        Err(status) => ui_font_status_code(status),
+    }
+}
+
+/// Copy one glyph's proportional advance through the C ABI.
+///
+/// # Safety
+/// `out` must address one writable `u32`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_ui_font_glyph_advance(code: u32, out: *mut u32) -> i32 {
+    if out.is_null() {
+        return ui_font_status_code(ui_font::Status::NullArgument);
+    }
+    match ui_font::advance(UI_FONT, code) {
+        Ok(value) => {
+            // SAFETY: the non-null pointer names one caller-owned value.
+            unsafe { *out = value };
+            ui_font_status_code(ui_font::Status::Ok)
+        }
         Err(status) => ui_font_status_code(status),
     }
 }

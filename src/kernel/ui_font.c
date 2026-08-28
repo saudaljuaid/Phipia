@@ -6,22 +6,22 @@
 #include <sapote/surface.h>
 #include <sapote/ui_font.h>
 
-#define SPLEEN_WIDTH 8U
-#define SPLEEN_HEIGHT 16U
-#define SPLEEN_ASCENT 12U
-#define SPLEEN_DESCENT 4U
-#define SPLEEN_ADVANCE 8U
-#define SPLEEN_ROW_BYTES 1U
-#define SPLEEN_FIRST 0x20U
-#define SPLEEN_COUNT 95U
-#define SPLEEN_DATA_LENGTH 1520U
-#define SPLEEN_ASSET_LENGTH 1544U
-#define SPLEEN_FINGERPRINT UINT64_C(0xF072CBC7D84A2A20)
-#define LABEL_PIXEL_HASH UINT64_C(0xB4C8837DDB7D81CD)
+#define INTER_WIDTH 16U
+#define INTER_HEIGHT 19U
+#define INTER_ASCENT 15U
+#define INTER_DESCENT 4U
+#define INTER_MAX_ADVANCE 15U
+#define INTER_ROW_BYTES 16U
+#define INTER_FIRST 0x20U
+#define INTER_COUNT 95U
+#define INTER_DATA_LENGTH 28975U
+#define INTER_ASSET_LENGTH 28999U
+#define INTER_FINGERPRINT UINT64_C(0xD4CC40D8355E676C)
+#define LABEL_PIXEL_HASH UINT64_C(0x2372F0E756FF629C)
 
 static bool verified;
 static struct ui_font_metrics installed_metrics;
-static const char *self_test_failure = "First Light UI font self-test not run";
+static const char *self_test_failure = "Sapote Redwood UI font self-test not run";
 
 static bool add_u32(uint32_t left, uint32_t right, uint32_t *sum)
 {
@@ -32,18 +32,18 @@ static bool add_u32(uint32_t left, uint32_t right, uint32_t *sum)
     return true;
 }
 
-static bool metrics_are_spleen(const struct ui_font_metrics *metrics)
+static bool metrics_are_inter(const struct ui_font_metrics *metrics)
 {
     return metrics != NULL &&
-        metrics->width == SPLEEN_WIDTH &&
-        metrics->height == SPLEEN_HEIGHT &&
-        metrics->ascent == SPLEEN_ASCENT &&
-        metrics->descent == SPLEEN_DESCENT &&
-        metrics->advance == SPLEEN_ADVANCE &&
-        metrics->row_bytes == SPLEEN_ROW_BYTES &&
-        metrics->first == SPLEEN_FIRST &&
-        metrics->count == SPLEEN_COUNT &&
-        metrics->data_length == SPLEEN_DATA_LENGTH;
+        metrics->width == INTER_WIDTH &&
+        metrics->height == INTER_HEIGHT &&
+        metrics->ascent == INTER_ASCENT &&
+        metrics->descent == INTER_DESCENT &&
+        metrics->advance == INTER_MAX_ADVANCE &&
+        metrics->row_bytes == INTER_ROW_BYTES &&
+        metrics->first == INTER_FIRST &&
+        metrics->count == INTER_COUNT &&
+        metrics->data_length == INTER_DATA_LENGTH;
 }
 
 enum ui_font_status ui_font_initialize(void)
@@ -54,9 +54,9 @@ enum ui_font_status ui_font_initialize(void)
     if (status != UI_FONT_STATUS_OK) {
         return (enum ui_font_status)status;
     }
-    if (!metrics_are_spleen(&metrics) ||
-        sapote_ui_font_size() != SPLEEN_ASSET_LENGTH ||
-        sapote_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
+    if (!metrics_are_inter(&metrics) ||
+        sapote_ui_font_size() != INTER_ASSET_LENGTH ||
+        sapote_ui_font_fingerprint() != INTER_FINGERPRINT) {
         return UI_FONT_STATUS_BAD_METRICS;
     }
 
@@ -87,13 +87,36 @@ enum ui_font_status ui_font_text_width(const char *text, uint32_t *width)
     }
 
     for (size_t index = 0U; text[index] != '\0'; ++index) {
-        if (length > UINT32_MAX - installed_metrics.advance) {
+        uint32_t advance;
+        const int32_t status = sapote_ui_font_glyph_advance(
+            (uint32_t)(unsigned char)text[index], &advance);
+
+        if (status != UI_FONT_STATUS_OK) {
+            return (enum ui_font_status)status;
+        }
+        if (length > UINT32_MAX - advance) {
             return UI_FONT_STATUS_SIZE_OVERFLOW;
         }
-        length += installed_metrics.advance;
+        length += advance;
     }
     *width = length;
     return UI_FONT_STATUS_OK;
+}
+
+static uint32_t blend_alpha(uint32_t under, uint32_t over, uint8_t alpha)
+{
+    const uint32_t inverse = UINT8_MAX - alpha;
+    uint32_t result = under & UINT32_C(0xFF000000);
+
+    for (uint32_t shift = 0U; shift <= 16U; shift += 8U) {
+        const uint32_t lower = (under >> shift) & UINT32_C(0xFF);
+        const uint32_t upper = (over >> shift) & UINT32_C(0xFF);
+        const uint32_t channel =
+            (lower * inverse + upper * alpha + 127U) / UINT8_MAX;
+
+        result |= channel << shift;
+    }
+    return result;
 }
 
 static enum ui_font_status draw_with_metrics(
@@ -143,37 +166,50 @@ static enum ui_font_status draw_with_metrics(
         const uint32_t code = (uint32_t)(unsigned char)text[index];
         const int32_t status = sapote_ui_font_glyph(code, bitmap,
             sizeof(bitmap));
+        uint32_t advance;
+        int32_t advance_status;
 
         if (status != UI_FONT_STATUS_OK) {
             return (enum ui_font_status)status;
+        }
+        advance_status = sapote_ui_font_glyph_advance(code, &advance);
+        if (advance_status != UI_FONT_STATUS_OK) {
+            return (enum ui_font_status)advance_status;
         }
 
         for (uint32_t row = 0U; row < metrics->height; ++row) {
             for (uint32_t column = 0U; column < metrics->width; ++column) {
                 uint32_t destination_x;
-                const uint8_t byte = bitmap[
-                    row * metrics->row_bytes + column / 8U
-                ];
-                const bool lit =
-                    (byte & (uint8_t)(0x80U >> (column & 7U))) != 0U;
+                const uint8_t alpha =
+                    bitmap[row * metrics->row_bytes + column];
 
                 const uint32_t destination_y = glyph_top + row;
 
-                if (!lit || !add_u32(pen, column, &destination_x) ||
+                if (alpha == 0U || !add_u32(pen, column, &destination_x) ||
                     destination_x < bounds.x || destination_x >= bounds_right ||
                     destination_x < clip.x || destination_x >= clip_right ||
                     destination_y < clip.y || destination_y >= clip_bottom) {
                     continue;
                 }
+                uint32_t pixel = foreground;
+                if (alpha != UINT8_MAX) {
+                    uint32_t under;
+
+                    if (surface_read_pixel(surface, destination_x,
+                            destination_y, &under) != SURFACE_STATUS_OK) {
+                        return UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE;
+                    }
+                    pixel = blend_alpha(under, foreground, alpha);
+                }
                 if (surface_pixel(surface, destination_x, destination_y,
-                        foreground) != SURFACE_STATUS_OK) {
+                        pixel) != SURFACE_STATUS_OK) {
                     return UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE;
                 }
             }
         }
 
         drawn += 1U;
-        if (!add_u32(pen, metrics->advance, &pen)) {
+        if (!add_u32(pen, advance, &pen)) {
             return UI_FONT_STATUS_SIZE_OVERFLOW;
         }
     }
@@ -234,18 +270,18 @@ bool ui_font_self_test(void)
 {
     struct ui_font_metrics metrics;
     int32_t status;
-    uint32_t pixels[64U * 16U] = { 0U };
+    uint32_t pixels[96U * 19U] = { 0U };
     struct surface surface = {
         .active = true,
-        .width = 64U,
-        .height = 16U,
-        .pitch = 64U * SURFACE_BYTES_PER_PIXEL,
+        .width = 96U,
+        .height = 19U,
+        .pitch = 96U * SURFACE_BYTES_PER_PIXEL,
         .pixels = pixels
     };
-    const struct surface_rect whole = { 0U, 0U, 64U, 16U };
-    const struct surface_rect short_box = { 0U, 0U, 64U, 15U };
+    const struct surface_rect whole = { 0U, 0U, 96U, 19U };
+    const struct surface_rect short_box = { 0U, 0U, 96U, 18U };
 
-    self_test_failure = "First Light UI font self-test passed";
+    self_test_failure = "Sapote Redwood UI font self-test passed";
     if (sapote_ui_font_self_test() != 1) {
         self_test_failure = "UI font bounded parser refusals are incomplete";
         return false;
@@ -255,25 +291,25 @@ bool ui_font_self_test(void)
         self_test_failure = ui_font_status_string((enum ui_font_status)status);
         return false;
     }
-    if (!metrics_are_spleen(&metrics) ||
-        sapote_ui_font_size() != SPLEEN_ASSET_LENGTH ||
-        sapote_ui_font_fingerprint() != SPLEEN_FINGERPRINT) {
+    if (!metrics_are_inter(&metrics) ||
+        sapote_ui_font_size() != INTER_ASSET_LENGTH ||
+        sapote_ui_font_fingerprint() != INTER_FINGERPRINT) {
         self_test_failure = "UI font pinned asset metrics or fingerprint changed";
         return false;
     }
-    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 12U, "SAPOTE",
+    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 15U, "SAPOTE",
             UINT32_C(0x00008E92), NULL) != UI_FONT_STATUS_OK ||
         pixel_hash(pixels, sizeof(pixels) / sizeof(pixels[0])) !=
             LABEL_PIXEL_HASH) {
         self_test_failure = "UI font representative label pixels changed";
         return false;
     }
-    if (draw_with_metrics(&metrics, &surface, short_box, short_box, 0U, 12U, "P",
+    if (draw_with_metrics(&metrics, &surface, short_box, short_box, 0U, 15U, "P",
             1U, NULL) != UI_FONT_STATUS_DESTINATION_CLIPPING_FAILURE) {
         self_test_failure = "UI font destination clipping refusal failed";
         return false;
     }
-    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 12U, "\x01",
+    if (draw_with_metrics(&metrics, &surface, whole, whole, 0U, 15U, "\x01",
             1U, NULL) != UI_FONT_STATUS_MISSING_GLYPH) {
         self_test_failure = "UI font missing-glyph refusal failed";
         return false;

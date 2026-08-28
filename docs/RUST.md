@@ -14,7 +14,7 @@ and encodings dominate the risk. Today it validates:
 | Module | Input |
 | --- | --- |
 | `font.rs`, `ui_font.rs` | packed bitmap-font headers and glyph data |
-| `logo.rs` | the deterministic runtime pebble stream |
+| `logo.rs` | the deterministic runtime Sapote S-mark stream |
 | `fat16.rs`, `linux_fat16.rs` | FAT16 geometry, chains, root entries, and payload digests |
 | `fat32.rs` | FAT32 BPB/FSInfo geometry, cluster classes, paths, names, and directory entries |
 | `elf64.rs`, `linux_elf64.rs` | bounded native and static BusyBox ELF64 records |

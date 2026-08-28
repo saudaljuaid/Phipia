@@ -343,10 +343,17 @@ of a dispatch needs an arm for every variant the subset does not handle, which
 is a branch nothing reaches and no test can cover. Nesting gives one arm at the
 top and a match underneath that is exhaustive over exactly four.
 
-**State: done for both lanes.** Not done: curves on items rather than tracks,
-which needs a name for a keyframe that survives its item being renumbered; and
-automation for anything that is not a level — a pan, a parameter on an effect
-that does not exist yet.
+**State: done for both lanes**, and — since **M8.10** — for a clip's framing
+too. The reason given here for not doing that was wrong, and it is worth
+saying why rather than quietly deleting it: curves on items were said to need
+"a name for a keyframe that survives its item being renumbered", and they do
+not. The worry dissolves by putting the curve *on the clip*, where there is no
+index to survive. What it actually needed was an answer to a question this
+line never asked — what a keyframe's instant is *measured from* — and the
+answer, the clip's own start, is what makes a ripple renumber nothing.
+
+Not done: automation for anything that is not a level or a framing — a pan, a
+parameter on an effect that does not exist yet.
 
 ## M5 — Sound
 
@@ -1442,6 +1449,1702 @@ contain.
 **State: done.** Not done: saying *which* media is missing, which is text on a
 frame and text needs a font; and a per-clip record of the last time a source
 was looked for, which is a cache rather than a project fact.
+
+## M8.8 — Resampling
+
+*Requires nothing new.*
+
+Scaling a clip is the most-used operation in an editor after cutting, and the
+one where "looks about right" hides the most. This is the arithmetic; putting a
+transform on a clip is the next milestone, and saying so is the point — M6 once
+claimed done while a named part of it did not exist.
+
+### Two decisions, both already made elsewhere
+
+**In what space?** Linear light. A resampled pixel is a *weighted average of
+what was there*, and an average only means something over quantities that add —
+which light does and code values do not. Averaging encoded values makes a
+reduced picture darker than the one it came from, most visibly on fine bright
+detail against dark.
+
+**Straight or premultiplied?** Premultiplied, and nothing else. Averaging
+straight samples across an edge mixes the colour of pixels that are barely
+there with the colour of pixels that are fully there at equal weight, which is
+the dark fringe around every badly keyed title. In premultiplied form a
+transparent pixel contributes nothing to the colour sum because its colour *is*
+nothing.
+
+Both are the compositor's arguments, arrived at independently and landing in
+the same place — which is the point of having written them down once.
+
+### The map runs backwards, and inverting it is exact
+
+A caller says what they want — twice the size, shifted right — which is a
+*forward* map. A resampler needs the opposite: for each destination pixel,
+which part of the source landed on it. So the mapping takes the forward map and
+inverts it, exactly, because a rational two-by-two inverse is a determinant and
+four divisions. A map that squashes the picture onto a line has no inverse and
+is refused rather than producing pixels drawn from regions of no area.
+
+### Two filters, and choosing is the caller's
+
+**Area** gives every destination pixel the exact area-weighted mean of the
+source it covers — the correct answer for *reduction*, because a destination
+pixel really is standing in for a region and this is that region's mean. Point
+sampling instead is what makes a reduced picture shimmer as it moves.
+
+It is also, honestly, a poor filter for *enlargement*: a destination pixel
+falling entirely inside one source pixel gets that pixel and nothing else,
+which is nearest-neighbour with extra arithmetic. **Bilinear** is for that.
+
+Choosing between them is the caller's rather than a heuristic's, because a
+heuristic keyed on the scale factor would change a picture's look at the moment
+somebody dragged past a hundred per cent.
+
+The area path reuses M8.2's clipper: a destination pixel's preimage under an
+affine map is a parallelogram, and the area a source pixel contributes is that
+parallelogram clipped against the pixel square. The **check** is a product of
+one-dimensional overlaps in the axis-aligned case — which the resampler never
+forms, so agreeing with it is a check by something sharing no code.
+
+### The extent and the reconstruction are different questions
+
+This one came out of a failing test and is the finding worth keeping.
+
+Outside the picture's *extent* there is nothing: no colour and no coverage, so
+a picture scaled smaller than its frame arrives surrounded by transparency
+rather than by its edge column smeared outwards forever.
+
+But the samples sit at pixel **centres**, so the outer half-pixel of a picture
+lies beyond every sample while still being inside the picture. Treating that as
+"outside" made the last column of an enlarged picture fade out — a real edge
+artefact, and the kind nobody notices until two versions of a shot are
+compared. There the reconstruction clamps to the edge sample, which is the best
+estimate of a signal past its last measurement.
+
+**State: done**, for the arithmetic; **M8.9** puts it on a clip. Not done:
+bicubic or Lanczos, which need a kernel wider than two samples and would be
+the first thing here whose weights are not exact.
+
+## M8.9 — Transform
+
+*Requires nothing new.*
+
+M8.8 built the resampler. This gives it a clip to move. A transform is to
+*geometry* what a grade is to colour and a mask is to extent: a property of the
+clip, carried by the layer stack, applied by the renderer.
+
+### Dimensionless, and about the centre
+
+The linear part is dimensionless — twice the size is twice the size at every
+resolution — and the translation is in **fractions of the frame**, so a project
+cut on a proxy and finished at four times the size keeps the framing somebody
+chose rather than a pixel count that no longer means the same thing.
+
+And it acts about the frame's **centre**. Scaling about the corner is what the
+arithmetic does if nobody decides otherwise, and it sends the picture sliding
+off to the lower right the moment somebody drags a scale slider — which is not
+what anybody means by "make it bigger".
+
+### An angle is not a matrix
+
+There is no rotation-in-degrees, for the reason the wipe's direction is a
+vector: a sine and a cosine are not exact. The linear part is four rationals,
+and an interface offering a dial converts once when somebody turns it. The
+pleasant consequence is that the transforms people actually use are exact — a
+half, a third, a mirror, a quarter turn.
+
+A **mirror** is a transform and not a refusal, which is worth a test of its
+own: a mirror has a *negative* determinant, and it is the zero one that has no
+inverse. Confusing the two would refuse flipping a shot.
+
+### Where it sits in the chain
+
+Between the grade and the mask, and both halves of that are decisions.
+
+**After the grade**, because a look is a function of colour and resampling
+averages colours: grading the average is not the average of the grade, and the
+table was written for the clip's own values rather than for whatever a scale
+produced.
+
+**Before the mask**, because a mask is in *frame* coordinates. Moving a clip
+moves the picture through a stationary mask, which is what a garbage matte and
+a split screen both want. A mask that travelled with its clip would be a
+different feature, and it would have to say so.
+
+### The identity is skipped, not computed
+
+A clip nobody has transformed goes through **no resampler at all**, and the
+test counts nodes in the plan rather than comparing pixels. Exact is a stronger
+promise than "the arithmetic works out", and it is the promise a project
+deserves after being opened and saved a hundred times.
+
+`SPRJ` goes to **version eleven**: a clip writes a transform flag, then the
+filter, four rationals and a move. Measured against the previous commit
+again — one byte per clip, at one, three and seven.
+
+**State: done**, and **M8.10** makes a transform change over time; **M8.22**
+animates the mask and **M8.24** turns both, exactly, which the "an angle is not
+a matrix" paragraph here had ruled out and should not have. **M8.25** takes the
+anchor, which turned out to be a second pair of rationals *and* a measurement
+about which space they may be added in. Not done: an anchor that animates.
+
+## M8.10 — Motion
+
+*Requires nothing new.*
+
+M8.9 gave a clip a framing. This lets the framing change over the length of the
+clip it is on — the push-in, the reframe, the slow drift across a still.
+
+The whole milestone is one decision made twice, and it is not the arithmetic.
+
+### The curve goes on the clip
+
+M4.6 opened by naming three things a curve is for: "opacity that fades, **a
+scale that pushes in**, a volume that ducks under dialogue." Two of the three
+got lanes. The third was deferred with a reason, and the reason was that a
+curve on an item would need "a name for a keyframe that survives its item being
+renumbered".
+
+That is a real problem for a curve stored *beside* the items, in some lane that
+refers to them by index — insert an item and every reference after it is wrong.
+It is not a problem at all for a curve stored *on* the clip, because there is
+no index: the animation is a field of the thing it animates. A ripple that
+renumbers every item after this one renumbers nothing here.
+
+Worth recording as a mistake rather than a change of plan. The deferral was not
+wrong about the difficulty of the design it had in mind; it was wrong to treat
+that design as the only one, and a reason attached to a deferral is a claim
+like any other.
+
+### Measured from the clip's own start
+
+Which is the other half of the same decision, and the half that has
+consequences. A keyframe at tick twelve is twelve ticks into *this clip*, not
+twelve ticks into the programme. So sliding a shot down the timeline slides its
+push-in with it, and "move this shot later" and "re-animate this shot" stay two
+different gestures — which they would not be if the curve were measured from
+the programme.
+
+The consequence is that a **cut re-bases the tail**. Split an animated clip at
+tick twenty-four and the tail's start is twenty-four ticks later than the
+original's, so its keyframes move back by that much and the ones before the cut
+go *negative*. Dropping them would be the obvious tidy and it would be wrong: a
+curve holds its first value before its first keyframe, so the pair straddling
+the cut is exactly the pair that says what the tail's opening frames do, and
+discarding half of it would flatten a move already underway into a hold. A
+keyframe at a negative instant is not a keyframe before the programme began. It
+is one before *this clip* began, which is an ordinary thing for a cut to
+produce.
+
+And **join is the exact inverse**, as it is for everything else here: two
+clips join only when the second's animation is the first's re-based onto the
+second's start. Anything else is refused rather than reconciled, because
+joining would keep the first's move and discard the second's without saying so.
+
+### A scale and two moves, not four curves
+
+The base transform holds the *shape* — a mirror, a quarter turn, a shear — and
+the motion scales and moves it. Not the whole linear part: a matrix that
+changes over time is four curves that can disagree about whether the picture is
+still a rectangle, and the shear that produces is a different feature with its
+own name.
+
+A motion requires a base transform, and the base cannot be taken off a clip
+that has one. Both directions, because a guard on one gesture that is missing
+from its opposite is not a guard — it is a door somebody has not tried yet.
+
+The scale is refused at nought or below when a keyframe is set. It is refused
+*again* when it is read, and that second check is not redundant: an ease's
+verticals are deliberately unclamped, so an overshoot between two positive
+scales can pass through nothing on its way. The test for that guard uses an
+ease that actually reaches it, because a guard is only checked by an input that
+gets there.
+
+### The renderer did not change
+
+Not one line, and that is the design rather than a happy accident. The layer
+stack hands out a **resolved** transform: by the time a frame is described, a
+motion has already become the framing it reads at that moment. A renderer told
+about curves would need a clock, and a node that depends on a clock is a node
+whose cache key is a lie.
+
+There is a test for that claim — an animated clip and a still one at the same
+framing must plan the same graph node for node and render the same picture byte
+for byte — and a third render at a *different* framing beside it, because the
+first two would agree just as well if the framing were being dropped on the
+floor.
+
+`SPRJ` goes to **version twelve**: a clip writes a motion flag and then, if it
+is set, three curves in the format's existing shape — scale, across, down. An
+absent lane stays absent rather than becoming a curve holding its neutral,
+because a save that grew two curves nobody drew would be a save that lied.
+Measured against the previous commit: one byte per clip, at one, three and
+seven.
+
+### The field that made an item too big to ignore
+
+Adding seventy-two bytes of lanes to a clip pushed `Item` past clippy's
+`large_enum_variant` threshold: 288 bytes for a clip against 24 for a gap — 304
+against 24 since M8.17 added fades. The
+lint is right about the numbers and its remedy is not available — boxing the
+clip is an infallible allocation, and this crate allows none that is not both
+bounded and fallible (R-5.1, R-5.2), while `Box::try_new` does not exist.
+
+So the exemption is written down with its argument, as an `expect` rather than
+an `allow` so the day it stops being needed the build says so. And the number
+it argues from is pinned by a test, because the cost of an item is exactly the
+kind of number that grows one field at a time with nothing watching. The
+argument itself is worth stating: the lint warns because a vector of the small
+variant pays for the large one, and a track is mostly clips — the waste is on
+the *minority* variant, against a clip's own bytes that have to live somewhere
+whatever this enum looks like.
+
+**State: done.** Not done: an animated mask, an animated grade, and an anchor
+point — the three remaining places where a parameter is a value where it could
+be a curve.
+
+## M8.11 — Trims
+
+*Requires nothing new.*
+
+Two operations every editor has and this model could not perform, and one that
+turned out to be there already.
+
+### A roll is not two trims
+
+`RollCut` moves a cut: the outgoing item runs on and the incoming one starts
+further into its source, so the material either side is unbroken and **the
+programme is exactly as long as it was**. That last clause is the whole
+operation. Doing it as two trims changes the length of the programme in
+between, which moves every position after the cut and then moves it back —
+and a state nothing downstream should ever be able to observe is a state
+something downstream will eventually observe.
+
+`SlideItem` moves an item along its track and does not touch the item at all:
+same source, same length, same grade, same everything. Its neighbours give and
+take to make room. So it needs a neighbour on both sides — an item at either
+end of a track has nothing to absorb the difference, and inventing a gap to
+absorb it would be a different edit performed silently.
+
+**Both are their own inverses** with the sign turned round, which is why
+neither carries a saved copy of what it replaced. That is not a convenience;
+it is the reason these belong in this model rather than beside it.
+
+### And the one that was already there
+
+There is no ripple delete, because there is nothing to ripple. A track stores
+no positions — an item's place is the sum of the lengths before it — so
+removing an item closes the hole by construction, and a second operation that
+closed it would be closing a hole that never opened. It is now pinned by a
+test rather than left as a property somebody would have to notice.
+
+### A dissolve is about exactly what a trim changes
+
+A transition carries two conditions: it may not outlast either neighbour, and
+the incoming clip must start far enough into its media for half a dissolve of
+handle. Both are statements about the lengths and in points a trim exists to
+change.
+
+So the check came out of `add_transition`, where it had been living as if it
+were a question asked once, and is now asked again by every trim — of the
+items the trim is *about to write*, before it writes any of them. Checking
+against what is on the track would pass and then let the write break it.
+
+Only the dissolves touching something that changed are re-checked. Checking
+all of them would be correct and would make a trim's cost the number of
+dissolves on the track, on an operation that runs on every frame of a drag.
+
+**State: done.** Not done: a trim that is allowed to move a dissolve rather
+than being refused by it; a three-point edit, which needs a notion of a
+selected range rather than a new operation on a track; and trimming across
+tracks at once, which needs a notion of which tracks are enabled.
+
+## M8.12 — Type
+
+*Requires nothing new.*
+
+"Offline media renders a slate but cannot say which media is missing — that is
+text on a frame, and text needs a font." That line has stood in the risk
+section for three milestones. This is the font.
+
+### Why it had to be written
+
+A font could not be taken from anywhere. Every outline format worth reading is
+a parser and a hinting engine — a large one, with a long history of memory
+faults, and no way to load a file on a platform that does not yet mount a file
+system. Every free face worth shipping is somebody else's licence to reconcile
+with GPL-3.0-only. And a bitmap face would have to be drawn at every size a
+title might be set at, which is the opposite of what this project does about
+resolution everywhere else.
+
+So SapStudio writes its own, and what it writes is decided by what it already
+has.
+
+### A glyph is disjoint convex pieces
+
+The shape rasteriser has computed the **exact area** of a pixel inside a convex
+region since M8.2. A letter is not convex. But a letter *is* a small number of
+convex pieces, and the area of a union of pieces whose interiors do not overlap
+is the sum of their areas — exactly, with no reasoning about antialiasing at
+all.
+
+So every glyph is authored as pieces that **touch but never overlap**, and
+coverage is their sum. That is not a convention the drawing hopes for. It is
+measured: for every pair of pieces in every glyph, the exact area of their
+intersection, which must be nought. And it is enforced a second, cheaper way —
+`quantise` refuses a coverage above full, so a face whose pieces overlapped
+enough to fill one pixel past one is *refused* rather than drawn wrong. The
+pairwise measurement is the stronger of the two and catches an overlap far too
+small to fill a pixel.
+
+The consequence worth having is that this face is exact at every size. There is
+no bitmap, no hinting, no grid fitting and no size at which it stops being the
+same letter — a title at 4K and the same title on a proxy are the same shape,
+measured the same way. A test asserts the form of that: a glyph at twice the
+size covers exactly four times the area.
+
+### What it does not do, and why each
+
+**No curves.** Every piece is a straight-edged quadrilateral or a triangle. A
+curve would be a polygonal approximation of a curve, which is a decision about
+how many segments — a number that would have to be defended, would change with
+size, and would make "the same shape at every size" false.
+
+**No lowercase.** An x-height, ascenders and descenders are a second set of
+metrics, not more of the same work. The first thing this face draws is a slate,
+which broadcast sets in capitals.
+
+**Monospaced.** The first things drawn are a timecode and a digest, and a
+proportional face makes a counting number dance in place while it counts. It
+also makes disjointness *between* glyphs free rather than authored: the advance
+is wider than the drawing box, so no two letters can share a pixel.
+
+**No substitution.** A character the face cannot set is refused by name. A face
+that drew a box would put a rectangle on a slate and call it a message; one
+that drew nothing would put a gap there. Both are a picture that says something
+other than what it was given, which is the one thing a slate must not do.
+
+### The design grid, and the two computed coordinates
+
+Half-units, sixteen to the em. A glyph is drawn in a box ten half-units wide
+and sixteen tall, with a stroke two thick, and the pen advances twelve. Every
+design coordinate is an integer on that grid, so the face is exact rational
+data rather than a table of decimals somebody rounded.
+
+Two coordinates are not integers, and they are the interesting ones: the
+crossbar of an `A` meets two slanted legs, so its own sides *are* those legs'
+facing edges, evaluated at the bar's top and bottom. Authored by hand it would
+either leave a hairline or overlap, and a hairline is invisible until somebody
+sets the letter large.
+
+### And it is kept as a picture
+
+Every other test here measures a number, and all of them would pass on a face
+whose letters were the wrong letters — a `G` drawn as a `C` is a perfectly
+disjoint, exactly rasterised, entirely wrong glyph. So the whole repertoire is
+committed as `tests/golden/specimen.png` and compared byte for byte, with what
+it actually drew written beside it on a mismatch. A face is the one thing in
+this project whose correctness is a judgement by eye and cannot be anything
+else.
+
+**State: done**, and **M8.13** puts it on a frame. Lowercase is **M8.15**, and
+the reason given here for deferring it — that it is a second set of metrics
+rather than more of the same drawing — turned out to be right. Not done:
+curves, kerning, and a face at more than one weight.
+
+## M8.13 — Legend
+
+*Requires nothing new.*
+
+M8.12 wrote the face. This puts it on a frame, and closes the sentence that
+has stood in the risk section since M8.7: **offline media renders a slate but
+cannot say which media is missing**.
+
+### It says the digest, not the file name
+
+Because the digest is what the clip refers to. A file name is a hint that may
+have moved, and two clips pointing at one digest are pointing at one thing
+whatever they were called when they were imported. Eight characters of it,
+which is what a person reads off a screen and types into a search — and the
+same prefix the conform module already writes into a reel name, so a slate and
+an edit decision list name the same thing the same way.
+
+### Two captions, because a proxy has a real choice to make
+
+A legend carries the whole sentence *and* the part that matters, and neither
+is right at both sizes. `MEDIA OFFLINE 4F3C9A21` needs a frame three hundred
+pixels across to be read; the eight characters that identify the clip need a
+hundred and sixty. Setting the long one small enough to fit a proxy is a grey
+smear, and dropping straight to nothing throws away what somebody actually
+needs.
+
+So: the whole sentence, then the part that matters, then **nothing at all**. A
+slate whose caption cannot be read has told the viewer something false about
+how much it knows, and the stripes underneath already say the one thing that
+matters. Below the floor the frame comes back byte for byte unchanged, which
+is a test.
+
+The floor is measured rather than chosen. A stroke is an eighth of the em, so
+nine pixels puts it just over one; at four it is half a pixel and the whole
+face is grey, which another test measures.
+
+### The one arithmetic claim
+
+The type is premultiplied **in light**, through the same conversion every other
+layer goes through. Writing the coverage byte into the colour channels is the
+obvious way to build white type and it is wrong everywhere the coverage is
+partial, by exactly the amount the transfer curve bends. It looks like a
+slightly thin font rather than like a bug.
+
+The test does not need the curve's numbers to catch it: the wrong arithmetic
+makes the colour code equal the coverage code at every pixel, and the right one
+makes it strictly greater wherever there is partial coverage. It also had to be
+told where to look — over an *opaque* field the composited alpha is 255
+everywhere, so the first version of that test found nothing partly covered at
+all and was reading the wrong plane.
+
+### What the node carries, and what it does not
+
+The words, and nothing else. No size, no place, no colour. Everything a
+caption's look could be is a decision that would have to be the same on every
+slate to be worth anything, and a parameter nobody varies is a parameter that
+goes wrong in one place and nowhere else.
+
+The words *are* in the identity, length-prefixed, so two slates that say
+different things are two cache entries and the same slate twice is one. Without
+that a timeline with two clips offline would show the first one's digest on
+both.
+
+**State: done**, and **M8.14** makes text something a project contains. Not
+done: a caption whose look somebody chose, which is what a title is and is why
+that is a different node.
+
+## M8.14 — Titles
+
+*Requires nothing new.*
+
+M8.12 wrote the face and M8.13 put a caption on a slate. This makes text
+something a **project contains**: a card somebody wrote, at a size and a place
+somebody chose, saved in the file and cut like anything else.
+
+### A title is media
+
+Not a new kind of item. Not a property of a clip. An **asset**, which a clip
+cuts from exactly as it cuts from a recording.
+
+That is the whole milestone, and everything below is a consequence of it.
+Trimming, rolling, sliding, splitting, joining, dissolving, wiping, grading,
+masking, transforming and animating a title all work already, and not one of
+them had to be told what a title is. A title that were its own kind of item
+would need every one of those written a second time, and would get one of them
+subtly wrong — probably the one nobody thought to test.
+
+What separates a title from a recording is only where its frames come from,
+and that is one enum on the asset. The *planner* acts on it, not the graph: the
+same decision M8.7 made about offline media, for the same reason. A node that
+chose for itself whether to fetch or to draw would be a node whose cache key
+did not record which it had done.
+
+### Named by what it says
+
+A title's digest is the digest of its own description. That is not a
+convenience; it is what content addressing already meant. The same card in two
+projects is the same card, two clips of it share one cached frame, and changing
+a word makes a **different asset** rather than quietly changing what every clip
+of it shows.
+
+Two consequences fall out. A title **cannot be relinked** — there is nothing to
+find, and a location hint on one would be inviting somebody to point a card at
+a file, which would be a different asset the moment it was opened. And a title
+is **never offline**: the library is not asked whether it has one, because
+asking about a file that does not exist would get "no" and put a slate where
+somebody's card should be.
+
+The file writes the digest anyway, as it does for every asset — and then checks
+it. A title is named by its description, so the two are one fact written twice,
+and a file where they disagree has been edited. Recomputing and accepting
+whichever came out would silently repoint every clip of the card.
+
+### White, and the reason is not laziness
+
+*Left as it was written, because M8.19 answers it rather than contradicting it
+— and because a record of what was believed at the time is worth more than a
+record edited to have been right.*
+
+A title here is white. Not because colour is hard to store, but because three
+bytes in a model that has never held a colour would be three bytes in *which
+encoding* — and answering that is the colour pipeline's job, with a name on it,
+rather than a silent assumption in a struct (R-8.3).
+
+The answer that costs nothing is already built. A clip carries a grade, and a
+grade is a lookup table applied in the encoding it was authored for. **To
+colour a title, grade it.** One mechanism doing two jobs, rather than two that
+have to agree.
+
+### No floor, unlike a caption
+
+A caption's size is chosen *for* the reader, so `caption` refuses to set one
+too small to read. A title's size is the editor's own decision, and a program
+that quietly declined to draw somebody's card because it judged it too small
+would be worse than one that drew it. So `title` has no floor and no ceiling,
+and a card placed off the frame is placed off the frame.
+
+The size is a fraction of the **height** and the place is fractions of both, so
+a card laid out on a proxy is the same card on the finish — the same argument a
+transform's move makes, and the same reason a mask's corners are fractions.
+
+`SPRJ` goes to **version thirteen**: every asset writes a source tag, and a
+title writes its words and its three fractions after it. Measured against the
+previous commit — one byte per asset, at one.
+
+**State: done**, and **M8.16** makes a card say more than one thing.
+**Superseded in part by M8.19**, which gives a title a colour after all — the
+argument above was right that a colour must not be three bytes, and wrong that
+the only way out was a grade. Three fractions of light are not bytes.
+
+Not done: a title that *animates* — which wants the treatment a clip's framing
+got in M8.10, with the curve on the asset rather than on the clip.
+
+## M8.15 — Lowercase
+
+*Requires nothing new.*
+
+M8.12 wrote the face and deferred lowercase with a reason: "an x-height,
+ascenders and descenders are a second set of metrics, not more of the same
+work." That reason was **right**, which is worth saying because the last two
+deferrals examined here were not.
+
+A capital is one measurement. It runs from the cap line to the baseline and
+there is nothing else to say about where it sits. Lowercase needed three more
+numbers before a single glyph could be drawn:
+
+- an **x-height** the bodies sit on, at ten of the sixteen half-units — much
+  smaller and the lowercase reads as small capitals, much larger and the
+  ascenders stop being visible as ascenders;
+- **ascenders**, which reach the cap line: `b d f h k l t`, and the dots of
+  `i` and `j`;
+- **descenders**, five half-units below the baseline: `g j p q y`.
+
+And a fourth that only exists once there are descenders: **line spacing**. Set
+at the em — which is what "line height equals font size" means everywhere it
+is offered — every `g` in one line goes through every `A` in the next. This
+face needs the em plus the descender plus a half-unit of air.
+
+### The metrics are checked, not written down
+
+Four numbers in a header file are four numbers nothing enforces. So each is a
+claim a test measures against the glyph data: every capital starts at the cap
+line and sits on the baseline, every lowercase body without an ascender starts
+exactly at the x-line, every descender reaches exactly the descender line, and
+nothing at all reaches outside the two. A letter that drifted off its own line
+would still draw, still be disjoint, still be exact — and would set a line of
+type that sat on nothing.
+
+The twenty-six new glyphs were disjoint on the first run, which is what the
+pairwise-intersection test is for and the first time it has had nothing to say.
+
+### What it unlocks
+
+A title card that can set a **name**. That is what titles are usually for, and
+a face that could set a slate and not a name would have been a face for slates.
+
+**State: done.** Not done: curves, kerning, a second weight, and accented
+letters — which are a fifth metric (where the accent sits above the cap line)
+and a decision about whether they are their own glyphs or a mark composed onto
+one.
+
+## M8.16 — A card that says more than one thing
+
+*Requires nothing new.*
+
+A lower third is two lines. An end card is a handful. M8.14 shipped a title of
+one line, which is the shape a slate has and not the shape a card has.
+
+### Two questions kept apart
+
+Where the *block* goes, and how the lines sit inside it. They are separate on
+purpose: a left-aligned card dragged across the frame stays left-aligned, and
+that is only true if moving it changes the block's place and nothing else.
+
+So a title carries an alignment — left, centred or right — and its `across` and
+`down` place the **middle of the block**. A two-line card straddles the point
+it was placed at rather than hanging below it, which is what anybody dragging a
+card to the centre of the frame means by the centre.
+
+Alignment lines up the **boxes** the glyphs are drawn in, not their ink. An `I`
+has its own bearings well inside its box, and chasing the ink would make a
+left-aligned column start in a different place depending on which letter each
+line happened to begin with — the same argument centring already makes.
+
+### The leading is the face's, and that is not a shortcut
+
+Lines stack at [`font::LINE_SPACING`] rather than at the em. Set at the em —
+which is what "line height equals font size" means everywhere it is offered —
+every `g` in one line goes through every `A` in the next.
+
+Here that is not a matter of taste. Two overlapping lines cover a pixel twice,
+the coverage sums past full, and the rasteriser **refuses** — so a card set too
+tight would not be drawn badly, it would not be drawn. That makes the test for
+it unusually clean: a card of descenders over capitals either draws or is
+refused, and there is no third outcome for the test to be wrong about.
+
+A leading *control* is deliberately not offered. It is a typographic preference
+where a correct default exists, and every parameter is a thing to keep true in
+the model, the format, the node's identity and the planner.
+
+### Named by all of it
+
+A card's digest already covered its words; it now covers **every line, each
+with its own length, and the alignment**. Two cards whose lines concatenate the
+same — `"AB"`, `"C"` against `"A"`, `"BC"` — are two cards, and without the
+per-line length they would have been one asset with two meanings.
+
+A blank line among others is fine, and is how a card puts air between two
+stanzas. A card where *every* line is blank is refused, because that is a gap.
+
+`SPRJ` goes to **version fourteen**: a title writes a count of lines, each line
+with its length, and an alignment tag. Measured against the previous commit —
+**no change at all** for a project with no titles, which is right: the cost is
+per card, not per asset.
+
+**State: done.** Not done: a leading control; a card whose lines are set in
+more than one size; and a title that *animates*, which wants the treatment a
+clip's framing got in M8.10, with the curve on the asset rather than the clip.
+
+## M8.17 — A fade on a clip, and the bug it found
+
+*Requires nothing new.*
+
+A dissolve sits at a cut and needs two clips. The first item of a programme has
+nothing before it — so until this, the most ordinary thing an edit does,
+bringing a programme up from black, was the one thing this model could not
+describe.
+
+### It is a different thing from a transition
+
+A transition is about *two* clips and belongs to the boundary between them. A
+fade is about one clip and belongs to it. Where they meet they multiply, which
+is a test.
+
+And it rises from **nought** on the clip's own first frame and falls back to
+nought on its last. That is not how a dissolve behaves and the difference is
+the point: a dissolve's fraction never reaches nought or one, because a frame
+at either end would repeat a neighbour. A fade from black *is* the black, and a
+first frame that showed the picture would not be a fade from anything.
+
+Where a clip's two fades meet, the smaller wins. Adding them would pass more
+than the material has; multiplying them would dip in the middle of a clip
+nobody asked to dip.
+
+A trim shorter than the fades on it is **refused**. Clamping them would
+silently re-time somebody's fade and dropping them would silently remove it,
+and neither is what a trim was asked to do.
+
+### Picture and sound, and why they are applied differently
+
+For picture the fade folds into the layer's opacity and reaches the compositor
+as one node — one rounding and one cache entry rather than two, because the
+product of two rationals is a rational.
+
+For sound it scales the **samples**. A fader is a position in decibels and a
+fade is a fraction of the material, and converting one into the other's units
+would mean a logarithm at every sample for a number that only takes two values
+a block. So the fade scales the buffer and the fader scales the source, exactly
+as a mask scales a picture and an opacity fades one.
+
+The pair of fractions a block of sound needs is *this clip's* fade one tick on
+— not whatever the timeline shows there. Reading the next frame off the track
+instead made every unfaded clip duck to silence over its last block, which the
+mixdown tests said within a minute of it being written.
+
+### The bug it found
+
+`composite::faded` and `composite::masked` scaled a premultiplied layer's
+colour in **code values**. The compositor's own module header has said since
+its first version that "a premultiplied sample is the encoding of `light ×
+coverage`, not the encoded value scaled by coverage" — so the convention was
+written down and two functions broke it.
+
+Nothing caught it because every fixture faded a layer that was **black**, where
+nought times anything is nought and the two arithmetics agree exactly. That is
+the third time this project has been bitten by a test over black, and it is
+recorded in [Verification](VERIFICATION.md) as such.
+
+What found it was a fixture that had never existed: a dissolve between two
+*identical* pictures, which has to be that picture and instead sagged by
+twenty-eight code values in the middle — a visible dip in every dissolve
+between two shots of anything.
+
+The correction moved three hand-derived numbers, and each was re-derived rather
+than accepted: the wipe's edge pixel from 154 to **205**, the mask's channels
+from `[100, 50, 25]` to **`[147, 72, 34]`**, and the slate's `picture red` from
+73 to **98**. The wipe's comment had also drawn the wrong moral — it said the
+linear answer was the darker one, which was the bug talking rather than a fact
+about light.
+
+One more thing had to be enforced: the colour goes through a curve and the
+coverage through an integer multiply, and the two roundings land a fraction
+apart — so a sample sitting exactly at its coverage can come out a code value
+above it, which `checked_premultiplied` refuses and is right to. The colour is
+held under its own coverage, which is not a clamp for safety; it is what
+premultiplied means.
+
+`SPRJ` goes to **version fifteen**: a flag per clip, and two lengths when it is
+set. Measured — one byte per clip, at three.
+
+**State: done.** Not done: a fade shape that is not linear, which would want
+the curve machinery and a decision about what an *ease* on a fade means at the
+frame it reaches nought; and a fade on a *track*, which is a different thing
+again and is what the automation lane already does.
+
+## M8.18 — Retiming
+
+*Requires nothing new.*
+
+A clip plays its media at a speed somebody chose. The clip keeps its length on
+the timeline; what changes is how much media it consumes to fill it. A half is
+slow motion, a two is fast, and a negative runs the media backwards out of the
+in point.
+
+### The speed is an exact rational, and that is not decoration
+
+A clip at `24/25` is the standard pull-down. A clip at `0.96` is a rounding of
+it that drifts a frame every twenty-five seconds — slowly enough that nobody
+notices until a delivery, which is the worst speed for a fault to have. An
+exact fraction is a speed two builds cannot disagree about, and it is the same
+reason the wipe's direction is a vector rather than an angle.
+
+### The size decides how far, the sign decides which way
+
+`source_at(offset)` is the in point plus or minus `floor(offset x |speed|)`,
+and splitting it that way rather than flooring `offset x speed` directly is a
+decision. Flooring a negative ramp rounds the other way, so a clip reversed at
+half speed would give `100, 99, 99, 98` — the in point once and everything
+after it twice — against the forward `100, 100, 101, 101`. Same speed,
+different frames, for no reason anybody could point at. Written this way a
+reversed clip shows exactly the frames its forward twin shows, and there is a
+test that holds the two the same distance from the in point at every offset.
+
+The floor is the floor a sample position already takes, and for the same
+reason: a tick names a frame rather than a moment, so a position part way
+through one is that frame and not the next.
+
+### What a speed reaches
+
+Everything that asks a clip where it is in its media, which turned out to be
+more places than the field itself: the layer stack's ordinary arm *and* its
+dissolve arm, the tail of a split, the join that asks whether two clips
+continue into each other, and the end the library checks against the asset's
+length. Each has its own control, and the dissolve arm's found a gap in the
+tests rather than in the code — the two arms had one control between them,
+because the anchor that was meant to name one of them was a substring of the
+other.
+
+A reverse that would read before its media is refused **when the speed is
+set**, not at the frame that reads it: the editor who set it is the one who
+can do something about it. A speed of nought is refused outright — it would
+show one frame forever and consume no media, which is a freeze, a different
+edit with a different name. Sound is refused at any speed but real time, by
+name, until there is a resampler to pitch it with; a silent pitch shift would
+be worse than a refusal.
+
+### A guard that could not be made to fail
+
+`source_at` began with an arm for real time, on the grounds that a clip nobody
+retimed should be added to rather than multiplied. Its negative control could
+not be made to fail: a speed of one takes `floor(offset x 1) = offset`, so the
+general path gives the same answer on every input. A guard whose absence
+changes no answer is a guard no test can hold, and it went. That is the fourth
+time this project has found a guard duplicating one further in.
+
+### And two numbers that had gone stale
+
+The speed is sixteen bytes on every clip, which put `Item` at 320 — exactly the
+ceiling `tests/size.rs` was holding, so the field that arrived was the one that
+spent the last of the slack. Raising a ceiling is allowed; raising it without
+saying what ate the room is not, and the constant now says.
+
+`Edit` crossed clippy's `large_enum_variant` threshold at the same time, since
+`InsertItem` carries a whole item and must — a `RemoveItem`'s inverse is the
+`InsertItem` that puts back what came out, and nothing else in the journal
+remembers it. The remedy clippy names is boxing, which R-5.2 forbids. So the
+exemption is written out with its argument, and the width is pinned by a test.
+
+Pinning it surfaced something else. `MAX_HISTORY` is 4096, and an entry is a
+pair of edits at 336 bytes each — 2.6 MiB against the nineteen mapped pages a
+Sapote program is given. The constant is not the bound that bites there, and
+reading it as a promise of four thousand undos would be reading it wrong: what
+arrives is `OutOfMemory` from the fallible reservation, not `CapacityExhausted`
+from the policy. The two deserve different words, and the arithmetic is now a
+test so the day the platform grows the ordering is re-checked rather than
+assumed.
+
+`SPRJ` goes to **version sixteen**: a flag per clip, and a rational when it is
+set. Measured — one byte per clip, at three. The image went from 90 pages to
+**91**.
+
+**State: done.** Not done: a speed that *changes* over a clip, which is a curve
+and a different mapping — the offset would integrate rather than multiply, and
+`source_end` would have to sum it; and retimed sound, which needs a resampler
+that does not exist yet and is named by `ModelStatus::SoundCannotBeRetimed`
+rather than left to happen.
+
+## M8.19 — A title's colour, named in light
+
+*Requires nothing new.*
+
+M8.14 shipped titles white and argued the case: "three bytes in a model that
+has never held a colour would be three bytes in *which encoding* — and
+answering that is the colour pipeline's job, with a name on it, rather than a
+silent assumption in a struct (R-8.3). **To colour a title, grade it.**"
+
+The argument was right and the conclusion was wrong, and the way out is in the
+argument itself. The problem was never storing a colour; it was storing a
+colour *as bytes*. An [`Ink`] is three fractions of **full light** — the domain
+the compositor already works in and the domain every transfer table converts to
+and from. A colour named that way means the same thing in sRGB, in Rec. 709 and
+in a linear working space, and the encoding happens once, at the frame, through
+that frame's own table.
+
+Grading a title still works and is still the right tool for a *look*. It was
+the wrong tool for "make this caption yellow", which needed a lookup table
+authored in an encoding and a file on disk to say one thing about one card.
+
+### What "in light" is worth, in one number
+
+sRGB bends. Half of full light is **188**, not 128 — and a colour picked in
+code values would be a colour whose meaning changed the moment somebody
+delivered in a different range. The same ink is 255 in a full-range frame and
+235 in a limited-range one, and a mid-grey is 188 in the first and **177** in
+the second. Every one of those four numbers is derived from the definition in
+the test's own comment, not read back out of the code.
+
+The ink is in the title's digest, so the same words in two colours are two
+assets, two cache entries and two pictures — the same reason the size and the
+alignment have been in there since the card had them.
+
+### The bug it found, and the bug it did not
+
+Type was packed as `u8::MAX` regardless of what the frame was encoded in, and
+255 is not a legal code value in limited range. The first draft of this
+milestone said so in the roadmap, the tests and the commit message, and then a
+negative control refused to fail.
+
+What measurement said is that the fault is real in one of the two places type
+is drawn and absent in the other, for a reason neither prose had considered:
+
+- A **card**'s letters come from a hard-edged stencil — the coverage plane
+  holds nought and full and nothing between. The only premultiplied samples
+  are full light at full coverage and none at none, and `encode(decode(255))`
+  searches only the legal codes and lands on 235. The illegal byte was clamped
+  away on the way out and nobody ever saw it.
+- A **slate caption** is antialiased. A partly covered pixel premultiplied
+  from a code of 255 holds `encode(decode(255) x coverage)`, and `decode(255)`
+  in limited range is about 1.09 of full light — so the sample sits above the
+  ceiling its own coverage allows and `checked_premultiplied` refuses it on the
+  way into `over`. A limited-range slate did not draw a slightly wrong caption.
+  It failed, by name, with `NotPremultiplied`.
+
+So the legend asks the table for white too, even though a legend carries no
+colour and never will: what a caption's *look* is remains not somebody's
+choice, but "white" is still a code value and it is this frame's to spell.
+
+Both facts now have tests that say which is which, and the card's test asserts
+its own premise — that the stencil has no soft edge — rather than resting on it.
+
+`SPRJ` goes to **version seventeen**: a tag per title, and three rationals when
+it is set. Measured — a titled project 183 bytes to 184, one byte, and the
+slate unchanged at 286 because it has no titles. The image went from 91 pages
+to **92**.
+
+**State: done.** A follow-up commit fixed something M8.18 had left open, and
+it belongs here because it is the same field's fault: a retimed clip could read
+**past the end** of its media and nothing refused it. `Project::check_source`
+compared the in point plus the clip's *timeline length* against the asset,
+which was the same number as what a clip reads right up until a clip could be
+retimed. `Edit::SetClipSpeed` was not in `validate`'s match at all.
+
+The fix is a new question rather than a new guard. `Clip::source_span` gives
+the lowest and highest ticks a clip reads, in that order, so a caller does not
+have to know which way the clip runs; `check_source` takes the clip the edit
+*would produce* and asks it. Four edits reach it now — insert, lengthen, slip
+and retime — and each builds the candidate rather than assembling a range out
+of the fields it happens to be changing. Recorded in
+[Verification](VERIFICATION.md) as what it is: a caller recomputing a callee's
+arithmetic, which is a copy nobody is told has fallen out of step. Measured:
+the image went from 92 pages to **93**, and no behaviour changed at real time
+— `start + length <= ticks` and `highest < ticks` are the same comparison
+there, which is why the whole suite stayed green under the new bound.
+
+Not done: a colour per *line* rather than per card; a ground
+behind the letters, which is what a lower third with a bar under it wants and
+which is a second colour and an extent rather than a second field; and an ink
+that animates, which wants the curve machinery the same way a title's position
+does.
+
+## M8.20 — Freeze
+
+*Requires nothing new.*
+
+A clip held on one frame, for as long as somebody wants. M8.18 named this
+milestone while refusing to be it: a speed of nought "would show one frame
+forever and consume no media — a freeze, which is a different edit with a
+different name".
+
+### The second half of that sentence is the whole design
+
+A freeze does **not** consume no media. It consumes exactly one frame, and
+`floor(offset x 0)` cannot say so — it puts `source_end` at the in point,
+which claims a clip that shows a frame reads none of it. Three things would
+have believed that: a join, the library's bound check, and a reel.
+
+So playback is two cases rather than one number:
+
+    enum Playback { At(Rational), Frozen }
+
+`At` is never nought, `Frozen` maps every offset to the in point, and
+`source_end` for a freeze is the in point **plus one**. The span is a single
+tick, which is what lets a still be held past the end of its own media: a
+frozen clip's length on the timeline is not bounded by what is left of the
+asset behind it. That is what a still *is*, and the library check written
+against the timeline length — which this project shipped for eleven
+milestones, and fixed one commit before this one — would have refused it.
+
+### Where a freeze needs its own answer, and where it does not
+
+Its own: **contiguity**. Two frozen clips continue each other when they hold
+the *same* frame, not when the second begins where the first's one frame
+ended. That is not a convenience — split a still in two and both halves hold
+the same frame, so join has to accept exactly that pair or stop being split's
+inverse. Two stills of *different* frames do not join, and neither does a
+still beside a moving clip, even where the source arithmetic lines up.
+
+Not its own: everything else. A freeze fades, grades, masks, moves, trims,
+rolls and slides like any other clip, because it is one — the freeze is a
+property of how it reads its media and nothing else looks at that.
+
+**Sound is refused**, by the clause that already refuses a speed, and for a
+sharper reason: a held frame of sound is a held *block* of samples, which is a
+tone at the block rate. Silence would be a different answer, and choosing one
+for somebody is what R-1.3 forbids.
+
+### One edit, and one construction
+
+`Edit::SetClipSpeed` became `Edit::SetClipPlayback`, because its inverse has
+to be able to say either: undoing a freeze on a clip that was at double speed
+must put it back at double speed, and undoing a retime of a still must put the
+still back. Two variants with cross-inverses would work and would be two
+things to keep agreeing.
+
+The same argument one level down. `Edit::apply` and `Project::validate` both
+need the clip an edit *would* produce, and both began by matching on the
+playback to build it — one construction written twice, which is the exact
+fault the source bound had one commit earlier. It is `Playback::applied_to`
+now, asked for by name.
+
+`SPRJ` goes to **version eighteen**: a third value for the tag that was
+already there. Measured — **no change at all** for a project with no stills,
+and a frozen clip costs the same one byte a real-time one does, because the
+frame it holds is the in point the file already carries. The image is
+unchanged at 93 pages.
+
+**State: done.** Not done: a freeze that holds a frame *other* than the clip's
+in point without slipping to it, which is a second field and a question about
+what trimming such a clip means; and a still exported to an edit decision list,
+where CMX has no way to say "hold" that this could write without inventing a
+convention.
+
+## M8.21 — A clip that animates itself
+
+*Requires nothing new.*
+
+Fades were the quick answer: two lengths and a straight ramp, which is what
+somebody means nine times out of ten by "bring it up". This is the general one
+— a curve on the clip, with whatever shape somebody drew: a hold, a linear
+run, an ease. The two **multiply**, like everything else here that decides
+what is on screen, so a clip can carry both and neither throws the other away.
+
+### On the clip, measured from its own start
+
+The same decision M8.10 made for a framing that animates, for the same reason:
+there is no keyframe name to survive a renumbering, so a ripple that moves
+every item after this one moves its animation with it and renames nothing. And
+a cut **re-bases** the tail — carried unchanged, the animation would restart at
+the cut, which is worse than not animating because the tail would still move,
+just from the wrong place. Join is the exact inverse, and refuses two halves
+whose curves do not line up.
+
+An overshooting ease is **clamped at the read** rather than refused at the
+edit. An ease's verticals are deliberately unclamped — an overshoot is a
+useful thing for a curve to do — and a layer past full coverage is a frame the
+compositor refuses. A track's automation already clamps, so this clamps: one
+rule rather than two that have to agree.
+
+Sound is refused an opacity, and not because sound cannot fade. It can, and
+does. A sound clip's loudness is its track's fader and its own fade, **in
+decibels**; an opacity is a coverage. One multiplies light and the other is a
+logarithm of amplitude, and they are not one quantity wearing two names.
+
+### Which animates a title, because a title is media
+
+That is the claim M8.14 was built on, cashed in without a line of new code: a
+card that fades up and pushes in is a clip with an opacity curve and a motion,
+and neither had to be told what a title is. There is a test that would notice
+if some path had quietly special-cased them.
+
+### Two pages back, and not for the reason it looks like
+
+The image *fell* from 93 pages to **91** — from a milestone that only added a
+field, an edit, two functions and a lane in the file. `sapstudio-model` lost
+7,376 bytes and `Edit::apply` alone lost 3,447 of them.
+
+Nothing in the diff explains that, so it was tested. On the **previous**
+commit, with none of this milestone's code, twenty-four bytes of dummy padding
+added to `Clip` — exactly what the opacity field costs — takes the image to 91
+pages and `Edit::apply` to 16,476 bytes. The saving was bought by the clip
+crossing 320 bytes: past that size the optimiser stops emitting an inline copy
+of a clip in each of `Edit::apply`'s many arms and calls out instead.
+
+A struct getting bigger made the program smaller. Recorded in
+[the platform contract](PLATFORM_CONTRACT.md) and in
+[Verification](VERIFICATION.md), because the tempting version — "the milestone
+paid for itself" — would have been a number credited to the wrong thing.
+
+`SPRJ` goes to **version nineteen**: a curve per clip, written the way an
+absent lane has always been written. Measured — four bytes a clip for a count
+of nought, and twenty-five more for a clip with one keyframe on it.
+
+**State: done**, and the two places it named are now both filled: **M8.22**
+animates the mask and **M8.23** the grade. Not done: a shape for the simple
+fade, which would now be the same curve machinery reached a second way and
+wants a decision about which of the two an editor's "fade" gesture writes.
+
+## M8.22 — A mask that animates
+
+*Requires nothing new.*
+
+An iris that opens, a vignette that breathes, a shape that sweeps a card on.
+The framing has animated since M8.10 and the shape had not, which made "reveal
+this from behind an edge" something this model could describe only at a cut, as
+a wipe — and a wipe is between two clips. This is about one.
+
+### A uniform scale and a move, not the corners
+
+The same shape of answer M8.10 gave for the framing, and here the argument is
+sharper than "four curves can disagree about whether it is still a rectangle".
+A corner that moves on its own can turn a convex outline **concave** part way
+through, and this build computes an exact area only for a convex one — so
+per-corner animation would mean a refusal arriving at a *frame* rather than at
+the edit that caused it. A positive scale and a translation are a similarity:
+convex in, convex out, wound the same way, for every value the curves can take.
+
+Which is why `Mask::moved_by` returns a mask rather than something that could
+refuse mid-render, and why a scale at or below nought is refused where it is
+set: at nought the shape collapses to a point with no area, and below it the
+shape turns inside out through its own middle, which is a mirror and belongs
+in the corners somebody drew.
+
+### About the mask's own centroid, weighed by area
+
+Not the frame's centre, which is right for a *transform* because a transform
+moves the whole picture and the picture's middle is the frame's. A mask is a
+shape somebody put somewhere, and scaling it about the frame's middle would
+slide it toward the middle while it grew.
+
+And the **area** centroid rather than the mean of the corners, which are the
+same point only for a shape whose corners are evenly spread. A trapezoid's
+corners average to `(1/2, 1/2)` and its area balances at `(1/2, 4/9)`, derived
+by hand from the definition in the test that asserts it. Scaling about the
+wrong one drifts a shape sideways while it grows, which reads as a bug in the
+animation rather than as a choice about which point is the middle. All of it
+rational, so a mask that opens to a half and back is the mask it started as,
+exactly — and the sign cancels, so a shape wound either way balances on the
+same point.
+
+### Which is a text reveal
+
+A strip from nought to a quarter, scaled about its middle at an eighth, has its
+left edge at `1/8 - s/8`; moving it right by `(s - 1)/8` puts that edge back at
+nought for every `s`. So the strip grows rightwards only, and at `s = 4` it is
+the whole frame — a card swept on from its left edge, out of the two lanes that
+were already there. That is the milestone's point, and it is why the scale and
+the move are separate lanes rather than one "size" that would have to mean both.
+
+Separate from the framing's animation, too: a mask glued to the picture is what
+*tracking* wants and exactly wrong for a vignette, which should stay where it
+was put while the shot pushes in. Two animations, because they are two
+questions, and a test that would notice if one field had been made to serve
+both.
+
+### What it cost
+
+`Clip` went from 344 bytes to **416** — an `Option<Motion>` is 72, and there
+are two of them now — and the image went from 91 pages back to **93**. Which
+is the mirror of M8.21's surprise: that milestone's 320 → 344 took two pages
+*off*, and this one's 344 → 416 put them back. One threshold effect at one
+size, not a trend, and the only way to know which side of it a change lands on
+is to build the image and look. The size test's argument now says so.
+
+`SPRJ` goes to **version twenty**: a tag per clip, and three curves when it is
+set — exactly how the framing's animation is written. Measured: one byte a
+clip, at three.
+
+**State: done**, and **M8.23** takes the last of the three — the animated
+grade — leaving no parameter in this model that is a value where it could be a
+curve. **M8.24** takes the rotation, and the decision it wanted from the
+transform turned out to be available exactly rather than not at all. Not done:
+per-corner animation, for the reason above.
+
+## M8.23 — An animated grade
+
+*Requires nothing new.*
+
+A look was applied or it was not. That made "bring this look on over the shot"
+something this model could not describe at all — and it was the phrase the last
+two milestones both ended on: **the last place a parameter is a value where it
+could be a curve.**
+
+### Not which look — how much of it
+
+A digest is not a quantity. Two tables have nothing between them to
+interpolate, and a grade that changed identity every frame would be a different
+grade every frame rather than an animated one. What animates is the
+**strength**: how far the picture has travelled from ungraded towards graded,
+nought for the clip untouched and one for the look applied exactly as it always
+was.
+
+One is the value an absent curve reads, and that is the whole compatibility
+story: neutral for something that multiplies is one, and neutral for a *grade*
+is fully applied. A default of nought would have turned off every look in every
+project ever written.
+
+### In the table's own domain, which is the opposite of the compositor
+
+The decision this milestone rests on. `look.rs` has said since its first
+version that a lookup table is a sampled function of **code values**, and that
+a look is applied in the space its definition is written in — which is why it
+refuses a frame in another encoding and refuses premultiplied coverage. A
+*fraction* of a look follows from the same sentence: it is a fraction of the
+way along that function's own output, `c + s·(f(c) − c)`, in the function's own
+domain.
+
+Mixing in linear light would decode both sides, average them there and encode
+again, which is a different picture that nobody authored. That points the
+**opposite way** from the compositor, which mixes only in light because `over`
+is a statement about how much light reaches the eye. Both follow from one rule
+pointing in two directions, because the two definitions do.
+
+It is a testable difference rather than a stated one, and the number is
+derived from the definition by hand: a mid-grey of 128 through a table that
+takes everything to black, half on, is 64 in code values. In light it is
+sRGB's 128 decoded to 0.215861, halved to 0.107930 and encoded again, which is
+92.374. The control that moves the mix into light lands on **92**, exactly.
+
+Black and white could not have shown this — nought and one are the fixed points
+of every transfer curve, and this project has already recorded a resampling
+test that could not tell the two spaces apart for precisely that reason.
+
+### On the clip, and the fourth lane counted that way
+
+The same decision M8.10, M8.21 and M8.22 each made, for the third time and the
+same reason: there is no keyframe name to survive a renumbering, so the
+animation is a field of the thing it animates. A cut **re-bases** the tail, a
+join is the exact inverse and refuses two halves whose curves do not line up,
+and an overshooting ease is **clamped at the read** rather than refused at the
+edit — one rule shared with the track's automation and the clip's own opacity,
+rather than three that have to agree.
+
+A strength with no grade is refused where it is set, and taking the grade off
+an animated clip is refused too — the guard the mask already carries, by the
+same door. One control breaks both the model's refusal and the file's, which is
+what says they are one guard rather than two.
+
+### A rounding claim that did not survive its own control
+
+The mix is written `from + s(to − from)` and the comment said the other
+arrangement is not exact at the ends. It is. Both forms are, because
+multiplying by nought and by one are each exact, and a sweep over sixty-five
+strengths and every code value finds no disagreement at either end — only
+59,520 in the middle, each one unit in the last place, moving a quantised byte
+in about one case in sixty. The form is still the right one, for a smaller
+reason than the one written down, and the exactness the milestone rests on
+belongs to the multiply. Recorded in [Verification](VERIFICATION.md), because
+the claim was falsified by *specifying* the control rather than by running it.
+
+### What it cost
+
+`Clip` went from 416 bytes to **440** — one more `Option<Curve>` at 24 — and
+the image went from 93 pages to **94**.
+
+The symbol table says something the page count hides. `Edit::apply` **fell
+9,599 bytes**, the threshold effect M8.21 first recorded, and its helpers took
+**7,381** of that straight back: `refade` +1,257, `remotion` +1,245, `reshape`
++1,194, `slip` +1,077, `regrade` +1,009, `remove` +962, `retime` +637. When the
+optimiser stops inlining a clip into each arm it does not delete the work, it
+moves it into the functions it now calls. A footprint that falls when a struct
+grows is a relocation rather than a saving, and no previous entry had subtracted
+two of the tool's own outputs to find that out.
+
+`SPRJ` goes to **version twenty-one**: a curve per clip, written the way an
+absent lane has always been written. Measured against the previous commit in a
+worktree — 203 → 207 bytes at one clip, 267 → 279 at three, 395 → 423 at seven
+— which is **four bytes a clip**, and twenty-five more for each keyframe on it.
+
+**State: done.** Not done: a strength lane on the *track* rather than the clip,
+which is the grade's version of a track's opacity and wants the same argument
+about which of the two an editor's gesture writes; a second look on one clip,
+which is an effect *list* and is M8's real problem rather than a field; and a
+look whose table is generated rather than read, which is what a primary
+corrector is and which wants parameters in the model where a digest sits now.
+
+## M8.24 — A turn, and it is exact
+
+*Requires nothing new.*
+
+M8.9 wrote down why this model has no rotation: "a sine and a cosine are not
+exact, and a project whose framing depended on them would drift." M8.22 left a
+turning mask undone and pointed back at that paragraph. The paragraph is right
+about **angles** and wrong about **rotations**, and the difference is a
+substitution two hundred years old.
+
+### Every rational point on the circle, and there are many
+
+Put `t = tan(θ/2)`. Then
+
+```text
+    cos θ = (1 − t²) / (1 + t²)        sin θ = 2t / (1 + t²)
+```
+
+which is a rational pair whenever `t` is, with `cos² + sin² = 1` **exactly**
+and a determinant of exactly one. `t = 1` is a quarter turn. `t = 1/3` is the
+three-four-five triangle, about 36.87°. The rational points on the unit circle
+are dense, so the rotations somebody can actually ask for are dense, and not
+one of them is approximated.
+
+What follows is not decoration. A turn **composes** without renormalising —
+the angle-addition formulae keep the product on the circle by an identity, not
+by rounding — so a turn applied a thousand times is a turn through a thousand
+times the angle and is still exactly a turn. Four quarter turns are the
+identity, on the nose. A shape's area is unchanged to the last bit. A picture
+turned four times through the resampler comes back **byte for byte**.
+
+### The point, not the parameter — and the parameter, not the point
+
+A [`Turn`] stores the pair, because `t` reaches every rotation *except* the
+half turn: `(−1, 0)` sits at infinity, and a type that stored the parameter
+could not turn a picture upside down. A pair that is not on the circle is
+refused by name, because a pair off the circle is a scale wearing a rotation's
+name and there is already a lane for scales, where it is checked for being
+positive rather than smuggled in through a matrix.
+
+The **curve** holds the parameter, for the mirror reason: `t` runs over the
+whole line while the angle runs over an interval, and a curve needs somewhere
+unbounded to live. A lane holding a cosine and a sine would be two curves that
+can leave the circle, which is the same defect as four curves that can shear.
+
+It is honestly not constant angular speed — `dθ/dt = 2/(1 + t²)`, so a straight
+ramp sweeps fastest through nought — and constant angular speed is not
+available at all: composing a fixed small turn once per frame would be exact
+and is unrepresentable, because the denominators multiply. A fifth of a right
+angle composed a few dozen times leaves what an `i64` holds, which is measured
+in a test rather than asserted here.
+
+### One lane, two consumers
+
+The turn joins the motion's three existing lanes rather than becoming its own
+animation, and M8.10's objection to a general matrix does not apply: a positive
+scale, a rotation and a translation compose to a **similarity**, which takes a
+convex outline to a convex outline for every value the curves can take. That is
+the same argument the scale made alone, which is why the turn was allowed to
+join it.
+
+So one lane turns **both** a mask, about its own area centroid, and a
+**framing**, on the left of whatever base transform is there — `R·M` turns the
+picture as the viewer sees it, `M·R` turns the source first, and they differ
+exactly when the framing mirrors, which is the case an editor actually has.
+
+The mask turns in the **frame's own coordinates** rather than in pixels, and
+that is stated rather than glossed: a mask's corners have always been fractions
+of the frame, so the square from `(1/4, 1/4)` to `(3/4, 3/4)` has never been
+square on screen. The space somebody dragged the corners in is the space the
+shape turns in. The alternative needs the delivery aspect, which lives in a
+crate this one is a sibling of and may not reach.
+
+### The renderer did not change, and the test that says so is new
+
+Not one line. `area_at` takes the destination pixel square back through the
+inverse map and clips against the parallelogram that results, which it has done
+since it was written — and its comment has claimed "however the picture is
+turned" for just as long, with nothing turning a picture.
+
+Testing that claim produced the milestone's sharpest finding. A quarter turn
+sends the pixel grid onto itself, so its preimages stay **axis-aligned** and
+the tilted path is never entered: replacing the preimage with the exact box
+around it fails *one* test in two hundred and thirty-five, and it is neither
+quarter-turn test. Recorded in [Verification](VERIFICATION.md) as the eighth
+meeting with the fixture rule, in its most specific form yet — the property
+that makes an answer exact is often the property that keeps the code under test
+from running.
+
+### What it cost
+
+`Clip` went from 440 bytes to **488** — a fourth lane in each of two motions —
+and the image did **not move**: 385,024 bytes, 94 pages, before and after. The
+symbol table says why rather than leaving it to luck: the net change is **143
+bytes**, 6,097 grown against 5,954 shrunk as the compiler re-laid the motion's
+functions out, and `.text` is padded to a page boundary with room to spare.
+Zero pages is a measurement here, not a rounding.
+
+`SPRJ` goes to **version twenty-two**: a fourth lane, written where the reader
+reads it. Measured against the previous commit in a worktree — a project with
+no motion is 207 bytes under both versions and the two files differ in
+**exactly one byte, at offset four**, and a project that carries a motion grows
+by **four**, which is the turn's own keyframe count of nought. The slate, which
+animates nothing, paid nothing but its version byte.
+
+The same measurement found something else worth fixing: the byte sweeps run
+over a fixture that had **never contained a motion at all**, so every lane
+added since M8.10 was covered by a round trip and by nothing else. It contains
+one now, with all four lanes and an ease among the keyframes.
+
+**State: done.** Not done: per-corner animation of a mask, for the reason M8.22
+gives; a turn on a *wipe*, whose direction is already a vector and which would
+want the same treatment; a rotation about a point that is not the centroid,
+which is the anchor question M8.9 left open from the other side; and constant
+angular speed, which this says plainly is not available.
+
+[`Turn`]: ../crates/sapstudio-model/src/transform.rs
+
+## M8.25 — The point a framing acts about
+
+*Requires nothing new.*
+
+M8.9 fixed it at the frame's centre with a good argument: scaling about the
+corner "sends the picture sliding off to the lower right the moment somebody
+drags a scale slider", which is not what anybody means by "make it bigger". The
+centre is the right **default** and it is a poor **rule** — a lower third
+swings in on its left edge, a card flips about the line it flips about, and
+M8.24 made that sharper than it had been, because a turn about the centre was
+suddenly the only turn available.
+
+### It cannot be folded into the move, and that was measured
+
+It looks as though it can. Acting about `a` rather than about the centre `c`
+contributes `(a − c) − M(a − c)`, which is a **translation** — and the model
+already passes one. So a model could add the two and the renderer would never
+need to know the anchor exists.
+
+That is true in **pixels** and false in **fractions**, and fractions are the
+only space the model has: the vector from the centre to the anchor is
+`(W·Δx, H·Δy)`, a linear part that mixes the components does not commute with
+scaling them separately, and dividing back per axis does not undo it. The
+folding is therefore exact for a scale, exact for a move, and **wrong for every
+rotation** — which is to say, wrong for the case the anchor was added for.
+
+There is a test that does the folding in fractions and compares. On an 8×4
+picture a diagonal map agrees to the last byte and the three-four-five turn
+does not. Both halves are asserted, because showing only the failure would not
+show that the tempting version works exactly where somebody would have tried
+it.
+
+So the anchor reaches the renderer, where the pixel dimensions are known and
+the arithmetic happens once.
+
+### A default, and the two places a default goes wrong
+
+The pivot defaults to the centre, so every project written before this renders
+identically. Two things had to hold for that and each has a control.
+
+`Transform::moved_by` rebuilds through `Transform::new`, which starts from
+nothing — right in a constructor, wrong everywhere else, and this is the
+**third** field to find that trap after the grade and the motion. An animated
+clip now keeps the pivot its framing was given.
+
+And `is_still` deliberately does **not** consult the anchor. The identity fixes
+every point, so it fixes the anchor too; asking would send every clip with a
+pivot through a resampler to compute the picture it already had.
+
+There is no refusal. Every point is a pivot, including points outside the
+frame — a card swinging in from above the picture turns about a point above it
+— so a bound here would be a bound on moves rather than on values.
+
+### A control that found a gap, and a fixture that proved the rule again
+
+The anchor went into the node's identity as a matter of course. The control
+that absorbs its across component twice — so two pivots differing only *down*
+the frame collide in the cache — failed **nothing**: the field was right and no
+test had ever asked it to be.
+
+Writing that test produced the eighth meeting with the fixture rule, and the
+circumstance is the recordable part: the first version drew vertical bars,
+which are constant down the frame, so the assertion that the pivot's second
+component matters passed without it mattering — in a test being written *for* a
+control that had just found a coverage gap. Both are in
+[Verification](VERIFICATION.md).
+
+### What it cost
+
+`Clip` went from 488 bytes to **520** — a transform now carries two more
+rationals — and the image from 94 pages to **95**. The code added is **816
+bytes** measured against the previous commit, and the pairing with M8.24 is
+what makes that number worth having: that milestone added 143 bytes and cost
+**no** pages, this one added 816 and cost one. `.text` is padded to a page
+boundary, so what a change costs in pages depends on how much slack the last
+page had when it arrived. "No growth" and "one page" are the same measurement
+at two offsets.
+
+`SPRJ` goes to **version twenty-three**: two rationals per transform, written
+after the move they are not interchangeable with. Measured in a worktree — a
+project with no transform is 207 bytes under both versions and the two differ
+in **exactly one byte, at offset four**; a project that carries one grows by
+**thirty-two**.
+
+**State: done.** Not done: an anchor that *animates*, which is a fifth lane and
+wants a decision about whether a moving pivot is a move or a re-framing; an
+anchor on a **mask**, which turns about its area centroid and for which M8.22's
+argument still holds; and a pivot expressed in the *source's* coordinates
+rather than the frame's, which is what pinning a corner of a scaled clip wants
+and is a different question.
+
+## M8.26 — The razor, and the merge that undoes it
+
+*Requires nothing new.*
+
+`Edit::SplitItem` has cut one item on one track since the model had items, and
+`Edit::JoinItems` has put two back together. Neither is the gesture an editor
+makes. A blade is dragged **down** the timeline and cuts every track it
+crosses; dragged back, it heals every cut it made.
+
+### The difference is undo, not convenience
+
+A razor performed as four splits is four entries in the history. Undo it once
+and three cuts are still there — a state nobody edited into existence, and one
+the person who pressed the key has to press it three more times to leave.
+
+So a column is **one edit**. `Edit::CutAt` names an instant and a set of
+tracks; its inverse is `Edit::HealAt` over the same instant and the same set.
+Each is the other's exact inverse, which is what R-9.2 asks of every edit and
+what a sequence of independent splits cannot give.
+
+### The set is passed, not computed, and that is what makes the inverse exact
+
+`Sequence::cuttable_at` answers which tracks a blade would land on. A caller
+that hands the answer straight back gets the ordinary razor; a caller that
+narrows it first gets a blade that cuts some tracks and not others, which is
+the same gesture with a modifier held down and needs no second edit.
+
+More importantly, the set the cut *performed* travels in its inverse. A blade
+does not cut a track whose material has stopped, or one whose cut is already
+there, and neither is a refusal — neither is a mistake the person holding the
+blade made. If the heal recomputed the set instead of carrying it, an undo
+could heal a cut the razor had not made.
+
+A set is a `u128`: one bit per track, against a bound of a hundred and
+twenty-eight tracks, and a compile-time assertion that the two numbers are one
+number. It holds no allocation, so an edit can carry it (R-5.2), and it has no
+bound of its own to keep agreeing with the sequence's.
+
+### Two passes, because a column is atomic
+
+A refused razor must leave **nothing** behind, so the edit works out the whole
+answer before it writes any of it: the first pass finds each named track's
+item, asks it to split, checks for a dissolve in the way and for room, and
+reserves that room; the second pass only writes, and cannot fail. The
+alternative — cut track by track and unwind on a refusal — needs an unwind that
+is itself correct under every partial failure, which is more code in the path
+that runs when something has already gone wrong.
+
+The heal is the same shape and it is where the milestone found something. Its
+control, which collapses the two passes into one, **failed nothing**: the cut
+had an atomicity test and the heal had only the argument. The tempting excuse
+is that healing removes an item rather than adding one so nothing allocates —
+which is an argument about allocation answering a question about atomicity.
+`Item::join` refuses a pair that is not one item cut in two, and a column that
+healed three tracks and refused the fourth is a merge nobody can undo in one
+step. Recorded in [Verification](VERIFICATION.md).
+
+### A merge heals a cut, not a boundary
+
+Two shots that happen to abut are not a shot that was cut, and fusing them
+would lose one of them. So the condition is `Item::continues_into` — the same
+one `JoinItems` uses, which already checks the media, the timebase, the grade,
+the playback and all four animation lanes line up. A merge inherits every one
+of those without being told about them, which is the payoff for join having
+been written that way in the first place.
+
+### What it cost
+
+No format change: history is not saved, so an edit that adds two variants adds
+nothing to a file. `Edit` went from 536 bytes to **544** and the image from 95
+pages to **96** — **5,527 bytes** measured against the previous commit, of
+which `Edit::apply` is 1,422 for its two new arms and about three thousand more
+is its helpers growing again as the enum crossed another inlining threshold.
+That is the third time that effect has shown up in four milestones, which is
+what a threshold does when a struct is sitting near one.
+
+**State: done.** Not done: a ripple cut, which closes the gap it leaves and is
+a different edit; a blade that cuts only the tracks a selection names, which is
+this edit with a set somebody else computed and therefore already possible; and
+a merge across a **dissolve**, which is refused here for the reason `split` and
+`join` both refuse it — a transition describes a boundary by index, and healing
+one renumbers it.
+
+## M8.27 — A lift, which is the other delete
+
+*Requires nothing new.*
+
+`Edit::RemoveItem` has been here since the model had items, and it moves
+everything after the hole earlier — what an editor calls a ripple delete, or an
+extract. The model has never had the other one, and half the deletes anybody
+performs are the other one.
+
+### The choice is about the rest of the programme, not about taste
+
+A lift takes the shot and leaves the hole; nothing after it moves. An extract
+closes up.
+
+Which one somebody wants is decided by what is *elsewhere on the timeline*.
+Sound cut to picture stays in sync through a lift and slides through an
+extract. A title two minutes later stays where it was written through a lift
+and arrives early through an extract. An editor that offers only one is an
+editor making that decision on the user's behalf and not mentioning it, and
+that is the kind of thing this project treats as a defect rather than a
+simplification.
+
+It composes with the razor from **M8.26** into the commonest gesture there is:
+blade a shot in two, take the half you do not want, and leave everything after
+it where the edit before this one put it.
+
+### The inverse carries the shot, and checks where it is going
+
+`RemoveItem` already sets the precedent — its inverse holds the item that came
+out, because nothing else in the journal remembers it. `DropItem` is the same
+and is **not** a general "replace this item": the slot has to still be a gap of
+exactly that length, or it refuses. A history that could drop a shot into a
+slot something else had happened to since is a history describing a project
+nobody edited.
+
+### A narrower transition check, and the fixture that could not see it
+
+A dissolve reaches into the clips either side of its cut, so lifting one of
+them would leave it mixing a **gap** — which the layer stack refuses at the
+frame, and a refusal at the frame is one nobody can act on. So a lift refuses
+when a transition sits on either boundary the item touches.
+
+*Either boundary it touches* rather than `transition_from`'s "at or after", and
+the difference is what an edit does to the numbering: a split inserts an item,
+so every boundary after it moves and a dissolve beyond the edit lands on a cut
+nobody put it on; a lift replaces in place and renumbers nothing. The coarse
+check would refuse a lift at the head of a programme because somebody drew a
+dissolve at the end of it.
+
+The control that swapped the narrow check for the coarse one **failed
+nothing**, because the fixture lifted an item *after* the dissolve — where the
+two checks agree. A case that lifts at the head with a dissolve at the end now
+exists. That is the ninth meeting with the same rule, and this time the axis
+the fixture failed to vary along was *which side of the transition the edit
+happened on*.
+
+### An exemption that expired on schedule
+
+`Edit` carried `#[expect(clippy::large_enum_variant)]`, arguing why **one**
+variant is so much bigger than the rest. A lift gives it a second variant
+holding an item, so there is no outlier, so the lint stopped firing — and
+because it was an `expect` rather than an `allow`, **the build failed**. The
+paragraph beside it had predicted exactly that, and the exemption is gone. The
+size ceiling in `tests/size.rs` stayed, because it was the half doing the work.
+
+### What it cost
+
+No format change: history is not saved, so two more edit variants cost a file
+nothing. `Edit` stayed at **544 bytes** and the image at **96 pages** —
+**1,512 bytes** measured against the previous commit, which fitted inside
+`.text`'s page padding, the third such measurement in five milestones.
+
+**State: done.** Not done: a **column** lift to match the razor, and the reason
+is measurable rather than a preference — its inverse would have to carry one
+item per track, and a hundred and twenty-eight items at 520 bytes is 66 KiB
+against the 76 KiB a Sapote program is given, for one entry in a history that
+holds thousands. A ripple delete over a *span* has the same shape and the same
+arithmetic. Both want an inverse that refers to material rather than carrying
+it, which is a different design and not a bigger version of this one.
+
+## M8.28 — Markers
+
+*Requires nothing new.*
+
+`ARCHITECTURE.md` has listed markers as planned since its first version,
+beside nested sequences, "so the shape is decided before the pressure to
+compromise it arrives". This is the shape, and it is a small one — which is
+worth saying, because a marker is the one thing in this model that exists
+**purely for the person editing**. Nothing renders it, nothing composites it,
+and no clip is affected by one.
+
+### At an instant, and absolutely
+
+A marker names a position in the *programme*, and it does **not** move when an
+item ripples. That is a decision rather than an omission: a note reading "the
+sync drifts here" is about a place on the timeline, and moving it because an
+unrelated shot got longer would move it away from the thing it is about.
+
+The opposite decision — a marker that belongs to a clip and travels with it —
+is a different feature with a different name, and it is one an editor wants
+too. It is not this one.
+
+Being absolute is a property of the *absence* of code, which makes it awkward
+to control: there is no line to mutate. So the control **adds** the behaviour
+instead — a trim that slides every note by its own change — and the test that
+pins the decision fails. An invariant held by nothing having been written still
+needs a test, and the mutation for it is the code somebody would one day add.
+
+### One per instant
+
+Two markers at one instant is the same nothing as none: neither can be named,
+moved, or removed without saying which, and "which" is exactly what an instant
+was going to answer. So a collision is refused — the same decision
+[`Curve`](../crates/sapstudio-model/src/curve.rs) makes about keyframes.
+
+Which makes a **move** one edit rather than a remove and an add. One gesture,
+one undo step, and the text does not go through the history twice for a move
+that never changed it. Its inverse is itself with the ends swapped, like a roll
+and a slide. And because the addition can refuse — onto an occupied instant, or
+onto its own — the removal is put back before the refusal is returned, so a
+move that did not happen does not quietly delete the note it was moving.
+
+### Text, bounded in characters
+
+The same bound a title's line has, and not by coincidence: both are text a
+person types into a box, both are bounded because a hostile file must not talk
+its way past a bound (R-11.2), and one number for "a line of text somebody
+typed" is better than two that drift.
+
+**Characters rather than bytes**, because a bound in bytes means something
+different in every language — a hundred and twenty-eight notes in English and
+sixty-four in French. The test that pins it writes the bound's worth of `é`,
+which is longer in bytes than in characters and therefore the only fixture
+that can tell the two rules apart.
+
+Empty text is allowed, and deliberately: a marker with nothing written on it is
+the commonest kind there is — somebody pressed the key to mark a spot and will
+come back to it.
+
+### What it cost
+
+`SPRJ` goes to **version twenty-four**: a count per sequence, and twelve bytes
+plus its own text for each note. Measured against the previous commit in a
+worktree — **four bytes a sequence** at one sequence (207 → 211) and at two
+(227 → 235), which is what says the step is per sequence rather than per file,
+and fifteen bytes for a three-character note, at one note and at three.
+
+The image went from 96 pages to **98** — 5,389 bytes, of which `Edit::apply`
+is 1,660 for its three new arms and `decode_payload` and `encode` are 1,857
+between them.
+
+**State: done.** Not done: a marker on a **clip**, which travels with it and is
+the other half of this pair; a marker with a *duration*, which is a region
+rather than an instant and wants the collision rule rethought; and a colour or
+a kind, which is presentation and belongs wherever the interface does.
 
 ## M7 — Speed
 

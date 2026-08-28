@@ -197,10 +197,16 @@ def encode(pixels, width, height):
 def main():
     source = sys.argv[1] if len(sys.argv) > 1 else 'assets/sapote-logo.png'
     maximum = int(sys.argv[2]) if len(sys.argv) > 2 else 280
+    keep_canvas = len(sys.argv) > 4 and sys.argv[4] == '--keep-canvas'
+    if len(sys.argv) > 4 and not keep_canvas:
+        raise SystemExit('fourth argument must be --keep-canvas')
     source_width, source_height, pixels = read_png(source)
-    width, height, pixels = crop_to_primary_mark(
-        pixels, source_width, source_height
-    )
+    if keep_canvas:
+        width, height = source_width, source_height
+    else:
+        width, height, pixels = crop_to_primary_mark(
+            pixels, source_width, source_height
+        )
     out_width, out_height = fit_within(width, height, maximum)
     scaled = downscale(pixels, width, height, out_width, out_height)
     body = encode(scaled, out_width, out_height)

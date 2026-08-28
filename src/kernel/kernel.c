@@ -99,7 +99,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write("/6 passed\n");
     sapfs_initialize();
     if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
-        console_write("Sapote: First Light ledger status redraw failed\n");
+        console_write("Sapote: Redwood ledger status redraw failed\n");
     }
 
     if (installed_context.test_scenario == KERNEL_TEST_NORMAL) {
@@ -110,8 +110,8 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_boot_ledger(&installed_context);
     }
 
-    if (installed_context.test_scenario == KERNEL_TEST_FIRST_LIGHT) {
-        kernel_test_complete_first_light();
+    if (installed_context.test_scenario == KERNEL_TEST_REDWOOD_PROOF) {
+        kernel_test_complete_redwood_proof();
     }
 
     if (installed_context.test_scenario == KERNEL_TEST_DEVICE_SUBSTRATE) {
@@ -142,23 +142,23 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_linux_uname();
     }
 
-    if (installed_context.test_scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND) {
-        kernel_test_complete_first_light_userland();
+    if (installed_context.test_scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND) {
+        kernel_test_complete_redwood_proof_userland();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT) {
-        kernel_test_complete_first_light_userland_absent();
+            KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT) {
+        kernel_test_complete_redwood_proof_userland_absent();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE) {
-        kernel_test_complete_first_light_userland_interactive();
+            KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE) {
+        kernel_test_complete_redwood_proof_userland_interactive();
     }
 
     if (installed_context.test_scenario ==
-            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT) {
-        kernel_test_complete_first_light_userland_interactive_absent();
+            KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT) {
+        kernel_test_complete_redwood_proof_userland_interactive_absent();
     }
 
     if (installed_context.test_scenario >= KERNEL_TEST_FAT32_SYSTEM &&

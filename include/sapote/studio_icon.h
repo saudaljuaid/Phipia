@@ -17,4 +17,65 @@ int32_t sapote_studio_icon_decode(
 );
 int32_t sapote_studio_icon_decode_alpha(uint8_t *out, size_t out_pixels);
 
+int32_t sapote_settings_icon_geometry(uint32_t *width, uint32_t *height);
+int32_t sapote_settings_icon_decode(
+    uint32_t *out,
+    size_t out_pixels,
+    uint8_t red_shift,
+    uint8_t green_shift,
+    uint8_t blue_shift,
+    uint32_t background
+);
+int32_t sapote_settings_icon_decode_alpha(uint8_t *out, size_t out_pixels);
+
+int32_t sapote_files_icon_geometry(uint32_t *width, uint32_t *height);
+int32_t sapote_files_icon_decode(
+    uint32_t *out,
+    size_t out_pixels,
+    uint8_t red_shift,
+    uint8_t green_shift,
+    uint8_t blue_shift,
+    uint32_t background
+);
+int32_t sapote_files_icon_decode_alpha(uint8_t *out, size_t out_pixels);
+
+int32_t sapote_terminal_icon_geometry(uint32_t *width, uint32_t *height);
+int32_t sapote_terminal_icon_decode(
+    uint32_t *out,
+    size_t out_pixels,
+    uint8_t red_shift,
+    uint8_t green_shift,
+    uint8_t blue_shift,
+    uint32_t background
+);
+int32_t sapote_terminal_icon_decode_alpha(uint8_t *out, size_t out_pixels);
+
+int32_t sapote_settings_category_icons_geometry(
+    uint32_t *width,
+    uint32_t *height
+);
+int32_t sapote_settings_category_icons_decode(
+    uint32_t *out,
+    size_t out_pixels,
+    uint8_t red_shift,
+    uint8_t green_shift,
+    uint8_t blue_shift,
+    uint32_t background
+);
+int32_t sapote_settings_category_icons_decode_alpha(
+    uint8_t *out,
+    size_t out_pixels
+);
+
+int32_t sapote_camera_icon_geometry(uint32_t *width, uint32_t *height);
+int32_t sapote_camera_icon_decode(
+    uint32_t *out,
+    size_t out_pixels,
+    uint8_t red_shift,
+    uint8_t green_shift,
+    uint8_t blue_shift,
+    uint32_t background
+);
+int32_t sapote_camera_icon_decode_alpha(uint8_t *out, size_t out_pixels);
+
 #endif

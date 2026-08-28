@@ -419,6 +419,49 @@ impl Curve {
             .binary_search_by_key(&ticks, |keyframe| keyframe.at.ticks())
     }
 
+    /// The same curve with every keyframe moved by `by` ticks.
+    ///
+    /// Which is what a cut through an animated clip needs. A curve on a clip
+    /// is measured from that clip's own start, so a split that gives the tail
+    /// a new start must move the tail's keyframes back by however far into the
+    /// original the cut fell.
+    ///
+    /// The keyframes that end up before nought stay. Dropping them would be
+    /// the obvious tidy and it would change what the tail reads: a curve holds
+    /// its first value before its first keyframe, so a pair straddling the cut
+    /// is exactly the pair that says what the tail's opening frames do, and
+    /// discarding the earlier half of it would flatten a move already underway
+    /// into a hold. A keyframe at a negative instant is not a keyframe before
+    /// the programme began — it is one before *this clip* began, which is an
+    /// ordinary thing for a cut to produce.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::Time`] wrapping an overflow.
+    pub fn shifted(&self, by: i64) -> Result<Self> {
+        let timebase = self.timebase();
+        let mut keyframes = Vec::new();
+        for keyframe in &self.keyframes {
+            let ticks = keyframe
+                .at
+                .ticks()
+                .checked_add(by)
+                .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+            push_bounded(
+                &mut keyframes,
+                Keyframe {
+                    at: Instant::new(ticks, timebase),
+                    ..*keyframe
+                },
+                MAX_KEYFRAMES,
+            )?;
+        }
+        // Shifting every keyframe by the same amount preserves the order and
+        // the count, so the invariants `Curve::new` checks are already held
+        // and re-checking them would only be able to disagree with itself.
+        Ok(Self { keyframes })
+    }
+
     /// The keyframes, in time order.
     #[must_use]
     pub fn keyframes(&self) -> &[Keyframe] {

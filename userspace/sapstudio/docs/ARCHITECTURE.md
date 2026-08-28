@@ -79,15 +79,15 @@ anything.
 | Crate | Owns | `unsafe` | State |
 | --- | --- | --- | --- |
 | `sapstudio-core` | Rational time, timebases, timecode, identifiers, fixed-point arithmetic and integer transcendentals, status enums | forbidden | **exists**, 79 tests |
-| `sapstudio-model` | Project, sequences, tracks, clips, media library, edit operations, undo journal, track faders, dissolves, the layer stack at an instant, keyframed parameter curves, opacity and fader automation, per-keyframe editing, a grade named by digest on a clip, dissolves and wipes, hard or soft, as one kind of transition, convex masks on clips, one asset per digest with a location hint | forbidden | **exists**, 123 tests |
+| `sapstudio-model` | Project, sequences, tracks, clips, media library, edit operations, undo journal, track faders, dissolves, the layer stack at an instant, keyframed parameter curves, opacity and fader automation, per-keyframe editing, a grade named by digest on a clip, dissolves and wipes, hard or soft, as one kind of transition, convex masks on clips, one asset per digest with a location hint, transforms on clips and animations of them, rolling a cut and sliding an item, titles as media the program makes out of words, of several lines and aligned, a fade on a clip, a clip retimed by an exact rational speed or held on one frame, a title's colour named in light, an opacity a clip animates over its own length, a mask a clip animates about its own centroid, a grade that comes on over a clip, an exact rotation and the lane that animates it, the point a framing acts about, and a razor and a merge across every track at once, a lift and the drop that undoes it, markers on a sequence | forbidden | **exists**, 342 tests |
 | `sapstudio-abi` | The five seams, every `extern "C"`, every raw pointer from outside | **permitted** | **exists**, two seams of five |
 | `sapstudio-rt` | Program entry, the allocator, the panic path, page and mapping management | **permitted** | **exists**, M1 heap |
 | `sapstudio-media` | Frame and sample types, full colour and format descriptions, content addressing, the frame pool, test patterns including the offline slate | forbidden | **exists**, 42 tests |
-| `sapstudio-io` | Every format: the project file, the reel, the waveform summary, the save protocol, CMX 3600 interchange and the conform that turns a sequence into one and back, the `.cube` lookup table, PNG reference captures, bounded byte readers and writers | forbidden | **exists**, 166 tests |
-| `sapstudio-app` | The event loop, command dispatch, playback policy, session lifetime, rendering a sequence at an instant, mixing its sound over a span | forbidden | **exists** as the slate — which now renders — the timeline renderer with offline media, the mixdown and the reference capture, 51 tests |
+| `sapstudio-io` | Every format: the project file, the reel, the waveform summary, the save protocol, CMX 3600 interchange and the conform that turns a sequence into one and back, the `.cube` lookup table, PNG reference captures, bounded byte readers and writers | forbidden | **exists**, 213 tests |
+| `sapstudio-app` | The event loop, command dispatch, playback policy, session lifetime, rendering a sequence at an instant, mixing its sound over a span | forbidden | **exists** as the slate — which now renders — the timeline renderer with offline media, the mixdown and the reference capture, 74 tests |
 | `sapstudio-image` | The entry point and nothing else; outside the workspace because it cannot build for the host | **permitted** | **exists**, audited |
-| `sapstudio-render` | The render graph, compositor, colour pipeline, lookup tables, rasterisation | forbidden | **exists** as the graph the timeline renders through, colour pipeline, conversion, compositor, scopes, 3D lookup tables applied to frames and to graph nodes, and the exact-area shape rasteriser a wipe and a mask are both made of, hard edges and soft, and masks, 165 tests |
-| `sapstudio-audio` | The mixer, DSP chain, loudness, waveform summaries, the real-time contract | forbidden | **exists** as buffers, gain, panning, the mix bus with moving faders, BS.1770 loudness and the waveform overview, 73 tests |
+| `sapstudio-render` | The render graph, compositor, colour pipeline, lookup tables, rasterisation | forbidden | **exists** as the graph the timeline renders through, colour pipeline, conversion, compositor, scopes, 3D lookup tables applied to frames and to graph nodes, and the exact-area shape rasteriser a wipe and a mask are both made of, hard edges and soft, masks, resampling in linear light, and a face written from scratch, capitals and lowercase, whose glyphs are disjoint convex pieces, the legend that sets one across a frame, and titles in a colour named as light, 239 tests |
+| `sapstudio-audio` | The mixer, DSP chain, loudness, waveform summaries, the real-time contract | forbidden | **exists** as buffers, gain, panning, the mix bus with moving faders, BS.1770 loudness and the waveform overview, 77 tests |
 | `sapstudio-ui` | Widgets, layout, damage tracking, interface state | forbidden | planned, M4 |
 
 Everything that exists today has no dependencies at all — not one line of
@@ -154,11 +154,11 @@ Project
   history       : EditJournal
 
 MediaAsset  identity (content digest), timebase, duration, location hint
-Sequence    timebase, tracks                                   [markers planned]
+Sequence    timebase, tracks, markers
 Track       ordered, non-overlapping items, fader, transitions,
             opacity and level curves
 Item        clip | gap                          [nested sequence planned]
-Clip        media reference, source range, length, grade, mask
+Clip        media reference, source range, length, grade, mask, transform
 ```
 
 **Every line above is what exists.** An earlier version of this block was a
@@ -179,10 +179,12 @@ decision after non-overlap: an item would have to overlap its neighbours, so a
 transition is a length and the cut it is centred on. Both a dissolve and a wipe
 are that same shape and differ only in what a renderer does with the fraction.
 
-Markers and nested sequences are named here so the shape is decided before the
-pressure to compromise it arrives, and neither exists. Effects do not exist
-either: a grade and a mask are fields on a clip rather than entries in a
-general effect list, and the general list is M8's problem.
+Nested sequences are named here so the shape is decided before the pressure to
+compromise it arrives, and do not exist. **Markers do**, as of M8.28: an
+instant and some text, beside the tracks rather than on one, because a note is
+about the programme at a moment and not about any one layer of it. Effects do
+not exist either: a grade and a mask are fields on a clip rather than entries
+in a general effect list, and the general list is M8's problem.
 
 A track's items are non-overlapping by construction: the type cannot represent
 an overlap, so an editing operation that would create one fails to compile a
@@ -194,7 +196,7 @@ important design decision.
 An edit is a value:
 
 ```text
-Edit = Insert | Remove | Trim | Slip | Slide | Roll | Ripple | SetParameter | ...
+Edit = Insert | Remove | Lift | Trim | Slip | Slide | Roll | Cut | Heal | SetParameter | ...
 ```
 
 Every variant carries enough to invert itself. The journal is a sequence of

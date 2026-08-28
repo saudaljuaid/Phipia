@@ -88,6 +88,41 @@ fn sample() -> Project {
         )
         .expect("sound");
 
+    look_at(&mut project, sequence);
+
+    frame_up(&mut project, sequence);
+
+    animate(&mut project, sequence);
+
+    // Two notes, so the sweeps cover the count, the instant, the length and
+    // the text -- and so a reader that wrote the same answer for every marker
+    // would be caught. One of them empty, because an empty note is legal and
+    // is the case a length-prefixed field gets wrong.
+    for (tick, text) in [(0_i64, ""), (742, "the sync drifts here")] {
+        project
+            .apply(
+                sequence,
+                Edit::AddMarker {
+                    at: Instant::new(tick, RATE),
+                    text: std::string::String::from(text),
+                },
+            )
+            .expect("a marker");
+    }
+
+    // A second, empty sequence, because one of everything is not a test.
+    project.add_sequence(Timebase::PAL_25).expect("room");
+    project
+}
+
+/// Grade one clip, and animate the grade's arrival on it.
+///
+/// Separate from the fixture for the reason `animate` is: `sample` had grown
+/// past what one function should hold, and clippy says so rather than leaving
+/// it to taste. Both halves belong here — the grade and the curve that brings
+/// it on — because the curve is refused without the grade, so a fixture that
+/// set one and not the other would not be a project the model can hold.
+fn look_at(project: &mut Project, sequence: sapstudio_model::SequenceId) {
     // A grade on one clip and not the others, so the sweeps cover both the
     // flag byte and the thirty-two that follow it, and so a reader that wrote
     // the same answer for every clip would be caught.
@@ -102,11 +137,128 @@ fn sample() -> Project {
         )
         .expect("a grade");
 
-    animate(&mut project, sequence);
-
-    // A second, empty sequence, because one of everything is not a test.
-    project.add_sequence(Timebase::PAL_25).expect("room");
+    // And a curve bringing that grade on, on the same clip and not the others.
+    // The fixture gains a value for a field in the commit the field arrives
+    // in, which is the narrower form of a lesson this file has learned twice:
+    // a sweep over bytes the writer never writes covers nothing, and every
+    // round-trip test agrees perfectly about a field that is not there.
+    //
+    // Three keyframes with an ease among them, for the reason `animate` gives:
+    // an ease is the only interpolation that writes anything after its tag.
     project
+        .apply(
+            sequence,
+            Edit::SetClipGradeStrength {
+                track: 0,
+                index: 0,
+                strength: Some(
+                    Curve::new(std::vec![
+                        Keyframe::new(
+                            Instant::new(0, RATE),
+                            Rational::new(0, 1).expect("a value"),
+                            Interpolation::ease_in_out().expect("an ease"),
+                        )
+                        .expect("a keyframe"),
+                        Keyframe::new(
+                            Instant::new(240, RATE),
+                            Rational::new(3, 5).expect("a value"),
+                            Interpolation::Linear,
+                        )
+                        .expect("a keyframe"),
+                        Keyframe::new(
+                            Instant::new(1_200, RATE),
+                            Rational::new(1, 1).expect("a value"),
+                            Interpolation::Hold,
+                        )
+                        .expect("a keyframe"),
+                    ])
+                    .expect("a curve"),
+                ),
+            },
+        )
+        .expect("a strength");
+}
+
+/// Frame one clip and animate all four lanes of its framing.
+///
+/// The sweeps below run over `sample`, and until this existed **no motion was
+/// in the file they sweep at all** — the motion tests build their own project,
+/// so every byte of every lane was covered by a round trip and by nothing
+/// else. That is the gap this file's own note about fixtures describes, sitting
+/// in the file since M8.10 and found by asking where the turn's new lane would
+/// be swept.
+///
+/// All four lanes, with an ease among the keyframes, because an ease is the
+/// only interpolation that writes anything after its tag — and a format bug in
+/// a variable-length record reads the next field as part of this one.
+fn frame_up(project: &mut Project, sequence: sapstudio_model::SequenceId) {
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 2,
+                transform: Some(
+                    sapstudio_model::Transform::scaled(
+                        Rational::new(3, 2).expect("a rational"),
+                        Rational::new(3, 2).expect("a rational"),
+                        (
+                            Rational::new(1, 20).expect("a rational"),
+                            Rational::new(-1, 16).expect("a rational"),
+                        ),
+                        sapstudio_model::Resampling::Bilinear,
+                    )
+                    .expect("a transform")
+                    // A pivot that is **not** the centre, so the sweeps cover
+                    // bytes that differ from the default. A fixture carrying
+                    // the default would sweep two rationals that any reader
+                    // could guess, which is the same nothing as not sweeping
+                    // them.
+                    .with_anchor((
+                        Rational::new(1, 5).expect("a rational"),
+                        Rational::new(7, 8).expect("a rational"),
+                    )),
+                ),
+            },
+        )
+        .expect("a framing");
+    let lane = |from: (i64, i64), to: (i64, i64)| {
+        Some(
+            Curve::new(std::vec![
+                Keyframe::new(
+                    Instant::new(0, RATE),
+                    Rational::new(from.0, from.1).expect("a value"),
+                    Interpolation::ease_in_out().expect("an ease"),
+                )
+                .expect("a keyframe"),
+                Keyframe::new(
+                    Instant::new(600, RATE),
+                    Rational::new(to.0, to.1).expect("a value"),
+                    Interpolation::Linear,
+                )
+                .expect("a keyframe"),
+            ])
+            .expect("a curve"),
+        )
+    };
+    project
+        .apply(
+            sequence,
+            Edit::SetClipMotion {
+                track: 0,
+                index: 2,
+                motion: Some(
+                    sapstudio_model::Motion::new(
+                        lane((1, 1), (9, 4)),
+                        lane((0, 1), (-3, 20)),
+                        lane((1, 17), (5, 17)),
+                        lane((0, 1), (2, 5)),
+                    )
+                    .expect("a motion"),
+                ),
+            },
+        )
+        .expect("a motion");
 }
 
 /// Put a curve on each automation lane.
@@ -1294,4 +1446,1871 @@ fn a_file_listing_one_piece_of_content_twice_is_refused() {
     doubled[16..48].copy_from_slice(sealed.bytes());
 
     assert_eq!(decode(&doubled), Err(IoStatus::DuplicateMedia));
+}
+
+#[test]
+fn a_transform_survives_the_file_with_its_filter() {
+    use sapstudio_model::{Resampling, Transform};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"moved"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    // A rotation nobody could write as a decimal: the linear part is four
+    // rationals, so a third of the way is a third and not a rounding of one.
+    let transform = Transform::new(
+        [
+            Rational::new(1, 3).expect("a rational"),
+            Rational::new(-2, 7).expect("a rational"),
+            Rational::new(2, 7).expect("a rational"),
+            Rational::new(1, 3).expect("a rational"),
+        ],
+        (
+            Rational::new(1, 11).expect("a rational"),
+            Rational::new(-3, 13).expect("a rational"),
+        ),
+        Resampling::Bilinear,
+    )
+    .expect("a transform");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(transform),
+            },
+        )
+        .expect("a transform");
+
+    let back = round_tripped(&project);
+    assert_eq!(
+        back.sequence(back.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence"),
+        project.sequence(sequence).expect("a sequence"),
+        "the whole sequence comes back equal, filter included"
+    );
+}
+
+#[test]
+fn a_file_holding_a_transform_that_flattens_the_picture_is_refused() {
+    // The reader goes through the model's constructor, so a project cannot
+    // hold a transform by being written down that it could not hold by being
+    // edited. Reaching that check needs a resealed file.
+    use sapstudio_model::{Resampling, Transform};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"flat"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    Transform::scaled(
+                        Rational::from_integer(4),
+                        Rational::from_integer(4),
+                        (Rational::ZERO, Rational::ZERO),
+                        Resampling::Area,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a transform");
+
+    // The linear part is `4, 0, 0, 4`. Making the second entry a four as well
+    // gives `4, 4, 0, 4`, which is still invertible -- so instead zero the
+    // *last* one, leaving `4, 0, 0, 0`, whose determinant is nought.
+    let file = encode(&project).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    for value in [4_i64, 1, 0, 1, 0, 1, 4, 1] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the linear part is in the file");
+    let mut flattened = file.clone();
+    flattened[at + 48..at + 56].copy_from_slice(&0_i64.to_le_bytes());
+    let sealed = Digest::of(&flattened[HEADER_BYTES..]);
+    flattened[16..48].copy_from_slice(sealed.bytes());
+
+    assert_eq!(
+        decode(&flattened),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::TransformNotInvertible
+        ))
+    );
+}
+
+/// A project with one clip, framed at four times size, and animated.
+///
+/// The scale of four is deliberate: its linear part encodes as the eight
+/// integers `4, 1, 0, 1, 0, 1, 4, 1`, which is a distinctive enough run of
+/// bytes to find in a file and cut about.
+fn animated(motion: sapstudio_model::Motion) -> Project {
+    use sapstudio_model::{Resampling, Transform};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"animated"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    Transform::scaled(
+                        Rational::from_integer(4),
+                        Rational::from_integer(4),
+                        (Rational::ZERO, Rational::ZERO),
+                        Resampling::Area,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a framing");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipMotion {
+                track: 0,
+                index: 0,
+                motion: Some(motion),
+            },
+        )
+        .expect("a motion");
+    project
+}
+
+/// Where the animated fixture's linear part begins in its encoding.
+fn linear_part(file: &[u8]) -> usize {
+    let mut wanted = std::vec::Vec::new();
+    for value in [4_i64, 1, 0, 1, 0, 1, 4, 1] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    file.windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the linear part is in the file")
+}
+
+/// The file with its declared length and its digest recomputed.
+///
+/// Both, because a file is sealed twice over: the header states how long the
+/// payload is and then states its digest, and a mutation that changes the
+/// length is refused as truncated before anything gets far enough to check
+/// the digest. A test that resealed only the digest would be testing the
+/// length check.
+fn resealed(mut file: std::vec::Vec<u8>) -> std::vec::Vec<u8> {
+    let length = (file.len() - HEADER_BYTES) as u64;
+    file[8..16].copy_from_slice(&length.to_le_bytes());
+    let sealed = Digest::of(&file[HEADER_BYTES..]);
+    file[16..48].copy_from_slice(sealed.bytes());
+    file
+}
+
+/// A curve from `from` to `to` over forty-eight ticks, leaving on an ease.
+fn animation(from: Rational, to: Rational) -> Curve {
+    Curve::new(std::vec![
+        Keyframe::new(
+            Instant::new(0, RATE),
+            from,
+            Interpolation::ease_in_out().expect("an ease")
+        )
+        .expect("a keyframe"),
+        Keyframe::new(Instant::new(48, RATE), to, Interpolation::Linear).expect("a keyframe"),
+    ])
+    .expect("a curve")
+}
+
+#[test]
+fn a_motion_survives_the_file_with_all_four_lanes() {
+    let motion = sapstudio_model::Motion::new(
+        Some(animation(
+            Rational::ONE,
+            Rational::new(7, 3).expect("a rational"),
+        )),
+        Some(animation(
+            Rational::ZERO,
+            Rational::new(-1, 11).expect("a rational"),
+        )),
+        Some(animation(
+            Rational::new(1, 13).expect("a rational"),
+            Rational::new(2, 13).expect("a rational"),
+        )),
+        // The turn's lane gains a value in the commit the lane arrives in,
+        // which is the operational form of a lesson this file has learned
+        // twice: a sweep over bytes the writer never writes covers nothing.
+        Some(animation(
+            Rational::new(-1, 3).expect("a rational"),
+            Rational::new(5, 7).expect("a rational"),
+        )),
+    )
+    .expect("a motion");
+    let project = animated(motion);
+    let back = round_tripped(&project);
+    assert_eq!(
+        back.sequence(back.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence"),
+        project
+            .sequence(project.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence"),
+        "four lanes, their handles, and their sevenths all come back equal"
+    );
+}
+
+#[test]
+fn a_motions_turn_lane_survives_the_file_by_name() {
+    // Named rather than round-tripped, because a round trip cannot see a field
+    // the format has forgotten -- both sides would be missing it and would
+    // agree. And the *values* rather than only the keyframes, so a lane that
+    // came back with the right shape at the wrong instants would fail.
+    let project = animated(
+        sapstudio_model::Motion::new(
+            None,
+            None,
+            None,
+            Some(animation(
+                Rational::ZERO,
+                Rational::new(1, 2).expect("a rational"),
+            )),
+        )
+        .expect("a motion"),
+    );
+    let back = round_tripped(&project);
+    let sequence = back.sequences().iter().next().expect("a sequence").1;
+    let Item::Clip(clip) = sequence
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    let motion = clip.motion().expect("an animation");
+    assert!(
+        motion.scale().is_none() && motion.across().is_none() && motion.down().is_none(),
+        "a lane nobody set came back set"
+    );
+    let lane = motion.turn().expect("the turn's lane did not come back");
+    assert_eq!(
+        lane.value_at(Instant::new(0, RATE)).expect("a value"),
+        Rational::ZERO,
+        "the turn lane's first keyframe is not where it was written"
+    );
+    // And the parameter really is a parameter: a half is the three-four-five
+    // turn, derived by hand from `cos = (1 - t^2)/(1 + t^2)`.
+    let turn = sapstudio_model::Turn::from_half_angle(
+        lane.value_at(Instant::new(1_798, RATE)).expect("a value"),
+    )
+    .expect("a turn");
+    assert_eq!(
+        (turn.cosine(), turn.sine()),
+        (
+            Rational::new(3, 5).expect("a rational"),
+            Rational::new(4, 5).expect("a rational")
+        ),
+        "the lane came back holding something other than the half-angle it was          written with"
+    );
+}
+
+#[test]
+fn a_motion_lane_that_is_absent_stays_absent() {
+    // Not the same as a lane holding its neutral. A clip that animates only
+    // its scale must come back animating only its scale, or every save would
+    // quietly grow two curves nobody drew -- and the next editor to look would
+    // find keyframes on a move they never touched.
+    let project = animated(
+        sapstudio_model::Motion::new(
+            Some(animation(
+                Rational::ONE,
+                Rational::new(3, 2).expect("a rational"),
+            )),
+            None,
+            None,
+            None,
+        )
+        .expect("a motion"),
+    );
+    let back = round_tripped(&project);
+    let sequence = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(sequence)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    let motion = clip.motion().expect("an animation");
+    assert!(motion.scale().is_some());
+    assert!(motion.across().is_none());
+    assert!(motion.down().is_none());
+}
+
+#[test]
+fn a_file_holding_an_animation_with_nothing_to_animate_is_refused() {
+    // The invariant the edit enforces, asked of the decoder. Reaching it needs
+    // the transform cut out of a clip that keeps its motion: the flag goes to
+    // nought and its hundred and twenty-nine bytes of payload go with it -- a
+    // resampling byte, sixty-four of linear part, thirty-two of move and
+    // thirty-two of pivot -- so everything after still lines up and the file
+    // is resealed over what is left.
+    let project = animated(
+        sapstudio_model::Motion::new(
+            Some(animation(
+                Rational::ONE,
+                Rational::new(3, 2).expect("a rational"),
+            )),
+            None,
+            None,
+            None,
+        )
+        .expect("a motion"),
+    );
+    let file = encode(&project).expect("an encoding");
+    let at = linear_part(&file);
+    let mut stripped = file[..at - 1].to_vec();
+    stripped.extend_from_slice(&file[at + 128..]);
+    stripped[at - 2] = 0;
+
+    assert_eq!(
+        decode(&resealed(stripped)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::NoTransformToAnimate
+        ))
+    );
+}
+
+#[test]
+fn a_motion_tag_this_build_does_not_read_is_refused() {
+    let project = animated(
+        sapstudio_model::Motion::new(
+            Some(animation(
+                Rational::ONE,
+                Rational::new(3, 2).expect("a rational"),
+            )),
+            None,
+            None,
+            None,
+        )
+        .expect("a motion"),
+    );
+    let file = encode(&project).expect("an encoding");
+    let at = linear_part(&file);
+    let mut unknown = file.clone();
+    // Straight after the linear part's sixty-four bytes, the offset's
+    // thirty-two and the pivot's thirty-two: the byte that says whether an
+    // animation follows.
+    assert_eq!(unknown[at + 128], 1, "the fixture's clip is animated");
+    unknown[at + 128] = 2;
+
+    assert_eq!(
+        decode(&resealed(unknown)),
+        Err(IoStatus::UnknownMotionTag(2))
+    );
+}
+
+#[test]
+fn a_file_holding_a_scale_that_flattens_the_picture_is_refused() {
+    // Through the model's own constructor, like every other field: a scale
+    // keyframe of nought is refused when it is set, and a file that carries
+    // one is refused when it is read.
+    let project = animated(
+        sapstudio_model::Motion::new(
+            Some(animation(
+                Rational::from_integer(3),
+                Rational::new(3, 2).expect("a rational"),
+            )),
+            None,
+            None,
+            None,
+        )
+        .expect("a motion"),
+    );
+    let file = encode(&project).expect("an encoding");
+    // The first keyframe's value: a three over a one, written after its tick.
+    let mut wanted = std::vec::Vec::new();
+    for value in [0_i64, 3, 1] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the first keyframe is in the file");
+    let mut flattened = file.clone();
+    flattened[at + 8..at + 16].copy_from_slice(&0_i64.to_le_bytes());
+
+    assert_eq!(
+        decode(&resealed(flattened)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::ScaleNotPositive
+        ))
+    );
+}
+
+/// A project holding one title card, and nothing else.
+fn carded(text: &str) -> Project {
+    use sapstudio_model::Title;
+
+    let mut project = Project::new();
+    let title = Title::line(
+        text.into(),
+        Rational::new(1, 6).expect("a size"),
+        Rational::new(3, 7).expect("a place"),
+        Rational::new(5, 11).expect("a place"),
+    )
+    .expect("a title");
+    let media = project
+        .add_media(MediaAsset::titled(title, RATE, frames(240)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 0, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+}
+
+#[test]
+fn a_title_survives_the_file_with_its_words_and_its_place() {
+    let project = carded("SAPSTUDIO");
+    let back = round_tripped(&project);
+    let (id, asset) = back.media().iter().next().expect("an asset");
+    let title = asset.title().expect("a title");
+    assert_eq!(title.lines(), ["SAPSTUDIO"]);
+    assert_eq!(title.size(), Rational::new(1, 6).expect("a size"));
+    assert_eq!(title.across(), Rational::new(3, 7).expect("a place"));
+    assert_eq!(title.down(), Rational::new(5, 11).expect("a place"));
+    assert_eq!(
+        back.media().get(id).expect("an asset").digest(),
+        project.media().iter().next().expect("an asset").1.digest(),
+        "and it comes back named the same thing"
+    );
+}
+
+#[test]
+fn a_recording_and_a_title_are_told_apart_in_the_file() {
+    // The tag costs one byte on every asset, which is the price of the format
+    // never having to guess. Both kinds in one file, so a reader that got the
+    // branch wrong would produce a project with the wrong number of titles in
+    // it rather than one that merely failed.
+    let mut project = carded("CARD");
+    let recorded = project
+        .add_media(MediaAsset::new(Digest::of(b"footage"), RATE, frames(240)).expect("an asset"))
+        .expect("room");
+    let hinted = sapstudio_model::Location::new(b"/reels/a.sprw").expect("a hint");
+    project
+        .set_media_location(recorded, Some(hinted))
+        .expect("a hint");
+
+    let back = round_tripped(&project);
+    let titles = back
+        .media()
+        .iter()
+        .filter(|(_, asset)| asset.title().is_some())
+        .count();
+    let recordings = back
+        .media()
+        .iter()
+        .filter(|(_, asset)| asset.title().is_none())
+        .count();
+    assert_eq!((titles, recordings), (1, 1));
+    assert!(
+        back.media()
+            .iter()
+            .any(|(_, asset)| asset.location().is_some()),
+        "and the recording kept its hint"
+    );
+}
+
+#[test]
+fn a_title_whose_name_is_not_what_it_says_is_refused() {
+    // A title is *named by* its description, so the two are one fact written
+    // twice. A file where they disagree has been edited, and recomputing the
+    // digest and accepting it would silently repoint every clip of the card.
+    let project = carded("SAPSTUDIO");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    let mut edited = file.clone();
+    edited[at + 3] = b'X';
+
+    assert_eq!(
+        decode(&resealed(edited)),
+        Err(IoStatus::TitleDigestMismatch)
+    );
+}
+
+#[test]
+fn a_media_source_tag_this_build_does_not_read_is_refused() {
+    let project = carded("SAPSTUDIO");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    // Straight before the words: the line's length, before that the count of
+    // lines, and before that the source tag.
+    let mut unknown = file.clone();
+    assert_eq!(unknown[at - 9], 1, "the fixture's asset is a title");
+    unknown[at - 9] = 7;
+
+    assert_eq!(
+        decode(&resealed(unknown)),
+        Err(IoStatus::UnknownMediaSourceTag(7))
+    );
+}
+
+#[test]
+fn a_title_whose_words_are_not_text_is_refused() {
+    let project = carded("SAPSTUDIO");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    let mut mangled = file.clone();
+    // A byte no UTF-8 sequence starts or continues with.
+    mangled[at + 2] = 0xFF;
+
+    assert_eq!(decode(&resealed(mangled)), Err(IoStatus::TitleNotText));
+}
+
+#[test]
+fn a_title_that_a_file_says_is_somewhere_is_refused() {
+    // The invariant the model enforces, enforced again in the decoder -- and
+    // the decoder's half needs a file no sequence of edits could write, so it
+    // is built here: a titled asset's own bytes with a location hint spliced
+    // into the empty slot in front of its source tag.
+    //
+    // Without that splice this test would be asserting the model's refusal a
+    // second time and the decoder's line would have no test at all, which is
+    // the shape a guard is usually missing in.
+    let project = carded("SAPSTUDIO");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    // The source tag sits nine bytes before the words -- one tag, a four-byte
+    // count of lines and a four-byte length -- and the location's own length
+    // is the four before that.
+    let tag = at - 9;
+    let length = tag - 4;
+    assert_eq!(&file[length..tag], &0_u32.to_le_bytes(), "no hint today");
+
+    let hint = b"/nowhere/at/all";
+    let mut hinted = file[..length].to_vec();
+    hinted.extend_from_slice(&u32::try_from(hint.len()).expect("a length").to_le_bytes());
+    hinted.extend_from_slice(hint);
+    hinted.extend_from_slice(&file[tag..]);
+
+    assert_eq!(
+        decode(&resealed(hinted)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::NotRecordedMedia
+        ))
+    );
+}
+
+#[test]
+fn a_card_of_several_lines_survives_the_file_with_its_alignment() {
+    use sapstudio_model::{Alignment, Title};
+
+    let mut project = Project::new();
+    let title = Title::new(
+        std::vec!["Sap Studio".into(), String::new(), "MMXXVI".into()],
+        Rational::new(1, 8).expect("a size"),
+        Rational::new(2, 5).expect("a place"),
+        Rational::new(3, 8).expect("a place"),
+        Alignment::Right,
+    )
+    .expect("a title");
+    let named = title.digest().expect("a digest");
+    project
+        .add_media(MediaAsset::titled(title, RATE, frames(240)).expect("an asset"))
+        .expect("room");
+
+    let back = round_tripped(&project);
+    let (_, asset) = back.media().iter().next().expect("an asset");
+    let card = asset.title().expect("a title");
+    assert_eq!(card.lines(), ["Sap Studio", "", "MMXXVI"]);
+    assert_eq!(card.alignment(), Alignment::Right);
+    assert_eq!(
+        asset.digest(),
+        named,
+        "and it comes back named the same thing, which is only true if every \
+         line and the alignment came back"
+    );
+}
+
+#[test]
+fn an_alignment_tag_this_build_does_not_read_is_refused() {
+    use sapstudio_model::{Alignment, Title};
+
+    let mut project = Project::new();
+    let title = Title::new(
+        std::vec!["CARD".into()],
+        Rational::new(1, 8).expect("a size"),
+        Rational::new(1, 2).expect("a place"),
+        Rational::new(1, 2).expect("a place"),
+        Alignment::Centre,
+    )
+    .expect("a title");
+    project
+        .add_media(MediaAsset::titled(title, RATE, frames(240)).expect("an asset"))
+        .expect("room");
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(4)
+        .position(|window| window == b"CARD")
+        .expect("the words are in the file");
+    // Straight after the only line: the alignment.
+    let mut unknown = file.clone();
+    assert_eq!(unknown[at + 4], 1, "the fixture's card is centred");
+    unknown[at + 4] = 9;
+
+    assert_eq!(
+        decode(&resealed(unknown)),
+        Err(IoStatus::UnknownAlignmentTag(9))
+    );
+}
+
+#[test]
+fn a_clips_fades_survive_the_file() {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"faded"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: frames(7),
+                fade_out: frames(11),
+            },
+        )
+        .expect("fades");
+
+    let back = round_tripped(&project);
+    assert_eq!(
+        back.sequence(back.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence"),
+        project.sequence(sequence).expect("a sequence"),
+        "the whole sequence comes back equal, both fades included"
+    );
+    // And they are not the same number, so a reader that swapped them would be
+    // caught rather than being right by accident.
+    assert_ne!(frames(7), frames(11));
+}
+
+#[test]
+fn a_fade_tag_this_build_does_not_read_is_refused() {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"faded"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: frames(7),
+                fade_out: frames(11),
+            },
+        )
+        .expect("fades");
+    let file = encode(&project).expect("an encoding");
+    // The two fade lengths, and the tag straight before them.
+    let mut wanted = std::vec::Vec::new();
+    for value in [7_i64, 11] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the fades are in the file");
+    let mut unknown = file.clone();
+    assert_eq!(unknown[at - 1], 1, "the fixture's clip is faded");
+    unknown[at - 1] = 4;
+
+    assert_eq!(decode(&resealed(unknown)), Err(IoStatus::UnknownFadeTag(4)));
+}
+
+#[test]
+fn a_file_whose_fades_outlast_its_clip_is_refused() {
+    // Through the model's own constructor, like everything else: a file cannot
+    // hold a clip the model would have refused. Reaching it needs a resealed
+    // file, because no sequence of edits can write one.
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"faded"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: frames(7),
+                fade_out: frames(11),
+            },
+        )
+        .expect("fades");
+    let file = encode(&project).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    for value in [7_i64, 11] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the fades are in the file");
+    let mut greedy = file.clone();
+    greedy[at..at + 8].copy_from_slice(&40_i64.to_le_bytes());
+
+    assert_eq!(
+        decode(&resealed(greedy)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::FadesLongerThanClip
+        ))
+    );
+}
+
+/// A project with one clip at a given speed.
+fn retimed(speed: Rational) -> Project {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"retimed"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipPlayback {
+                track: 0,
+                index: 0,
+                playback: sapstudio_model::Playback::At(speed),
+            },
+        )
+        .expect("a speed");
+    project
+}
+
+#[test]
+fn a_speed_survives_the_file_exactly() {
+    // Twenty-four twenty-fifths, which no decimal writes: the whole reason a
+    // speed is a rational is that this comes back as itself rather than as a
+    // rounding that drifts a frame every twenty-five seconds.
+    let speed = Rational::new(24, 25).expect("a pull-down");
+    let project = retimed(speed);
+    let back = round_tripped(&project);
+    assert_eq!(
+        back.sequence(back.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence"),
+        project
+            .sequence(project.sequences().iter().next().expect("a sequence").0)
+            .expect("a sequence")
+    );
+    let sequence = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(sequence)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(clip.speed(), Some(speed));
+}
+
+#[test]
+fn a_reversed_clip_survives_the_file() {
+    let project = retimed(Rational::new(-1, 2).expect("reverse"));
+    let back = round_tripped(&project);
+    let sequence = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(sequence)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(clip.speed(), Some(Rational::new(-1, 2).expect("reverse")));
+}
+
+#[test]
+fn a_clip_at_real_time_costs_one_byte_to_say_so() {
+    // A flag rather than a fraction of one over one, which is sixteen bytes of
+    // saying nothing -- and real time is what almost every clip is.
+    let real = encode(&retimed(Rational::ONE)).expect("an encoding");
+    let slow = encode(&retimed(Rational::new(1, 2).expect("a half"))).expect("an encoding");
+    assert_eq!(slow.len(), real.len() + 16, "the fraction is the only cost");
+}
+
+#[test]
+fn a_speed_tag_this_build_does_not_read_is_refused() {
+    let project = retimed(Rational::new(1, 2).expect("a half"));
+    let file = encode(&project).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    for value in [1_i64, 2] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the speed is in the file");
+    let mut unknown = file.clone();
+    assert_eq!(unknown[at - 1], 1, "the fixture's clip is retimed");
+    unknown[at - 1] = 6;
+
+    assert_eq!(
+        decode(&resealed(unknown)),
+        Err(IoStatus::UnknownSpeedTag(6))
+    );
+}
+
+#[test]
+fn a_file_holding_a_clip_stopped_at_no_speed_is_refused() {
+    // Through the model's own constructor, like everything else. The name of
+    // this test used to say "frozen", which stopped being right the day a
+    // freeze became a tag of its own: a still is `SPEED_FROZEN` and carries no
+    // number, and a *speed* of nought is a number that means nothing. Only the
+    // second is what this refuses.
+    let project = retimed(Rational::new(1, 2).expect("a half"));
+    let file = encode(&project).expect("an encoding");
+    let mut wanted = std::vec::Vec::new();
+    for value in [1_i64, 2] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the speed is in the file");
+    let mut stopped = file.clone();
+    stopped[at..at + 8].copy_from_slice(&0_i64.to_le_bytes());
+
+    assert_eq!(
+        decode(&resealed(stopped)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::SpeedNotUsable
+        ))
+    );
+}
+
+/// A project holding one coloured title card.
+fn inked(ink: sapstudio_model::Ink) -> Project {
+    use sapstudio_model::Title;
+
+    let mut project = Project::new();
+    let title = Title::line(
+        "SAPSTUDIO".into(),
+        Rational::new(1, 6).expect("a size"),
+        Rational::new(3, 7).expect("a place"),
+        Rational::new(5, 11).expect("a place"),
+    )
+    .expect("a title")
+    .with_ink(ink);
+    project
+        .add_media(MediaAsset::titled(title, RATE, frames(240)).expect("an asset"))
+        .expect("room");
+    project
+}
+
+#[test]
+fn an_ink_survives_the_file_exactly() {
+    use sapstudio_model::Ink;
+
+    // Exactly, and the fixture says so: three fractions no decimal can write.
+    // An ink that went through a float on the way to the file would come back
+    // near enough to pass a comparison of pictures and wrong in the digest,
+    // which is the one place a title cannot afford to be near enough.
+    let ink = Ink::new(
+        Rational::new(1, 3).expect("a fraction"),
+        Rational::new(7, 9).expect("a fraction"),
+        Rational::new(2, 11).expect("a fraction"),
+    )
+    .expect("an ink");
+    let project = inked(ink);
+    let back = round_tripped(&project);
+    let (_, asset) = back.media().iter().next().expect("an asset");
+    assert_eq!(asset.title().expect("a title").ink(), ink);
+    assert_eq!(
+        asset.digest(),
+        project.media().iter().next().expect("an asset").1.digest(),
+        "and the card is still named the same thing, ink and all"
+    );
+}
+
+#[test]
+fn a_white_card_costs_one_byte_to_say_so() {
+    use sapstudio_model::Ink;
+
+    // Three rationals is forty-eight bytes, and white is what most cards are.
+    // Measured rather than asserted from the constant, because the constant is
+    // what would be wrong.
+    let white = encode(&inked(Ink::WHITE)).expect("an encoding").len();
+    let coloured = encode(&inked(
+        Ink::new(Rational::ONE, Rational::ZERO, Rational::ZERO).expect("red"),
+    ))
+    .expect("an encoding")
+    .len();
+    assert_eq!(coloured - white, 48, "three rationals after the tag");
+}
+
+#[test]
+fn an_ink_tag_this_build_does_not_read_is_refused() {
+    use sapstudio_model::Ink;
+
+    // Not read as white. A future build that adds a second way of naming a
+    // colour -- a gradient, a per-line ink -- would write a tag this one has
+    // never seen, and a decoder that fell through to white would hand back
+    // somebody's card in the wrong colour and call it a successful load.
+    let project = inked(Ink::WHITE);
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    // After the words: the alignment, then three rationals, then the ink tag.
+    let tag = at + 9 + 1 + 3 * 16;
+    let mut unknown = file.clone();
+    assert_eq!(unknown[tag], 0, "the fixture's card is white");
+    unknown[tag] = 9;
+    assert_eq!(decode(&resealed(unknown)), Err(IoStatus::UnknownInkTag(9)));
+}
+
+#[test]
+fn a_file_holding_an_ink_the_model_refuses_is_refused() {
+    use sapstudio_model::Ink;
+
+    // The decoder builds every ink through `Ink::new`, so a file cannot carry
+    // a colour brighter than white -- which would reach the compositor as a
+    // premultiplied sample above its own coverage and be refused there, three
+    // layers further on and with nothing left to say which card it came from.
+    let project = inked(Ink::new(Rational::ONE, Rational::ZERO, Rational::ZERO).expect("red"));
+    let file = encode(&project).expect("an encoding");
+    let at = file
+        .windows(9)
+        .position(|window| window == b"SAPSTUDIO")
+        .expect("the words are in the file");
+    // The first channel's numerator, straight after the ink tag.
+    let numerator = at + 9 + 1 + 3 * 16 + 1;
+    let mut brighter = file.clone();
+    assert_eq!(
+        i64::from_le_bytes(
+            brighter[numerator..numerator + 8]
+                .try_into()
+                .expect("eight bytes")
+        ),
+        1,
+        "the fixture's red channel is one over one"
+    );
+    brighter[numerator..numerator + 8].copy_from_slice(&2_i64.to_le_bytes());
+    assert_eq!(
+        decode(&resealed(brighter)),
+        Err(IoStatus::Model(sapstudio_model::ModelStatus::InkOutOfRange))
+    );
+}
+
+#[test]
+fn a_frozen_clip_survives_the_file() {
+    use sapstudio_model::Playback;
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"still"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipPlayback {
+                track: 0,
+                index: 0,
+                playback: Playback::Frozen,
+            },
+        )
+        .expect("a freeze");
+    let back = round_tripped(&project);
+    let held = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(held)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert!(clip.is_frozen(), "a still comes back a still");
+    assert_eq!(clip.speed(), None);
+    assert_eq!(clip.source_start(), 200, "of the frame it was held on");
+}
+
+#[test]
+fn a_freeze_costs_one_byte_and_no_number() {
+    use sapstudio_model::Playback;
+
+    // The frame a freeze holds is the clip's in point, which is already in the
+    // file a few bytes above the tag. Writing it again would be the same fact
+    // twice, and two facts that have to be kept agreeing.
+    let real = encode(&retimed(Rational::ONE)).expect("an encoding").len();
+    let mut project = retimed(Rational::ONE);
+    let sequence = project.sequences().iter().next().expect("a sequence").0;
+    project
+        .apply(
+            sequence,
+            Edit::SetClipPlayback {
+                track: 0,
+                index: 0,
+                playback: Playback::Frozen,
+            },
+        )
+        .expect("a freeze");
+    assert_eq!(
+        encode(&project).expect("an encoding").len(),
+        real,
+        "a tag either way, and nothing after the frozen one"
+    );
+}
+
+#[test]
+fn a_clips_own_opacity_curve_survives_the_file() {
+    use sapstudio_model::{Curve, Interpolation, Keyframe};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"shot"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    // An ease, so the four handles go through the file as well as the values.
+    let drawn = Curve::new(std::vec![
+        Keyframe::new(
+            sapstudio_core::Instant::new(0, RATE),
+            Rational::ZERO,
+            Interpolation::ease_in_out().expect("an ease"),
+        )
+        .expect("a keyframe"),
+        Keyframe::new(
+            sapstudio_core::Instant::new(24, RATE),
+            Rational::ONE,
+            Interpolation::Linear,
+        )
+        .expect("a keyframe"),
+    ])
+    .expect("a curve");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipOpacity {
+                track: 0,
+                index: 0,
+                opacity: Some(drawn.clone()),
+            },
+        )
+        .expect("a rise");
+    let back = round_tripped(&project);
+    let held = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(held)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(clip.opacity(), Some(&drawn));
+}
+
+#[test]
+fn a_clip_nobody_animated_costs_four_bytes_to_say_so() {
+    use sapstudio_model::{Curve, Interpolation, Keyframe};
+
+    // A count of nought, which is what an absent lane has always cost -- the
+    // same four bytes each of the motion's three lanes costs, and no new tag
+    // to reserve. Measured rather than asserted from the constant.
+    let plain = encode(&retimed(Rational::ONE)).expect("an encoding").len();
+    let mut project = retimed(Rational::ONE);
+    let sequence = project.sequences().iter().next().expect("a sequence").0;
+    project
+        .apply(
+            sequence,
+            Edit::SetClipOpacity {
+                track: 0,
+                index: 0,
+                opacity: Some(
+                    Curve::new(std::vec![
+                        Keyframe::new(
+                            sapstudio_core::Instant::new(0, RATE),
+                            Rational::ONE,
+                            Interpolation::Hold,
+                        )
+                        .expect("a keyframe"),
+                    ])
+                    .expect("a curve"),
+                ),
+            },
+        )
+        .expect("an animation");
+    let animated = encode(&project).expect("an encoding").len();
+    assert_eq!(
+        animated - plain,
+        25,
+        "one keyframe: a tick, a rational and a kind, past the count both pay"
+    );
+}
+
+#[test]
+fn a_clips_mask_animation_survives_the_file() {
+    use sapstudio_model::{Curve, Interpolation, Keyframe, Mask, Motion};
+
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"shot"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    let iris = Motion::new(
+        Some(
+            Curve::new(std::vec![
+                Keyframe::new(
+                    sapstudio_core::Instant::new(0, RATE),
+                    Rational::ONE,
+                    Interpolation::ease_in_out().expect("an ease"),
+                )
+                .expect("a keyframe"),
+                Keyframe::new(
+                    sapstudio_core::Instant::new(24, RATE),
+                    Rational::new(2, 1).expect("twice"),
+                    Interpolation::Linear,
+                )
+                .expect("a keyframe"),
+            ])
+            .expect("a curve"),
+        ),
+        None,
+        None,
+        None,
+    )
+    .expect("an iris");
+    for edit in [
+        Edit::SetClipMask {
+            track: 0,
+            index: 0,
+            mask: Some(
+                Mask::rectangle(
+                    Rational::new(1, 4).expect("a quarter"),
+                    Rational::new(1, 4).expect("a quarter"),
+                    Rational::new(3, 4).expect("three quarters"),
+                    Rational::new(3, 4).expect("three quarters"),
+                )
+                .expect("a square"),
+            ),
+        },
+        Edit::SetClipMaskMotion {
+            track: 0,
+            index: 0,
+            motion: Some(iris.clone()),
+        },
+    ] {
+        project.apply(sequence, edit).expect("an edit");
+    }
+    let back = round_tripped(&project);
+    let held = back.sequences().iter().next().expect("a sequence").0;
+    let Item::Clip(clip) = back
+        .sequence(held)
+        .expect("a sequence")
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(clip.mask_motion(), Some(&iris));
+}
+
+#[test]
+fn a_file_animating_a_mask_that_is_not_there_is_refused() {
+    use sapstudio_model::{Curve, Interpolation, Keyframe, Mask, Motion};
+
+    // The invariant the edit enforces, asked of the decoder -- reached the way
+    // the transform's version is: cut the *shape* out of a clip that keeps its
+    // animation. The mask's tag goes to nought and its payload goes with it,
+    // so everything after still lines up, and the file is resealed over what
+    // is left.
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"shot"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    for edit in [
+        Edit::SetClipMask {
+            track: 0,
+            index: 0,
+            mask: Some(
+                Mask::rectangle(
+                    Rational::new(1, 4).expect("a quarter"),
+                    Rational::new(1, 4).expect("a quarter"),
+                    Rational::new(3, 4).expect("three quarters"),
+                    Rational::new(3, 4).expect("three quarters"),
+                )
+                .expect("a square"),
+            ),
+        },
+        Edit::SetClipMaskMotion {
+            track: 0,
+            index: 0,
+            motion: Some(
+                Motion::new(
+                    Some(
+                        Curve::new(std::vec![
+                            Keyframe::new(
+                                sapstudio_core::Instant::new(0, RATE),
+                                Rational::ONE,
+                                Interpolation::Linear,
+                            )
+                            .expect("a keyframe"),
+                        ])
+                        .expect("a curve"),
+                    ),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("an iris"),
+            ),
+        },
+    ] {
+        project.apply(sequence, edit).expect("an edit");
+    }
+    let file = encode(&project).expect("an encoding");
+
+    // The first corner is (1/4, 1/4): four little-endian i64s, 1, 4, 1, 4.
+    let mut wanted = std::vec::Vec::new();
+    for value in [1_i64, 4, 1, 4] {
+        wanted.extend_from_slice(&value.to_le_bytes());
+    }
+    let corners = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the shape is in the file");
+    // Before the corners: a count of four, an inversion flag, and the tag.
+    let tag = corners - 4 - 1 - 1;
+    assert_eq!(file[tag], 1, "the fixture's clip really is masked");
+    let mut stripped = file[..tag].to_vec();
+    stripped.push(0);
+    // Four corners of two rationals, sixteen bytes each.
+    stripped.extend_from_slice(&file[corners + 4 * 2 * 16..]);
+
+    assert_eq!(
+        decode(&resealed(stripped)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::NoMaskToAnimate
+        ))
+    );
+}
+
+/// A project with one graded clip, and a curve on it if asked.
+fn graded(strength: Option<Curve>) -> (Project, std::vec::Vec<u8>) {
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"graded"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipGrade {
+                track: 0,
+                index: 0,
+                grade: Some(Digest::of(b"a look")),
+            },
+        )
+        .expect("a grade");
+    if let Some(curve) = strength {
+        project
+            .apply(
+                sequence,
+                Edit::SetClipGradeStrength {
+                    track: 0,
+                    index: 0,
+                    strength: Some(curve),
+                },
+            )
+            .expect("a strength");
+    }
+    let file = encode(&project).expect("an encoding");
+    (project, file)
+}
+
+/// The curve those tests animate a grade with: nought, rising to all of it.
+fn arrival() -> Curve {
+    Curve::new(std::vec![
+        Keyframe::new(
+            Instant::new(0, RATE),
+            Rational::new(0, 1).expect("a value"),
+            Interpolation::Linear,
+        )
+        .expect("a keyframe"),
+        Keyframe::new(
+            Instant::new(24, RATE),
+            Rational::new(1, 1).expect("a value"),
+            Interpolation::Hold,
+        )
+        .expect("a keyframe"),
+    ])
+    .expect("a curve")
+}
+
+#[test]
+fn a_clips_grade_strength_survives_the_file() {
+    // Named rather than round-tripped, because a round trip cannot see a field
+    // the format has forgotten: both sides of the comparison would be missing
+    // it and would agree perfectly. This file's own notes record that
+    // happening twice, once immediately after the lesson was written down.
+    let (_, file) = graded(Some(arrival()));
+    let back = decode(&file).expect("a project");
+    let Item::Clip(clip) = back
+        .sequences()
+        .iter()
+        .next()
+        .expect("a sequence")
+        .1
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(
+        clip.grade_strength(),
+        Some(&arrival()),
+        "the arrival did not come back"
+    );
+    // And the values it reads, not only the keyframes it holds — so a curve
+    // that came back with the right shape at the wrong instants would fail.
+    for (offset, expected) in [(0_i64, (0, 1)), (6, (1, 4)), (24, (1, 1)), (47, (1, 1))] {
+        assert_eq!(
+            clip.grade_strength_at(offset).expect("a strength"),
+            Rational::new(expected.0, expected.1).expect("a value"),
+            "the arrival reads wrongly at offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn a_grade_nobody_animated_costs_four_bytes_to_say_so() {
+    // The count of nought an absent lane has always been written as, rather
+    // than a fifth tag byte to reserve. Measured rather than reasoned about:
+    // the difference between a file with the lane empty and one with a curve
+    // on it is the curve, and the difference between this format version and
+    // the last is four bytes a clip.
+    let (_, flat) = graded(None);
+    let (_, animated) = graded(Some(arrival()));
+    assert_eq!(
+        animated.len() - flat.len(),
+        50,
+        "two keyframes are eight bytes of instant, sixteen of value and one of \
+         interpolation each, and the count of nought is already paid for"
+    );
+}
+
+#[test]
+fn a_file_that_brings_on_a_grade_that_is_not_there_is_refused() {
+    // Through the model's own constructor, so a file cannot produce a project
+    // no sequence of edits could. Reaching the check needs a *resealed* file:
+    // the payload's digest covers every byte, so a plain mutation is refused
+    // as a digest mismatch long before a field is looked at.
+    let (_, animated) = graded(Some(arrival()));
+    let (_, flat) = graded(None);
+    // Find the grade's flag byte and the digest behind it, and cut both out —
+    // which leaves the strength's curve exactly where it was, now describing a
+    // clip with no look to be the strength of.
+    let mut wanted = std::vec::Vec::new();
+    wanted.push(1_u8);
+    wanted.extend_from_slice(Digest::of(b"a look").bytes());
+    let at = animated
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the grade is in the file");
+    let mut ungraded = animated.clone();
+    ungraded.splice(at..at + wanted.len(), [0_u8]);
+    assert_eq!(
+        ungraded.len(),
+        animated.len() - 32,
+        "the splice did not remove exactly the digest"
+    );
+    assert!(
+        flat.len() < ungraded.len(),
+        "and what is left still carries the curve, which is the whole point"
+    );
+
+    assert_eq!(
+        decode(&resealed(ungraded)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::NoGradeToAnimate
+        )),
+        "a file holding an arrival with nothing to arrive was accepted"
+    );
+}
+
+#[test]
+fn a_transforms_pivot_survives_the_file() {
+    // Named rather than round-tripped, for the reason this file has now
+    // learned three times: a round trip cannot see a field the format has
+    // forgotten, because both sides are missing it and agree.
+    let mut project = Project::new();
+    let media = project
+        .add_media(MediaAsset::new(Digest::of(b"framed"), RATE, frames(9_000)).expect("an asset"))
+        .expect("room");
+    let sequence = project.add_sequence(RATE).expect("room");
+    project
+        .apply(
+            sequence,
+            Edit::AddTrack {
+                index: 0,
+                kind: TrackKind::Video,
+            },
+        )
+        .expect("a track");
+    project
+        .apply(
+            sequence,
+            Edit::InsertItem {
+                track: 0,
+                index: 0,
+                item: Item::Clip(Clip::new(media, 200, frames(48)).expect("a clip")),
+            },
+        )
+        .expect("a clip");
+    let pivot = (
+        Rational::new(-1, 3).expect("a rational"),
+        Rational::new(9, 7).expect("a rational"),
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    sapstudio_model::Transform::scaled(
+                        Rational::new(2, 1).expect("a rational"),
+                        Rational::new(2, 1).expect("a rational"),
+                        (Rational::ZERO, Rational::ZERO),
+                        sapstudio_model::Resampling::Area,
+                    )
+                    .expect("a transform")
+                    // Outside the frame on both axes, deliberately: a pivot is
+                    // not required to be inside the picture, and a reader that
+                    // clamped one would be caught here rather than by a shot
+                    // that swings in from the wrong place.
+                    .with_anchor(pivot),
+                ),
+            },
+        )
+        .expect("a framing");
+
+    let back = round_tripped(&project);
+    let sequence = back.sequences().iter().next().expect("a sequence").1;
+    let Item::Clip(clip) = sequence
+        .track(0)
+        .expect("a track")
+        .item(0)
+        .expect("an item")
+    else {
+        panic!("a clip");
+    };
+    assert_eq!(
+        clip.transform().expect("a framing").anchor(),
+        pivot,
+        "the pivot did not come back"
+    );
+    // And a transform nobody moved the pivot of comes back on the centre,
+    // rather than on whatever nought happens to mean.
+    assert_eq!(
+        sapstudio_model::Transform::scaled(
+            Rational::ONE,
+            Rational::ONE,
+            (Rational::ZERO, Rational::ZERO),
+            sapstudio_model::Resampling::Area,
+        )
+        .expect("a transform")
+        .anchor(),
+        (
+            Rational::new(1, 2).expect("a rational"),
+            Rational::new(1, 2).expect("a rational")
+        ),
+    );
+}
+
+#[test]
+fn a_sequences_markers_survive_the_file() {
+    // Named rather than round-tripped, for the reason this file has learned
+    // four times: a round trip cannot see a field the format has forgotten,
+    // because both sides are missing it and agree.
+    let back = round_tripped(&sample());
+    let sequence = back.sequences().iter().next().expect("a sequence").1;
+    let notes: std::vec::Vec<(i64, &str)> = sequence
+        .markers()
+        .iter()
+        .map(|held| (held.at().ticks(), held.text()))
+        .collect();
+    assert_eq!(
+        notes,
+        std::vec![(0_i64, ""), (742, "the sync drifts here")],
+        "the notes did not come back, in order, saying what they said"
+    );
+}
+
+#[test]
+fn a_sequence_with_no_markers_costs_four_bytes_to_say_so() {
+    // The count of nought every list in this format is written as. Measured
+    // rather than reasoned about, and measured *per sequence* -- which is what
+    // says the step is not per file.
+    let mut one = Project::new();
+    one.add_sequence(RATE).expect("room");
+    let mut two = Project::new();
+    two.add_sequence(RATE).expect("room");
+    two.add_sequence(RATE).expect("room");
+
+    let single = encode(&one).expect("bytes").len();
+    let double = encode(&two).expect("bytes").len();
+    // A second empty sequence is its timebase, its track count and its marker
+    // count: sixteen, four and four.
+    assert_eq!(double - single, 24);
+}
+
+#[test]
+fn a_markers_text_has_to_be_text() {
+    // The same refusal a title's words carry, and reaching it needs a resealed
+    // file: the payload's digest covers every byte, so a plain mutation is
+    // refused as a digest mismatch long before a field is looked at.
+    let file = encode(&sample()).expect("an encoding");
+    let wanted = b"the sync drifts here";
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the note is in the file");
+    let mut mangled = file.clone();
+    // A byte no UTF-8 sequence may begin with.
+    mangled[at] = 0xFF;
+    assert_eq!(
+        decode(&resealed(mangled)),
+        Err(IoStatus::MarkerNotText),
+        "a file's bytes became a note that says something else"
+    );
+}
+
+#[test]
+fn a_file_holding_two_markers_at_one_instant_is_refused() {
+    // Through the model's own constructor, like everything else: a file cannot
+    // produce a project no sequence of edits could. Reaching it needs a
+    // resealed file, because no sequence of edits can write one.
+    let file = encode(&sample()).expect("an encoding");
+    // The second note's instant, 742, immediately before its length and text.
+    let wanted = 742_i64.to_le_bytes();
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the note's instant is in the file");
+    let mut collided = file.clone();
+    // Move it onto the first note's instant, which is nought.
+    collided[at..at + 8].copy_from_slice(&0_i64.to_le_bytes());
+    assert_eq!(
+        decode(&resealed(collided)),
+        Err(IoStatus::Model(sapstudio_model::ModelStatus::MarkerExists)),
+    );
+}
+
+#[test]
+fn a_file_holding_a_marker_before_the_programme_is_refused() {
+    let file = encode(&sample()).expect("an encoding");
+    let wanted = 742_i64.to_le_bytes();
+    let at = file
+        .windows(wanted.len())
+        .position(|window| window == wanted.as_slice())
+        .expect("the note's instant is in the file");
+    let mut early = file.clone();
+    early[at..at + 8].copy_from_slice(&(-1_i64).to_le_bytes());
+    assert_eq!(
+        decode(&resealed(early)),
+        Err(IoStatus::Model(
+            sapstudio_model::ModelStatus::MarkerBeforeStart
+        )),
+    );
 }

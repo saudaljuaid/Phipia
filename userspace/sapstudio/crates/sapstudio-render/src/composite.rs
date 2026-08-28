@@ -313,17 +313,27 @@ pub fn masked(frame: &Frame, coverage: &[u8]) -> Result<Frame> {
     if coverage.len().checked_mul(CHANNELS) != Some(samples.len()) {
         return Err(RenderStatus::CoverageSizeMismatch);
     }
+    let table = TransferTable::build(described.colour())?;
+    let fractions = coverage_table()?;
     let mut out = reserved(samples.len())?;
-    for (pixel, fraction) in samples.chunks_exact(CHANNELS).zip(coverage) {
-        for sample in pixel {
-            // Exact integer arithmetic, rounded half away from zero, so a wipe
-            // is the same wipe on every machine (R-4.1). Full coverage is a
-            // multiply by 255/255, which is exact, so an unmasked pixel
-            // arrives unchanged rather than nearly unchanged.
-            let scaled = i64::from(*sample) * i64::from(*fraction);
-            let full = i64::from(u8::MAX);
-            out.push(u8::try_from((scaled * 2 + full) / (full * 2)).unwrap_or(u8::MAX));
+    for (pixel, ink) in samples.chunks_exact(CHANNELS).zip(coverage) {
+        // Colour in light, coverage in its stored value -- the same division
+        // [`faded`] makes and for the same reason. A mask that scaled its
+        // colour in code values would darken every soft edge it drew by
+        // exactly the amount the transfer curve bends, which reads as a fringe
+        // rather than as a bug.
+        let fraction = fractions[usize::from(*ink)];
+        // Full coverage is a multiply by 255/255, which is exact, so an
+        // unmasked pixel arrives unchanged rather than nearly unchanged.
+        let scaled = i64::from(pixel[ALPHA]) * i64::from(*ink);
+        let full = i64::from(u8::MAX);
+        let masked_coverage = u8::try_from((scaled * 2 + full) / (full * 2)).unwrap_or(u8::MAX);
+        let ceiling = fractions[usize::from(masked_coverage)];
+        for &code in &pixel[..ALPHA] {
+            let light = table.decode(code).checked_mul(fraction)?;
+            out.push(table.encode(held_under(light, ceiling)));
         }
+        out.push(masked_coverage);
     }
     Ok(Frame::from_packed(described, &out)?)
 }
@@ -343,14 +353,25 @@ fn reserved(bytes: usize) -> Result<Vec<u8>> {
 /// halving the colour too — anything else would leave a frame claiming more
 /// colour than its coverage allows, which [`over`] refuses and is right to.
 ///
-/// The scaling is on the *stored* values rather than in linear light, and that
-/// is not an oversight: coverage is not light, and a premultiplied colour
-/// sample is a coverage-weighted quantity. `over` decodes both sides
-/// afterwards, so the light arithmetic still happens where it belongs.
+/// The **colour** is scaled in linear light and the **coverage** is scaled in
+/// its stored value, and those are two different things because only one of
+/// them is light. This is the correction of a real bug: the first version
+/// scaled both in code values and defended it in a comment — "coverage is not
+/// light, and a premultiplied colour sample is a coverage-weighted quantity"
+/// — which is true of the coverage and false of the colour. A premultiplied
+/// sample stores `encode(colour x coverage)`, and `encode(c) x t` is not
+/// `encode(c x t)` for any transfer curve that bends.
+///
+/// What it cost: a dissolve between two *identical* pictures dipped by as much
+/// as twenty-eight code values in the middle, which is a visible sag in the
+/// middle of every dissolve between two shots of anything. Every test the
+/// project had faded a layer that was **black**, where nought times anything
+/// is nought and the two arithmetics agree — the third time that particular
+/// blind spot has cost something here.
 ///
 /// This is what makes a dissolve need no operator of its own: fade the
 /// incoming layer and put it `over` the outgoing one, and the result is
-/// `in x t + out x (1 - t)`.
+/// `in x t + out x (1 - t)` — which is now true rather than nearly true.
 ///
 /// # Errors
 ///
@@ -365,18 +386,49 @@ pub fn faded(frame: &Frame, opacity: Rational) -> Result<Frame> {
         // multiply by one: a layer nobody is dissolving must arrive exactly.
         return Ok(frame.clone());
     }
+    let table = TransferTable::build(described.colour())?;
+    let fractions = coverage_table()?;
+    let fraction = Fixed::from_rational(opacity).map_err(RenderStatus::Time)?;
     let samples = frame.to_packed()?;
     let mut out = reserved(samples.len())?;
-    let numerator = opacity.numerator();
-    let denominator = opacity.denominator();
-    for sample in &samples {
-        // Exact integer arithmetic, rounded half away from zero, so a fade is
-        // the same fade on every machine (R-4.1).
-        let scaled = i64::from(*sample)
-            .checked_mul(numerator)
-            .ok_or(RenderStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
-        let rounded = (scaled * 2 + denominator) / (denominator * 2);
-        out.push(u8::try_from(rounded.clamp(0, 255)).unwrap_or(255));
+    for pixel in samples.chunks_exact(CHANNELS) {
+        let faded_coverage = scaled_coverage(pixel[ALPHA], opacity)?;
+        let ceiling = fractions[usize::from(faded_coverage)];
+        for &code in &pixel[..ALPHA] {
+            let light = table.decode(code).checked_mul(fraction)?;
+            out.push(table.encode(held_under(light, ceiling)));
+        }
+        out.push(faded_coverage);
     }
     Ok(Frame::from_packed(described, &out)?)
+}
+
+/// A light value no brighter than the coverage carrying it.
+///
+/// Not a fudge and not a clamp for safety: this *is* what premultiplied means.
+/// The colour is scaled through a curve and the coverage is scaled as an
+/// integer, and the two roundings land a fraction apart — so a sample that was
+/// exactly at its coverage can come out a code value above it, which
+/// [`checked_premultiplied`] refuses and is right to. Enforcing the invariant
+/// here is the whole of the fix, and it costs nothing when the sample is
+/// anywhere below the limit, which is almost always.
+fn held_under(light: Fixed, ceiling: Fixed) -> Fixed {
+    let held = clamp_to_one(light);
+    if held > ceiling { ceiling } else { held }
+}
+
+/// A coverage byte at a fraction of itself, exactly.
+///
+/// Integer arithmetic on the stored value, rounded half away from zero, so a
+/// fade is the same fade on every machine (R-4.1). Coverage really *is* linear
+/// in its code value — it is a fraction of a pixel, not an amount of light —
+/// so this is the one channel that must not go through the transfer curve.
+fn scaled_coverage(coverage: u8, fraction: Rational) -> Result<u8> {
+    let numerator = fraction.numerator();
+    let denominator = fraction.denominator();
+    let scaled = i64::from(coverage)
+        .checked_mul(numerator)
+        .ok_or(RenderStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+    let rounded = (scaled * 2 + denominator) / (denominator * 2);
+    Ok(u8::try_from(rounded.clamp(0, 255)).unwrap_or(255))
 }

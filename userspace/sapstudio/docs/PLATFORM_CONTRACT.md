@@ -24,7 +24,7 @@ Read from the source, not from expectations:
 | Storage | Read-only FAT16 on emulated NVMe, three frozen root entries, no path API, no VFS, no write path | `src/kernel/filesystem.c` |
 | Memory to a program | 12 image pages, 4 stack pages, 2 heap pages, 1 anonymous page — 76 KiB in total | `include/sapote/paging.h` |
 | Framebuffer | Kernel-owned, mapped write-combining, presented through a cached surface with damage tracking | `src/kernel/framebuffer.c`, `src/kernel/surface.c` |
-| Input | Kernel-owned PS/2 keyboard and three-byte pointer, consumed by First Light | `src/kernel/keyboard.c`, `src/kernel/pointer.c` |
+| Input | Kernel-owned PS/2 keyboard and three-byte pointer, consumed by Sapote Redwood | `src/kernel/keyboard.c`, `src/kernel/pointer.c` |
 | Time | `clock_monotonic_ns()` from a calibrated TSC, cross-checked against the ACPI PM timer; kernel-only | `src/kernel/clock.c` |
 | Threads | Kernel threads with guarded stacks and preemption, capacity 8; no userspace threads | `include/sapote/thread.h` |
 | Cores | One | `docs/ARCHITECTURE.md` |
@@ -124,8 +124,8 @@ a nightly toolchain. SapStudio does not, for the same reason Sapote pins a
 stable compiler: a toolchain requirement is a promise to everyone who ever
 builds the thing.
 
-**The image already exceeds what Sapote can map.** The current build is 70
-pages, 280 KiB in total, against the 76 KiB a Sapote program is given today —
+**The image already exceeds what Sapote can map.** The current build is 75
+pages, 300 KiB in total, against the 76 KiB a Sapote program is given today —
 and that is a program with no picture and no interface, whose frames are
 sixteen pixels wide because that is what fits. The first thing `SAP-03`
 unblocks is not video; it is the program itself.
@@ -136,34 +136,98 @@ section and attributes every sized symbol to the crate that emitted it:
 
 | Section | Pages | Share |
 | --- | --- | --- |
-| `.text` | 47 | 68% |
-| `.rodata` | 5 | 7% |
-| `.bss` | 17 | 25% |
+| `.text` | 71.0 | 74.7% |
+| `.rodata` | 7.0 | 7.4% |
+| `.bss` | 17.0 | 17.9% |
 
-**Sixteen of those seventy pages are one constant.** `sapstudio_rt::HEAP` is
-`HEAP_BYTES`, sixty-four kibibytes of static arena, and it is a *reservation*
-rather than anything the program contains. Reading the total as "the program
-has grown" — which every earlier entry in the table below did — was wrong in a
-way that mattered: the code went from twenty pages to twenty-six over the same
-period, and sixteen pages never moved at all.
+Re-measured at this commit rather than carried forward. An earlier version of
+this table had been left standing while the growth history below moved on
+under it, which is the exact failure the history exists to prevent — a number
+in a document is only evidence of what it was measured on.
 
-The rest, by crate:
+**And it happened again, worse, for a reason the tool was hiding.** The tables
+here went stale over several milestones, and could not have been refreshed:
+`tools/footprint.py` read Rust's *legacy* mangling, the toolchain emits **v0**,
+and so every symbol in the image fell into one bucket called `(unmangled)`
+while the line underneath went on printing "attributed in total". A blind
+reader still produces a table. It just has one row in it.
+
+The reader now understands both manglings, refuses when more than five per
+cent of the sized symbols carry a name it cannot parse, and checks itself
+against five real symbols before it reads anything at all. The measured
+unreadable share is **0.27%** — 965 bytes, every one a compiler intrinsic with
+a C name (`memcmp`, `memset`, `__udivti3`), which carry no crate and never
+will.
+
+**Seventeen of those ninety-five pages are one constant.**
+`sapstudio_rt::HEAP` is `HEAP_BYTES`, sixty-four kibibytes of static arena,
+and it is a *reservation* rather than anything the program contains. Reading
+the total as "the program has grown" — which every earlier entry in the table
+below did — was wrong in a way that mattered: the code has gone from twenty
+pages to fifty-four over the same period, and the arena never moved at all.
+
+The rest, by crate, read from the mangling:
 
 | Pages | Crate |
 | --- | --- |
-| 16.0 | `sapstudio-rt` — the arena, almost entirely |
-| 15.3 | `sapstudio-render` |
-| 8.8 | `sapstudio-model` |
-| 5.9 | `sapstudio-io` |
-| 4.0 | `sapstudio-app` |
-| 2.7 | `sapstudio-core` |
-| 2.4 | `core` |
+| 23.4 | `sapstudio-render` |
+| 19.8 | `sapstudio-model` |
+| 16.1 | `sapstudio-rt` — the arena, almost entirely |
+| 9.2 | `sapstudio-io` |
+| 5.1 | `core` |
+| 5.0 | `sapstudio-app` |
+| 2.9 | `sapstudio-core` |
 | 2.4 | `sapstudio-media` |
+| 1.4 | `alloc` |
+| 0.4 | everything else — `compiler_builtins`, the compiler's own shim crate, and the C-named intrinsics |
+| 0.1 | `sapstudio-abi` |
 
-`sapstudio_io::format::encode` is the largest single function at 7,194 bytes,
-then `Edit::apply` at 6,525 and `Lut3D::look_up` at 5,230. Some pages are not
-attributed at all: padding, literals, and anything the symbol table does not
-carry a size for.
+`sapstudio_io::format::encode` is the largest single function at **10,970
+bytes**, then `Edit::apply` at 8,003, `format::decode_payload` at 7,902,
+`Graph::evaluate` at 6,488, `Sequence::stack_at` at 5,923 and `Lut3D::look_up`
+at 5,232. `Face::stencil`, which held this list at 23,807 bytes, does not
+appear on it at all any more — the face moved into read-only data and the
+number went with it, which is the change the entry below records and which
+this table had never been updated to show.
+
+Some pages are not attributed at all — 9.2 of them: padding, literals, and
+anything the symbol table does not carry a size for.
+
+**The largest-function title has changed hands three times, and each move was
+structural.** `Face::stencil` took it at
+23,807 bytes, and the reason was structural rather than careless: the face was
+a table of seventy-one glyphs written as literal coordinates *inside a
+function*, so the compiler emitted every coordinate as an instruction that
+stores it. Twenty-six lowercase glyphs had cost 7,888 bytes — a little over
+three hundred each, for four to six rectangles of eight small integers.
+
+As a `static` the table lives in `.rodata` at roughly its own size. `.rodata`
+went from five pages to six and `.text` lost five, so the image went from 91
+pages to **87**: four back, for a change that moved no coordinate.
+
+That last clause is the part worth having a test for, and it already existed.
+The specimen came out **byte for byte identical**, which is what makes this a
+change to how the face is written rather than to what it says — and it is the
+reason a face is kept as a picture at all.
+
+`Edit::apply` is worth naming twice, and its history is the clearest thing in
+this document about how little a single number says. It was 6,525 bytes when
+this table was first written; it grew to 17,597 by M8.22, because it is a
+match over every edit the model has and *every* feature that adds an edit adds
+an arm to one function; and it is **8,003 today**, having lost more than half
+its size in a single commit that only added a field.
+
+That fall is not an optimisation anybody wrote. Past a certain `Clip` size the
+compiler stops emitting an inline copy of a clip in each of that function's
+arms and calls out instead — and the work does not vanish, it moves: the seven
+helpers `apply` now calls took 7,381 of the 9,599 bytes straight back. The
+title returned to `format::encode`, which has held it at 10,970 since.
+
+The lesson the paragraph originally carried still holds and is now the smaller
+half of it: a match over every edit is a function that grows with the feature
+list, and it is a place to look when the image has to come down. The larger
+half is that **its size is not a property of the code alone**, and neither is
+any other single figure in this document.
 
 **The heap is eighty-four per cent of what a Sapote program is given, on its
 own.** That reframes the problem: the largest single question about this
@@ -205,6 +269,85 @@ is how a program stops fitting:
 | 69 | masks: the shape on a clip, its edit, its format, and its rasterisation |
 | 70 | one asset per digest, and a location hint beside it |
 | 70 | offline media: the slate and the planner's question, for **no growth** |
+| 75 | resampling and the transform that uses it, reached through the graph |
+| 78 | motion: a framing that animates, and the re-basing a cut through one needs |
+| 80 | rolling a cut and sliding an item, which `Edit::apply` reaches and so the image links |
+| 80 | a face written from scratch, for **no growth** — nothing in the image sets type |
+| 87 | the slate naming its media — **seven pages**, and all of it the face being *reached* |
+| 89 | titles as media: the model, the format, the node, and the planner that chooses it |
+| 91 | lowercase — twenty-six glyphs, and `Face::stencil` becomes the largest function in the image |
+| 87 | the face moved into read-only data: **four pages back**, and the specimen byte for byte identical |
+| 88 | a card of several lines, aligned — one page, all of it the block layout |
+| 90 | a fade on a clip, and the transfer table the corrected compositor now builds twice |
+| 91 | retiming: an exact rational speed on a clip, and the mapping every frame goes through |
+| 92 | a title's colour, named in light and encoded through the frame's own table |
+| 93 | the span of media a clip reads, which the library check now asks it for |
+| 93 | a freeze, for **no growth**: a third value for a tag that already existed |
+| 91 | an opacity a clip animates — **two pages back**, and not for the reason it looks like |
+| 93 | a mask a clip animates: two pages back again, and for the mirror of that reason |
+| 94 | an animated grade — one page on, while the largest function in the image *fell* 9,599 bytes |
+| 94 | an exact turn on a mask and a framing, for **no growth at all**: 143 bytes net, inside `.text`'s own page padding |
+| 95 | the point a framing acts about — 816 bytes, which is one page because the padding the last change fitted inside was spent |
+| 96 | a razor and a merge across every track at once — 5,527 bytes, a third of it `Edit::apply`'s two new arms |
+| 96 | a lift, and the drop that undoes it — 1,512 bytes, inside the page padding again |
+| 98 | markers — 5,389 bytes, a third of it `Edit::apply`'s three new arms and a third the format's two halves |
+
+**A total that moves has a location.** M8.23 took `Clip` from 416 bytes to 440
+and the image from 93 pages to 94 — and `Edit::apply`, the largest function in
+the image, **fell 9,599 bytes** over the same commit. The threshold effect
+M8.21 first recorded fired again: past a certain size the optimiser stops
+emitting an inline copy of a clip in each of that function's many arms.
+
+What no earlier entry had done is ask where the bytes went. They went into the
+functions it now calls: `refade` +1,257, `remotion` +1,245, `reshape` +1,194,
+`slip` +1,077, `regrade` +1,009, `remove` +962 and `retime` +637 — **7,381** of
+the 9,599, straight back. The optimiser did not delete the work when it stopped
+inlining it; it relocated it.
+
+So a footprint that falls when a struct grows is a relocation rather than a
+saving, and the entries below that read such a fall as one were reading a total
+where a location was the fact. The tool has printed the largest symbols since
+`make audit` learned to; subtracting two of its runs is all this took.
+
+**Two pages back, from a milestone that only added things.** M8.21 put an
+opacity curve on a clip, an edit to set it, two functions and a lane in the
+file — and the image *fell* from 93 pages to 91. `sapstudio-model` lost 7,376
+bytes and `Edit::apply` alone lost 3,447 of them.
+
+Nothing in the diff explains that, so it was tested rather than explained. On
+the **previous** commit, with none of M8.21's code, a dummy `[u64; 3]` added to
+`Clip` — twenty-four bytes of nothing, exactly what the opacity field costs —
+takes the image to **91 pages** and `Edit::apply` to 16,476 bytes. The saving
+was bought by the clip crossing 320 bytes, not by anything the milestone added:
+past that size the optimiser stops emitting an inline copy of a clip in each of
+`Edit::apply`'s many arms and calls out instead.
+
+So a struct getting *bigger* made the program smaller. The seventy-six
+kibibytes are the program's, not the struct's, and this is the clearest case
+yet that the two are not the same measurement — and that a page count credited
+to the change that happened to be in flight is a page count credited to the
+wrong thing.
+
+And the very next milestone put both pages back. M8.22 gave a clip a second
+`Option<Motion>` — 72 bytes, three lanes of curve — taking `Clip` from 344 to
+**416**, and the image returned to 93 pages. So the relationship is not
+monotone either: 320 → 344 saved two pages and 344 → 416 spent them. There is
+one threshold effect at one size, not a trend to lean on, and the only way to
+know which side of it a change lands on is to build the image and look.
+
+**The same pair again, at seven times the size.** The face was written in one
+commit and cost **nothing** — no symbol of it appeared in the image, because
+nothing in the image set type. One commit later the planner names a `Legend`
+on an offline slate, `Graph::evaluate` calls `font::caption`, and the image
+went from 80 pages to **87**. `Face::stencil` alone is 15,919 bytes: it is a
+table of forty-five glyphs built with literal coordinates, and the compiler
+emits every one of them as code.
+
+That is nine per cent of a Sapote program's whole address space spent on being
+able to write eight characters on a slate, and it is the clearest case yet for
+the split this section keeps arriving at. The face is exactly the kind of thing
+an editing program loads *when it needs it* — and cannot, today, because there
+is no `SAP-03` to load it with.
 
 **And the converse, one commit later.** Wipes cost two pages, every byte of
 them `.text`, and `sapstudio-render` went from 11.2 pages to 13.0. The

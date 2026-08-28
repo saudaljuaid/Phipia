@@ -51,6 +51,8 @@ pub enum RenderStatus {
     /// A look asked of premultiplied coverage, where a non-linear function
     /// computes the wrong thing at every coverage but full.
     LookPremultiplied,
+    /// A grade asked for at a strength outside none of it to all of it.
+    LookStrengthOutOfRange,
     /// A source answered with a frame that is not the one asked for.
     SourceDescriptionMismatch,
     /// An edge whose coefficients name no line.
@@ -61,6 +63,12 @@ pub enum RenderStatus {
     ShapeTooComplex,
     /// A coverage plane whose size does not match the frame it is for.
     CoverageSizeMismatch,
+    /// A character this face has no glyph for.
+    NoSuchGlyph,
+    /// A run of text longer than this draws.
+    TextTooLong,
+    /// A type size at or below nothing.
+    SizeNotPositive,
 }
 
 impl RenderStatus {
@@ -88,11 +96,17 @@ impl RenderStatus {
             Self::LookSpaceMismatch => "that frame is not in the encoding this look was made for",
             Self::LookNotRgb => "a look maps three colour channels, and that format has other ones",
             Self::LookPremultiplied => "a look needs straight coverage, not premultiplied",
+            Self::LookStrengthOutOfRange => {
+                "a grade's strength runs from none of the look to all of it"
+            }
             Self::SourceDescriptionMismatch => "the source answered with a different frame",
             Self::DegenerateEdge => "an edge with no direction names no line",
             Self::DegenerateShape => "that shape encloses nothing",
             Self::ShapeTooComplex => "that shape has more edges than this rasterises",
             Self::CoverageSizeMismatch => "the coverage plane is not the size of the frame",
+            Self::NoSuchGlyph => "this face has no glyph for that character",
+            Self::TextTooLong => "that run of text is longer than this draws",
+            Self::SizeNotPositive => "type has to be some size",
         }
     }
 }

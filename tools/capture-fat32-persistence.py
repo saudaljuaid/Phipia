@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Capture a real First Light FAT32 create/sync/reboot/read interaction.
+"""Capture a real Sapote Redwood FAT32 create/sync/reboot/read interaction.
 
 The clean reboot boundary tears down the first emulator after the guest's
 synchronization proof, then starts a second QEMU process on the same data image.
@@ -101,7 +101,7 @@ def send_line(qmp, text):
 
 
 def open_terminal(qmp):
-    """Open Terminal through ordinary First Environment keyboard focus."""
+    """Open Terminal through ordinary Sapote Redwood keyboard focus."""
     qmp.hmp("sendkey tab")
     time.sleep(0.10)
     qmp.hmp("sendkey ret")

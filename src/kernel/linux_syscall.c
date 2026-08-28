@@ -943,8 +943,8 @@ enum linux_syscall_status linux_syscall_cat_complete_read(
     runtime.cat_authenticated_frame.rax = (uint64_t)byte_count;
     runtime.cat_read_state = LINUX_CAT_READ_READY;
     console_serial_write(eof ?
-        "FL CAT EOF converted to zero-length read result\n" :
-        "FL CAT destination validated and all-or-nothing copy-out complete\n");
+        "RW CAT EOF converted to zero-length read result\n" :
+        "RW CAT destination validated and all-or-nothing copy-out complete\n");
     return LINUX_SYSCALL_STATUS_OK;
 }
 
@@ -990,7 +990,7 @@ const struct linux_syscall_frame *linux_syscall_cat_resume_frame(
     runtime.cat_read_state = LINUX_CAT_READ_RESUMED;
     ++runtime.result.cat_resume_count;
     console_serial_write(
-        "FL CAT authenticated process generation ready to resume\n");
+        "RW CAT authenticated process generation ready to resume\n");
     return &runtime.cat_saved_frame;
 }
 
@@ -2215,7 +2215,7 @@ static enum linux_syscall_status execute_cat_call(
         runtime.cat_saved_valid = true;
         runtime.cat_read_state = LINUX_CAT_READ_WAITING;
         runtime.result.cat_wait_observed = true;
-        console_serial_write("FL CAT authentic read SYSCALL observed\n");
+        console_serial_write("RW CAT authentic read SYSCALL observed\n");
         *return_value = 0U;
         return LINUX_SYSCALL_STATUS_OK;
     }
@@ -2232,12 +2232,12 @@ static enum linux_syscall_status execute_cat_call(
                 runtime.cat_output_bytes)) {
             return LINUX_SYSCALL_STATUS_STDOUT;
         }
-        console_serial_write("FL CAT authentic write SYSCALL observed\n");
+        console_serial_write("RW CAT authentic write SYSCALL observed\n");
         if (runtime.context.publish_stdout) {
-            console_serial_write("FL CAT userspace stdout begin\n");
+            console_serial_write("RW CAT userspace stdout begin\n");
             console_write_n((const char *)output,
                 runtime.cat_output_bytes);
-            console_serial_write("FL CAT userspace stdout accepted\n");
+            console_serial_write("RW CAT userspace stdout accepted\n");
         }
         runtime.result.stdout_bytes += runtime.cat_output_bytes;
         runtime.result.stdout_valid = true;
@@ -2263,7 +2263,7 @@ static enum linux_syscall_status execute_cat_call(
         runtime.cat_read_state = LINUX_CAT_READ_RELEASED;
         runtime.cat_phase = CAT_SYSCALL_RELEASED;
         cat_release_saved_read();
-        console_serial_write("FL CAT exit status zero observed\n");
+        console_serial_write("RW CAT exit status zero observed\n");
         *return_value = 0U;
         return LINUX_SYSCALL_STATUS_OK;
     case CAT_SYSCALL_RELEASED:
@@ -2377,7 +2377,7 @@ uintptr_t linux_syscall_dispatch(struct linux_syscall_frame *frame)
             runtime.result.status = LINUX_SYSCALL_STATUS_RESTORE;
         }
         console_serial_write(
-            "FL CAT suspended with kernel CR3 and safe stack restored\n");
+            "RW CAT suspended with kernel CR3 and safe stack restored\n");
         return linux_process_resume_stack();
     }
     if (runtime.context.profile == LINUX_SYSCALL_PROFILE_CAT) {

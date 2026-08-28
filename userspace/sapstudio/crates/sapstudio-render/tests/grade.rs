@@ -139,6 +139,7 @@ fn a_look_node_grades_what_it_reads() {
         .add(Node::Look {
             input: source,
             look: look.digest().expect("a digest"),
+            strength: Rational::ONE,
         })
         .expect("a node");
 
@@ -198,6 +199,7 @@ fn a_grade_edited_between_renders_is_a_different_key() {
             .add(Node::Look {
                 input: source,
                 look: look.digest().expect("a digest"),
+                strength: Rational::ONE,
             })
             .expect("a node");
         graph
@@ -277,6 +279,7 @@ fn the_same_grade_twice_is_computed_once() {
                 .add(Node::Look {
                     input: base,
                     look: look.digest().expect("a digest"),
+                    strength: Rational::ONE,
                 })
                 .expect("a node"),
         );
@@ -351,6 +354,7 @@ fn a_look_the_library_does_not_hold_is_refused() {
         .add(Node::Look {
             input: source,
             look: look.digest().expect("a digest"),
+            strength: Rational::ONE,
         })
         .expect("a node");
     let mut pool = FramePool::new(64, 1 << 20);
@@ -358,4 +362,82 @@ fn a_look_the_library_does_not_hold_is_refused() {
         graph.evaluate(graded, &mut pool, &mut held).is_err(),
         "a missing look rendered as though there were none"
     );
+}
+
+#[test]
+fn the_strength_is_in_the_nodes_identity() {
+    // A look coming on over a shot is a different picture at every frame. A
+    // key that named the look and not how much of it was on would serve the
+    // whole arrival out of one cache entry — which is the same fault as
+    // leaving the tick out of a source's identity, and that one is already in
+    // this project's table.
+    let look = Look::new(swap(5), colour(), Interpolation::Tetrahedral);
+    let mut held = library([200, 40, 10], std::slice::from_ref(&look));
+
+    let mut graph = Graph::new();
+    let source = graph
+        .add(Node::Source {
+            media: Digest::of(b"footage"),
+            tick: 0,
+            description: described(),
+        })
+        .expect("a node");
+    let mut ids = std::vec::Vec::new();
+    let strengths = [
+        Rational::ZERO,
+        Rational::new(1, 3).expect("a ratio"),
+        Rational::new(2, 3).expect("a ratio"),
+        Rational::ONE,
+    ];
+    for strength in strengths {
+        ids.push(
+            graph
+                .add(Node::Look {
+                    input: source,
+                    look: look.digest().expect("a digest"),
+                    strength,
+                })
+                .expect("a node"),
+        );
+    }
+    let identities: std::vec::Vec<Digest> = ids
+        .iter()
+        .map(|id| graph.identity(*id).expect("an identity"))
+        .collect();
+    for (first, later) in
+        (0..identities.len()).flat_map(|i| (i + 1..identities.len()).map(move |j| (i, j)))
+    {
+        assert_ne!(
+            identities[first], identities[later],
+            "two strengths of one look share an identity, so a cache would \
+             answer one with the other"
+        );
+    }
+
+    // And the pictures really are different, so the identities above are not
+    // distinguishing things that happen to look the same anyway.
+    let mut pool = FramePool::new(64, 1 << 20);
+    let mut pictures = std::vec::Vec::new();
+    for id in ids {
+        pictures.push(
+            graph
+                .evaluate(id, &mut pool, &mut held)
+                .expect("a frame")
+                .to_packed()
+                .expect("bytes"),
+        );
+    }
+    assert_eq!(
+        &pictures[0][..3],
+        &[200, 40, 10],
+        "no strength is the source"
+    );
+    assert_eq!(
+        &pictures[3][..3],
+        &[10, 40, 200],
+        "full strength is the look"
+    );
+    for pair in pictures.windows(2) {
+        assert_ne!(pair[0], pair[1], "two strengths drew the same picture");
+    }
 }

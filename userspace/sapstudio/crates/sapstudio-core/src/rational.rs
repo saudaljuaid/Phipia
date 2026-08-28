@@ -33,6 +33,12 @@ const ONE_DENOMINATOR: NonZeroI64 = match NonZeroI64::new(1) {
     None => panic!("one is not zero"),
 };
 
+/// Two, as a non-zero denominator, in a const context.
+const TWO_DENOMINATOR: NonZeroI64 = match NonZeroI64::new(2) {
+    Some(two) => two,
+    None => panic!("two is not zero"),
+};
+
 impl Rational {
     /// Zero.
     pub const ZERO: Self = Self {
@@ -44,6 +50,16 @@ impl Rational {
     pub const ONE: Self = Self {
         numerator: 1,
         denominator: ONE_DENOMINATOR,
+    };
+
+    /// A half.
+    ///
+    /// Here rather than at each call site because it is the middle of a frame,
+    /// and a `const` cannot call [`Rational::new`] to find that out — the
+    /// reduction is a loop. Already reduced: two is even and one is not.
+    pub const HALF: Self = Self {
+        numerator: 1,
+        denominator: TWO_DENOMINATOR,
     };
 
     /// Build a rational from a numerator and denominator, reducing it.

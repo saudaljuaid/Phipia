@@ -98,8 +98,8 @@
  * The runtime layout check is what the self-test drives; this assertion keeps
  * the linked and runtime policies together.
  */
-#define PAGING_KERNEL_IMAGE_LIMIT UINT64_C(0x800000)
-#define PAGING_MAX_KERNEL_FINE_REGIONS 4U
+#define PAGING_KERNEL_IMAGE_LIMIT UINT64_C(0x3000000)
+#define PAGING_MAX_KERNEL_FINE_REGIONS 24U
 #define PAGING_MAX_SECTIONS 4U
 
 _Static_assert(

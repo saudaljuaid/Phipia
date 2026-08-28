@@ -254,7 +254,7 @@ Examples this project will need:
 | A concave outline is refused | Follow whichever way the last corner turned | An arrowhead stops being refused |
 | Corners in a line enclose nothing | Accept a polygon that never turns | Three collinear points become a mask |
 | A mask survives a rebuild | Drop it in `with_source` | A slip loses the shape |
-| A mask's winding is measured, not assumed | Take one direction as given | The same shape given the other way round inverts |
+| A convex region's winding is measured, not assumed | Take one direction as given | The same shape given the other way round inverts — and this now guards the resampler too, which shares the constructor |
 | An inversion flips the byte, not the shape | Ignore the flag | A mask and its inversion stop summing to full coverage |
 | A mask's corners are fractions of the frame | Read them as pixels | A half-by-half rectangle stops covering a quarter |
 | The file carries a clip's mask | Write the absent flag for every clip | A shape does not come back |
@@ -271,6 +271,307 @@ Examples this project will need:
 | An offline slate's period is a fraction of the frame | Fix it at sixteen pixels | The slate is a solid colour on a small frame |
 | An offline slate runs diagonally | Vary along one axis only | It becomes bars, which a programme may contain |
 | Each test pattern has its own identity | Give two the same tag | Five patterns produce four identities |
+| Resampling happens in linear light | Average the code values | A checkerboard of 64 and 192 reads 188 rather than 146 — but only after a fixture whose values are not the transfer's fixed points |
+| The weights are the exact overlap areas | Leave out the division by the footprint | A flat field stops surviving a scale |
+| Bilinear samples at pixel centres | Sample at the corner | The picture shifts half a pixel up and left |
+| Outside the source contributes nothing | Clamp to the nearest edge pixel | The edge column smears outwards instead of stopping |
+| A bilinear sample beyond the last centre clamps | Let it vanish | The last column of an enlarged picture fades out |
+| A map with no inverse is refused | Refuse it as something else | The singular-map test stops naming its refusal |
+| Resampling requires premultiplied samples | Accept straight ones | A keyed edge picks up a dark fringe |
+| A transform that flattens the picture is refused | Never check the determinant | A scale of nought stops being refused |
+| A mirror is not a refusal | Refuse a negative determinant too | Flipping a shot stops being possible |
+| The identity is still, and a move is not | Ignore the offset | A move of a hundredth reads as no move |
+| A transform survives a rebuild | Drop it in `with_source` | A slip loses the framing |
+| A transform acts about the frame's centre | Act about the corner | A halved clip lands in the top-left quarter |
+| A transform that moves nothing adds no node | Add one anyway | The identity is resampled |
+| A mask is in frame coordinates, after the transform | Mask before moving | The mask travels with the clip |
+| The file carries a transform's filter | Write area for every one | Bilinear comes back as area |
+| A file's transform goes through the model's constructor | Build a fresh one instead | A file describing a flattening transform stops being refused |
+| A motion is measured from the clip's own start | Measure it from the programme | A shot moved down the timeline arrives mid-push-in |
+| The stack resolves the motion at all | Hand out the base framing | Every animated clip holds its first frame's size |
+| A split re-bases the tail's animation | Carry it across unchanged | The move restarts at every cut |
+| A shift keeps the keyframes that land before nought | Drop them as out of range | The tail's opening frames flatten to a hold |
+| A join checks two present animations line up | Accept any two | Joining keeps the first's move and discards the second's |
+| A join refuses an animation on only one side | Accept those too | Half an animation survives a join that had no business happening |
+| An overshooting ease is caught before it becomes a framing | Drop the guard in `moved_by` | A scale that dips below nothing becomes a framing rather than a refusal |
+| A scale keyframe at nought or below is refused | Refuse only `i64::MIN` | A keyframe at nought flattens the picture onto a point |
+| A motion that animates nothing is refused | Hold it | An empty motion reads as an animated clip |
+| An absent scale lane reads one, not nought | Read nought | A clip that animates only its position vanishes |
+| The base's filter survives the motion | Force area | Every animated enlargement gets the reduction filter |
+| The format's three lanes are written in the order it reads | Swap two | A saved push-in comes back as a move, or is refused outright |
+| A motion needs a framing to animate | Accept a clip with none | A project holds an animation with nothing to scale |
+| The framing cannot be taken off an animated clip | Allow it | The same state by the other door |
+| A motion counted another way is refused when it is set | Compare a lane with itself | The render finds out instead of the editor |
+| A file cannot animate a clip with nothing to animate | Skip the check | A file produces a project no sequence of edits could |
+| A motion tag this build does not read is refused | Read it as no animation | A future file's animation is silently dropped |
+| A roll moves the incoming clip's in point too | Leave it where it was | The cut moves and the same frame is still under it |
+| A roll gives to one side what it takes from the other | Give half | Every roll changes how long the programme is |
+| A roll that eats a side is refused | Floor the length at one tick | A roll past a clip's end silently deletes it |
+| A roll cannot reach before its media begins | Floor the in point at nought | A roll asks for frames that were never shot |
+| A roll names the cut by the item after it | Never refuse a boundary of nought | The subtraction goes round the houses |
+| A slide leaves the item it slides alone | Lengthen it too | Sliding a shot re-times it |
+| An item needs a neighbour on the side it slides away from | Never refuse an item at the start | The subtraction again |
+| A trim re-checks the dissolves it moved | Trust the check that ran when it was drawn | A trim leaves a transition the track cannot perform |
+| A dissolve needs a handle as well as a length | Ask for no handle | A roll leaves a dissolve starting before its clip's media |
+| A refused trim writes nothing | Write first, check after | Half a cut nobody made |
+| A trim checks the dissolve against what it is about to write | Check against what is there now | The check passes and then the write breaks it |
+| A roll's inverse turns the sign round | Take its absolute value | Undoing a roll rolls further the same way |
+| A slide's inverse turns the sign round | Hand back the same number | Undoing a slide slides again |
+| A glyph's pieces do not overlap | Widen `E`'s top bar over its stem | The sum stops being the union's area |
+| The rasteriser refuses a face whose pieces overlap | Widen `F`'s top bar the same way | A pixel covered twice, drawn as if once |
+| A glyph's area is the shoelace sum halved | Do not halve it | Every area is twice what it is |
+| A crossbar is computed from the strokes it meets | Take the wrong edge of one | `A`'s bar overshoots its own leg |
+| A character this face cannot set is refused | Hand back the first glyph | A slate prints a message it was not given |
+| The pen advances between glyphs | Advance by nothing | Every letter is drawn on the one before |
+| The advance is wider than the box | Narrow it to the box | Adjacent letters start sharing pixels |
+| A run is placed where it was asked | Ignore the vertical origin | Every line of a caption lands on the first |
+| The size scales the glyph | Scale only across | Type is one em tall at every size |
+| Type has to be some size | Accept nought | A run at no size is drawn rather than refused |
+| A run longer than this draws is refused | Accept any length | The bound is a comment |
+| A piece's bounding box contains the piece | Take one more pixel off it | The right-hand column of every stroke is dropped |
+| A run is as wide as its advance, not its box | Measure by the box | Every measured caption comes up short |
+| Type is premultiplied in light, not in code values | Write the coverage into the colour | Every edge of every caption is too dark by what the curve bends |
+| The brief caption is tried when the long one will not fit | Give up after the first | A proxy slate says nothing rather than saying the digest |
+| A caption's words are in its identity | Hash whether each is empty | Two offline clips share one slate |
+| A caption's length is in its identity | Hash the bytes alone | Two captions that concatenate the same collide |
+| A caption is centred on its ink, not on its advance | Measure by the advance | Every caption sits left of centre by half a side bearing |
+| A caption keeps its margin | Use the whole width | Type runs into both edges of the frame |
+| A caption below the floor is not set | Set it at any size | A slate's caption is a grey smear claiming to be information |
+| A caption of nothing is not set | Divide by its width anyway | A refusal where a blank frame was asked for |
+| A caption is capped so it does not become a billboard | Take whatever fits the width | Two characters six hundred pixels tall, mostly off the bottom |
+| An offline slate says which media is missing | Draw the bare pattern | Three milestones of "cannot say which" |
+| The slate names the media by its own digest | Name every clip as zeroes | Every offline clip is the same clip |
+| Every part of a title is in its name | Hash the words and the size only | Two cards in two places become one asset |
+| A title's words are in its name | Hash whether it is empty | Every card in a project is the same card |
+| A title with nothing to say is refused | Hold it | A picture that draws nothing calls itself a title |
+| A title longer than this describes is refused | Take any length | The bound is a comment |
+| Type has to be some size | Refuse only `i64::MIN` | A card at no size, saved and reopened |
+| A title is named by its own description | Give every one the same digest | Every card in every project collides |
+| A title has nowhere to be | Accept a location hint | Somebody relinks a card to a file |
+| Relinking goes through the asset's own refusal | Swallow it in the library | The guard by the other door |
+| A title is drawn rather than fetched | Ask the library for it | Every card renders as an offline slate |
+| A title's words are in its node's identity | Hash none of them | A programme with two cards shows the first twice |
+| A title's size is a fraction of the height | Take it off the width | A card set for 16:9 shrinks when delivered 4:3 |
+| A title is placed where it was told | Read one fraction for both axes | Every card lands on a diagonal |
+| A line is centred on the point it was given | Take the cap line as the centre | Every line sits half an em low |
+| The file says which kind of media an asset is | Write every asset as a recording | Every title comes back as a missing file |
+| A title's words survive the file | Write them as `A`s | The card reopens saying something else |
+| A title's place survives the file | Swap the two fractions | The card reopens somewhere else |
+| A title is named by what it says, in the file too | Skip the check | An edited file repoints every clip of a card |
+| A file cannot say a title is somewhere | Skip the check | A project no sequence of edits could produce |
+| A media source tag this build does not read is refused | Read it as a recording | A future file's titles become missing files |
+| A title's words have to be text | Replace what is not | A file's bytes become a card that says something else |
+| A lowercase body sits on the x-line | Start `c` a half-unit higher | The x-height is whatever each letter felt like |
+| A descender reaches the descender line | Stop `p` one short | A word with a `p` in it sits on a different line |
+| An ascender reaches above the x-line | Cut `l` down to the x-line | `l` and `i` become the same letter |
+| A capital sits on the baseline | Lift `L` off it | Capitals and lowercase stop sharing a line |
+| Nothing hangs below the descender | Claim one half-unit less | The metric stops describing the face |
+| A line leaves room for the descender above it | Set the spacing at the em | Every `g` goes through the `A` below it |
+| The face sets lowercase at all | Name `a` as `A` | A face for slates, not for names |
+| Lowercase pieces do not overlap either | Widen `m`'s shoulder over its stem | The sum stops being the union's area |
+| The specimen shows the whole repertoire | Add a glyph nothing sets | A letter nobody ever looks at |
+| The specimen is the face that is committed | Move `o` half a unit | The picture and the face disagree |
+| An `A` keeps its crossbar | Compute it and drop it | An `A` is two legs and no bar |
+| A `1` keeps its flag | Compute it and drop it | A `1` is a bare stem |
+| The crossbar is computed from the legs it meets | Pass one leg twice | The bar collapses onto itself |
+| A glyph counts the piece it computes | Count only its strokes | The count and the drawing disagree |
+| The table is the whole face | Drop the space from it | A space stops being a character |
+| A glyph's strokes are its own | Give every glyph the first one's | Every letter is a space |
+| A block stacks its lines at the face's line spacing | Stack them at the em | A descender lands on the cap below and the card is refused |
+| A block's lines are stacked at all | Advance by nothing | Every line of a card on top of the first |
+| A block straddles the point it was placed at | Hang it below | A two-line card drops half a block when a line is added |
+| A block is as wide as its widest line | Take the last line's width | Alignment measures against whichever line came last |
+| Left puts a line at the block's left edge | Put it at the right | Left and right are the same alignment |
+| Right puts a line at the block's right edge | Put it at the left | The same, from the other side |
+| One line is set where one line used to be | Make the block an em taller | Every card in every older project moves |
+| A card where every line is blank is refused | Hold it | A picture that draws nothing calls itself a title |
+| A card of more lines than this describes is refused | Take any number | The bound is a comment |
+| The alignment is in the card's name | Hash them all the same | Three alignments, one asset |
+| Each line's length is in the card's name | Hash the bytes alone | Two cards whose lines concatenate the same collide |
+| Every line of a card survives the file | Write only the first | A card reopens saying less |
+| A card's alignment survives the file | Write centred for all | Every card reopens centred |
+| An alignment tag this build does not read is refused | Read it as centred | A future file's cards are silently re-set |
+| The alignment a card was given is the one it is set in | Cross the wire in the planner | The model and the picture disagree |
+| Every line of a card reaches the node | Hand over the first | The project holds a card the render does not draw |
+| A fade in rises from nothing | Start it one tick along | A fade from black starts a shade above it |
+| A fade out falls to nothing on the last frame | Fall to nothing on the frame after | One frame of picture at the end of every fade to black |
+| Where the two fades meet the smaller wins | Take the larger | A clip faded both ways is at full in the middle of both |
+| Outside the clip a fade is nothing | Read it as full | A dissolve's handles show material the fade has not reached |
+| A clip nobody has faded is up at every instant | Do not short-circuit a fade of nought | Every clip in every project fades |
+| Fades that together outlast the clip are refused | Hold them | A clip that is never fully up |
+| A trim re-checks the fades on the clip | Skip it | A trim silently re-times somebody's fade |
+| The stack carries where the fade is going | Repeat this frame's value | Every block of a fade is flat, and the fade is a staircase |
+| A gap cannot be faded | Report no fades and change nothing | An inverse that claims to have done something |
+| A clip's fade reaches the picture | Multiply by one | The model holds a fade the render ignores |
+| The fade and the opacity go into one node | Use two | Two roundings and two cache entries for one picture |
+| A clip's fade reaches the sound | Never scale the samples | A picture that fades over sound that does not |
+| A faded buffer ramps across the block | Hold the first value | The fade is a staircase at the block rate |
+| A fade rounds away from zero in both directions | Round both up | A direct-current offset, which is a thump at every cut |
+| A faded layer's colour is scaled in light | Scale the code value | A dissolve between two identical pictures sags in the middle |
+| A masked layer's colour is scaled in light | Scale the code value | Every soft edge is darker than the picture either side of it |
+| A masked sample stays under its own coverage | Clamp only to one | The frame stops being premultiplied and `over` refuses it |
+| A clip's fades survive the file | Write them the other way round | A saved fade in comes back a fade out |
+| A fade tag this build does not read is refused | Read it as no fades | A future file's fades are silently dropped |
+| A speed maps the offset onto the media | Take the offset as the media position | A clip at half speed shows every frame once |
+| The mapping floors rather than rounds | Round to nearest | A pull-down lands on the next frame from halfway through each one |
+| The size decides how far and the sign decides which way | Add for a reverse as well | A reversed clip runs forwards out of its in point |
+| A reversed clip mirrors its forward twin | Let the speed's sign into the distance | `100, 99, 99, 98` against a forward `100, 100, 101, 101` |
+| A speed of nothing is refused | Accept it | A clip that shows one frame forever and consumes no media |
+| A reverse that would read before its media is refused | Accept it | A negative source tick, discovered at the frame instead of at the edit |
+| A cut through a retimed clip goes through its own mapping | Add the offset to the in point | The tail of a split drifts by the speed's worth of frames |
+| Two clips at different speeds do not join | Ignore the speeds | A join makes one clip out of two that play at different rates |
+| The source end is past what the clip consumes | Return the in point plus the length | A clip at double speed claims half the media it eats |
+| Sound cannot yet be retimed | Accept a speed on an audio track | A pitch nobody resampled, silently |
+| A gap has no media to play at any speed | Answer real time for one | A speed set on nothing, reported as applied |
+| The playhead asks for the retimed frame | Add the offset to the in point | The layer stack hands the renderer the un-retimed frame |
+| A dissolve's two layers ask for the retimed frame as well | Add the offset in the transition arm | A retimed shot jumps for exactly the length of the dissolve |
+| A speed survives the file exactly | Write real time instead | A saved slow-motion clip comes back at full speed |
+| Real time costs one byte to say so | Always write the whole rational | Sixteen bytes a clip for the fact that nothing was retimed |
+| A speed tag this build does not read is refused | Read it as real time | A future file's retiming is silently dropped |
+| A file's speed goes through the model's constructor | Take the file's word for it | A file holding a frozen clip loads into a model that refuses to make one |
+| An ink channel above full light is refused | Check only the low end | A colour brighter than white, refused three layers on with nothing naming the card |
+| An ink channel below no light is refused | Check only the high end | A colour that subtracts, which is not an ink |
+| The bounds include their own ends | Make both comparisons strict | Black type and white type are the two colours refused |
+| Every channel is checked, not just the first | Loop over the red alone | A green above full light passes |
+| A card is white until somebody colours it | Default to black | Every card written before an ink existed goes black |
+| The ink is part of what a card is | Leave it out of the digest | The same words in two colours are one asset, and whichever drew first wins |
+| All three channels are in the digest | Absorb the red three times | Two inks differing only in blue are one asset |
+| Colouring a card keeps everything else about it | Re-align it on the way past | A right-aligned block re-flows when somebody picks a colour |
+| The ink is a fraction of light rather than a byte | Pack the byte directly | Half of full light comes out nought instead of 188 |
+| The table is this frame's and not a default one | Build it from full-range sRGB | A limited-range card's mid-tones are spelled in the wrong range |
+| The three channels are packed in order | Reverse them | Red type comes out blue |
+| A caption asks the table for white too | Hard-code 255 | A limited-range slate refuses its own caption by name |
+| The ink is in the cache key | Leave it out | A red card is served from a white card's cache entry |
+| The planner carries the ink across | Send white regardless | The model holds a colour the picture never shows |
+| An ink survives the file exactly | Write nought for every channel | A saved card comes back black |
+| White costs one byte to say so | Always write three rationals | Forty-eight bytes an asset to say nothing was chosen |
+| An ink tag this build does not read is refused | Read it as white | A future file's colour is silently dropped |
+| A file's ink is refused rather than corrected | Fall back to white | A file holding an impossible colour loads as a card nobody wrote |
+| A span puts its low end first | Always return the in point first | A reversed clip's range reads backwards to whoever checks it |
+| A span ends at the last frame the clip shows | End one past it | Every clip claims one frame more media than it reads |
+| The library asks what the clip reads, not how long it is | Use the in point and the timeline length | A clip at double speed reads twice its length unchecked |
+| The far end of the media is checked at all | Drop the comparison | A clip reads past its asset, discovered at the frame |
+| The last frame of the media is inside the bound | Stop one frame short | A clip that ends exactly at the last frame is refused |
+| Retiming reaches the library check | Skip the edit | Setting a speed walks around the bound |
+| A clip arriving already retimed reaches it too | Skip the insert | A paste, a file or an undo walks around it instead |
+| A slip is checked on the clip it would produce | Check the clip as it was | Moving the in point past the end is accepted |
+| A lengthening is checked on the clip it would produce | Check the clip as it was | A trim past what a retimed clip can read is accepted |
+| A freeze shows one frame at every offset | Take the speed to be one | A still plays |
+| A freeze consumes the frame it shows | End at the in point | A clip that shows a frame reads none of it |
+| A freeze consumes one frame and not two | End one further along | Every still claims a frame it never shows |
+| Freezing keeps everything else about the clip | Drop the grade | A still loses the look somebody put on it |
+| Two stills join only when they hold the same frame | Join any two | Two stills of two different shots fuse into one |
+| A still cut in two joins back together | Ask the moving question of a freeze | Join stops being the inverse of split |
+| A still and a moving clip are two shots | Ignore the playback | A join keeps one playback and drops the other silently |
+| A freeze is applied rather than ignored | Hand back the clip unchanged | The edit reports success and nothing is held |
+| A speed is applied through the same door | Hand back the clip unchanged | Retiming stops working, freezing does not |
+| The inverse gives back the playback it replaced | Always say real time | Undoing a freeze on a fast clip leaves it at real time |
+| Sound is refused a freeze as well as a speed | Refuse only speeds | A held block of samples, which is a tone at the block rate |
+| A freeze survives the file | Write it as real time | A saved still comes back playing |
+| A frozen tag is read back as a freeze | Read it as no playback at all | The tag is written and dropped on the way back |
+| A freeze writes no number after its tag | Write a rational too | The frame it holds, said twice, in two places that can disagree |
+| An absent curve reads as fully opaque | Read it as nothing | Every clip nobody animated disappears |
+| The curve is read from the clip's own start | Read it three ticks along | An animation that plays early, by a margin nobody can see |
+| An overshooting ease is clamped at the read | Hand back what the curve said | A layer past full coverage, refused by the compositor |
+| A curve counted another way is refused | Accept it | An animation read at the wrong frames for a whole clip |
+| A cut re-bases the animation onto the tail | Carry it unchanged | The animation restarts at every cut |
+| Two animations that do not line up do not join | Ignore the curves | Two shots fuse and one animation is dropped silently |
+| Two halves of one animation do join | Refuse any animated pair | Join stops being the inverse of split |
+| The animation is applied rather than ignored | Hand back the clip unchanged | The edit reports success and nothing animates |
+| The inverse gives back the curve it replaced | Always say none | Switching an animation off throws away the shape somebody drew |
+| Sound has no opacity to animate | Accept a curve on a sound clip | A coverage set on a quantity that is a logarithm of amplitude |
+| A gap has nothing to reveal | Answer none for one | An animation set on nothing, reported as applied |
+| The clip's own animation reaches the layer | Send the track's alone | The model holds an animation the picture never shows |
+| A title's animation reaches the layer like any other clip's | Send one instead | A card that will not fade, though every shot does |
+| A clip's animation survives the file | Write no curve | A saved animation comes back gone |
+| The centroid weighs by area rather than by corner | Average the corners | A trapezoid balances where nothing is |
+| The centroid divides by six times the area | Divide by four | Every shape scales about a point outside itself |
+| A shape scales about its own middle | Scale about the frame's corner | A vignette slides toward the corner while it grows |
+| A scale of one and a move of nothing change nothing | Add one to the scale | A shape nobody animated is twice the size |
+| A scale at or below nothing is refused | Accept it | A shape collapsed to a point, or turned inside out |
+| The move is added after the scale | Drop it | A sweep that grows both ways instead of one |
+| The animation reaches the shape | Hand back the shape unmoved | The model holds an iris the picture never opens |
+| The animation is read from the clip's own start | Read it three ticks along | A shape that opens early, by a margin nobody can see |
+| An animation with no shape is refused | Accept it | An animation of nothing, which no edit could produce |
+| A cut re-bases the shape's animation | Carry it unchanged | The iris restarts at every cut |
+| Two shape animations that do not line up do not join | Ignore them | Two shots fuse and one animation is dropped |
+| Two halves of one shape animation do join | Refuse any animated pair | Join stops being the inverse of split |
+| Taking the shape off an animated clip is refused | Allow it | An animation left with nothing to scale |
+| The shape's animation is applied rather than ignored | Hand back the clip | The edit reports success and nothing animates |
+| The layer carries the resolved shape | Carry the unresolved one | The renderer would need a clock, and a clock makes a cache key lie |
+| The shape's animation survives the file | Write none | A saved iris comes back still |
+| A file animating a shape that is not there is refused | Read it as none | A file's animation is silently dropped rather than named |
+| A grade nobody animated is all the way on | Read an absent curve as nought | Every look in every project written before a strength existed turns off |
+| The arrival is read from the clip's own start | Read it three ticks along | A look that arrives early, by a margin nobody can see |
+| An overshooting ease is clamped at the read | Hand back what the curve said | A strength past the table's own output, which is arithmetic rather than a grade |
+| A strength needs a grade to be the strength of | Accept one on an ungraded clip | Two tests fail, in two crates: the edit stops refusing and so does the file, which is one guard reached by two doors |
+| A strength counted another way is refused | Compare a curve's timebase with itself | An arrival read at the wrong frames for a whole clip |
+| Taking the grade off an animated clip is refused | Let it through | An arrival left with nothing to arrive at |
+| A cut re-bases the arrival onto the tail | Shift it by nothing | Two tests fail: the look restarts arriving at every cut, and join stops being the inverse of split |
+| Two arrivals that do not line up do not join | Answer yes to any pair | Two shots fuse and one arrival is dropped silently |
+| The layer carries the resolved strength | Report a full grade whatever the curve says | Two tests fail, in two crates: the model holds an arrival the picture never shows |
+| The strength is in the node's identity | Leave it out of the digest | A look coming on over a shot is served from one cache entry for its whole arrival |
+| The planner carries the strength across | Send a full grade regardless | The wiring between the model and the node, which is the seam both sides' tests leave uncovered |
+| A strength outside none to all is refused | Check only the low end | A picture on the far side of a table that was never sampled there |
+| The bounds include their own ends | Make both comparisons strict | Fifteen tests fail: none of it and all of it are the two strengths every project actually holds |
+| The mix reaches the pixels at all | Apply the look flat and drop the result | Four tests fail; the model holds an arrival and the renderer applies the whole look |
+| The mix happens in code values, not in light | Decode both sides, mix, and encode again | Half a look on a mid-grey lands on **92** rather than 64 — the exact number the test derives by hand from the sRGB curve, from the other space |
+| The file carries a clip's grade strength | Write no curve | Three tests fail, and — as ever — **not** the round trips, which compare a round trip against another round trip |
+| The strength is written after the grade — **control passed, claim was decoration** | Swap both the write and the read | *Nothing failed.* The refusal lives in `Clip::with_grade_strength` at the end of the builder chain and cannot see what order the bytes arrived in. The comment claiming the reader "holds both" is corrected to say the order is a convention |
+| The half-angle formula is the half-angle formula | Add the square instead of subtracting it | Seven tests fail across three crates, the hand-derived quarter turn among them |
+| The sine's numerator is twice the parameter | Multiply by one | A quarter turn stops being a quarter turn |
+| A pair off the unit circle is refused | Compute the sum and drop the comparison | A scale is accepted wearing a rotation's name |
+| The rotation turns rather than reflecting | Add where the matrix subtracts | Five tests fail, the corner arithmetic and the left-multiplication among them |
+| A shape turns about its own centroid | Turn about the frame's corner | Nine tests fail; a vignette swings across the picture instead of rotating in place |
+| The shape's turn is applied at all | Hand the corners to `Turn::NONE` | The model holds an iris that turns and a picture that does not |
+| The turn acts on the left of the framing | Take the rows instead of the columns, which is `M·R` | A mirrored clip turns the other way |
+| The framing's turn is applied at all | Leave the linear part alone | Three tests fail, the planner's seam among them |
+| The turn lane counts towards being an animation | Leave it out of the emptiness check | Five tests fail: a motion that only turns is refused as empty |
+| An absent turn lane reads no turn | Read its neutral as one | Seven tests fail; every clip that animates only its scale starts turning through a right angle |
+| The turn lane is shifted by a cut | Carry it across unchanged | The turn restarts at every cut and join stops being the inverse of split |
+| The file carries a motion's turn lane | Write the absent lane | Two tests fail, and — as ever — **not** the round trips |
+| The writer's lane order is the reader's | Read the turn where the down lane is written | Four tests fail, the canonical-encoding test among them |
+| A preimage is a parallelogram, not its bounding box | Replace it with the exact box around it | **One** test fails: the tilted turn. Every axis-aligned test passes, and so do *both* quarter-turn tests — which is the measurement that a right angle cannot test rotation |
+| The default pivot is the centre | Make it the corner | Three tests fail across three crates; every framing ever rendered slides to the lower right |
+| An animated clip keeps the pivot its framing was given | Rebuild through the constructor, which starts from nothing | The pivot returns to the centre half way through a push-in — the third field to find this trap, after the grade and the motion |
+| The pivot is not part of being still | Require it to be the centre before skipping the node | A clip with a pivot and no move is resampled to compute the picture it already had |
+| The pivot is where the map acts about | Scale it by the other axis | Two tests fail; the fixed point is not fixed on any picture that is not square |
+| The pivot reaches the map at all | Use the centre once inside the renderer | Three tests fail, the folding measurement among them |
+| The pivot is in the node's identity — **control passed, gap was real** | Absorb the across component twice | *Nothing failed.* The anchor was in the digest and no test asked it to be, so two pivots differing only *down* the frame collided. A test now names both axes, and the same mutation fails it |
+| The pivot's two axes are written in order | Swap them | Three tests fail, the canonical-encoding test among them |
+| The file carries a transform's pivot | Write nought for both | Three tests fail, and — as ever — the named-field test is the one that had to exist |
+| A pivot cannot be folded into the move in fractions | Fold it, in the only space a model could | A diagonal map agrees exactly and a rotation on an 8×4 picture does not, which is the whole argument for the field |
+| The footprint reader knows the mangling the compiler emits | Refuse to parse v0 | It names the three symbols it misreads and exits non-zero, rather than filing the whole image under one row |
+| A length prefix is not the name's first character | Drop v0's separator from the pattern | The one crate whose name begins with an underscore reads one character short |
+| A symbol with no crate says so | File a C name under `core` | The self-check names `memcmp` |
+| A column publishes every cut or none | Split each track as it is reached | A refused razor leaves a cut behind on the track it could cut |
+| A column publishes every heal or none — **control passed, gap was real** | Join each track as it is reached | *Nothing failed.* The cut had an atomicity test and the heal had none. One now exists, and the same mutation fails it |
+| A cut's inverse is a heal over the same set | Hand back an empty set | Undoing a razor leaves the whole column cut |
+| A merge's inverse is the cut that made it | Hand back an empty set | Undoing a merge leaves the tracks fused |
+| A blade on a cut is not a cut | Name a track whose boundary is already there | The blade names tracks with nothing to cut, and the razor refuses at the moment somebody drags it |
+| A track under a dissolve is left out of the blade | Stop asking about transitions | The set names a track `Track::split` refuses |
+| A merge heals a cut rather than any boundary | Name any boundary at the instant | Two different shots that abut are fused and one of them is lost |
+| A set names a track it was given and no other | Ignore an index past the bound | A set silently drops a track, and a cut and its inverse describe different edits |
+| A set that names nothing is refused | Accept it | An edit that changes nothing takes a place in the history and claims, on undo, to have put something back |
+| A set iterates in index order | Iterate it backwards | Two tests fail; an edit's effect starts depending on how its set was built |
+| A lift leaves a hole and moves nothing | Remove the item instead | Six tests fail; the lift is an extract, and everything after it moves |
+| The hole is as long as the shot | Make it one tick shorter | Four tests fail; the programme changes length |
+| A gap cannot be lifted | Accept one | An edit that changes nothing takes a place in the history |
+| An item a transition touches cannot be lifted | Drop the check | A dissolve is left mixing a gap, refused at the frame instead of at the edit |
+| The transition check is the narrow one — **control passed, fixture was blind** | Ask "at or after" instead | *Nothing failed.* The fixture lifted an item *after* the dissolve, where both checks agree. A case that lifts at the head of a programme with a dissolve at its end now exists, and the same mutation fails it |
+| A shot goes back only into the gap it left | Drop the check | A shot is dropped into a slot something else happened to |
+| The gap has to be the right length as well as a gap | Check only that it is a gap | A shot is dropped into a gap of the wrong length |
+| The inverse of a lift carries the shot | Hand back the shot without its look | Undo puts back a clip nobody graded |
+| Two notes at one instant are refused | Accept the second | Three tests fail; neither note can be named, moved or removed |
+| Notes are kept in time order | Insert at the end regardless | Two tests fail; the list stops being the timeline |
+| A note before the programme is refused | Accept it | Two tests fail, in the model and in the file: a note on nothing |
+| A marker's text bound is a bound | Raise it a thousandfold | A hostile file talks its way past it |
+| The bound counts characters, not bytes | Count bytes | A note of legal length in a language that spells wider is refused |
+| The inverse of a removal carries the text | Hand back an empty note | Undo puts back a marker that has forgotten what it said |
+| A refused move puts the note back | Leave it removed | A move that did not happen deletes the note it was moving |
+| A note does not move when an item ripples | Slide every note by the trim | The note moves away from the thing it is about |
+| The file carries a sequence's markers | Write an empty list | Four tests fail, and — as ever — **not** the round trips |
+| A note's text has to be text | Read it lossily | A file's bytes become a note that says something else |
 
 ### A rule stated in a comment is not a rule
 
@@ -427,6 +728,51 @@ same answer. The fixture varied along the *order* axis and not along the axis
 that separates the two readings of it. The events are now renumbered to agree
 with the wrong order, so the numbers are a complete, self-consistent account of
 a cut that runs the other way, and the control fails.
+
+### A control has to mutate the branch the test takes
+
+The control for "a mask is in frame coordinates, applied after the transform"
+mutated the `None` arm — the one taken when there is *no* mask. The test has a
+mask, so it took the other arm, and the control passed while proving nothing.
+
+It is a small mistake with a general shape: **a control on a `match` must
+change the arm the gate's fixture actually reaches**, and which arm that is is
+worth checking rather than assuming from the line that looked relevant. The
+same applies to any conditional — an `if` whose `else` a test never enters is
+not covered by mutating the `else`.
+
+Cheap to catch, because this is exactly what a control passing means. It is the
+third distinct reason a passing control has turned up so far: a fixture that
+cannot see the axis, a claim that was decoration, and now a mutation aimed at
+dead ground.
+
+### Black and white cannot tell light from code values
+
+The resampler's linear-light test halved a checkerboard of black and white and
+asserted 188. The control that replaced the decode with a straight division
+**passed**, and the reason is that nought and one are exactly the fixed points
+of a transfer function: `decode(0) = 0` and `decode(255) = 1` either way, so
+their mean is the same number in both spaces.
+
+At 64 and 192 the answers separate — 146 against 128 — and the control fails.
+This is the sixth meeting of the fixture rule and the most specific form of it
+yet: **a test of a non-linear function must use values where the function is
+not the identity**, and for a transfer curve those are the mid-tones, which are
+exactly the values a lazy fixture avoids because black and white are easier to
+type.
+
+### An interrupted control harness leaves a wrong build behind
+
+A control edits the source in place and restores it afterwards. When the
+process died between those two steps, the mutation stayed — and the next thing
+to run was a *wrong build that looked like a real one*. The symptom was a test
+failing for a reason that made no sense against the source as read, which cost
+more time than the bug it was chasing.
+
+The harness now restores on the way out however the process ends, including a
+kill. The general form: **any tool that mutates a working tree has to restore
+from a handler rather than from the next line**, because the next line is
+exactly what does not run.
 
 ### A fallback inside a cached computation poisons the cache
 
@@ -946,6 +1292,628 @@ That is not a hypothetical. One control in this table passed for a real reason �
 the zero-decibel fast path in `Gain::factor` turned out not to be load-bearing —
 and it would have been indistinguishable from a control that never ran, if the
 build had not been checked.
+
+### A test whose name overstated its fixture
+
+M8.10's join check is a `match` over two clips' animations: neither, both, or
+one. A control that made two *present* animations always agree changed nothing,
+and the test it was gated on was called
+`two_differently_animated_clips_do_not_join` — which is what it ought to have
+been testing and is not what it did. The fixture animated the tail and left the
+head alone, so the only arm it ever reached was the one-sided one.
+
+The lesson is not "mutate the arm the fixture takes" — that one is already
+written down two sections up and was met again here anyway. It is that the
+**name** said so first. A test named for two animated clips that only animates
+one is a discrepancy readable without running anything, and it was sitting in
+the file while the control was being written.
+
+The test now runs all three cases and the invariant carries two controls, one
+for each arm that can wrongly say yes.
+
+### The seventh fixture that did not vary
+
+A flat colour, scaled, is the same flat colour. The first version of the test
+claiming M8.10 needed no renderer change rendered a 4×4 flat red frame through
+two different framings and compared them — and it would have passed just as
+happily if the framing had never been applied at all, because there was nothing
+in the picture for a framing to move.
+
+Seven times now, in different crates, with different subjects. The pattern is
+always the same shape: the fixture is chosen for how simply it states the
+*subject*, and simplicity in the subject usually means uniformity in the thing
+being measured. The remedy that has worked every time is to put the *negative*
+in the same test — render a third framing that must come out different — so
+the fixture proves it can tell before it is asked to.
+
+That third assertion is now the first one in the test, deliberately: if the
+fixture cannot distinguish, the failure should say so rather than letting two
+vacuous comparisons pass underneath it.
+
+### Two mechanisms enforcing one rule, for the third time
+
+`Track::roll` refused a boundary past the last item, and so did `Track::item`
+a line later. The control that removed the first one failed nothing, because
+the second produced the same refusal with the same name — and the test could
+not tell which had spoken.
+
+The redundant half is gone. What is left is the half that is not a duplicate
+of anything: a boundary of nought would take `boundary - 1` round the houses,
+and no later check stands in for that. Both trims now carry a control that
+removes it, and both fail.
+
+This is the third time the pattern has appeared — after `Over`'s two inputs
+and the zero-decibel fast path — and it is starting to look less like an
+accident than like the ordinary result of writing a guard and then writing the
+code under it. **A guard that duplicates one further in is not defence in
+depth; it is a test that cannot fail.**
+
+### A mutation that changes nothing is not a control
+
+Distinct from a control that *passes* — that is a finding about the code. This
+was a finding about the mutation. The control for "a slide leaves the item it
+slides alone" replaced the slid item with `shortened_from_the_front(index, 0)`,
+which shortens by nothing and moves the in point by nothing, so it hands back
+the item it was given. The suite was right to accept it.
+
+Reading the verdict as "the invariant is unchecked" would have been wrong; so
+would reading it as "the invariant holds". The only correct reading is that
+nothing was tried. A control has to be checked for *being a change* before its
+result means anything — which, in practice, means writing the mutation and
+then asking what value it produces rather than only what line it replaces.
+
+### An inverse a test never asked for
+
+`a_slide_is_its_own_inverse` applied `+by` and then `-by` and compared with the
+original. It passed with the edit's inverse mutated to hand back `by` unchanged
+— because the test never used the inverse. It computed one.
+
+Two properties, and only one of them was being tested: *sliding back undoes a
+slide* is arithmetic, and *the edit knows how to undo itself* is the journal.
+There is now a separate test that goes through `undo`, and the control fails
+it.
+
+### A control that found slack rather than a hole
+
+The font's per-piece bounding box exists to skip work: a run of forty
+characters is two hundred convex pieces and a pixel touches a handful, so each
+piece is asked about a pixel only if it could possibly cover it. The bound was
+written the obvious way — round the near edge down, the far edge up.
+
+The control took one pixel off the far edge and **changed no answer**. Which
+meant the bound had a pixel of slack in it: a piece ending at 6.875 has its
+last ink in pixel 6, and one ending at exactly 7.0 also has its last ink in
+pixel 6, because pixel 7 is the square from 7 to 8. Rounding up is right for a
+*coordinate* and wrong for the *pixel containing* one.
+
+Nothing was incorrect — a generous bound only costs work — and the finding is
+still worth having, because the control's job is to establish that a line is
+load-bearing and this one established that a character of it was not. The bound
+is tight now, and the control takes one pixel off *that*, and fails.
+
+### A generalisation asserted one size too far
+
+A stroke in this face is two of sixteen units, so at an em of `n` pixels it is
+`n/8` pixels wide. The test asserting that nothing is solid below eight pixels
+to the em looked like arithmetic and was **false at seven**.
+
+Two strokes that abut make a region thicker than either of them, and a pixel
+inside the corner where a stem meets a bar is covered by both. The stroke width
+bounds what one *piece* can fill, not what the *letter* can — and the fixture,
+which runs the whole repertoire rather than one glyph, found the corner the
+reasoning had not.
+
+The test now asserts what was measured (four pixels to the em, nothing solid)
+and the note says why the tidier claim is not available.
+
+### A separator can stand in for a length, until there are three fields
+
+The legend's identity covers two captions, and the test for it set two legends
+whose captions *concatenate* to the same bytes — the collision a
+length-prefixed encoding exists to prevent.
+
+Removing the length prefix failed that test, as it should. Weakening it to a
+constant instead — one byte, always the same — **passed**. With exactly two
+fields and a fixed separator between them, the separator itself lands in a
+different place and the streams differ.
+
+Which is true and is not the property. The prefix is there so the encoding
+stays unambiguous when a third field arrives, and a control that only proves
+"something separates them" would go on passing through the change that breaks
+it. The control removes the prefix entirely, which is the mutation that
+matches the claim.
+
+### A ceiling with no test under it
+
+The caption's size is the smaller of what fits the width and a fraction of the
+height. Removing the second failed nothing: every fixture was a caption long
+enough that the *width* decided, so the ceiling never bound.
+
+It exists for the opposite case — two characters across a wide frame fit at an
+enormous size — and there was no fixture like that. There is now: "OK" on a
+480-pixel frame, with the inked rows counted. That is the sixth or seventh time
+the same shape has appeared, and the shape is always "the fixture does not
+reach the branch", not "the branch is wrong".
+
+### A test that pinned the wrong number and drew the wrong moral
+
+This file has said twice already that **a test over black cannot tell light
+from code values**. The third time it cost a real bug, and the bug had been
+sitting inside the test written to catch it.
+
+`composite::faded` and `composite::masked` scaled a premultiplied layer's
+colour in *code values*. The module's own header has said since its first
+version that "a premultiplied sample is the encoding of `light × coverage`,
+not the encoded value scaled by coverage" — so the convention was written
+down, and two functions broke it, and nothing noticed.
+
+Nothing could. Every fixture faded a layer that was **black**: the dissolve
+goldens, the wipe, the slate. Nought times anything is nought, and the two
+arithmetics agree there exactly. What found it was a fixture that had never
+existed — a dissolve between two *identical* pictures, which has to be that
+picture and instead sagged by twenty-eight code values in the middle.
+
+The part worth keeping is what it did to the wipe test. That test exists
+**specifically** to pin the difference between light and code values. It
+asserted 154 for the edge pixel, with a comment reading: "the linear answer is
+the *darker* one — the opposite of what a white-over-black intuition predicts,
+which is why this asserts the number rather than a direction." Every clause of
+that is the bug talking. The linear answer is 205 and it is the *brighter* one.
+
+So the test's own stated moral — assert the number, never the direction — was
+right, and was not enough. Asserting a number derived from the code you are
+testing is asserting that the code does what it does. The number has to be
+derived from the *definition*, by hand, in the comment, which is what both
+tests now do and what the slate's `picture red` has done all along — and that
+is why `picture red` moving from 73 to 98 could be checked rather than
+accepted.
+
+### A size the exemption argues from, caught going stale
+
+`tests/size.rs` exists because `Item`'s `large_enum_variant` exemption argues
+from a number: a clip is 288 bytes. Adding two fades made it 336, and the test
+failed with "either shrink it or rewrite the argument, but do not leave the two
+disagreeing".
+
+Shrinking it was the better answer, and finding that out was the point. Two
+`Duration`s carry a timebase each, and a fade's timebase is the clip's — so
+they were the same fact written three times and three facts to keep agreeing.
+Stored as ticks the clip is 304 bytes, the invariant is gone, and the accessors
+still hand back `Duration`s counted the clip's way.
+
+A number nobody measures is a number that goes stale; a number a test measures
+is a design review that arrives on time.
+
+### A guard that could not be made to fail, for the fourth time
+
+`Clip::source_at` opened with an arm for real time — return the in point plus
+the offset, rather than multiply by a speed that happens to be one. Its
+control replaced the condition with `false` and the gate passed, because a
+speed of one takes `floor(offset x 1) = offset` and the general path answers
+identically on every input.
+
+The tempting reading is that the control was badly aimed. It was not: there is
+no input that separates the two arms, so no gate could hold that guard, and a
+guard no test can hold is a guard that will be edited one day by someone who
+has no way of finding out they were wrong. It went, and the doc comment now
+says it went and why — because the next person to notice the multiply will
+have the same idea.
+
+Fourth time, after `Track::roll` and `Track::slide`'s bounds checks and the
+transform's invertibility check. The shape is always the same: a guard placed
+for clarity in front of a path that already handles the case.
+
+### An anchor that was a substring of the one it meant
+
+The layer stack asks a clip for its media position in two places — the
+ordinary arm and the dissolve arm — and they sit at different indentations.
+The control for the ordinary one anchored on
+`"            let source = clip.source_at(offset)?;"`, twelve spaces, and the
+harness reported **two matches**: the dissolve arm's line is the same text at
+twenty spaces, and contains the twelve-space version as a substring.
+
+The harness caught it, which is the whole reason it counts matches rather than
+replacing the first. But the fix was not just a longer anchor. Two call sites
+had one control between them, and the dissolve arm — where a retimed shot
+would jump for exactly the length of a transition, and nowhere else — had
+never been tested at all. It has its own gate now, and its own control.
+
+An anchor that matches twice is usually a harness complaint. It is sometimes a
+coverage report.
+
+### A control that does not compile, for the third time
+
+`let along = offset;` in place of `floor_of(size x offset)` left `floor_of`
+with no callers, and `warnings = "deny"` makes an uncalled private function a
+build error, so the gate never ran and the harness said `did not build`. The
+mutation had to keep the function alive — `floor_of(Rational::new(offset, 1)?)`
+— which is a narrower and better control anyway: it isolates the *speed*
+rather than the speed and the flooring together.
+
+Recorded already, twice, and worth recording again because the failure mode is
+invisible from the mutation: nothing about `let along = offset;` looks like it
+will delete a function.
+
+### A bug asserted before it was measured
+
+The ink milestone was written believing it fixed something: type was packed as
+`u8::MAX`, 255 is an illegal code value in limited range, so a limited-range
+title had been writing an illegal sample. That sentence went into the module
+header, two test comments and a test *name* —
+`an_illegal_code_value_is_no_longer_what_a_card_writes` — before anything had
+been run against the old code.
+
+The control refused to fail. Putting the hard-coded byte back left both
+limited-range assertions passing, because `premultiply` re-encodes through the
+frame's own table on the way out and `encode` searches only the legal codes.
+The illegal byte never survived to anything anybody could see.
+
+Measuring properly took two more steps and found something the prose had not
+considered. The fault is real for a **slate caption** and absent for a
+**card**, and the difference is the coverage plane: a card's letters come from
+a hard-edged stencil, so every sample is full light at full coverage or none at
+none and the clamp catches it; a caption is antialiased, and a partly covered
+pixel premultiplied from 255 claims more light than its coverage allows, which
+`checked_premultiplied` refuses by name. A limited-range slate was not drawing
+a slightly wrong caption. It was failing with `NotPremultiplied`.
+
+Three things worth keeping:
+
+- The test that was going to carry the claim now asserts its own premise — the
+  stencil has no soft edge — instead of resting on it. A test that depends on
+  a fact it does not state is a test that stops meaning what its name says the
+  day the fact changes.
+- A test named after a fix has to be checked against the code it fixes. This
+  one held before and after, which is fine for a statement about encoding and
+  fatal for a statement about a bug, and only its name knew the difference.
+- The pattern is the wipe test's from M8.17, one turn earlier in the loop:
+  there the number came out of the code, here the *fault* came out of the
+  reasoning. Neither is measurement. A control is what tells the difference,
+  and it is worth writing the control before the prose it is going to check.
+
+### A parameter that was the same thing as another, until it was not
+
+`Project::check_source` took a media identifier, an in point and a **length**,
+and computed `in point + length` as the range a clip reads. That was exactly
+right for eleven milestones, because a clip read one frame of media per frame
+of timeline and the two numbers were the same number.
+
+M8.18 made them different. A clip at double speed reads twice its length, and
+nothing noticed: the guard kept comparing the timeline length against the
+asset, so a clip could be retimed until it read past the end of its media and
+the refusal arrived at the frame that fetched it rather than at the edit that
+caused it. `Edit::SetClipSpeed` was not in `validate`'s match at all.
+
+Two things made it invisible. The retiming milestone wrote a guard for the
+*other* end — `with_speed` refuses a reverse that would read before its media
+begins — and having written one guard, the pair felt thought about. And every
+fixture in the suite was a clip well inside a long asset, so nothing was near
+either end. That is the seventh fixture problem in a new costume: a clip a
+hundred frames into nine thousand cannot see a bound at either end.
+
+The remedy is not a second guard. It is to stop passing the *ingredients* of a
+question and pass the thing that can answer it. `check_source` now takes the
+clip the edit would produce and asks it for `source_span`, which cannot fall
+behind the mapping because it is the mapping. **A caller that recomputes a
+callee's arithmetic is a copy that has to be kept in step, and nothing tells
+you the day it stops being.**
+
+The same argument in one line: the four edits that can widen what a clip reads
+all build the clip first and hand it over, rather than each assembling a range
+out of the fields it happens to be changing.
+
+### A page count credited to the change that happened to be in flight
+
+M8.21 added an opacity curve to a clip, an edit to set it, two functions and a
+lane in the file — and the image *fell* two pages. The sentence that wanted to
+be written was "the milestone paid for itself", and it would have been wrong.
+
+Nothing in the diff explains a saving, so it was tested rather than explained.
+On the previous commit, with none of the milestone's code, a dummy `[u64; 3]`
+in `Clip` — twenty-four bytes of nothing, exactly what the new field costs —
+took the image from 93 pages to **91** and `Edit::apply` from 20,210 bytes to
+16,476. The saving was bought by the clip crossing 320 bytes, past which the
+optimiser stops emitting an inline copy of a clip in each of `Edit::apply`'s
+arms and calls out instead.
+
+Two things worth keeping:
+
+- **A control does not have to be a mutation that breaks something.** This one
+  changed nothing about behaviour and everything about attribution: it asked
+  "would this number have moved anyway?" and the answer was yes. Every
+  footprint entry in this project's history is a claim about *cause*, and only
+  this kind of experiment can check one.
+- A struct getting **bigger** made the program **smaller**, which is the
+  opposite of what every earlier footprint note in this repository assumed
+  while reading a total. The seventy-six kibibytes belong to the program, not
+  to the struct, and the two are not the same measurement.
+
+### "Did not build" is not "did not fail", and the harness now says which
+
+Fourth time a control's mutation left a binding unused and `warnings = "deny"`
+turned that into a build error, so the gate never ran. The harness printed
+`did not build` on its second line and `PASSED` on its first — and `PASSED`
+is what got read, three times in one run.
+
+The mutations were fixed the usual way, by keeping the binding used. The
+harness was fixed too: a mutation that never compiled now prints **`NOBUILD`**
+rather than `PASSED`, because those are different findings and only one of them
+is about the code under test.
+
+Recorded as its own entry rather than folded into the earlier ones, because the
+earlier lesson was "write mutations that compile" and this one is "a report
+that can be misread will be". The first is advice; the second is a fix.
+
+### A claim about rounding that the control would not support
+
+`mix` interpolates `from + s·(to − from)` rather than `from·(1 − s) + to·s`,
+and the comment above it said the first form is chosen because "only the first
+is exact at the ends" — a `Fixed` multiplied by one comes back unchanged, so a
+strength of one gives back the look byte for byte, which is the property every
+project written before this milestone depends on.
+
+Every clause of that is true except the word **only**. Both forms are exact at
+both ends, because multiplying by nought and by one are each exact, and a sweep
+of sixty-five strengths against every code value finds **zero** disagreements
+at either end. What the sweep does find is 59,520 disagreements in the middle,
+each of exactly one unit in the last place, enough to move a quantised byte in
+about one case in sixty — and the chosen form lands nearer the exact rational
+109,382 times against 43,084, equal otherwise.
+
+So the form is load-bearing, and it is load-bearing for a *smaller* reason than
+the one written down, and the exactness the milestone actually rests on belongs
+to the multiply rather than to the arrangement.
+
+What is worth keeping is when this was found. The comment was written first,
+the control was designed second, and designing it was what exposed the claim —
+before the control was ever run, because writing "and the other form does not"
+requires deciding what would fail. This project has recorded twice that a
+control is what tells measurement from reasoning; this is the cheaper version
+of the same lesson: **a control does not have to be executed to falsify a
+sentence, only specified.**
+
+### A claim that was decoration, found by a control that changed nothing
+
+The project file writes a clip's grade strength *after* its grade, and the
+comment gave a reason: the reader is then "holding both when it has to refuse a
+strength with no look to be the strength of" — the same argument the motion's
+position after the transform makes.
+
+Swapping both the write and the read broke nothing. The refusal does not happen
+at the read at all: `read_item` collects its fields and then builds the clip
+through the model's own constructors, and `Clip::with_grade_strength` is the
+last link in that chain. It cannot see what order the bytes arrived in, and the
+grade is already on the clip by the time it runs whichever way round the file
+is written.
+
+The order is a convention worth keeping — a reader comparing the two halves of
+the format should find the same shapes in the same places — and it is not a
+mechanism. The comment now says so. This is the third entry of this kind, after
+the rasteriser's two, and the shape is always the same: **a reason attached to
+a line is a claim, and the only thing in this project that checks a claim is a
+control.**
+
+### A threshold effect that moves cost rather than removing it
+
+M8.21 recorded a surprise: adding a field to `Clip` made the image *smaller*,
+because past 320 bytes the optimiser stops emitting an inline copy of a clip in
+each of `Edit::apply`'s many arms. M8.22 recorded the mirror when the clip grew
+again. Both were measured, and both were read as the whole story.
+
+This milestone took the clip from 416 bytes to 440 and the symbol table shows
+what those entries could not. `Edit::apply` **fell 9,599 bytes** — and its
+helpers rose: `refade` by 1,257, `remotion` by 1,245, `reshape` by 1,194,
+`slip` by 1,077, `regrade` by 1,009, `remove` by 962 and `retime` by 637, which
+is **7,381** of it back. The optimiser did not delete the work when it stopped
+inlining; it moved the work into the functions it now calls.
+
+So a footprint that falls when a struct grows is not a saving, it is a
+relocation, and reading the total is what hides that. The general form, which
+is this project's own note about a single number turned one turn further:
+**a total that moves has a location, and the location is a different fact from
+the movement.** The tool that prints the largest symbols already had the
+answer; nothing had subtracted two of its outputs before.
+
+### The one rotation that cannot test rotation
+
+The area resampler's `area_at` has said since it was written that an affine map
+"sends a square to a parallelogram, so this is exact and has four corners
+however the picture is turned". Nothing had ever turned a picture, so the
+clause was prose. The obvious fix was a quarter turn of a small picture, and it
+is a good test: a right angle sends the pixel grid onto itself, so the answer
+must be an **exact permutation** of the pixels with no blending anywhere, and
+four quarter turns must give back the picture byte for byte. Both hold.
+
+Neither exercises the parallelogram. A right angle takes the unit square to the
+unit square, so every preimage in that test is still **axis-aligned**, and the
+tilted path the comment describes is never entered.
+
+The control is what said so, and said it exactly. Replacing the four-corner
+preimage with the exact axis-aligned box around it — a change that is a no-op
+whenever the preimage is already axis-aligned — fails **one** test out of two
+hundred and thirty-five: the one that turns by the three-four-five angle, where
+the box has area 49/25 against the parallelogram's one. Every axis-aligned test
+passes. Both quarter-turn tests pass.
+
+The general form, and this project's eighth meeting with it: **a fixture chosen
+because it makes the answer exact has usually chosen the case where the code
+under test does not run.** The exactness that made a quarter turn attractive —
+the grid maps onto itself — is precisely the property that keeps it out of the
+branch. The tilted test asserts something weaker about each pixel (a flat field
+survives, so the weights sum to one) and something much stronger about the
+code, and both tests are kept because neither is the other.
+
+### A rotation that is exact, which a comment had ruled out
+
+`transform.rs` has said since M8.9 that there is no rotation in this model
+because "a sine and a cosine are not exact, and a project whose framing
+depended on them would drift". Every word of that is true of an **angle** and
+none of it is true of a **rotation**.
+
+The rational points on the unit circle are dense, and the tangent half-angle
+substitution reaches all of them: `cos = (1 − t²)/(1 + t²)`, `sin = 2t/(1 + t²)`
+is a rational pair for every rational `t`, with `cos² + sin² = 1` exactly and a
+determinant of exactly one. So a turn composes without drifting, preserves area
+exactly, and returns to where it started after four quarter turns — none of
+which a floating-point rotation can claim.
+
+This is the deferral-reason lesson again, one heading further on from the soft
+edge that was left out because the case analysis "would be much larger" and
+turned out to be two clips and a moment. The shape repeats: **a reason attached
+to a deferral is a claim, and a claim about arithmetic is worth five minutes of
+trying.** The cost of being wrong is a feature that never gets built and a
+document that confidently explains why.
+
+What the reason *did* get right is worth keeping too, because it is why the
+type stores the point rather than the parameter: `t` reaches every rotation
+except the half turn, which is `(−1, 0)` and sits at infinity. A type that
+stored the parameter could not turn a picture upside down. The parameter is
+what a **curve** holds, because a curve needs somewhere unbounded to live.
+
+### A field in a digest that nothing asked to be there
+
+The anchor went into `Node::Transform`'s identity as a matter of course — every
+parameter of a node is in its identity, that is what the rule says. The control
+absorbed the *across* component twice, so two pivots differing only **down** the
+frame would collide in the cache, and **nothing failed**.
+
+The field was right and the coverage was absent, which is the same verdict as
+"a guard whose refusal nothing triggers" reached from the opposite direction:
+there, a correct clamp was unreached; here, a correct digest was unasked. Both
+look identical from outside — a control that passes — and both mean a line of
+code is being trusted rather than checked.
+
+The test that closes it varies **each axis separately**, because the mutation
+crossed out exactly one of them and a fixture that moved the pivot diagonally
+would have caught nothing.
+
+### The eighth fixture, written while fixing the seventh
+
+That test's first version drew `TestPattern::Bars` and asserted that three
+pivots give three different pictures. Two of the three comparisons were
+vacuous: bars are constant **down** the frame, so moving the pivot down changes
+no pixel, and the assertion that the anchor's second component matters passed
+without the anchor's second component mattering.
+
+The circumstance is what makes it worth recording. This was a test being
+written *for a control that had just found a coverage gap*, by someone who had
+written the phrase "a fixture that does not vary along the axis under test"
+into this file twice that day — and the fixture still did not vary along the
+axis under test. A checkerboard fixed it.
+
+**Knowing the rule does not apply the rule.** What applies it is asking, of
+every fixture, the question the rule is made of: *does this input move when the
+thing I am testing moves?* — and asking it after the fixture is chosen rather
+than before, because the fixture is always chosen for how simply it states the
+subject.
+
+### A page boundary is a step, and two milestones landed either side of it
+
+M8.24 added 143 bytes of code and the image did not move: 94 pages before and
+after. M8.25 added 816 and the image went to 95. Neither number is a surprise
+on its own and the pair is the useful thing: `.text` is padded to a page
+boundary, so a milestone's cost in *pages* depends on how much slack the last
+page happened to have when it arrived, not only on what it added.
+
+Which means "no growth" and "one page" are the same measurement reported at
+different offsets, and neither is a statement about the change until the byte
+count is beside it. Every entry in the footprint table now carries one.
+
+### A reader that had gone blind, and still printed a table
+
+`make audit` runs `tools/footprint.py`, which splits the image by section and
+attributes every sized symbol to the crate that emitted it. The per-crate table
+in the platform contract comes from it, and this project's own note about that
+number says a figure worth tracking is worth decomposing at least once.
+
+It had stopped decomposing anything. The reader knew Rust's **legacy**
+mangling — `_ZN`, then length-prefixed path components — and the toolchain
+emits **v0**, so `crate_of` returned `(unmangled)` for every symbol in the
+image. The table still printed. It still added up. The line under it still
+said "attributed in total". It had one row.
+
+Nothing failed, because nothing could: the output is a table, a table with one
+row is a table, and no check compared it against anything. The contract's
+per-crate figures had been unreproducible for as long as this had been true,
+and the largest-function list beside them was quoting `Face::stencil` at 23,807
+bytes — a symbol that no longer exists at that size, in a section it no longer
+lives in.
+
+Three things now hold it:
+
+- the reader understands **both** manglings, because which one a build uses is
+  the toolchain's decision and not the tool's;
+- it **checks itself** against five real symbols before it reads the image at
+  all — including one whose crate name begins with an underscore, which is the
+  case that carries v0's length separator and which this reader got wrong on
+  its first attempt, filing `__rustc` as `___rust`;
+- it **refuses** when more than five per cent of the sized symbols carry a name
+  it cannot parse. The measured share is 0.27%, all of it compiler intrinsics
+  with C names, and the bound is twenty times that on purpose: the failure it
+  exists to catch is not a drifting number, it is a cliff — the day the
+  mangling changes, that share goes from a quarter of a per cent to a hundred
+  in one commit.
+
+The general form, and it is the sharpest version this project has met of a
+shape it already knew: **a tool that reports a shape rather than a verdict can
+fail without failing.** `layering.py` refuses. `counts.py` refuses. `elf-audit`
+refuses, and `audit-control.py` proves on every run that it can. `footprint.py`
+printed, and printing is not checking. Every tool that produces a number needs
+a condition under which it declines to.
+
+### One direction tested, the other assumed
+
+The column cut and the column heal are the same shape: work out the whole
+answer in a pass that touches nothing, then publish it in a pass that cannot
+fail. The cut got a test for that — a set naming one track that can be cut and
+one that cannot, and an assertion that the refusal leaves the first track
+exactly as it was.
+
+The heal got the reasoning and not the test. Its control, which collapses the
+two passes into one and heals each track as it is reached, changed **no
+answer** — because no fixture ever asked a merge to refuse partway.
+
+The tempting reading is that the heal is safe anyway: it removes an item
+rather than adding one, so nothing allocates, so what could go wrong. That is
+an argument about *allocation* answering a question about *atomicity*, and the
+two are different: `Item::join` refuses a pair that is not one item cut in two,
+and a column that healed three tracks and refused the fourth would be a merge
+nobody could undo in one step.
+
+The general form is narrower than "test both directions", because the two
+directions here were not symmetric in the author's head — one felt like it
+needed the care and the other felt free. **When two operations are built from
+one argument, the argument has to be tested at both ends, and the end that
+feels safe is the one that will not be.**
+
+### An exemption that expired on schedule
+
+`Edit` carried `#[expect(clippy::large_enum_variant)]` with a paragraph
+explaining why one variant is so much bigger than the rest: `InsertItem` holds
+an item, because that is what an insert is and what makes undo work, and
+boxing it would be an infallible allocation R-5.2 forbids.
+
+Adding a lift gave the enum a **second** variant holding an item. The lint
+compares the largest against the next largest; with two the same size there is
+no outlier, so it stopped firing — and because the exemption was written as an
+`expect` rather than an `allow`, the build failed with "this lint expectation
+is unfulfilled".
+
+That is the whole reason the distinction exists, and it is worth recording as a
+success rather than as an incident. The paragraph beside the attribute had said
+so in advance: *"an `expect` rather than an `allow` so that the day the
+difference falls back under the threshold the build says so instead of carrying
+a stale exemption."* It did, on the exact day, without anybody remembering.
+
+**Prefer the annotation that expires.** `allow` is a claim that never has to be
+true again; `expect` is a claim checked on every build. The same shape as
+`tests/size.rs` pinning a number a doc comment argues from, and as
+`counts.py` reading the totals the README states — each is a sentence a machine
+can re-read.
+
+The ceiling in `tests/size.rs` stayed, because it was the half doing the work
+all along: it bounds what the whole history costs, and no lint was ever going
+to notice that.
 
 ## Fuzzing
 

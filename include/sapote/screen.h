@@ -80,7 +80,7 @@ enum screen_status screen_write(const char *text);
 enum screen_status screen_clear(void);
 
 /*
- * First Light borrows the one long-lived cached surface and constrains this
+ * Sapote Redwood borrows the one long-lived cached surface and constrains this
  * console to a fixed terminal client rectangle. Cells remain in a bounded
  * backing store while hidden, so reopening redraws rather than resets them.
  */

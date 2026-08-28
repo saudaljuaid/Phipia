@@ -8,9 +8,9 @@
 
 #include <sapote/surface.h>
 
-#define UI_FONT_MAX_WIDTH 16U
+#define UI_FONT_MAX_WIDTH 20U
 #define UI_FONT_MAX_HEIGHT 32U
-#define UI_FONT_MAX_ROW_BYTES 2U
+#define UI_FONT_MAX_ROW_BYTES UI_FONT_MAX_WIDTH
 
 enum ui_font_status {
     UI_FONT_STATUS_OK = 0,
@@ -47,6 +47,7 @@ int32_t sapote_ui_font_glyph(
     uint8_t *out,
     size_t out_len
 );
+int32_t sapote_ui_font_glyph_advance(uint32_t code, uint32_t *advance);
 
 /* Validate the exact built-in asset and retain only its copied metrics. */
 enum ui_font_status ui_font_initialize(void);

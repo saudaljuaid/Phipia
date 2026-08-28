@@ -77,12 +77,17 @@ fn a_hint_is_not_part_of_what_makes_an_asset_the_same() {
     let mut project = Project::new();
     let first = Location::new(b"/reels/a.sprw").expect("a hint");
     let one = project
-        .add_media(asset(b"same", 100).with_location(Some(first.clone())))
+        .add_media(
+            asset(b"same", 100)
+                .with_location(Some(first.clone()))
+                .expect("a hint"),
+        )
         .expect("room");
     let two = project
         .add_media(
             asset(b"same", 100)
-                .with_location(Some(Location::new(b"/elsewhere/a.sprw").expect("a hint"))),
+                .with_location(Some(Location::new(b"/elsewhere/a.sprw").expect("a hint")))
+                .expect("a hint"),
         )
         .expect("room");
     assert_eq!(one, two);

@@ -43,7 +43,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_WRITE_COMBINING,
     KERNEL_TEST_DEVICE_WINDOWS,
     KERNEL_TEST_BOOT_LEDGER,
-    KERNEL_TEST_FIRST_LIGHT,
+    KERNEL_TEST_REDWOOD_PROOF,
     KERNEL_TEST_DEVICE_SUBSTRATE,
     KERNEL_TEST_XHCI,
     KERNEL_TEST_NVME,
@@ -51,10 +51,10 @@ enum kernel_test_scenario {
     KERNEL_TEST_PROCESS,
     KERNEL_TEST_LINUX_ABI,
     KERNEL_TEST_LINUX_ABI_UNAME,
-    KERNEL_TEST_FIRST_LIGHT_USERLAND,
-    KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT,
-    KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE,
-    KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT,
+    KERNEL_TEST_REDWOOD_PROOF_USERLAND,
+    KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT,
+    KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE,
+    KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT,
     KERNEL_TEST_FAT32_SYSTEM,
     KERNEL_TEST_FAT32_DATA,
     KERNEL_TEST_FAT32_NESTED,
@@ -140,7 +140,7 @@ struct boot_context;
 _Noreturn void kernel_test_complete_boot_ledger(
     const struct boot_context *context
 );
-_Noreturn void kernel_test_complete_first_light(void);
+_Noreturn void kernel_test_complete_redwood_proof(void);
 _Noreturn void kernel_test_complete_device_substrate(void);
 bool kernel_test_device_substrate_exit_self_test(void);
 _Noreturn void kernel_test_complete_xhci(void);
@@ -155,10 +155,10 @@ _Noreturn void kernel_test_complete_linux_abi(void);
 bool kernel_test_linux_abi_exit_self_test(void);
 _Noreturn void kernel_test_complete_linux_uname(void);
 bool kernel_test_linux_uname_exit_self_test(void);
-_Noreturn void kernel_test_complete_first_light_userland(void);
-_Noreturn void kernel_test_complete_first_light_userland_absent(void);
-_Noreturn void kernel_test_complete_first_light_userland_interactive(void);
-_Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
+_Noreturn void kernel_test_complete_redwood_proof_userland(void);
+_Noreturn void kernel_test_complete_redwood_proof_userland_absent(void);
+_Noreturn void kernel_test_complete_redwood_proof_userland_interactive(void);
+_Noreturn void kernel_test_complete_redwood_proof_userland_interactive_absent(
     void
 );
 _Noreturn void kernel_test_complete_fat32(void);

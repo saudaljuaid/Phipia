@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 
 use sapstudio_audio::mix::Source;
 use sapstudio_audio::{AudioBuffer, Gain, MixReport, SampleRate};
-use sapstudio_core::{Instant, TimeRange, Timebase};
+use sapstudio_core::{Instant, Rational, TimeRange, Timebase};
 use sapstudio_model::{Lane, MediaId, Sequence};
 
 use crate::SlateStatus;
@@ -249,6 +249,12 @@ fn frame_block(
             continue;
         }
         gains.push((gain, arriving));
+        // Where the clip's own fade is at each end of the block. The fader is
+        // a gain in decibels and this is a fraction of the material, and they
+        // are two different things multiplied together -- so the fade scales
+        // the samples and the fader scales the source, rather than one of them
+        // being converted into the other's units.
+        let fading = (layer.fade(), layer.fade_arriving());
         // The layer's source position is a timeline tick of the media, so it
         // goes through the same floor: a clip that starts on a frame boundary
         // starts on the sample that frame boundary falls in, and two clips of
@@ -261,7 +267,15 @@ fn frame_block(
             // decision made in the wrong place (R-1.3).
             return Err(SlateStatus::Audio(sapstudio_audio::AudioStatus::NotMixable));
         }
-        held.push(block);
+        held.push(if fading.0 == Rational::ONE && fading.1 == Rational::ONE {
+            // A clip nobody has faded is not copied. Scaling every sample by
+            // one is exact and is still a pass over the whole block.
+            block
+        } else {
+            block
+                .faded(fading.0, fading.1)
+                .map_err(SlateStatus::Audio)?
+        });
     }
 
     if held.is_empty() {

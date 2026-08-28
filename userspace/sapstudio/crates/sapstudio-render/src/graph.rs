@@ -20,7 +20,7 @@
 
 use alloc::vec::Vec;
 
-use sapstudio_core::{Digest, Rational, Sha256};
+use sapstudio_core::{Digest, Fixed, Rational, Sha256};
 use sapstudio_media::{
     AlphaState, CacheKey, ColourDescription, Frame, FrameDescription, FramePool, TestPattern,
 };
@@ -107,6 +107,32 @@ pub enum Node {
         /// How much of it is showing.
         opacity: Rational,
     },
+    /// A frame moved: scaled, shifted, or turned.
+    ///
+    /// The linear part is dimensionless and the offset is in fractions of the
+    /// frame, so the node is the same node at every size — which is what lets
+    /// a proxy render and a finish render share a cache key for everything
+    /// above it. The map acts about the frame's **centre**, because scaling
+    /// about the corner sends a picture sliding off to the lower right the
+    /// moment somebody drags a scale slider.
+    Transform {
+        /// What to move.
+        input: NodeId,
+        /// The linear part, row-major and dimensionless.
+        linear: [Rational; 4],
+        /// The move, in fractions of the frame.
+        offset: (Rational, Rational),
+        /// The point the linear part acts about, in fractions of the frame.
+        ///
+        /// A field here rather than folded into `offset` by the caller,
+        /// because the two are only interchangeable in *pixels*: the vector
+        /// from the centre to the anchor scales per axis, and a linear part
+        /// that mixes the axes — which is to say any rotation — does not
+        /// commute with that scaling. See [`crate::resample::Mapping::about`].
+        anchor: (Rational, Rational),
+        /// Whether to weigh by area or between four samples.
+        bilinear: bool,
+    },
     /// A frame with everything outside a shape taken away.
     ///
     /// The corners are fractions of the frame, so the node is the same node at
@@ -119,6 +145,77 @@ pub enum Node {
         corners: alloc::vec::Vec<(Rational, Rational)>,
         /// Whether what is kept is what lies outside it.
         inverted: bool,
+    },
+    /// A picture made of words, at a size and a place somebody chose.
+    ///
+    /// A **source**, not a filter: a title is media the program generates, so
+    /// this sits where a [`Node::Source`] would and everything above it — the
+    /// grade, the mask, the transform, the fade — is the same machinery a
+    /// recording goes through. That is the whole reason a title is media
+    /// rather than a kind of item.
+    ///
+    /// Transparent everywhere the letters are not. The ink is three fractions
+    /// of **full light** rather than three code values, for the reason the
+    /// model gives: a code value is a number in an encoding, and the same
+    /// number is a different colour in sRGB than in a linear working space.
+    /// Naming it in light means the conversion happens once, here, through the
+    /// table this frame's own description spells its colours with — so a
+    /// limited-range title writes 235 for white and not the illegal 255 a
+    /// hard-coded byte would.
+    ///
+    /// Distinct from [`Node::Legend`], which carries the words and *nothing
+    /// else* because a slate's caption is not something anybody chose the look
+    /// of. Here somebody did.
+    Type {
+        /// What to draw it as.
+        description: FrameDescription,
+        /// What it says, a line at a time.
+        lines: alloc::vec::Vec<alloc::string::String>,
+        /// The em, as a fraction of the frame's height.
+        size: Rational,
+        /// Where the middle of the block sits across the frame.
+        across: Rational,
+        /// And down it.
+        down: Rational,
+        /// How the lines sit against one another.
+        alignment: crate::font::Alignment,
+        /// What colour the letters are, as fractions of full light.
+        ink: [Rational; 3],
+    },
+    /// A frame with a line of type set across it.
+    ///
+    /// A caption on a slate, not a title tool. It carries the words and
+    /// nothing else — no size, no place, no colour — because everything a
+    /// caption's *look* could be is a decision that would have to be the same
+    /// on every slate to be worth anything, and a parameter nobody varies is a
+    /// parameter that goes wrong in one place and nowhere else. Titles as
+    /// something a project contains are a different feature with a different
+    /// node.
+    ///
+    /// The words are in the identity, so two slates saying different things
+    /// are two cache entries, and the same slate twice is one.
+    ///
+    /// It draws **nothing** on a frame too small to read it. That is not a
+    /// failure and not a refusal: a slate whose caption is a grey smear has
+    /// told the viewer something false about how much it knows, and the
+    /// stripes underneath already say the one thing that matters.
+    Legend {
+        /// What to write on.
+        input: NodeId,
+        /// What it says.
+        text: alloc::string::String,
+        /// What it says instead when there is no room to read the first.
+        ///
+        /// Two strings rather than one, because a caption on a proxy has a
+        /// real choice to make and neither answer is right at both sizes.
+        /// "MEDIA OFFLINE 4F3C9A21" needs a frame three hundred pixels across
+        /// to be read; the eight characters that *identify* the clip need a
+        /// hundred and sixty. Setting the long one small enough to fit is a
+        /// grey smear, and dropping straight to nothing throws away the part
+        /// somebody actually needs.
+        ///
+        /// So: the whole sentence, then the part that matters, then nothing.
+        brief: alloc::string::String,
     },
     /// A frame revealed behind a wipe's edge.
     ///
@@ -159,17 +256,27 @@ pub enum Node {
         /// coverage is carried.
         target: FrameDescription,
     },
-    /// A frame with a look applied.
+    /// A frame with a look applied, some of the way on.
     ///
     /// The look is named by its digest rather than carried, because a cube is
     /// 35,937 triples and a graph is rebuilt for every instant. That also
     /// makes the node's identity depend on what the look *is*: a grade edited
     /// between two renders is a different key rather than a stale hit.
+    ///
+    /// The strength is a field rather than a second node in front of this one
+    /// because it is not a second picture: it says where along the table's own
+    /// output this frame lands, which is a thing only the table can compute.
+    /// It is in the identity for the reason everything else here is — a look
+    /// coming on over a shot is a different picture every frame, and a key
+    /// that ignored the strength would serve the whole arrival out of one
+    /// cache entry.
     Look {
         /// What to grade.
         input: NodeId,
         /// Which look.
         look: Digest,
+        /// How far from ungraded to graded, from none of it to all of it.
+        strength: Rational,
     },
     /// One frame over another.
     ///
@@ -202,12 +309,15 @@ impl Node {
         match self {
             Self::Pattern { description, .. }
             | Self::Blank { description }
+            | Self::Type { description, .. }
             | Self::Source { description, .. } => Some(*description),
             Self::Convert { target, .. } | Self::Associate { target, .. } => Some(*target),
             Self::Fade { .. }
             | Self::Wipe { .. }
+            | Self::Transform { .. }
             | Self::Mask { .. }
             | Self::Over { .. }
+            | Self::Legend { .. }
             | Self::Look { .. } => None,
         }
     }
@@ -216,11 +326,15 @@ impl Node {
     #[must_use]
     pub fn inputs(&self) -> &[NodeId] {
         match self {
-            Self::Pattern { .. } | Self::Blank { .. } | Self::Source { .. } => &[],
+            Self::Pattern { .. } | Self::Blank { .. } | Self::Source { .. } | Self::Type { .. } => {
+                &[]
+            }
             Self::Convert { input, .. }
             | Self::Fade { input, .. }
             | Self::Wipe { input, .. }
             | Self::Mask { input, .. }
+            | Self::Legend { input, .. }
+            | Self::Transform { input, .. }
             | Self::Look { input, .. }
             | Self::Associate { input, .. } => core::slice::from_ref(input),
             Self::Over { layers } => layers.as_slice(),
@@ -376,39 +490,30 @@ impl Graph {
     fn identity_of(&self, node: &Node) -> Result<Digest> {
         let mut hasher = Sha256::new();
         hasher.update(b"sapstudio-render-node-v1");
+        if !absorb_source(&mut hasher, node)? {
+            self.absorb_filter(&mut hasher, node)?;
+        }
+        Ok(hasher.finish())
+    }
+
+    /// Absorb a node that reads other nodes.
+    ///
+    /// Split from [`Graph::identity_of`] along the line the graph is actually
+    /// made of: a **source** is named by what it produces and nothing else,
+    /// and a **filter** is named by its inputs' identities and its own
+    /// parameters. Every filter arm below begins with the same two lines
+    /// because of that, and every source arm cannot.
+    fn absorb_filter(&self, hasher: &mut Sha256, node: &Node) -> Result<()> {
         match node {
-            Node::Pattern {
-                pattern,
-                description,
-            } => {
-                hasher.update(&[1]);
-                absorb_pattern(&mut hasher, *pattern);
-                absorb_description(&mut hasher, *description);
-            }
-            Node::Blank { description } => {
-                hasher.update(&[2]);
-                absorb_description(&mut hasher, *description);
-            }
             Node::Convert { input, target } => {
                 hasher.update(&[3]);
                 hasher.update(self.identity(*input)?.bytes());
-                absorb_description(&mut hasher, *target);
-            }
-            Node::Source {
-                media,
-                tick,
-                description,
-            } => {
-                hasher.update(&[4]);
-                hasher.update(media.bytes());
-                hasher.update(&tick.to_le_bytes());
-                absorb_description(&mut hasher, *description);
+                absorb_description(hasher, *target);
             }
             Node::Fade { input, opacity } => {
                 hasher.update(&[5]);
                 hasher.update(self.identity(*input)?.bytes());
-                hasher.update(&opacity.numerator().to_le_bytes());
-                hasher.update(&opacity.denominator().to_le_bytes());
+                absorb_rationals(hasher, [*opacity]);
             }
             Node::Wipe {
                 input,
@@ -419,10 +524,25 @@ impl Graph {
             } => {
                 hasher.update(&[9]);
                 hasher.update(self.identity(*input)?.bytes());
-                for held in [across, down, fraction, softness] {
-                    hasher.update(&held.numerator().to_le_bytes());
-                    hasher.update(&held.denominator().to_le_bytes());
-                }
+                absorb_rationals(hasher, [*across, *down, *fraction, *softness]);
+            }
+            Node::Transform {
+                input,
+                linear,
+                offset,
+                anchor,
+                bilinear,
+            } => {
+                hasher.update(&[11]);
+                hasher.update(self.identity(*input)?.bytes());
+                hasher.update(&[u8::from(*bilinear)]);
+                absorb_rationals(
+                    hasher,
+                    linear
+                        .iter()
+                        .copied()
+                        .chain([offset.0, offset.1, anchor.0, anchor.1]),
+                );
             }
             Node::Mask {
                 input,
@@ -432,22 +552,30 @@ impl Graph {
                 hasher.update(&[10]);
                 hasher.update(self.identity(*input)?.bytes());
                 hasher.update(&[u8::from(*inverted)]);
-                for corner in corners {
-                    for held in [corner.0, corner.1] {
-                        hasher.update(&held.numerator().to_le_bytes());
-                        hasher.update(&held.denominator().to_le_bytes());
-                    }
-                }
+                absorb_rationals(
+                    hasher,
+                    corners.iter().flat_map(|corner| [corner.0, corner.1]),
+                );
             }
             Node::Associate { input, target } => {
                 hasher.update(&[8]);
                 hasher.update(self.identity(*input)?.bytes());
-                absorb_description(&mut hasher, *target);
+                absorb_description(hasher, *target);
             }
-            Node::Look { input, look } => {
+            Node::Look {
+                input,
+                look,
+                strength,
+            } => {
                 hasher.update(&[7]);
                 hasher.update(self.identity(*input)?.bytes());
                 hasher.update(look.bytes());
+                absorb_rationals(hasher, [*strength]);
+            }
+            Node::Legend { input, text, brief } => {
+                hasher.update(&[12]);
+                hasher.update(self.identity(*input)?.bytes());
+                absorb_text(hasher, text, brief)?;
             }
             Node::Over { layers } => {
                 hasher.update(&[6]);
@@ -455,8 +583,11 @@ impl Graph {
                     hasher.update(self.identity(*layer)?.bytes());
                 }
             }
+            Node::Pattern { .. } | Node::Blank { .. } | Node::Source { .. } | Node::Type { .. } => {
+                unreachable();
+            }
         }
-        Ok(hasher.finish())
+        Ok(())
     }
 
     /// What a node produces, following the edges where the node cannot say.
@@ -541,14 +672,20 @@ impl Graph {
                 softness,
             } => {
                 let source = self.evaluate(input, pool, library)?;
-                let geometry = source.description().geometry();
-                let width =
-                    usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
-                let height =
-                    usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
+                let (width, height) = extent(&source)?;
                 let coverage =
                     crate::shape::feathered(across, down, fraction, softness, width, height)?;
                 composite::masked(&source, &coverage)?
+            }
+            Node::Transform {
+                input,
+                linear,
+                offset,
+                anchor,
+                bilinear,
+            } => {
+                let source = self.evaluate(input, pool, library)?;
+                moved(&source, linear, offset, anchor, bilinear)?
             }
             Node::Mask {
                 input,
@@ -556,32 +693,33 @@ impl Graph {
                 inverted,
             } => {
                 let source = self.evaluate(input, pool, library)?;
-                let geometry = source.description().geometry();
-                let width =
-                    usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
-                let height =
-                    usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
+                let (width, height) = extent(&source)?;
                 let coverage = crate::shape::masking(&corners, inverted, width, height)?;
                 composite::masked(&source, &coverage)?
             }
-            Node::Associate { input, target } => {
+            Node::Type {
+                description,
+                lines,
+                size,
+                across,
+                down,
+                alignment,
+                ink,
+            } => typeset(description, &lines, size, across, down, alignment, ink)?,
+            Node::Legend { input, text, brief } => {
                 let source = self.evaluate(input, pool, library)?;
-                match (source.description().alpha(), target.alpha()) {
-                    (Some(AlphaState::Straight), Some(AlphaState::Premultiplied)) => {
-                        composite::premultiply(&source)?
-                    }
-                    (Some(AlphaState::Premultiplied), Some(AlphaState::Straight)) => {
-                        composite::unpremultiply(&source)?
-                    }
-                    // Anything else is not a re-association: it is a frame
-                    // with no coverage, or a node claiming to change something
-                    // it is not changing.
-                    _ => return Err(RenderStatus::WrongAlphaState),
-                }
+                lettered(&source, &text, &brief)?
             }
-            Node::Look { input, look } => {
+            Node::Associate { input, target } => {
+                associated(&self.evaluate(input, pool, library)?, target)?
+            }
+            Node::Look {
+                input,
+                look,
+                strength,
+            } => {
                 let source = self.evaluate(input, pool, library)?;
-                library.look(look)?.apply(&source)?
+                library.look(look)?.apply(&source, strength)?
             }
             Node::Over { layers } => {
                 let bottom = self.evaluate(layers[0], pool, library)?;
@@ -597,6 +735,265 @@ impl Graph {
             Err(status) => Err(RenderStatus::Media(status)),
         }
     }
+}
+
+/// A frame with its coverage associated the other way.
+///
+/// Anything but the two real directions is refused: a frame with no coverage
+/// has nothing to associate, and a node asking for the state its input is
+/// already in is claiming to change something it is not changing.
+fn associated(source: &Frame, target: FrameDescription) -> Result<Frame> {
+    match (source.description().alpha(), target.alpha()) {
+        (Some(AlphaState::Straight), Some(AlphaState::Premultiplied)) => {
+            composite::premultiply(source)
+        }
+        (Some(AlphaState::Premultiplied), Some(AlphaState::Straight)) => {
+            composite::unpremultiply(source)
+        }
+        _ => Err(RenderStatus::WrongAlphaState),
+    }
+}
+
+/// A frame of coloured type on nothing.
+///
+/// Premultiplied by the same conversion every other layer goes through, for
+/// the reason [`lettered`] gives: a premultiplied sample is the colour times
+/// the coverage *in light*, and code values are not light.
+///
+/// The ink arrives as three fractions of full light and leaves as three code
+/// values, and the table that converts it is built from *this frame's* colour
+/// description. That is the whole argument for naming a colour in light: the
+/// same ink is 255 in a full-range frame and 235 in a limited-range one, and
+/// neither number had to be written down anywhere.
+fn typeset(
+    description: FrameDescription,
+    lines: &[alloc::string::String],
+    size: Rational,
+    across: Rational,
+    down: Rational,
+    alignment: crate::font::Alignment,
+    ink: [Rational; 3],
+) -> Result<Frame> {
+    let geometry = description.geometry();
+    let width = usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?;
+    let height = usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?;
+    let borrowed: alloc::vec::Vec<&str> = lines.iter().map(alloc::string::String::as_str).collect();
+    let coverage = crate::font::title(&borrowed, size, across, down, alignment, width, height)?
+        .plane(width, height)?;
+    let straight = description
+        .with_alpha(AlphaState::Straight)
+        .map_err(RenderStatus::Media)?;
+    let mut packed = alloc::vec::Vec::new();
+    packed
+        .try_reserve(
+            coverage
+                .len()
+                .checked_mul(4)
+                .ok_or(RenderStatus::OutOfMemory)?,
+        )
+        .map_err(|_| RenderStatus::OutOfMemory)?;
+    let table = crate::convert::TransferTable::build(straight.colour())?;
+    let mut colour = [0_u8; 3];
+    for (slot, channel) in colour.iter_mut().zip(ink) {
+        *slot = table.encode(Fixed::from_rational(channel)?);
+    }
+    for alpha in &coverage {
+        packed.extend_from_slice(&[colour[0], colour[1], colour[2], *alpha]);
+    }
+    let letters = Frame::from_packed(straight, &packed).map_err(RenderStatus::Media)?;
+    let associated = composite::premultiply(&letters)?;
+    if description.alpha() == Some(AlphaState::Premultiplied) {
+        Ok(associated)
+    } else {
+        // A description that asks for straight coverage gets it, rather than a
+        // frame labelled one way and holding the other.
+        composite::unpremultiply(&associated)
+    }
+}
+
+/// A frame resampled through a transform about its own centre.
+fn moved(
+    source: &Frame,
+    linear: [Rational; 4],
+    offset: (Rational, Rational),
+    anchor: (Rational, Rational),
+    bilinear: bool,
+) -> Result<Frame> {
+    let described = *source.description();
+    let geometry = described.geometry();
+    let mapping = crate::resample::Mapping::about(
+        linear,
+        offset,
+        anchor,
+        geometry.width(),
+        geometry.height(),
+    )?;
+    crate::resample::resample(
+        source,
+        described,
+        mapping,
+        if bilinear {
+            crate::resample::Filter::Bilinear
+        } else {
+            crate::resample::Filter::Area
+        },
+    )
+}
+
+/// A frame with a caption set across it, or the frame unchanged.
+///
+/// White type, centred, on a baseline two thirds of the way down, at whatever
+/// size lets the run fit the width with a margin — capped so a short caption
+/// on a wide frame does not become a billboard.
+///
+/// The type is built **straight** and premultiplied by the same conversion
+/// every other layer goes through, rather than by writing the coverage into
+/// all four channels. Those two are not the same thing: a premultiplied sample
+/// is the colour times the coverage *in light*, and code values are not light.
+/// Writing the coverage byte into the colour would draw type that is too dark
+/// at every edge, everywhere, by exactly the amount the transfer curve bends —
+/// which is the same mistake the compositor was built to stop making.
+fn lettered(source: &Frame, text: &str, brief: &str) -> Result<Frame> {
+    let (width, height) = extent(source)?;
+    let mut chosen = crate::font::caption(text, width, height)?;
+    if chosen.is_none() {
+        chosen = crate::font::caption(brief, width, height)?;
+    }
+    let Some(run) = chosen else {
+        // Too small even for the short one. The stripes underneath already say
+        // the one thing that matters, and a grey smear would say it less well.
+        return Ok(source.clone());
+    };
+    let coverage = run.plane(width, height)?;
+    let described = source.description();
+    let straight = described
+        .with_alpha(AlphaState::Straight)
+        .map_err(RenderStatus::Media)?;
+    let mut packed = alloc::vec::Vec::new();
+    packed
+        .try_reserve(
+            coverage
+                .len()
+                .checked_mul(4)
+                .ok_or(RenderStatus::OutOfMemory)?,
+        )
+        .map_err(|_| RenderStatus::OutOfMemory)?;
+    // Full light, spelled the way this frame spells it. A hard-coded 255 is
+    // an *illegal* code value in limited range, which some equipment reads as
+    // a sync pattern -- so even a caption nobody chose the colour of has to
+    // ask the table what white is.
+    let white = crate::convert::TransferTable::build(straight.colour())?.encode(Fixed::ONE);
+    for alpha in &coverage {
+        packed.extend_from_slice(&[white, white, white, *alpha]);
+    }
+    let letters = Frame::from_packed(straight, &packed).map_err(RenderStatus::Media)?;
+    composite::over(&composite::premultiply(&letters)?, source)
+}
+
+/// A frame's size, as the counts a rasteriser wants.
+fn extent(frame: &Frame) -> Result<(usize, usize)> {
+    let geometry = frame.description().geometry();
+    Ok((
+        usize::try_from(geometry.width()).map_err(|_| RenderStatus::OutsideDomain)?,
+        usize::try_from(geometry.height()).map_err(|_| RenderStatus::OutsideDomain)?,
+    ))
+}
+
+/// Absorb a node that reads nothing, saying whether it was one.
+///
+/// A source is named by what it produces: a pattern by which pattern, a title
+/// by what it says. None of them has an input to fold in, which is exactly
+/// what makes them sources.
+fn absorb_source(hasher: &mut Sha256, node: &Node) -> Result<bool> {
+    match node {
+        Node::Pattern {
+            pattern,
+            description,
+        } => {
+            hasher.update(&[1]);
+            absorb_pattern(hasher, *pattern);
+            absorb_description(hasher, *description);
+        }
+        Node::Blank { description } => {
+            hasher.update(&[2]);
+            absorb_description(hasher, *description);
+        }
+        Node::Source {
+            media,
+            tick,
+            description,
+        } => {
+            hasher.update(&[4]);
+            hasher.update(media.bytes());
+            hasher.update(&tick.to_le_bytes());
+            absorb_description(hasher, *description);
+        }
+        Node::Type {
+            description,
+            lines,
+            size,
+            across,
+            down,
+            alignment,
+            ink,
+        } => {
+            hasher.update(&[13]);
+            absorb_description(hasher, *description);
+            hasher.update(
+                &u64::try_from(lines.len())
+                    .map_err(|_| RenderStatus::OutsideDomain)?
+                    .to_le_bytes(),
+            );
+            for line in lines {
+                absorb_text(hasher, line, "")?;
+            }
+            hasher.update(&[match alignment {
+                crate::font::Alignment::Left => 0,
+                crate::font::Alignment::Centre => 1,
+                crate::font::Alignment::Right => 2,
+            }]);
+            absorb_rationals(hasher, [*size, *across, *down]);
+            absorb_rationals(hasher, *ink);
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// A match arm the shape of the type makes impossible.
+///
+/// Not a panic and not a refusal that could be mistaken for a real one: the
+/// two halves of a node's identity partition the node kinds, and this is the
+/// half of each partition the other one covers.
+const fn unreachable() {}
+
+/// Absorb exact numbers into a hash, each as its two halves.
+///
+/// Both halves rather than one scaled integer, for the reason the project file
+/// writes them the same way: a third is a third, and a node keyed by a decimal
+/// near it would be a node that two builds disagreed about.
+fn absorb_rationals(hasher: &mut Sha256, values: impl IntoIterator<Item = Rational>) {
+    for held in values {
+        hasher.update(&held.numerator().to_le_bytes());
+        hasher.update(&held.denominator().to_le_bytes());
+    }
+}
+
+/// Absorb a legend's two captions into a hash, each length first.
+///
+/// The length before the bytes, so two captions cannot run together into one
+/// digest: "AB" then "C" and "A" then "BC" are different slates and have to be
+/// different keys.
+fn absorb_text(hasher: &mut Sha256, text: &str, brief: &str) -> Result<()> {
+    for held in [text, brief] {
+        hasher.update(
+            &u64::try_from(held.len())
+                .map_err(|_| RenderStatus::OutsideDomain)?
+                .to_le_bytes(),
+        );
+        hasher.update(held.as_bytes());
+    }
+    Ok(())
 }
 
 /// Absorb a pattern's identity into a hash.

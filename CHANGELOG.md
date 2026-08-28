@@ -2,6 +2,37 @@
 
 # Changelog
 
+## Sapote Redwood
+
+- Updated the vendored SapStudio `engineering-foundation` snapshot to upstream
+  commit `034ba9336f6dee3cd5a524a42b740b41013ca852`.
+- Retained and modestly reduced the reflective 3D dock while expanding it to
+  Files, Terminal, Notes, SapStudio, Camera, and Settings.
+- Replaced the square pixel UI face with build-rasterized, antialiased,
+  proportional Inter while keeping the kernel free of a TrueType parser.
+- Added a classic twelve-category Settings app. Appearance switches only the
+  dock shelf colour between Light and Dark; Desktop exposes Aurora plus
+  thirteen additional photographic wallpapers.
+- Added bounded fixed-point spring window opening with one controlled overshoot
+  and damage-only animation frames.
+- Added a deliberately spare Camera app backed by a bounded double-buffered
+  RGB provider, a truthful device state, a camera-marked shutter, and
+  recovery-safe synchronized 320×180 BMP capture. It never substitutes a
+  wallpaper, generated scene, or fake live frame when no camera is present.
+- Rebuilt supplied Camera and Settings dock artwork with clean alpha edges,
+  removed rectangular icon shadows, increased dock breathing room, and added
+  a coherent Lucide-based Settings category sheet.
+- Reduced repaint cost with native wallpaper blits, row-blitted Camera preview,
+  quantized parallax, targeted Camera control damage, and a shorter spring.
+- Restyled Notes and Files around the supplied classic references and made the
+  Notes plus action create a real new note.
+- Extended authentic QEMU capture to an exact 25-second UI interaction with
+  screenshots and retained FAT32 note, project, and export evidence. Camera is
+  deliberately left closed because the QEMU proof machine has no webcam.
+
+Explicit non-feature: physical webcam video requires UVC enumeration and
+streaming support that Sapote's xHCI layer does not yet provide.
+
 ## 2.2.0 — Several Processes, Thirty-Two Bounded Drivers and HD Audio
 
 - Replaced the one-process-ever address-space model with up to four private
@@ -93,7 +124,6 @@ framebuffer programming, command submission, memory management or power
 management despite one of them reading the capability of that name; the device
 model that executes them is a stand-in sharing their register offsets, not
 hardware.
-
 ## 2.1.0 — Advanced Networking and Browser Foundation
 
 - Added a modern virtio-net PCI/MSI-X/DMA driver with bounded queues, explicit

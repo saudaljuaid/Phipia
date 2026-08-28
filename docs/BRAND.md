@@ -5,34 +5,34 @@ Sapote is the only current public name of this project. Public prose uses
 `sapote`; preprocessor guards and build environment variables use `SAPOTE`.
 The interactive prompt is `sap>`.
 
-`Sapote First Environment` names the current graphical shell. `First Light`
+`Sapote Redwood` names the current graphical shell. `Sapote Redwood`
 remains the historical v1/v2.0 milestone name; neither is a separate product.
 
 ## Canonical mark
 
-[`assets/sapote-logo-source.jpeg`](../assets/sapote-logo-source.jpeg) is the
-unaltered supplied 1024×892 source of truth. Its SHA-256 is:
+[`assets/sapote-logo-source.png`](../assets/sapote-logo-source.png) is the
+unaltered supplied 643×606 source of truth. Its SHA-256 is:
 
-    0743231ED884F16A8D973A5E7C6D51F2EF97D2F1E386D59FF8A35024AC2EDE3C
+    90F1C5613AF4EAA817BBF69B151FC2E387BA45873643CC7C220BB471423C6663
 
 Do not redraw, trace, recolour, crop, mirror, add type to it, or substitute a
 visually similar mark. Public uses preserve its aspect ratio. The transparent
 runtime derivative is [`assets/sapote-logo.png`](../assets/sapote-logo.png),
 SHA-256
-`16EC9B0CB3DCB098EB52EF6FB27A2EBF6BBB615B1A0F9EB0B67D21D1D1F77317`.
-It exists so the exact green pebble can sit cleanly inside code-native UI icons;
-it does not replace the supplied source.
+`F7D932CFB5B2FCC7EC9A33291326217CC17E2E36C604A880083BA7BB459FA912`.
+It removes only the source's white matte so the exact red S mark can sit
+cleanly on every code-native surface; it does not replace the supplied source.
 
 The kernel does not parse PNG. `tools/make-logo-asset.py` deterministically
 fits the source within a 280-pixel ceiling using a bounded premultiplied box
-filter. The resulting 280×258 image is encoded as a 43,838-byte `SRL1` stream
+filter. The resulting 280×278 image is encoded as a 188,798-byte `SRL1` stream
 and embedded by Rust. This is a runtime presentation size, not a replacement
 source asset. The boot proof decodes it into guest memory and compares every
 drawn pixel with the decoded stream before reporting success.
 
 ## Palette
 
-The logo supplies no interface palette. First Environment uses a separate palette
+The logo supplies no interface palette. Sapote Redwood uses a separate palette
 around the unchanged asset:
 
 | Role | Value |
@@ -51,16 +51,17 @@ around the unchanged asset:
 | Warm white | `#F8FAF8` |
 
 Accent colors belong to tool icons, not readiness indicators or the logo.
-First Environment displays the decoded green pebble in the menu and Files icon.
+Sapote Redwood displays the decoded red S mark in the menu bar, Settings,
+Terminal, and other operating-system identity surfaces.
 The framebuffer console uses pale green on near-black; early VGA text remains
 bright white on black. The kernel has no general alpha compositor or runtime
 theme selection.
 
-First Environment uses one-pixel outlines, platinum bevels, bitmap type, a
+Sapote Redwood uses one-pixel outlines, platinum bevels, bitmap type, a
 compact menu strip, a photographic blue-hour desktop, and a centered reflective
 3D Dock. Files uses a compact source list and icon grid; Terminal and Notes keep
 the same bounded chrome. Its interaction grammar is informed by late-classic
-desktop interfaces; the pebble, composition, labels, and code-native icons are
+desktop interfaces; the S mark, composition, labels, and code-native icons are
 Sapote's own.
 
 ## Voice
@@ -86,7 +87,7 @@ bundle and tree-equivalence proof.
 
 `make verify` pins the exact source hash, 280-pixel runtime ceiling, branded ABI
 symbols, artifact names, transcript, and prompt. `screen`, `shell` and normal
-scenarios exercise the black-and-white console and `sap>` prompt. `first-light`
+scenarios exercise the black-and-white console and `sap>` prompt. `redwood-proof`
 verifies the installed palette, typed layout, exact decoded logo, and real
 framebuffer pixels. QMP captures the committed runtime screenshots; the images
 are not manually edited.

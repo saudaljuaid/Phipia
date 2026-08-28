@@ -7,6 +7,7 @@ use sapstudio_core::Digest;
 use sapstudio_core::{Duration, Instant, Timebase};
 use sapstudio_media::{
     AlphaState, ColourDescription, Frame, FrameDescription, FramePool, Geometry, PixelFormat,
+    TestPattern,
 };
 use sapstudio_model::{Clip, Edit, Item, MediaAsset, MediaId, Project, SequenceId, TrackKind};
 use sapstudio_render::{Library, Look, RenderStatus};
@@ -1688,7 +1689,11 @@ fn a_planner_does_not_ask_for_media_it_was_told_is_missing() {
     };
     let (graph, _) =
         timeline::plan(&project, sequence, at(5), described(), &mut library).expect("a plan");
-    assert_eq!(graph.len(), 3, "a blank, a slate, and one `over`");
+    assert_eq!(
+        graph.len(),
+        4,
+        "a blank, a slate, the legend naming what is missing, and one `over`"
+    );
     timeline::render(
         &project,
         sequence,
@@ -1698,4 +1703,1450 @@ fn a_planner_does_not_ask_for_media_it_was_told_is_missing() {
         &mut library,
     )
     .expect("a render");
+}
+
+#[test]
+fn a_transform_scales_about_the_centre_rather_than_the_corner() {
+    // The decision that separates "make it bigger" from "make it bigger and
+    // slide it off the bottom right". Halving a full-frame clip about the
+    // centre leaves the picture in the middle with transparency around it;
+    // halving about the corner would leave it in the top-left quarter.
+    use sapstudio_core::Rational;
+    use sapstudio_model::{Resampling, Transform};
+
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let white = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(white, 0, frames(10)).expect("a clip"))],
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    Transform::scaled(
+                        Rational::new(1, 2).expect("a half"),
+                        Rational::new(1, 2).expect("a half"),
+                        (Rational::ZERO, Rational::ZERO),
+                        Resampling::Area,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a transform");
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, white), [255, 255, 255, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let bytes = timeline::render(
+        &project,
+        sequence,
+        at(5),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render")
+    .to_packed()
+    .expect("bytes");
+    let at_pixel = |x: usize, y: usize| bytes[(y * 4 + x) * 4];
+    // Four pixels across, halved about the centre: the picture occupies the
+    // middle two columns and rows, and the outside is the black underneath.
+    assert_eq!(at_pixel(1, 1), 255, "the middle is the picture");
+    assert_eq!(at_pixel(2, 2), 255);
+    assert_eq!(at_pixel(0, 0), 0, "and the corner is not");
+    assert_eq!(at_pixel(3, 3), 0);
+    for column in 0..4 {
+        assert_eq!(
+            bytes[(column) * 4 + 3],
+            255,
+            "the programme is opaque where the clip is not, at {column}"
+        );
+    }
+}
+
+#[test]
+fn a_transform_that_moves_nothing_is_not_resampled_at_all() {
+    // Exact is a stronger promise than "the arithmetic works out". A clip
+    // nobody has moved must not go through a resampler, so the plan has no
+    // node for it -- which is what this counts.
+    use sapstudio_core::Rational;
+    use sapstudio_model::{Resampling, Transform};
+
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let one = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(one, 0, frames(10)).expect("a clip"))],
+    );
+    let mut library = Flat {
+        colours: std::vec![(digest_of(&project, one), [200, 30, 40, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let (bare, _) =
+        timeline::plan(&project, sequence, at(5), described(), &mut library).expect("a plan");
+
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    Transform::new(
+                        [Rational::ONE, Rational::ZERO, Rational::ZERO, Rational::ONE],
+                        (Rational::ZERO, Rational::ZERO),
+                        Resampling::Area,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a transform");
+    let (still, _) =
+        timeline::plan(&project, sequence, at(5), described(), &mut library).expect("a plan");
+    assert_eq!(still.len(), bare.len(), "the identity adds no node");
+
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    Transform::scaled(
+                        Rational::new(1, 2).expect("a half"),
+                        Rational::new(1, 2).expect("a half"),
+                        (Rational::ZERO, Rational::ZERO),
+                        Resampling::Area,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a transform");
+    let (moved, _) =
+        timeline::plan(&project, sequence, at(5), described(), &mut library).expect("a plan");
+    assert_eq!(
+        moved.len(),
+        bare.len() + 1,
+        "and a real one adds exactly one"
+    );
+}
+
+#[test]
+fn a_mask_stays_in_the_frame_while_the_clip_moves_through_it() {
+    // A mask is in *frame* coordinates, applied after the transform, so moving
+    // a clip moves the picture through a stationary mask. That is what a
+    // garbage matte and a split screen both want; a mask that travelled with
+    // its clip would be a different feature and would have to say so.
+    use sapstudio_core::Rational;
+    use sapstudio_model::{Mask, Resampling, Transform};
+
+    let build = |offset: Rational| {
+        let mut project = Project::new();
+        let sequence = project.add_sequence(RATE).expect("a sequence");
+        let white = media(&mut project, 1);
+        lay(
+            &mut project,
+            sequence,
+            0,
+            &[Item::Clip(Clip::new(white, 0, frames(10)).expect("a clip"))],
+        );
+        project
+            .apply(
+                sequence,
+                Edit::SetClipMask {
+                    track: 0,
+                    index: 0,
+                    mask: Some(
+                        Mask::rectangle(
+                            Rational::ZERO,
+                            Rational::ZERO,
+                            Rational::new(1, 2).expect("a half"),
+                            Rational::ONE,
+                        )
+                        .expect("a rectangle"),
+                    ),
+                },
+            )
+            .expect("a mask");
+        project
+            .apply(
+                sequence,
+                Edit::SetClipTransform {
+                    track: 0,
+                    index: 0,
+                    transform: Some(
+                        Transform::scaled(
+                            Rational::new(1, 2).expect("a half"),
+                            Rational::ONE,
+                            (offset, Rational::ZERO),
+                            Resampling::Area,
+                        )
+                        .expect("a transform"),
+                    ),
+                },
+            )
+            .expect("a transform");
+        let mut source = Flat {
+            colours: std::vec![(digest_of(&project, white), [255, 255, 255, 255])],
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        };
+        let bytes = timeline::render(
+            &project,
+            sequence,
+            at(5),
+            described(),
+            &mut pool(),
+            &mut source,
+        )
+        .expect("a render")
+        .to_packed()
+        .expect("bytes");
+        (0..4)
+            .map(|column| bytes[column * 4])
+            .collect::<std::vec::Vec<u8>>()
+    };
+
+    let centred = build(Rational::ZERO);
+    let shifted = build(Rational::new(1, 4).expect("a quarter"));
+    assert_ne!(centred, shifted, "moving the clip changes the picture");
+    // The mask keeps the right half of the frame dark in both, because the
+    // mask did not move.
+    assert_eq!(centred[3], 0, "the masked side stays masked: {centred:?}");
+    assert_eq!(shifted[3], 0, "and still does after the move: {shifted:?}");
+}
+
+#[test]
+fn an_animated_clip_plans_the_graph_a_still_one_at_that_framing_plans() {
+    // M8.10 added animated framings and changed nothing in this crate or in
+    // the renderer, which is a claim worth a test rather than a sentence in a
+    // commit message. It holds because the layer stack hands out a *resolved*
+    // transform: by the time a frame is described, a motion has already become
+    // the framing it reads at that moment, so the renderer never learns that
+    // anything moves.
+    //
+    // Three renders, then. Two arrive at the same framing at frame five, one
+    // flatly and one by animating through it, and must agree node for node and
+    // byte for byte. The third is at a *different* framing, and is here
+    // because the first two would agree just as well if the framing were being
+    // dropped on the floor -- a flat colour scaled is the same flat colour, so
+    // the first fixture written for this passed without the transform doing
+    // anything at all.
+    use sapstudio_model::{Curve, Interpolation, Keyframe, Motion, Resampling, Transform};
+
+    let ratio = |numerator, denominator| {
+        sapstudio_core::Rational::new(numerator, denominator).expect("a rational")
+    };
+    let moved = |across| {
+        Transform::scaled(
+            sapstudio_core::Rational::ONE,
+            sapstudio_core::Rational::ONE,
+            (across, sapstudio_core::Rational::ZERO),
+            Resampling::Bilinear,
+        )
+        .expect("a transform")
+    };
+
+    // A ramp from nought to one over ten frames reads a half at frame five.
+    let ramp = Curve::new(std::vec![
+        Keyframe::new(at(0), sapstudio_core::Rational::ZERO, Interpolation::Linear)
+            .expect("a keyframe"),
+        Keyframe::new(at(10), sapstudio_core::Rational::ONE, Interpolation::Linear)
+            .expect("a keyframe"),
+    ])
+    .expect("a curve");
+
+    let mut planned = std::vec::Vec::new();
+    let mut pixels = std::vec::Vec::new();
+    for (base, animate) in [
+        (ratio(1, 2), false),
+        (sapstudio_core::Rational::ZERO, true),
+        (ratio(1, 4), false),
+    ] {
+        let mut project = Project::new();
+        let sequence = project.add_sequence(RATE).expect("a sequence");
+        let red = media(&mut project, 1);
+        lay(
+            &mut project,
+            sequence,
+            0,
+            &[Item::Clip(Clip::new(red, 0, frames(10)).expect("a clip"))],
+        );
+        project
+            .apply(
+                sequence,
+                Edit::SetClipTransform {
+                    track: 0,
+                    index: 0,
+                    transform: Some(moved(base)),
+                },
+            )
+            .expect("a framing");
+        if animate {
+            project
+                .apply(
+                    sequence,
+                    Edit::SetClipMotion {
+                        track: 0,
+                        index: 0,
+                        motion: Some(
+                            Motion::new(None, Some(ramp.clone()), None, None).expect("a motion"),
+                        ),
+                    },
+                )
+                .expect("a motion");
+        }
+        let mut source = Flat {
+            colours: std::vec![(digest_of(&project, red), [200, 30, 40, 255])],
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        };
+        let (graph, _) =
+            timeline::plan(&project, sequence, at(5), described(), &mut source).expect("a plan");
+        planned.push(graph.len());
+        let rendered = timeline::render(
+            &project,
+            sequence,
+            at(5),
+            described(),
+            &mut pool(),
+            &mut source,
+        )
+        .expect("a render");
+        pixels.push(rendered.to_packed().expect("bytes"));
+    }
+    assert_ne!(
+        pixels[0], pixels[2],
+        "the fixture must vary along the axis under test, or the rest is vacuous"
+    );
+    assert_eq!(planned[0], planned[1], "the same graph, node for node");
+    assert_eq!(pixels[0], pixels[1], "and the same picture, byte for byte");
+}
+
+/// The description the slate tests render at, big enough to read a caption on.
+///
+/// The rest of this file works at four pixels across, which is the size the
+/// freestanding image composites at and is right for everything that is about
+/// arithmetic. A caption is about *legibility*, and four pixels cannot carry
+/// one -- so this is the one fixture here that has to be a picture.
+fn readable() -> FrameDescription {
+    FrameDescription::square(
+        Geometry::new(320, 180).expect("a geometry"),
+        PixelFormat::Rgba8,
+        ColourDescription::srgb_full(),
+        None,
+        Some(AlphaState::Premultiplied),
+    )
+    .expect("a description")
+}
+
+/// A project with one clip of a given media tag, and that media's digest.
+fn one_tagged_clip(tag: u8) -> (Project, SequenceId, Digest) {
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let only = media(&mut project, tag);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(only, 0, frames(10)).expect("a clip"))],
+    );
+    let digest = digest_of(&project, only);
+    (project, sequence, digest)
+}
+
+/// What an offline clip of `tag` renders as, at a size a caption fits.
+fn offline_slate(tag: u8) -> Frame {
+    let (project, sequence, digest) = one_tagged_clip(tag);
+    let mut library = Sometimes {
+        inner: Flat {
+            colours: std::vec::Vec::new(),
+            description: readable(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        },
+        missing: std::vec![digest],
+    };
+    timeline::render(
+        &project,
+        sequence,
+        at(5),
+        readable(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render")
+}
+
+#[test]
+fn an_offline_slate_names_the_media_it_is_missing() {
+    // The sentence that stood in the risk section for three milestones:
+    // "offline media renders a slate but cannot say which media is missing --
+    // that is text on a frame, and text needs a font". There is a font now.
+    //
+    // Two clips of two different pieces of media, both offline. The slates
+    // must differ, and they can only differ in what they say, because the
+    // stripes underneath are a pure function of the frame's size.
+    let one = offline_slate(1);
+    let other = offline_slate(2);
+    assert_ne!(
+        one.digest(),
+        other.digest(),
+        "two missing clips get two slates"
+    );
+
+    let bare = TestPattern::Offline
+        .render(readable())
+        .expect("a bare slate");
+    assert_ne!(
+        one.digest(),
+        bare.digest(),
+        "and a named slate is not the bare pattern"
+    );
+
+    // How much of it is the caption: enough to be a sentence rather than a
+    // stray pixel, and far less than half the frame.
+    let named = one.to_packed().expect("bytes");
+    let plain = bare.to_packed().expect("bytes");
+    let changed = named
+        .iter()
+        .zip(&plain)
+        .filter(|(here, there)| here != there)
+        .count();
+    assert!(
+        (2_000..named.len() / 4).contains(&changed),
+        "{changed} bytes of {} differ, which is not a caption",
+        named.len()
+    );
+}
+
+#[test]
+fn a_slate_too_small_for_a_caption_is_the_bare_pattern() {
+    // At four pixels across there is nothing legible to say, and a slate that
+    // said it anyway would be a grey smear claiming to be information. The
+    // rest of this file renders at that size, so this is also the reason none
+    // of those tests changed when captions arrived.
+    let (project, sequence, digest) = one_tagged_clip(3);
+    let mut library = Sometimes {
+        inner: Flat {
+            colours: std::vec::Vec::new(),
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        },
+        missing: std::vec![digest],
+    };
+    let rendered = timeline::render(
+        &project,
+        sequence,
+        at(5),
+        described(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render");
+    let bare = TestPattern::Offline
+        .render(described())
+        .expect("a bare slate");
+    assert_eq!(
+        rendered.to_packed().expect("bytes"),
+        bare.to_packed().expect("bytes"),
+        "byte for byte the pattern, with nothing written on it"
+    );
+}
+
+/// A project with one title clip on one track, and that title's digest.
+fn titled(words: &str) -> (Project, SequenceId, Digest) {
+    use sapstudio_model::Title;
+
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let title = Title::line(
+        words.into(),
+        sapstudio_core::Rational::new(1, 6).expect("a size"),
+        sapstudio_core::Rational::new(1, 2).expect("a place"),
+        sapstudio_core::Rational::new(1, 2).expect("a place"),
+    )
+    .expect("a title");
+    let asset = MediaAsset::titled(title, RATE, frames(1000)).expect("an asset");
+    let digest = asset.digest();
+    let media = project.add_media(asset).expect("an identifier");
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(media, 0, frames(10)).expect("a clip"))],
+    );
+    (project, sequence, digest)
+}
+
+/// A library that refuses everything and records what it was asked.
+struct Refuses {
+    asked: std::vec::Vec<Digest>,
+}
+
+impl Library for Refuses {
+    fn frame(
+        &mut self,
+        media: Digest,
+        _tick: i64,
+        _description: FrameDescription,
+    ) -> Result<Frame, RenderStatus> {
+        self.asked.push(media);
+        Err(RenderStatus::OutsideDomain)
+    }
+
+    fn look(&mut self, _look: Digest) -> Result<Look, RenderStatus> {
+        Err(RenderStatus::OutsideDomain)
+    }
+
+    fn available(&mut self, media: Digest) -> bool {
+        self.asked.push(media);
+        false
+    }
+}
+
+#[test]
+fn a_title_clip_is_drawn_rather_than_fetched() {
+    // And the library is never asked about it -- not for the frame, and not
+    // even whether it *has* it. There is nothing to find, so asking would be
+    // asking about a file that does not exist, and a library that answered
+    // "no" would put an offline slate where somebody's card should be.
+    let (project, sequence, _) = titled("SAPSTUDIO");
+    let mut library = Refuses {
+        asked: std::vec::Vec::new(),
+    };
+    let (graph, _) =
+        timeline::plan(&project, sequence, at(5), readable(), &mut library).expect("a plan");
+    assert!(
+        library.asked.is_empty(),
+        "the library was asked about a title"
+    );
+    assert_eq!(graph.len(), 3, "a blank, the type, and one `over`");
+
+    let rendered = timeline::render(
+        &project,
+        sequence,
+        at(5),
+        readable(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render");
+    let blank = Frame::blank(readable()).expect("a blank");
+    assert_ne!(
+        rendered.digest(),
+        blank.digest(),
+        "and there are words on it"
+    );
+}
+
+#[test]
+fn two_different_cards_are_two_different_pictures() {
+    // The identity carries the words, so a programme with two cards on it does
+    // not show the first one twice.
+    let mut shared = pool();
+    let mut pictures = std::vec::Vec::new();
+    for words in ["SAPSTUDIO", "THE END"] {
+        let (project, sequence, _) = titled(words);
+        let mut library = Refuses {
+            asked: std::vec::Vec::new(),
+        };
+        pictures.push(
+            timeline::render(
+                &project,
+                sequence,
+                at(5),
+                readable(),
+                &mut shared,
+                &mut library,
+            )
+            .expect("a render")
+            .digest(),
+        );
+    }
+    assert_ne!(pictures[0], pictures[1]);
+}
+
+#[test]
+fn a_title_is_the_same_picture_at_every_frame_of_its_clip() {
+    // A card does not move, so every instant of it is one cached frame. That
+    // is not an optimisation this arranged -- it falls out of the node not
+    // carrying a tick, which it does not carry because there is nothing for a
+    // tick to select.
+    let (project, sequence, _) = titled("SAPSTUDIO");
+    let mut library = Refuses {
+        asked: std::vec::Vec::new(),
+    };
+    let mut shared = pool();
+    let first = timeline::render(
+        &project,
+        sequence,
+        at(1),
+        readable(),
+        &mut shared,
+        &mut library,
+    )
+    .expect("a render");
+    let later = timeline::render(
+        &project,
+        sequence,
+        at(8),
+        readable(),
+        &mut shared,
+        &mut library,
+    )
+    .expect("a render");
+    assert_eq!(first.digest(), later.digest());
+}
+
+#[test]
+fn a_title_clip_grades_and_masks_like_a_recording() {
+    // The claim the whole design rests on, asked of the *renderer* rather than
+    // of the model: a title goes where a source goes, so everything above it
+    // is the machinery a recording already goes through and none of it had to
+    // be told.
+    let (mut project, sequence, _) = titled("SAPSTUDIO");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipMask {
+                track: 0,
+                index: 0,
+                mask: Some(
+                    sapstudio_model::Mask::new(std::vec![
+                        (
+                            sapstudio_core::Rational::ZERO,
+                            sapstudio_core::Rational::ZERO
+                        ),
+                        (
+                            sapstudio_core::Rational::new(1, 2).expect("a corner"),
+                            sapstudio_core::Rational::ZERO
+                        ),
+                        (
+                            sapstudio_core::Rational::new(1, 2).expect("a corner"),
+                            sapstudio_core::Rational::new(1, 1).expect("a corner")
+                        ),
+                        (
+                            sapstudio_core::Rational::ZERO,
+                            sapstudio_core::Rational::new(1, 1).expect("a corner")
+                        ),
+                    ])
+                    .expect("a mask"),
+                ),
+            },
+        )
+        .expect("a mask");
+    let mut library = Refuses {
+        asked: std::vec::Vec::new(),
+    };
+    let (graph, _) =
+        timeline::plan(&project, sequence, at(5), readable(), &mut library).expect("a plan");
+    assert_eq!(
+        graph.len(),
+        4,
+        "a blank, the type, the mask, and one `over`"
+    );
+    let masked = timeline::render(
+        &project,
+        sequence,
+        at(5),
+        readable(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render");
+
+    let (plain, plain_sequence, _) = titled("SAPSTUDIO");
+    let whole = timeline::render(
+        &plain,
+        plain_sequence,
+        at(5),
+        readable(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render");
+    assert_ne!(
+        masked.digest(),
+        whole.digest(),
+        "half the card is gone, which is what the mask asked for"
+    );
+}
+
+#[test]
+fn a_card_of_two_lines_is_not_a_card_of_one() {
+    // Through the whole program rather than through the layout: the model
+    // holds the lines, the planner hands them to the node, the node sets them,
+    // and two cards that say different things are two pictures.
+    use sapstudio_model::{Alignment, Title};
+
+    let mut pictures = std::vec::Vec::new();
+    for lines in [
+        std::vec!["Sap Studio".to_string()],
+        std::vec!["Sap Studio".to_string(), "MMXXVI".to_string()],
+    ] {
+        let mut project = Project::new();
+        let sequence = project.add_sequence(RATE).expect("a sequence");
+        let title = Title::new(
+            lines,
+            sapstudio_core::Rational::new(1, 10).expect("a size"),
+            sapstudio_core::Rational::new(1, 2).expect("a place"),
+            sapstudio_core::Rational::new(1, 2).expect("a place"),
+            Alignment::Centre,
+        )
+        .expect("a title");
+        let media = project
+            .add_media(MediaAsset::titled(title, RATE, frames(1000)).expect("an asset"))
+            .expect("an identifier");
+        lay(
+            &mut project,
+            sequence,
+            0,
+            &[Item::Clip(Clip::new(media, 0, frames(10)).expect("a clip"))],
+        );
+        let mut library = Refuses {
+            asked: std::vec::Vec::new(),
+        };
+        pictures.push(
+            timeline::render(
+                &project,
+                sequence,
+                at(5),
+                readable(),
+                &mut pool(),
+                &mut library,
+            )
+            .expect("a render")
+            .digest(),
+        );
+    }
+    assert_ne!(pictures[0], pictures[1]);
+}
+
+#[test]
+fn the_alignment_a_card_was_given_is_the_alignment_it_is_set_in() {
+    // The one thing that could quietly go wrong between the model and the
+    // renderer, because they name the alignment separately -- they are
+    // siblings and neither may depend on the other, so a `match` translates
+    // and a `match` is where a wire gets crossed.
+    use sapstudio_model::{Alignment, Title};
+
+    let mut pictures = std::vec::Vec::new();
+    for alignment in [Alignment::Left, Alignment::Centre, Alignment::Right] {
+        let mut project = Project::new();
+        let sequence = project.add_sequence(RATE).expect("a sequence");
+        let title = Title::new(
+            std::vec!["MMMMMMMM".to_string(), "I".to_string()],
+            sapstudio_core::Rational::new(1, 10).expect("a size"),
+            sapstudio_core::Rational::new(1, 2).expect("a place"),
+            sapstudio_core::Rational::new(1, 2).expect("a place"),
+            alignment,
+        )
+        .expect("a title");
+        let media = project
+            .add_media(MediaAsset::titled(title, RATE, frames(1000)).expect("an asset"))
+            .expect("an identifier");
+        lay(
+            &mut project,
+            sequence,
+            0,
+            &[Item::Clip(Clip::new(media, 0, frames(10)).expect("a clip"))],
+        );
+        let mut library = Refuses {
+            asked: std::vec::Vec::new(),
+        };
+        pictures.push(
+            timeline::render(
+                &project,
+                sequence,
+                at(5),
+                readable(),
+                &mut pool(),
+                &mut library,
+            )
+            .expect("a render")
+            .digest(),
+        );
+    }
+    for (index, one) in pictures.iter().enumerate() {
+        for other in &pictures[index + 1..] {
+            assert_ne!(one, other, "three alignments, three pictures");
+        }
+    }
+}
+
+/// A project with one clip on V1, faded up and down over `rising`/`falling`.
+fn faded(rising: i64, falling: i64) -> (Project, SequenceId) {
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let only = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(only, 0, frames(24)).expect("a clip"))],
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: frames(rising),
+                fade_out: frames(falling),
+            },
+        )
+        .expect("fades");
+    (project, sequence)
+}
+
+#[test]
+fn a_clip_fades_up_from_black_and_back_down_to_it() {
+    // The whole gesture, through the whole program: the model holds the fade,
+    // the stack reads it, the planner folds it into the layer's opacity, and
+    // the compositor puts the result over black.
+    let (project, sequence) = faded(8, 8);
+    let mut source = Flat {
+        colours: std::vec![(
+            digest_of(&project, media(&mut project.clone(), 1)),
+            [200, 200, 200, 255]
+        )],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let read = |instant, source: &mut Flat| {
+        timeline::render(
+            &project,
+            sequence,
+            at(instant),
+            described(),
+            &mut pool(),
+            source,
+        )
+        .expect("a render")
+    };
+    assert_eq!(
+        pixel(&read(0, &mut source)).0,
+        0,
+        "the first frame is black"
+    );
+    assert_eq!(pixel(&read(23, &mut source)).0, 0, "and so is the last");
+    let up = pixel(&read(12, &mut source)).0;
+    assert_eq!(up, 200, "and in between it is the picture, whole");
+    let rising = pixel(&read(4, &mut source)).0;
+    assert!(
+        rising > 0 && rising < up,
+        "halfway up is between the two: {rising}"
+    );
+}
+
+#[test]
+fn a_clip_nobody_faded_is_whole_at_its_first_frame() {
+    // The fixture that would have caught the fade being applied where there is
+    // none, which is the failure mode a default of "nothing" has.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let only = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(only, 0, frames(24)).expect("a clip"))],
+    );
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, only), [200, 200, 200, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    for instant in [0, 12, 23] {
+        let frame = timeline::render(
+            &project,
+            sequence,
+            at(instant),
+            described(),
+            &mut pool(),
+            &mut source,
+        )
+        .expect("a render");
+        assert_eq!(pixel(&frame).0, 200, "at {instant}");
+    }
+}
+
+#[test]
+fn a_clips_fade_and_its_tracks_opacity_multiply_into_one_node() {
+    // One node rather than two: two would be two rounding points and two cache
+    // entries for one picture, and the product of two rationals is a rational.
+    let (mut project, sequence) = faded(8, 0);
+    let only = project.media().iter().next().expect("an asset").0;
+    project
+        .apply(
+            sequence,
+            Edit::SetTrackOpacity {
+                track: 0,
+                opacity: Some(
+                    sapstudio_model::Curve::constant(
+                        at(0),
+                        sapstudio_core::Rational::new(1, 2).expect("a half"),
+                    )
+                    .expect("a curve"),
+                ),
+            },
+        )
+        .expect("an opacity");
+    let mut source = Flat {
+        colours: std::vec![(digest_of(&project, only), [200, 200, 200, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let (graph, _) =
+        timeline::plan(&project, sequence, at(4), described(), &mut source).expect("a plan");
+    assert_eq!(
+        graph.len(),
+        4,
+        "a blank, a source, one fade, and one `over` -- not two fades"
+    );
+}
+
+#[test]
+fn a_faded_clip_still_dissolves() {
+    // A fade belongs to the clip and a dissolve belongs to the cut, and where
+    // they meet they multiply. Neither is allowed to swallow the other.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let one = media(&mut project, 1);
+    let two = media(&mut project, 2);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[
+            Item::Clip(Clip::new(one, 100, frames(24)).expect("a clip")),
+            Item::Clip(Clip::new(two, 100, frames(24)).expect("a clip")),
+        ],
+    );
+    project
+        .apply(
+            sequence,
+            Edit::AddTransition {
+                track: 0,
+                transition: sapstudio_model::Transition::new(1, frames(8)).expect("a dissolve"),
+            },
+        )
+        .expect("a dissolve");
+    let mut source = Flat {
+        colours: std::vec![
+            (digest_of(&project, one), [200, 200, 200, 255]),
+            (digest_of(&project, two), [200, 200, 200, 255]),
+        ],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let dissolving = timeline::render(
+        &project,
+        sequence,
+        at(22),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    assert_eq!(
+        pixel(&dissolving).0,
+        200,
+        "a dissolve between two identical pictures is that picture"
+    );
+
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: frames(0),
+                fade_out: frames(8),
+            },
+        )
+        .expect("a fade out");
+    let both = timeline::render(
+        &project,
+        sequence,
+        at(22),
+        described(),
+        &mut pool(),
+        &mut source,
+    )
+    .expect("a render");
+    assert!(
+        pixel(&both).0 < 200,
+        "and the outgoing clip's own fade still takes it down: {}",
+        pixel(&both).0
+    );
+}
+
+/// A project with one coloured title clip on one track.
+fn inked(words: &str, ink: sapstudio_model::Ink) -> (Project, SequenceId) {
+    use sapstudio_model::Title;
+
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let title = Title::line(
+        words.into(),
+        sapstudio_core::Rational::new(1, 3).expect("a size"),
+        sapstudio_core::Rational::new(1, 2).expect("a place"),
+        sapstudio_core::Rational::new(1, 2).expect("a place"),
+    )
+    .expect("a title")
+    .with_ink(ink);
+    let media = project
+        .add_media(MediaAsset::titled(title, RATE, frames(1000)).expect("an asset"))
+        .expect("an identifier");
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(media, 0, frames(10)).expect("a clip"))],
+    );
+    (project, sequence)
+}
+
+/// The brightest sample in each channel of a rendered frame.
+fn brightest(frame: &Frame) -> [u8; 3] {
+    let packed = frame.to_packed().expect("the samples");
+    let mut most = [0_u8; 3];
+    for pixel in packed.chunks_exact(4) {
+        for channel in 0..3 {
+            most[channel] = most[channel].max(pixel[channel]);
+        }
+    }
+    most
+}
+
+#[test]
+fn a_titles_ink_reaches_the_picture_through_the_planner() {
+    // The model owns the colour, the renderer owns what a colour means, and
+    // the planner is the one line between them. A planner that dropped the
+    // ink would leave every card white and every test in the two crates
+    // either side of it still passing.
+    let (project, sequence) = inked(
+        "SAP",
+        sapstudio_model::Ink::new(
+            sapstudio_core::Rational::ONE,
+            sapstudio_core::Rational::ZERO,
+            sapstudio_core::Rational::ZERO,
+        )
+        .expect("red"),
+    );
+    let mut library = Refuses {
+        asked: std::vec::Vec::new(),
+    };
+    let rendered = timeline::render(
+        &project,
+        sequence,
+        at(5),
+        readable(),
+        &mut pool(),
+        &mut library,
+    )
+    .expect("a render");
+    let most = brightest(&rendered);
+    assert_eq!(most[0], u8::MAX, "the letters are at full red");
+    assert_eq!(
+        (most[1], most[2]),
+        (0, 0),
+        "and there is no green or blue anywhere on the card"
+    );
+}
+
+#[test]
+fn two_cards_that_differ_only_in_ink_are_two_different_pictures() {
+    // End to end rather than at the digest: the asset identity test in the
+    // model proves they are two *assets*, and this proves the difference
+    // survives all the way to the samples rather than being a distinction the
+    // renderer then discards.
+    let mut shared = pool();
+    let mut pictures = std::vec::Vec::new();
+    for ink in [
+        sapstudio_model::Ink::WHITE,
+        sapstudio_model::Ink::new(
+            sapstudio_core::Rational::ZERO,
+            sapstudio_core::Rational::ONE,
+            sapstudio_core::Rational::ZERO,
+        )
+        .expect("green"),
+    ] {
+        let (project, sequence) = inked("SAP", ink);
+        let mut library = Refuses {
+            asked: std::vec::Vec::new(),
+        };
+        pictures.push(
+            timeline::render(
+                &project,
+                sequence,
+                at(5),
+                readable(),
+                &mut shared,
+                &mut library,
+            )
+            .expect("a render")
+            .digest(),
+        );
+    }
+    assert_ne!(pictures[0], pictures[1]);
+}
+
+#[test]
+fn the_planner_carries_the_strength_across() {
+    // The seam a negative control found missing once already, in the same
+    // place: the model carries the arrival, the node carries the strength, and
+    // nothing between them is tested by either side's own tests. Sending one
+    // regardless would leave the model holding a colour the picture never
+    // shows, and both halves would still look covered.
+    //
+    // A ramp, and three instants along it, so the picture is a function of
+    // *when* it is rendered — a fixture that rendered one instant could not
+    // tell a carried strength from a hard-coded one.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let id = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(id, 0, frames(9)).expect("a clip"))],
+    );
+
+    let look = swap_look();
+    project
+        .apply(
+            sequence,
+            Edit::SetClipGrade {
+                track: 0,
+                index: 0,
+                grade: Some(look.digest().expect("a digest")),
+            },
+        )
+        .expect("a grade");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipGradeStrength {
+                track: 0,
+                index: 0,
+                strength: Some(
+                    sapstudio_model::Curve::new(std::vec![
+                        sapstudio_model::Keyframe::new(
+                            at(0),
+                            sapstudio_core::Rational::ZERO,
+                            sapstudio_model::Interpolation::Linear,
+                        )
+                        .expect("a keyframe"),
+                        sapstudio_model::Keyframe::new(
+                            at(8),
+                            sapstudio_core::Rational::ONE,
+                            sapstudio_model::Interpolation::Linear,
+                        )
+                        .expect("a keyframe"),
+                    ])
+                    .expect("a curve"),
+                ),
+            },
+        )
+        .expect("a strength");
+
+    // Red 200 and blue 10, swapped by the table. At a strength of `s` the red
+    // channel is `200 + s(10 - 200)`, in code values, which is 200 at nought,
+    // 105 at a half and 10 at one -- derived from the definition rather than
+    // read back out of the renderer.
+    let mut seen = std::vec::Vec::new();
+    for (tick, expected) in [
+        (0_i64, (200, 40, 10)),
+        (4, (105, 40, 105)),
+        (8, (10, 40, 200)),
+    ] {
+        let mut source = Flat {
+            colours: std::vec![(digest_of(&project, id), [200, 40, 10, 255])],
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec![(look.digest().expect("a digest"), look.clone())],
+            answers_wrongly: false,
+        };
+        let frame = timeline::render(
+            &project,
+            sequence,
+            at(tick),
+            described(),
+            &mut pool(),
+            &mut source,
+        )
+        .expect("a frame");
+        let (red, green, blue, alpha) = pixel(&frame);
+        assert_eq!(
+            (red, green, blue, alpha),
+            (expected.0, expected.1, expected.2, 255),
+            "the arrival is not what the picture shows at tick {tick}"
+        );
+        seen.push(red);
+    }
+    assert!(
+        seen.windows(2).all(|pair| pair[0] > pair[1]),
+        "the picture does not move with the instant, so nothing above is \
+         evidence that the strength was carried rather than fixed"
+    );
+}
+
+/// A clip framed by the identity and turning through a quarter over its length.
+///
+/// Split out because the test that uses it ran past the hundred lines clippy
+/// allows, which is the same reason `sample` in the format suite grew two
+/// helpers this week.
+fn turning() -> (Project, SequenceId, MediaId) {
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let id = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(id, 0, frames(24)).expect("a clip"))],
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    sapstudio_model::Transform::scaled(
+                        sapstudio_core::Rational::ONE,
+                        sapstudio_core::Rational::ONE,
+                        (
+                            sapstudio_core::Rational::ZERO,
+                            sapstudio_core::Rational::ZERO,
+                        ),
+                        sapstudio_model::Resampling::Bilinear,
+                    )
+                    .expect("a transform"),
+                ),
+            },
+        )
+        .expect("a framing");
+    project
+        .apply(
+            sequence,
+            Edit::SetClipMotion {
+                track: 0,
+                index: 0,
+                motion: Some(
+                    sapstudio_model::Motion::new(
+                        None,
+                        None,
+                        None,
+                        Some(
+                            sapstudio_model::Curve::new(std::vec![
+                                sapstudio_model::Keyframe::new(
+                                    at(0),
+                                    sapstudio_core::Rational::ZERO,
+                                    sapstudio_model::Interpolation::Linear,
+                                )
+                                .expect("a keyframe"),
+                                sapstudio_model::Keyframe::new(
+                                    at(24),
+                                    sapstudio_core::Rational::ONE,
+                                    sapstudio_model::Interpolation::Linear,
+                                )
+                                .expect("a keyframe"),
+                            ])
+                            .expect("a curve"),
+                        ),
+                    )
+                    .expect("a motion"),
+                ),
+            },
+        )
+        .expect("a turn");
+
+    (project, sequence, id)
+}
+
+#[test]
+fn a_turned_framing_reaches_the_graph_and_a_turn_of_nothing_does_not() {
+    // The seam: the model resolves the turn into the framing, and the planner
+    // has to hand that framing's linear part to the node. Both halves look
+    // covered from their own side, which is the shape this project's notes say
+    // always lacks a test.
+    //
+    // Asserted on the plan rather than on a picture, deliberately. The only
+    // source these tests have draws a flat colour, and a flat colour turned is
+    // the same flat colour — the fixture could not see the axis under test.
+    // What a turn actually *does* to pixels is pinned in the resampler's own
+    // suite, where a quarter turn of a 4x4 picture is an exact permutation.
+    let (project, sequence, id) = turning();
+    let linear_at = |tick: i64| -> Option<[sapstudio_core::Rational; 4]> {
+        let mut library = Flat {
+            colours: std::vec![(digest_of(&project, id), [200, 40, 10, 255])],
+            description: described(),
+            asked: std::vec::Vec::new(),
+            looks: std::vec::Vec::new(),
+            answers_wrongly: false,
+        };
+        let (graph, root) = timeline::plan(&project, sequence, at(tick), described(), &mut library)
+            .expect("a plan");
+        let mut found = None;
+        let mut pending = std::vec![root];
+        while let Some(id) = pending.pop() {
+            let node = graph.node(id).expect("a node");
+            pending.extend_from_slice(node.inputs());
+            if let sapstudio_render::Node::Transform { linear, .. } = node {
+                found = Some(*linear);
+            }
+        }
+        found
+    };
+
+    // At the first frame the parameter is nought, so the framing is the
+    // identity and the planner adds no node at all -- exact beats "the
+    // arithmetic works out", which is what `Transform::is_still` is for.
+    assert_eq!(
+        linear_at(0),
+        None,
+        "a turn of nothing was resampled rather than skipped"
+    );
+    // At the halfway mark the parameter is a half, which is the three-four-five
+    // turn: cos 3/5, sin 4/5, derived by hand from the parametrisation.
+    let one = sapstudio_core::Rational::ONE;
+    let three_fifths = sapstudio_core::Rational::new(3, 5).expect("a rational");
+    let four_fifths = sapstudio_core::Rational::new(4, 5).expect("a rational");
+    assert_eq!(
+        linear_at(12),
+        Some([
+            three_fifths,
+            sapstudio_core::Rational::ZERO
+                .checked_sub(four_fifths)
+                .expect("a negation"),
+            four_fifths,
+            three_fifths
+        ]),
+        "the node did not get the turn the curve read"
+    );
+    // And the last frame is a different turn again, so the node is a function
+    // of the instant rather than of the clip.
+    assert_ne!(linear_at(12), linear_at(20));
+    assert_ne!(
+        linear_at(20),
+        Some([
+            one,
+            sapstudio_core::Rational::ZERO,
+            sapstudio_core::Rational::ZERO,
+            one
+        ])
+    );
+}
+
+#[test]
+fn the_planner_carries_the_pivot_across() {
+    // The seam again. The model knows where a framing pivots and the node
+    // needs to be told, and neither side's own tests cross the join.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(RATE).expect("a sequence");
+    let id = media(&mut project, 1);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(Clip::new(id, 0, frames(10)).expect("a clip"))],
+    );
+    let pivot = (
+        sapstudio_core::Rational::ZERO,
+        sapstudio_core::Rational::new(1, 4).expect("a rational"),
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipTransform {
+                track: 0,
+                index: 0,
+                transform: Some(
+                    sapstudio_model::Transform::scaled(
+                        sapstudio_core::Rational::new(2, 1).expect("a rational"),
+                        sapstudio_core::Rational::new(2, 1).expect("a rational"),
+                        (
+                            sapstudio_core::Rational::ZERO,
+                            sapstudio_core::Rational::ZERO,
+                        ),
+                        sapstudio_model::Resampling::Bilinear,
+                    )
+                    .expect("a transform")
+                    .with_anchor(pivot),
+                ),
+            },
+        )
+        .expect("a framing");
+
+    let mut library = Flat {
+        colours: std::vec![(digest_of(&project, id), [200, 40, 10, 255])],
+        description: described(),
+        asked: std::vec::Vec::new(),
+        looks: std::vec::Vec::new(),
+        answers_wrongly: false,
+    };
+    let (graph, root) =
+        timeline::plan(&project, sequence, at(0), described(), &mut library).expect("a plan");
+    let mut found = None;
+    let mut pending = std::vec![root];
+    while let Some(id) = pending.pop() {
+        let node = graph.node(id).expect("a node");
+        pending.extend_from_slice(node.inputs());
+        if let sapstudio_render::Node::Transform { anchor, .. } = node {
+            found = Some(*anchor);
+        }
+    }
+    assert_eq!(
+        found,
+        Some(pivot),
+        "the model holds a pivot the picture never turns about"
+    );
+    // And the default reaches the node as the centre rather than as nothing,
+    // so a clip nobody moved the pivot of renders the way it always did.
+    assert_ne!(
+        found,
+        Some((
+            sapstudio_core::Rational::ZERO,
+            sapstudio_core::Rational::ZERO
+        )),
+        "the fixture's pivot is not the corner, so this comparison means something"
+    );
 }

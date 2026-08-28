@@ -850,6 +850,85 @@ fn clamped(value: Rational) -> Result<Rational> {
     Ok(value)
 }
 
+/// A convex region from its corners, in pixel coordinates.
+///
+/// The winding is **not** the caller's problem. A polygon's edges point inward
+/// on one winding and outward on the other, so the region they describe is
+/// either the polygon or everything outside all of its edges — which is
+/// nothing. This picks the winding by measuring, from the sign of the
+/// polygon's own area, rather than insisting the caller supply one.
+///
+/// Two things need this and they arrive from opposite directions: a mask's
+/// corners are dragged by a person, and a resampled pixel's preimage is
+/// whatever an affine map made of a square — including, under a mirror, the
+/// other winding. Neither can promise a direction, so neither is asked.
+///
+/// # Errors
+///
+/// [`RenderStatus::DegenerateShape`] for fewer than three corners or for
+/// corners enclosing no area, [`RenderStatus::ShapeTooComplex`] past
+/// [`MAX_EDGES`], and [`RenderStatus::Time`] wrapping an overflow.
+pub fn convex(corners: &[(Rational, Rational)]) -> Result<Shape> {
+    if corners.len() < 3 {
+        return Err(RenderStatus::DegenerateShape);
+    }
+    if corners.len() > MAX_EDGES {
+        return Err(RenderStatus::ShapeTooComplex);
+    }
+    let mut twice = Rational::ZERO;
+    for (index, current) in corners.iter().enumerate() {
+        let next = corners[(index + 1) % corners.len()];
+        twice = twice
+            .checked_add(
+                current
+                    .0
+                    .checked_mul(next.1)
+                    .map_err(RenderStatus::Time)?
+                    .checked_sub(next.0.checked_mul(current.1).map_err(RenderStatus::Time)?)
+                    .map_err(RenderStatus::Time)?,
+            )
+            .map_err(RenderStatus::Time)?;
+    }
+    if twice.is_zero() {
+        return Err(RenderStatus::DegenerateShape);
+    }
+    let clockwise = twice.is_positive();
+
+    let mut edges = Vec::new();
+    edges
+        .try_reserve(corners.len())
+        .map_err(|_| RenderStatus::OutOfMemory)?;
+    for (index, current) in corners.iter().enumerate() {
+        let next = corners[(index + 1) % corners.len()];
+        // The inward normal of this edge: its direction turned a quarter of a
+        // turn, the way the winding says.
+        let run = next.0.checked_sub(current.0).map_err(RenderStatus::Time)?;
+        let rise = next.1.checked_sub(current.1).map_err(RenderStatus::Time)?;
+        let normal = if clockwise {
+            (rise, run.checked_neg().map_err(RenderStatus::Time)?)
+        } else {
+            (rise.checked_neg().map_err(RenderStatus::Time)?, run)
+        };
+        if normal.0.is_zero() && normal.1.is_zero() {
+            // Two corners in the same place: no edge, and nothing to clip by.
+            continue;
+        }
+        let offset = normal
+            .0
+            .checked_mul(current.0)
+            .map_err(RenderStatus::Time)?
+            .checked_add(
+                normal
+                    .1
+                    .checked_mul(current.1)
+                    .map_err(RenderStatus::Time)?,
+            )
+            .map_err(RenderStatus::Time)?;
+        edges.push(Edge::new(normal.0, normal.1, offset)?);
+    }
+    Shape::new(edges)
+}
+
 /// A convex mask's coverage over a picture, one byte per pixel.
 ///
 /// The corners are fractions of the frame, so this is where they become
@@ -898,55 +977,7 @@ pub fn masking(
         ));
     }
 
-    // Which way round the corners run decides which side of each edge is the
-    // inside. Measured from the signed area rather than assumed.
-    let mut twice_area = Rational::ZERO;
-    for (index, current) in placed.iter().enumerate() {
-        let next = placed[(index + 1) % placed.len()];
-        twice_area = twice_area
-            .checked_add(
-                current
-                    .0
-                    .checked_mul(next.1)
-                    .map_err(RenderStatus::Time)?
-                    .checked_sub(next.0.checked_mul(current.1).map_err(RenderStatus::Time)?)
-                    .map_err(RenderStatus::Time)?,
-            )
-            .map_err(RenderStatus::Time)?;
-    }
-    if twice_area.is_zero() {
-        return Err(RenderStatus::DegenerateShape);
-    }
-    let clockwise = twice_area.is_positive();
-
-    let mut edges = Vec::new();
-    edges
-        .try_reserve(placed.len())
-        .map_err(|_| RenderStatus::OutOfMemory)?;
-    for (index, current) in placed.iter().enumerate() {
-        let next = placed[(index + 1) % placed.len()];
-        // The inward normal of the edge from `current` to `next`, which is the
-        // edge direction turned a quarter of a turn — the way the winding
-        // says.
-        let run = next.0.checked_sub(current.0).map_err(RenderStatus::Time)?;
-        let rise = next.1.checked_sub(current.1).map_err(RenderStatus::Time)?;
-        let (a, b) = if clockwise {
-            (rise, run.checked_neg().map_err(RenderStatus::Time)?)
-        } else {
-            (rise.checked_neg().map_err(RenderStatus::Time)?, run)
-        };
-        if a.is_zero() && b.is_zero() {
-            // Two corners in the same place: no edge, and nothing to clip by.
-            continue;
-        }
-        let c = a
-            .checked_mul(current.0)
-            .map_err(RenderStatus::Time)?
-            .checked_add(b.checked_mul(current.1).map_err(RenderStatus::Time)?)
-            .map_err(RenderStatus::Time)?;
-        edges.push(Edge::new(a, b, c)?);
-    }
-    let shape = Shape::new(edges)?;
+    let shape = convex(&placed)?;
 
     let mut out = Vec::new();
     out.try_reserve(

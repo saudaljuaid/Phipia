@@ -605,11 +605,28 @@ fn a_mask_scales_the_coverage_with_the_colour() {
     // Premultiplied, so halving the coverage halves the colour too. A frame
     // whose colour was scaled and whose alpha was not would claim more colour
     // than its coverage allows, and `over` refuses exactly that.
+    //
+    // But the two are halved in different *spaces*, and that is the whole of
+    // what this test pins. A premultiplied sample is `encode(light x
+    // coverage)`, so halving it means halving the **light**; coverage is a
+    // fraction of a pixel's area and is linear in its stored value, so halving
+    // that means halving the byte.
     let frame = flat(1, 1, [200, 100, 50, 255]);
     let masked = sapstudio_render::composite::masked(&frame, &[128]).expect("a masked frame");
-    // 200 x 128 / 255 = 100.39..., 100 x 128 / 255 = 50.2, 50 x 128 / 255 =
-    // 25.1, 255 x 128 / 255 = 128, each rounded half away from zero.
-    assert_eq!(masked.to_packed().expect("samples"), vec![100, 50, 25, 128]);
+    // Worked out by hand, one channel at a time, at a coverage of 128/255 =
+    // 0.50196:
+    //
+    //   red   200 decodes to 0.57751; x 0.50196 = 0.28993; encodes to 147
+    //   green 100 decodes to 0.12744; x 0.50196 = 0.06397; encodes to  72
+    //   blue   50 decodes to 0.03190; x 0.50196 = 0.01601; encodes to  34
+    //   alpha 255 x 128 / 255 = 128, exactly
+    //
+    // This test asserted [100, 50, 25, 128] until M8.17 -- the code values
+    // halved -- and that was the bug rather than the convention. The module's
+    // own header has said since its first version that a premultiplied sample
+    // is "the encoding of light x coverage, not the encoded value scaled by
+    // coverage", and `masked` was doing the second thing.
+    assert_eq!(masked.to_packed().expect("samples"), vec![147, 72, 34, 128]);
     assert!(checked_premultiplied(&masked).is_ok());
 }
 
@@ -669,15 +686,24 @@ fn a_wipe_needs_no_operator_of_its_own() {
         "the programme stays opaque across the edge"
     );
     assert_eq!(samples[11], 255);
-    // The edge pixel, worked out by hand. Coverage 128/255 leaves 127/255 of
-    // the grey underneath, and stored 128 is 0.21586 of full light, so the sum
-    // is 0.21586 x 0.49804 + 0.21586 = 0.32337, which encodes to 154.
+    // The edge pixel, worked out by hand. The incoming is white, so its light
+    // is 1; masked to a coverage of 128/255 = 0.50196 it becomes light
+    // 0.50196 at coverage 128. The grey underneath is stored 128, which is
+    // 0.21586 of full light, and 128/255 of coverage leaves 0.49804 of it. So
+    // the sum is 0.50196 + 0.21586 x 0.49804 = 0.60947, which encodes to 205.
     //
     // Mixing the code values instead gives 255 x 0.50196 + 128 x 0.49804 =
-    // 192. Thirty-eight code values apart, and the linear answer is the
-    // *darker* one -- the opposite of what a white-over-black intuition
-    // predicts, which is why this asserts the number rather than a direction.
-    assert_eq!(samples[8], 154);
-    assert_eq!(samples[9], 154);
-    assert_eq!(samples[10], 154);
+    // 192. Thirteen code values apart, and the linear answer is the *brighter*
+    // one here.
+    //
+    // This assertion read 154 until M8.17, and the comment beside it said the
+    // linear answer was the darker one -- which was not a fact about light, it
+    // was the consequence of `masked` scaling the incoming's colour in code
+    // values. A test written to pin the difference between light and code
+    // values was pinning the wrong number and drawing the wrong moral from it.
+    // The lesson survives in a better form: assert the number, never the
+    // direction, because the direction was wrong.
+    assert_eq!(samples[8], 205);
+    assert_eq!(samples[9], 205);
+    assert_eq!(samples[10], 205);
 }

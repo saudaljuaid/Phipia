@@ -4,7 +4,7 @@
 
 Sapote is a single-core x86_64 kernel built as one fixed-address ELF image. It
 boots through Multiboot2, installs its own memory and interrupt foundations,
-discovers emulated hardware, and can hand control to the First Light workspace
+discovers emulated hardware, and can hand control to the Sapote Redwood workspace
 or one of the bounded QEMU proof scenarios.
 
 This page is the durable map. Source, headers, self-tests, and the Boot Ledger
@@ -75,7 +75,7 @@ The current device boundaries are deliberately small:
 - FAT32: separate immutable-system and writable-data mounts with bounded
   handles, a four-sector cache, and clean-sync persistence;
 - FAT16: retained read-only compatibility proofs for historical releases;
-- PS/2: keyboard and three-byte pointer input for the shell and First Light.
+- PS/2: keyboard and three-byte pointer input for the shell and Sapote Redwood.
 
 `driver.c` adds thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus
 Logic and Bochs Display Interface devices. Each binds through the same typed
@@ -147,7 +147,7 @@ refuses legal returns on any processor that sets it.
 The native Ring 3 proof loads one exact ELF64 fixture and returns through a
 private interrupt gate. Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
-profiles: `echo SAPOTE`, `uname -s`, and `cat`. First Light's `linux` command
+profiles: `echo SAPOTE`, `uname -s`, and `cat`. Sapote Redwood's `linux` command
 selects one of the three exact root entries on the deterministic read-only
 FAT32 system volume attached as an ordinary emulated NVMe namespace. Each
 launch validates
@@ -158,7 +158,7 @@ prompt.
 Echo and uname remain synchronous. Cat alone may suspend at its measured
 `read(0, 0x400001203f00, 4096)` entry. The syscall boundary saves an
 authenticated user frame, restores the kernel CR3 and safe launch stack, and
-returns to First Light without printing a prompt. Keyboard events then belong
+returns to Sapote Redwood without printing a prompt. Keyboard events then belong
 to the bounded foreground line state. A complete line or EOF is revalidated,
 copied all-or-nothing into the authenticated RW/NX mapping, and resumes the
 same generation immediately after the real `SYSCALL`. The cycle may repeat
@@ -179,16 +179,16 @@ streams that the kernel did not create: packed fonts and logo data, FAT16/FAT32
 metadata, and ELF64 program records. Only validated, pointer-free results cross
 back to C. See [`RUST.md`](RUST.md).
 
-## First Light
+## Sapote Redwood
 
 `framebuffer.c` validates and maps the linear framebuffer. `surface.c` provides
 cached clipped drawing and damage tracking; `screen.c` implements text cells.
 `keyboard.c`, `pointer.c`, `shell.c`, and `ui.c` form the interactive boundary.
 
-First Light is a fixed workspace with a menu strip, launcher, tool dock,
-terminal, Boot Ledger, system, and about panels. It is not a general window
-manager. Its design and capture contract are in
-[`FIRST_LIGHT.md`](FIRST_LIGHT.md).
+Sapote Redwood is a bounded six-application workspace with a menu bar, native
+3D Dock, movable overlapping windows, Settings, Camera, Files, Notes,
+Terminal, and SapStudio. It is not a general window manager. Its design and
+capture contract are in [`REDWOOD.md`](REDWOOD.md).
 
 ## Repository map
 

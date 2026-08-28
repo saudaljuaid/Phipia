@@ -265,10 +265,321 @@ checksum-pinned BusyBox programs.
   diagonal stripes whose period is a *fraction of the frame* rather than a
   pixel count, because a fixed period is a solid colour on a small frame, which
   is exactly where a slate must not look like footage;
+- **resampling**, which scaling a clip needs and which is where "looks about
+  right" hides the most. It happens in **linear light**, because an average
+  only means something over quantities that add, and on **premultiplied**
+  samples, because averaging straight ones across an edge is the dark fringe
+  round every badly keyed title. The forward map is inverted exactly — a
+  rational two-by-two inverse is a determinant and four divisions — and a map
+  with no inverse is refused. Area weighting is the exact overlap and is right
+  for reduction; bilinear is right for enlargement; **choosing is the caller's**
+  rather than a heuristic keyed on the scale factor, which would change a
+  picture's look the moment somebody dragged past 100%. The general
+  parallelogram path is checked against a product of one-dimensional overlaps
+  it never forms;
+- **transforms on clips**, which is that resampler given something to move. The
+  linear part is dimensionless and the move is in fractions of the frame, so a
+  project cut on a proxy and finished four times larger keeps the framing
+  somebody chose. It acts about the frame's **centre**, because scaling about
+  the corner sends a picture sliding off the bottom right the moment a slider
+  moves. There is no rotation-in-degrees — four rationals instead, for the
+  reason the wipe's direction is a vector — so a half, a third, a mirror and a
+  quarter turn are all exact. A **mirror is not a refusal**: it has a negative
+  determinant, and it is the *zero* one that has no inverse. And a transform
+  that moves nothing goes through no resampler at all, which a test asserts by
+  counting nodes rather than comparing pixels;
+- **motion**, which is that framing given a curve. M4.6 named "a scale that
+  pushes in" in its opening line and then deferred it, on the grounds that a
+  curve on an item would need a keyframe name surviving a renumbering — and it
+  does not, because the curve goes **on the clip**, where there is no index to
+  survive. It is measured from the clip's own start, so moving a shot down the
+  timeline moves its push-in with it rather than re-timing it. Which means a
+  **cut re-bases the tail**: keyframes before the cut go negative rather than
+  being dropped, because a curve holds its first value before its first
+  keyframe and dropping that pair would flatten a move already underway into a
+  hold. Join is the exact inverse, and refuses two halves whose animations do
+  not line up. The renderer did not change by one line: the layer stack hands
+  out a *resolved* transform, so nothing below it ever learns that anything
+  moves — a claim with a test, and a third render beside it at a different
+  framing, because the first two would agree just as well if the framing were
+  being dropped on the floor;
+- **rolling a cut and sliding an item**, the two trims a track could not do.
+  A roll moves a cut without changing how long the programme is, so nothing
+  after the cut moves and nothing after the cut has to be moved back; a slide
+  moves an item without changing the item at all, its neighbours giving and
+  taking to make room. **Both are their own inverses** with the sign turned
+  round, which is why neither edit has to remember what it replaced. A
+  dissolve&#39;s two conditions are about exactly what a trim changes — how long
+  each side is, and how far into its media the incoming one starts — so a trim
+  re-checks the dissolves it moved rather than trusting a check that ran when
+  somebody drew them. And **removing an item was already a ripple delete**: a
+  track stores no positions, so there is never a hole to close;
+- **a face, written from scratch**, because one could not be taken from
+  anywhere: every outline format worth reading is a parser and a hinting
+  engine, every free face is somebody else's licence, and a bitmap would have
+  to be drawn again at every size. A glyph here is a handful of **convex pieces
+  that touch but never overlap**, so its coverage is their *sum* — exact, by
+  the rasteriser wipes and masks already use, with no reasoning about
+  antialiasing at all. Disjointness is measured rather than trusted: for every
+  pair of pieces in every glyph, the exact area of their intersection, which
+  must be nought. And `quantise` refuses a coverage above full, so an
+  overlapping face is refused rather than drawn wrong. The face is therefore
+  **the same shape at every size** — a glyph at twice the size covers exactly
+  four times the area — with no hinting and no grid to snap to. Capitals,
+  digits, lowercase and enough punctuation for a timecode, a digest and a
+  name. Capitals were **one** measurement — cap line to baseline and nothing
+  else — and lowercase needed three more: an x-height the bodies sit on,
+  ascenders that reach the cap line, and descenders that hang below the
+  baseline. Those four numbers are not a comment: a test measures every glyph
+  against them, so a letter that drifted off its own line would fail rather
+  than merely look wrong. A character it
+  cannot set is **refused by name** rather than drawn as a box, because a
+  slate that prints a message it was not given is the one thing a slate must
+  not do. The whole repertoire is committed as
+  [`tests/golden/specimen.png`](tests/golden/specimen.png) and compared byte
+  for byte, because every other test would pass on a face whose letters were
+  the wrong letters. And the face is a **table**, not a program that builds
+  one: written as construction code it was the largest single item in the whole
+  image at 23,807 bytes — a coordinate in a function body is an *instruction
+  that stores a coordinate*, and there are some two thousand of them — so it
+  moved into read-only data and gave **four pages** back. The specimen came out
+  byte for byte identical, which is the proof the change was a change to how
+  the face is written rather than to what it says;
+- **and the offline slate says which media is missing**, which is the sentence
+  that stood in this file's risk section for three milestones. The digest
+  rather than a file name, because the digest is what the clip refers to: a
+  name is a hint that may have moved. A legend carries **two** captions — the
+  whole sentence and the part that matters — because a caption on a proxy has
+  a real choice to make and neither answer is right at both sizes: at 320
+  across it reads `MEDIA OFFLINE 4F3C9A21`, at 160 just the digest, and below
+  that **nothing at all**, because a slate whose caption is a grey smear has
+  told the viewer something false about how much it knows. The type is
+  premultiplied **in light**, through the same conversion every other layer
+  goes through; writing the coverage byte into the colour channels is the
+  obvious way to build white type and is too dark along every edge by exactly
+  the amount the transfer curve bends;
+- **titles, which are media** — not a new kind of item and not a property of a
+  clip, but an asset a clip cuts from like any other. That is the whole design:
+  trimming, rolling, sliding, splitting, joining, dissolving, grading, masking,
+  moving and animating a title all work already, and not one of them had to be
+  told what a title is. A title is **named by what it says** — its digest is
+  the digest of its own description — so the same card in two projects is one
+  asset, two clips of it share a cached frame, and changing a word makes a
+  *different* asset rather than quietly changing every clip of it. It has
+  nowhere to be, so it cannot be relinked and does not need to be; and it is
+  never offline, so the library is never even asked whether it has one. Its
+  colour is three fractions of **full light** rather than three code values: a
+  byte is a number in an encoding and the same byte is a different colour in
+  sRGB than in a linear working space, so the ink means the same thing
+  everywhere and the frame's own table spells it — 255 in full range, 235 in
+  limited, and half of full light is 188 rather than 128. A card says as many
+  lines as it
+  needs, aligned left, centred or right, and the two questions stay apart:
+  where the *block* goes is the card's own place, and the alignment is only how
+  the lines sit against one another — so moving a left-aligned card does not
+  re-align it. The lines stack at the face's **own** line spacing rather than
+  at the em: this face descends, and lines an em apart would put every `g` in
+  one line through every `A` in the next — where the two would sum past full
+  coverage and the card would be *refused* rather than drawn heavy;
+- **a fade on a clip**, which is the gesture a cut cannot make. A dissolve
+  sits at a cut and needs two clips; the first item of a programme has nothing
+  before it, so until this there was no way to bring a programme up from black
+  at all. It rises from **nought** on the clip's own first frame and falls back
+  to nought on its last — a different question from a dissolve, whose fraction
+  never reaches either end because a frame there would repeat a neighbour. A
+  fade from black *is* the black. Where the two fades of one clip meet, the
+  smaller wins; where a clip's fade meets a dissolve at its cut, they multiply.
+  A trim shorter than the fades on it is **refused** rather than silently
+  re-timing somebody's fade;
+- and **a bug that fade found**. Compositing a faded or masked layer scaled its
+  premultiplied colour in *code values* — which this module's own header has
+  forbidden since its first version: "a premultiplied sample is the encoding of
+  light × coverage, not the encoded value scaled by coverage". A dissolve
+  between two **identical** pictures sagged by twenty-eight code values in the
+  middle. Every test the project had faded a layer that was **black**, where
+  nought times anything is nought and the two arithmetics agree — the third
+  time that blind spot has cost something here, and this time it had corrupted
+  a test written specifically to pin the difference: the wipe's edge pixel
+  asserted 154 with a comment saying the linear answer was the darker one, and
+  both the number and the moral were the bug talking. It is 205, derived by
+  hand, and `picture red` moved from 73 to 98;
+- **retiming**: a clip plays its media at an exact rational speed. It keeps its
+  length on the timeline; what changes is how much media it consumes to fill
+  it. A clip at `24/25` is the standard pull-down and a clip at `0.96` is a
+  rounding of it that drifts a frame every twenty-five seconds — slowly enough
+  that nobody notices until a delivery. The **size** of the speed says how far
+  and the **sign** says which way, so a reversed clip shows exactly the frames
+  its forward twin shows; flooring `offset × speed` directly would round the
+  other way and give `100, 99, 99, 98` against a forward `100, 100, 101, 101`.
+  A reverse that would read before its media is refused when the speed is
+  *set*, a speed of nought is refused as a freeze by another name, and sound is
+  refused at any speed but real time until there is a resampler to pitch it;
+- **a freeze**, which retiming named while refusing to be it: a speed of nought
+  "would show one frame forever and consume no media — a freeze, which is a
+  different edit with a different name". The second half of that sentence is
+  the design. A freeze does *not* consume no media: it consumes exactly one
+  frame, and `floor(offset × 0)` cannot say so — it puts the source end at the
+  in point, claiming a clip that shows a frame reads none of it. So playback is
+  two cases, at a speed or frozen, and a still's span is a single tick — which
+  is what lets it be **held past the end of its own media**, as a still should
+  be. Two stills join when they hold the *same* frame, because a still cut in
+  two is two stills of one frame and join is the exact inverse of split; a
+  still beside a moving clip does not join even where the arithmetic lines up.
+  Sound is refused a freeze for a sharper reason than a speed: a held frame of
+  sound is a held *block* of samples, which is a tone at the block rate;
+- **a clip that animates itself**. A fade is the quick answer — two lengths and
+  a straight ramp — and this is the general one: a curve on the clip with
+  whatever shape somebody drew, a hold, a linear run, an ease. The two
+  **multiply**, like everything else here that decides what is on screen.
+  Measured from the clip's own start, so a ripple moves the animation with the
+  shot, and a cut **re-bases** the tail rather than restarting it. An
+  overshooting ease is clamped at the read, exactly as a track's automation is,
+  because a layer past full coverage is a frame the compositor refuses. Sound
+  is refused an opacity — not because sound cannot fade, but because its
+  loudness is decibels and an opacity is a coverage. And it animates a **title**
+  with no code of its own, because a title is media and a clip cuts from it
+  like any other: a card that fades up and pushes in is a clip with a curve and
+  a motion;
+- and **a page count that was credited to the wrong thing**. That milestone
+  only added — a field, an edit, two functions, a lane in the file — and the
+  image *fell* two pages. Rather than write "it paid for itself", the claim was
+  tested: on the previous commit, twenty-four bytes of dummy padding in `Clip`
+  produce the same two pages and the same 3.4 KB off `Edit::apply`. The saving
+  was bought by the clip crossing 320 bytes, past which the optimiser stops
+  copying a clip inline into each of `apply`'s arms. **A struct getting bigger
+  made the program smaller**, which is the opposite of what every earlier
+  footprint note here assumed while reading a total;
+- **markers**, which `ARCHITECTURE.md` has listed as planned since its first
+  version. A note at an instant, with text — the one thing in this model that
+  exists purely for the person editing: nothing renders it and no clip is
+  affected by one. It does **not** move when an item ripples, because a note
+  reading "the sync drifts here" is about a place on the timeline and an
+  unrelated shot getting longer must not move it away from the thing it is
+  about. That is a property of the *absence* of code, so the control **adds**
+  the behaviour — a trim that slides every note — and the test that pins the
+  decision fails. One per instant, because two at one instant is the same
+  nothing as none: neither can be named. The text bound counts **characters**,
+  and the fixture that proves it is the bound's worth of `é`, which is longer
+  in bytes than in characters and is the only input that can tell the two rules
+  apart;
+- **a lift, which is the other delete**. Removing an item and closing the gap
+  has always been here; taking the shot and *leaving* the hole never was, and
+  half the deletes anybody performs are that one. The choice is not taste, it
+  is about the rest of the programme: sound cut to picture stays in sync
+  through a lift and slides through an extract, and an editor offering only one
+  is making that decision for the user without saying so. It composes with the
+  razor into the commonest gesture there is. Its inverse carries the shot back
+  and refuses any slot that is not still the gap it left. And a dissolve on
+  either boundary the item touches refuses the lift — *either boundary it
+  touches*, not "at or after", because a lift renumbers nothing and the coarse
+  check would refuse a lift at the head of a programme because of a dissolve at
+  its end. The commit also retired an exemption **on schedule**: `Edit` carried
+  a `clippy::large_enum_variant` `expect` arguing why *one* variant is bigger
+  than the rest, a second variant now carries an item, the lint stopped firing,
+  and the build said so — which is exactly what the paragraph beside it had
+  predicted;
+- **a razor, and the merge that undoes it**. Cutting one item on one track has
+  been here since the model had items; what was missing is the gesture — a
+  blade dragged **down** the timeline cuts every track it crosses, and dragged
+  back it heals every cut it made. The difference is not convenience, it is
+  **undo**: four splits are four entries in the history, and undoing once
+  leaves three cuts behind. So a column is one edit whose inverse is one edit,
+  over a set of tracks the edit itself carries — a `u128`, one bit per track,
+  against a bound of 128 tracks and a compile-time assertion that the two
+  numbers are one number. The set is *passed* rather than recomputed, which is
+  what makes the inverse exact: a blade does not cut a track whose material has
+  stopped or whose cut is already there, and a heal that recomputed could
+  undo a cut nobody made. Both directions are two passes — work the whole
+  answer out touching nothing, then publish it — so a refused razor leaves
+  nothing behind. A control found that the *heal* had that reasoning and no
+  test, which is the second half of an argument going untested because it felt
+  like the safe half;
+- **the point a framing acts about**. The centre was a good default and a poor
+  rule — a lower third swings in on its left edge, and M8.24 made that sharper,
+  because a turn about the centre was suddenly the only turn there was. The
+  interesting part is what could *not* be done: acting about `a` rather than
+  the centre contributes `(a − c) − M(a − c)`, which is a translation, so it
+  looks foldable into the move the model already passes. That is true in
+  **pixels** and false in **fractions**, which is the only space the model has
+  — the vector to the anchor scales per axis and a rotation does not commute
+  with that — so the folding is exact for a scale and wrong for every
+  rotation, which is the case it was added for. There is a test that folds it
+  and compares: on an 8×4 picture a diagonal map agrees byte for byte and a
+  three-four-five turn does not. And a control here found a real gap: the
+  anchor was in the render node's cache key and nothing had ever asked it to
+  be, so two pivots differing only *down* the frame collided;
+- **a turn, and it is exact**. This model said since M8.9 that it has no
+  rotation, because "a sine and a cosine are not exact, and a project whose
+  framing depended on them would drift". True of an *angle*; false of a
+  **rotation**. Put `t = tan(θ/2)` and `cos = (1 − t²)/(1 + t²)`,
+  `sin = 2t/(1 + t²)` is a rational pair for every rational `t`, with
+  `cos² + sin² = 1` exactly and a determinant of exactly one — and the rational
+  points on the circle are *dense*, so a quarter turn, a three-four-five, and
+  everything between them are all available with nothing approximated. Turns
+  compose without renormalising, so a thousand of them is still exactly a turn;
+  four quarter turns are the identity on the nose; and a picture turned four
+  times through the resampler comes back **byte for byte**. The type stores the
+  *point*, because `t` reaches every rotation except the half turn, which sits
+  at infinity; the *curve* stores `t`, because a curve needs somewhere
+  unbounded to live. One lane turns a mask about its own centroid and a framing
+  on the left of its base transform — `R·M`, not `M·R`, which differ exactly
+  when the framing mirrors. The renderer did not change by a line, and the
+  image did not move by a page. And testing the resampler's own long-standing
+  claim that it works "however the picture is turned" found the sharpest
+  fixture lesson yet: a **quarter turn cannot test rotation**, because a right
+  angle sends the pixel grid onto itself and leaves every preimage
+  axis-aligned. The mutation that proves it fails one test in 235, and it is
+  neither quarter-turn test;
+- **a grade that comes on over a shot** — the last place a parameter was a
+  value where it could be a curve, which is the phrase the two milestones
+  before it both ended on. Not *which* look: a digest is not a quantity and two
+  tables have nothing between them to interpolate. What animates is the
+  **strength**, nought for the clip untouched and one for the look applied
+  exactly as it always was — and one is what an absent curve reads, which is
+  why every project written before this keeps its looks. The mix happens in the
+  table's own **code values**, `c + s·(f(c) − c)`, for the reason that module
+  has given since its first version: apply an operation in the space its
+  definition is written in. That is the **opposite direction** from the
+  compositor, which mixes only in light, and both follow from the one rule. It
+  is a testable difference rather than a stated one: half a look taking a
+  mid-grey to black lands on 64, and the control that moves the mix into light
+  lands on 92.374 — both derived by hand from the sRGB curve before either was
+  run. And the commit corrected two sentences it had written itself: that the
+  interpolation's arrangement is what makes a full-strength grade exact (it is
+  the multiply, and both arrangements are exact at the ends), and that the
+  format's field order is what lets a file's refusal see the grade (it is the
+  builder chain, and swapping both halves of the format breaks nothing). Both
+  were found by controls — one by specifying it, one by running it;
+- **a mask that animates** — an iris that opens, a vignette that breathes, a
+  shape that sweeps a card on. A uniform scale and a move, not the corners: a
+  corner that moved on its own could turn a convex outline **concave** part way
+  through, and this build computes an exact area only for a convex one, so
+  per-corner animation would mean a refusal arriving at a *frame* rather than
+  at the edit. It scales about the mask's **own area centroid** — a trapezoid's
+  corners average to `(1/2, 1/2)` and its area balances at `(1/2, 4/9)`, and
+  scaling about the wrong one drifts a shape sideways while it grows. Which
+  gives a **text reveal** out of the two lanes already there: a strip scaled by
+  `s` and moved right by `(s − 1)/8` keeps its left edge at nought and sweeps a
+  card on. And the same milestone put the two pages back — `Clip` 344 → 416,
+  the image 91 → 93 — so the threshold above is one effect at one size, not a
+  trend to lean on;
+- **a title's colour, named in light**. Titles shipped white with an argument
+  that was right — three bytes in a model that has never held a colour would be
+  three bytes in *which encoding* — and a conclusion that was not. The way out
+  is to store fractions of **full light** rather than bytes: the same ink is
+  255 in a full-range frame and 235 in a limited-range one, and half of full
+  light is 188 rather than 128, because sRGB bends. Each of those numbers is
+  derived from the definition in the test that asserts it. And it found a real
+  refusal: a slate caption is antialiased, so packing a hard 255 made every
+  partly covered pixel claim more light than its coverage allowed, and a
+  limited-range slate failed with `NotPremultiplied` rather than drawing
+  something slightly wrong. A card, whose stencil has no soft edge, was never
+  affected — which the tests now say, one each, rather than one claim covering
+  both;
 - **the program renders**, on the freestanding target, and says what came out.
   The slate composites two layers through a fade at frame 12 of a 24-frame rise
   and prints the SHA-256 of the result — a golden render hash over the layer
-  stack, the plan, the graph, the compositor and the pool. `picture red` is 73,
+  stack, the plan, the graph, the compositor and the pool. `picture red` is 98,
   and every step of that is derived by hand: fading a premultiplied layer
   scales its coverage too, and `over` works in linear light. Until this
   existed, `sapstudio-render` had **no symbol in the image at all** — half the
@@ -278,11 +589,12 @@ checksum-pinned BusyBox programs.
   non-PIE `ET_EXEC` with no dynamic section, no relocations, and no SIMD, built
   twice into different directories and compared byte for byte.
 
-699 tests, no third-party dependencies, no `unsafe` outside the two crates that
-are allowed it, and every rule this project wrote down is enforced by something
-that runs. 193 invariants have been checked by
-deliberately breaking the code and requiring the break to be caught; three of
-those found real bugs, five found gaps in the tests themselves, and one
+1066 tests, no third-party dependencies, no `unsafe` outside the two crates
+that are allowed it, and every rule this project wrote down is enforced by
+something that runs. 494 invariants have been checked by
+deliberately breaking the code and requiring the break to be caught; four of
+those found real bugs, nine found gaps in the tests themselves, two found a
+sentence claiming more than the code delivers, and one
 named the exact cost of a shortcut that had looked harmless. They
 are listed, with what each refusal looked like, in
 [Verification](docs/VERIFICATION.md).

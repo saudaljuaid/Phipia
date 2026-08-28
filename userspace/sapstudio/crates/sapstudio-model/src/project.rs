@@ -127,7 +127,8 @@ impl Project {
     ///
     /// # Errors
     ///
-    /// [`ModelStatus::Time`] wrapping a stale or unknown identifier.
+    /// [`ModelStatus::Time`] wrapping a stale or unknown identifier, and
+    /// [`ModelStatus::NotRecordedMedia`] for a title, which has nowhere to be.
     pub fn set_media_location(
         &mut self,
         id: MediaId,
@@ -135,7 +136,10 @@ impl Project {
     ) -> Result<Option<crate::media::Location>> {
         let asset = self.media.get_mut(id)?;
         let previous = asset.location().cloned();
-        *asset = asset.with_location(location);
+        // Built before the write, so a refusal leaves the library exactly as
+        // it was (R-1.4).
+        let relinked = asset.with_location(location)?;
+        *asset = relinked;
         Ok(previous)
     }
 
@@ -226,81 +230,88 @@ impl Project {
 
     /// Check an edit against the media library before it is applied.
     ///
-    /// Three edits can put a clip's source range outside its media: inserting
-    /// a clip, lengthening one, and slipping one. Each is checked here, on the
-    /// values the edit would produce, before anything changes. Removals,
-    /// splits, joins, and track edits cannot introduce a reference or widen a
-    /// range, so they have nothing to check.
+    /// Four edits can put a clip's source range outside its media: inserting a
+    /// clip, lengthening one, slipping one, and **retiming** one (a freeze is
+    /// the one that cannot, and is checked anyway). Each is
+    /// checked here, on the clip the edit would produce, before anything
+    /// changes. Removals, splits, joins, and track edits cannot introduce a
+    /// reference or widen a range, so they have nothing to check.
+    ///
+    /// Retiming was missing for a milestone, and the shape of the omission is
+    /// worth keeping: `check_source` took a start and a *length on the
+    /// timeline*, which was the same thing as what a clip read right up until
+    /// a clip could be retimed. A clip at double speed reads twice its length
+    /// and nothing noticed. So the question it asks is now the clip's own —
+    /// [`crate::Clip::source_span`] — which cannot fall behind the mapping,
+    /// because it *is* the mapping.
     fn validate(&self, id: SequenceId, edit: &Edit) -> Result<()> {
         let sequence = self.sequences.get(id)?;
+        let held = |track: &usize, index: &usize| -> Result<Option<crate::Clip>> {
+            match sequence.track(*track)?.item(*index)? {
+                Item::Clip(clip) => Ok(Some(clip.clone())),
+                Item::Gap(_) => Ok(None),
+            }
+        };
         match edit {
             Edit::InsertItem { item, .. } => {
                 let Item::Clip(clip) = item else {
                     return Ok(());
                 };
-                self.check_source(
-                    sequence,
-                    clip.media(),
-                    clip.source_start(),
-                    clip.duration().ticks(),
-                )
+                self.check_source(sequence, clip)
             }
             Edit::SetItemDuration {
                 track,
                 index,
                 duration,
             } => {
-                let Item::Clip(clip) = sequence.track(*track)?.item(*index)? else {
+                let Some(clip) = held(track, index)? else {
                     return Ok(());
                 };
-                self.check_source(
-                    sequence,
-                    clip.media(),
-                    clip.source_start(),
-                    duration.ticks(),
-                )
+                self.check_source(sequence, &clip.with_duration(*duration)?)
             }
             Edit::SetClipSource {
                 track,
                 index,
                 source_start,
             } => {
-                let Item::Clip(clip) = sequence.track(*track)?.item(*index)? else {
+                let Some(clip) = held(track, index)? else {
                     return Ok(());
                 };
-                self.check_source(
-                    sequence,
-                    clip.media(),
-                    *source_start,
-                    clip.duration().ticks(),
-                )
+                self.check_source(sequence, &clip.with_source(*source_start)?)
+            }
+            Edit::SetClipPlayback {
+                track,
+                index,
+                playback,
+            } => {
+                let Some(clip) = held(track, index)? else {
+                    return Ok(());
+                };
+                // The same construction the edit itself uses, asked for by
+                // name rather than written out again here.
+                self.check_source(sequence, &playback.applied_to(&clip)?)
             }
             _ => Ok(()),
         }
     }
 
-    /// Whether a source range lies inside the media it names.
-    fn check_source(
-        &self,
-        sequence: &Sequence,
-        media: MediaId,
-        source_start: i64,
-        length: i64,
-    ) -> Result<()> {
+    /// Whether what a clip reads lies inside the media it names.
+    fn check_source(&self, sequence: &Sequence, clip: &crate::Clip) -> Result<()> {
         let asset = self
             .media
-            .get(media)
+            .get(clip.media())
             .map_err(|_| ModelStatus::UnknownMedia)?;
         if asset.timebase() != sequence.timebase() {
             return Err(ModelStatus::MediaTimebaseMismatch);
         }
-        if source_start < 0 {
+        let (lowest, highest) = clip.source_span()?;
+        if lowest < 0 {
             return Err(ModelStatus::SourceBeforeStart);
         }
-        let end = source_start
-            .checked_add(length)
-            .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
-        if end > asset.duration().ticks() {
+        // The span's ends are both frames the clip shows, so the last one has
+        // to *be* a frame of the asset rather than sit one past the last --
+        // which is why this compares against the length rather than to it.
+        if highest >= asset.duration().ticks() {
             return Err(ModelStatus::SourceAfterEnd);
         }
         Ok(())

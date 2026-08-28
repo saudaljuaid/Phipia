@@ -339,34 +339,52 @@ def short_name_bytes(name: str) -> bytes:
     return (base.ljust(8) + extension.ljust(3)).encode("ascii")
 
 
-def populate_data_image(source: bytes, name: str, payload: bytes) -> bytes:
-    """Place one bounded ordinary file in a fresh deterministic data image."""
+def populate_data_files(
+    source: bytes, files: list[tuple[str, bytes]]
+) -> bytes:
+    """Place bounded ordinary files in a fresh deterministic data image."""
     verify_data(source)
-    if not payload:
-        raise Fat32Error("staged media file must not be empty")
-    if len(payload) > 16 * 1024 * 1024:
-        raise Fat32Error("staged media file exceeds the kernel file bound")
-    short_name = short_name_bytes(name)
-    clusters = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
-    first_cluster = ROOT_CLUSTER + 1
-    if first_cluster + clusters - 1 > CLUSTER_COUNT + 1:
-        raise Fat32Error("staged media file does not fit the data volume")
+    if not files or len(files) > SECTOR_BYTES // ENTRY_BYTES - 1:
+        raise Fat32Error("staged file count exceeds the bounded root subset")
+    names: set[bytes] = set()
+    prepared: list[tuple[bytes, bytes, int]] = []
+    total_clusters = 0
+    for name, payload in files:
+        if not payload:
+            raise Fat32Error("staged media file must not be empty")
+        if len(payload) > 16 * 1024 * 1024:
+            raise Fat32Error("staged media file exceeds the kernel file bound")
+        short_name = short_name_bytes(name)
+        if short_name in names:
+            raise Fat32Error("staged filenames must be unique")
+        names.add(short_name)
+        clusters = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
+        total_clusters += clusters
+        prepared.append((short_name, payload, clusters))
+    first_free = ROOT_CLUSTER + 1
+    if first_free + total_clusters - 1 > CLUSTER_COUNT + 1:
+        raise Fat32Error("staged media files do not fit the data volume")
 
     image = bytearray(source)
-    for ordinal in range(clusters):
-        cluster = first_cluster + ordinal
-        following = cluster + 1 if ordinal + 1 < clusters else FAT32_EOC
-        _set_fat(image, cluster, following)
-        offset = _cluster_offset(cluster)
-        start = ordinal * SECTOR_BYTES
-        block = payload[start:start + SECTOR_BYTES]
-        image[offset:offset + len(block)] = block
     root = _cluster_offset(ROOT_CLUSTER)
-    image[root + ENTRY_BYTES:root + 2 * ENTRY_BYTES] = _directory_entry(
-        short_name, 0x20, first_cluster, len(payload)
-    )
-    free_clusters = CLUSTER_COUNT - 1 - clusters
-    next_free = first_cluster + clusters
+    next_cluster = first_free
+    for index, (short_name, payload, clusters) in enumerate(prepared):
+        first_cluster = next_cluster
+        for ordinal in range(clusters):
+            cluster = first_cluster + ordinal
+            following = cluster + 1 if ordinal + 1 < clusters else FAT32_EOC
+            _set_fat(image, cluster, following)
+            offset = _cluster_offset(cluster)
+            start = ordinal * SECTOR_BYTES
+            block = payload[start:start + SECTOR_BYTES]
+            image[offset:offset + len(block)] = block
+        entry = root + (index + 1) * ENTRY_BYTES
+        image[entry:entry + ENTRY_BYTES] = _directory_entry(
+            short_name, 0x20, first_cluster, len(payload)
+        )
+        next_cluster += clusters
+    free_clusters = CLUSTER_COUNT - 1 - total_clusters
+    next_free = next_cluster
     if next_free > CLUSTER_COUNT + 1:
         next_free = 0xFFFFFFFF
     info = _fsinfo(free_clusters, next_free)
@@ -376,6 +394,11 @@ def populate_data_image(source: bytes, name: str, payload: bytes) -> bytes:
     populated = bytes(image)
     inspect_image(populated)
     return populated
+
+
+def populate_data_image(source: bytes, name: str, payload: bytes) -> bytes:
+    """Place one bounded ordinary file in a fresh deterministic data image."""
+    return populate_data_files(source, [(name, payload)])
 
 
 def parse_geometry(image: bytes | bytearray | memoryview) -> Geometry:

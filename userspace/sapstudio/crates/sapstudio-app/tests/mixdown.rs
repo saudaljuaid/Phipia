@@ -1031,3 +1031,125 @@ fn a_fader_level_on_a_picture_track_is_refused() {
         Err(sapstudio_model::ModelStatus::LevelOnPicture)
     );
 }
+
+#[test]
+fn a_sound_clip_fades_up_from_silence() {
+    // The gesture a cut cannot make, on the sound side. A fade on the clip is
+    // a fraction of the *material*; the fader is a position on a console. They
+    // are two different things multiplied together, so the fade scales the
+    // samples and the fader scales the source, rather than one of them being
+    // converted into the other's units — which for a fraction and a decibel
+    // would mean a logarithm at every sample.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(Timebase::FILM_24).expect("a sequence");
+    let id = media(&mut project, 1, Timebase::FILM_24);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(
+            Clip::new(
+                id,
+                0,
+                Duration::new(4, Timebase::FILM_24).expect("a duration"),
+            )
+            .expect("a clip"),
+        )],
+    );
+    project
+        .apply(
+            sequence,
+            Edit::SetClipFades {
+                track: 0,
+                index: 0,
+                fade_in: Duration::new(2, Timebase::FILM_24).expect("a duration"),
+                fade_out: Duration::new(0, Timebase::FILM_24).expect("a duration"),
+            },
+        )
+        .expect("a fade in");
+    let mut source = Flat {
+        levels: std::vec![(id, 10_000)],
+        rate: SampleRate::Hz48000,
+        channels: 1,
+        asked: std::vec::Vec::new(),
+    };
+    let (mixed, _) = mixdown::mix(
+        project.sequence(sequence).expect("a sequence"),
+        span(Timebase::FILM_24, 0, 4),
+        SampleRate::Hz48000,
+        1,
+        &mut source,
+    )
+    .expect("a mix");
+    let samples = mixed.channel(0).expect("a channel");
+    assert_eq!(samples[0], 0, "the first sample is silence");
+    assert!(
+        samples[1] > 0 && samples[1] < 10_000,
+        "and the second is on its way up: {}",
+        samples[1]
+    );
+    let per_frame = samples.len() / 4;
+    assert_eq!(
+        samples[2 * per_frame],
+        10_000,
+        "two frames in, the fade has finished"
+    );
+    assert_eq!(
+        samples[samples.len() - 1],
+        10_000,
+        "and it stays finished to the end"
+    );
+    // Rising, sample by sample, with no step at the block boundary -- which is
+    // what the half-open pair is for. A fade that arrived at its value on the
+    // last sample of each block instead would repeat one value at every seam,
+    // and a repetition at a regular interval is a tone.
+    for pair in samples[..2 * per_frame].windows(2) {
+        assert!(pair[1] >= pair[0], "{pair:?} goes backwards");
+    }
+}
+
+#[test]
+fn a_clip_nobody_faded_arrives_at_the_bus_bit_for_bit() {
+    // The fixture that would have caught a fade being applied where there is
+    // none -- and it did: reading the *next frame's* value off the track
+    // rather than off the clip made every unfaded clip duck to silence over
+    // its last block, and this said so within a minute.
+    let mut project = Project::new();
+    let sequence = project.add_sequence(Timebase::FILM_24).expect("a sequence");
+    let id = media(&mut project, 1, Timebase::FILM_24);
+    lay(
+        &mut project,
+        sequence,
+        0,
+        &[Item::Clip(
+            Clip::new(
+                id,
+                0,
+                Duration::new(3, Timebase::FILM_24).expect("a duration"),
+            )
+            .expect("a clip"),
+        )],
+    );
+    let mut source = Flat {
+        levels: std::vec![(id, 12_345)],
+        rate: SampleRate::Hz48000,
+        channels: 1,
+        asked: std::vec::Vec::new(),
+    };
+    let (mixed, _) = mixdown::mix(
+        project.sequence(sequence).expect("a sequence"),
+        span(Timebase::FILM_24, 0, 3),
+        SampleRate::Hz48000,
+        1,
+        &mut source,
+    )
+    .expect("a mix");
+    assert!(
+        mixed
+            .channel(0)
+            .expect("a channel")
+            .iter()
+            .all(|sample| *sample == 12_345),
+        "including the last block, which is where an end-of-clip fade would show"
+    );
+}

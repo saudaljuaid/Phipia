@@ -1,31 +1,36 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-only
-"""Build the deterministic, bounded Sapote desktop wallpaper asset.
+"""Build Sapote's bounded SPW3 photographic wallpaper collection.
 
-The source remains a normal PNG.  This tool performs all PNG and scaling work
-on the host, then emits SPW1: geometry, a fixed RGB332 palette, and one checked
-palette index per output pixel.  The kernel therefore needs no PNG or DEFLATE
-implementation and the committed photograph can be reproduced byte-for-byte.
+Each committed PNG is cropped to 4:3, resampled to 1024x768 with bilinear
+filtering and stored as deterministic little-endian RGB565. The kernel can
+decode any frame into a caller-selected output size without carrying PNG or
+DEFLATE code, while retaining 65,536 colours instead of the former 256-colour
+dithered palette.
 """
+
+from __future__ import annotations
 
 import struct
 import sys
 import zlib
+from pathlib import Path
 
 
-MAGIC = b"SPW1"
+MAGIC = b"SPW3"
 OUT_WIDTH = 1024
 OUT_HEIGHT = 768
-BAYER = ((0, 8, 2, 10), (12, 4, 14, 6),
-         (3, 11, 1, 9), (15, 7, 13, 5))
+MAX_FRAMES = 32
+PIXEL_BITS = 16
 
 
-def unfilter(raw, width, height, channels):
+def unfilter(raw: bytes, width: int, height: int, channels: int) -> bytes:
     stride = width * channels
     output = bytearray()
     previous = bytearray(stride)
     offset = 0
     for _ in range(height):
+        if offset + stride + 1 > len(raw):
+            raise SystemExit("truncated PNG scanline")
         kind = raw[offset]
         line = bytearray(raw[offset + 1:offset + 1 + stride])
         offset += stride + 1
@@ -49,18 +54,21 @@ def unfilter(raw, width, height, channels):
                 raise SystemExit("unsupported PNG filter")
         output += line
         previous = line
-    return output
+    return bytes(output)
 
 
-def read_png(path):
-    data = open(path, "rb").read()
+def read_png(path: Path) -> tuple[int, int, int, bytes]:
+    data = path.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise SystemExit("wallpaper source is not a PNG")
+        raise SystemExit(f"{path}: not a PNG")
     offset = 8
     header = None
     compressed = bytearray()
-    while offset < len(data):
+    while offset + 12 <= len(data):
         length = struct.unpack(">I", data[offset:offset + 4])[0]
+        end = offset + length + 12
+        if end > len(data):
+            raise SystemExit(f"{path}: truncated PNG chunk")
         kind = data[offset + 4:offset + 8]
         body = data[offset + 8:offset + 8 + length]
         if kind == b"IHDR":
@@ -69,64 +77,94 @@ def read_png(path):
             compressed += body
         elif kind == b"IEND":
             break
-        offset += length + 12
+        offset = end
     if header is None:
-        raise SystemExit("wallpaper PNG has no IHDR")
+        raise SystemExit(f"{path}: missing IHDR")
     width, height, depth, colour, compression, filtering, interlace = header
-    if depth != 8 or colour not in (2, 6) or compression != 0 or filtering != 0 or interlace != 0:
-        raise SystemExit("expected a non-interlaced 8-bit RGB or RGBA PNG")
+    if (depth, compression, filtering, interlace) != (8, 0, 0, 0) or colour not in (2, 6):
+        raise SystemExit(f"{path}: expected non-interlaced 8-bit RGB/RGBA")
     channels = 3 if colour == 2 else 4
     return width, height, channels, unfilter(
-        zlib.decompress(bytes(compressed)), width, height, channels)
+        zlib.decompress(bytes(compressed)), width, height, channels
+    )
 
 
-def expand(bits, value):
-    maximum = (1 << bits) - 1
-    return (value * 255 + maximum // 2) // maximum
+def interpolate(first: int, second: int, fraction: int, denominator: int) -> int:
+    return (first * (denominator - fraction) + second * fraction +
+            denominator // 2) // denominator
 
 
-def palette():
-    result = bytearray()
-    for index in range(256):
-        result += bytes((expand(3, index >> 5),
-                         expand(3, (index >> 2) & 7),
-                         expand(2, index & 3)))
-    return result
-
-
-def quantize(channel, levels, threshold):
-    adjusted = max(0, min(255, channel + threshold))
-    return (adjusted * (levels - 1) + 127) // 255
-
-
-def build_indices(source, width, height, channels):
-    result = bytearray(OUT_WIDTH * OUT_HEIGHT)
+def build_pixels(source: bytes, width: int, height: int, channels: int) -> bytes:
+    # Fill a 4:3 output while preserving source proportions.
+    if width * OUT_HEIGHT > height * OUT_WIDTH:
+        crop_height = height
+        crop_width = height * OUT_WIDTH // OUT_HEIGHT
+        crop_x = (width - crop_width) // 2
+        crop_y = 0
+    else:
+        crop_width = width
+        crop_height = width * OUT_HEIGHT // OUT_WIDTH
+        crop_x = 0
+        crop_y = (height - crop_height) // 2
+    result = bytearray(OUT_WIDTH * OUT_HEIGHT * 2)
     for y in range(OUT_HEIGHT):
-        source_y = min(height - 1, (y * height + OUT_HEIGHT // 2) // OUT_HEIGHT)
+        scaled_y = y * (crop_height - 1)
+        source_y = scaled_y // (OUT_HEIGHT - 1)
+        fraction_y = scaled_y % (OUT_HEIGHT - 1)
+        next_y = min(source_y + 1, crop_height - 1)
         for x in range(OUT_WIDTH):
-            source_x = min(width - 1, (x * width + OUT_WIDTH // 2) // OUT_WIDTH)
-            offset = (source_y * width + source_x) * channels
-            dither = BAYER[y & 3][x & 3] - 8
-            red = quantize(source[offset], 8, dither * 2)
-            green = quantize(source[offset + 1], 8, dither * 2)
-            blue = quantize(source[offset + 2], 4, dither * 4)
-            result[y * OUT_WIDTH + x] = (red << 5) | (green << 2) | blue
-    return result
+            scaled_x = x * (crop_width - 1)
+            source_x = scaled_x // (OUT_WIDTH - 1)
+            fraction_x = scaled_x % (OUT_WIDTH - 1)
+            next_x = min(source_x + 1, crop_width - 1)
+            channels_out = []
+            for channel in range(3):
+                top_left = source[
+                    ((crop_y + source_y) * width + crop_x + source_x) *
+                    channels + channel]
+                top_right = source[
+                    ((crop_y + source_y) * width + crop_x + next_x) *
+                    channels + channel]
+                bottom_left = source[
+                    ((crop_y + next_y) * width + crop_x + source_x) *
+                    channels + channel]
+                bottom_right = source[
+                    ((crop_y + next_y) * width + crop_x + next_x) *
+                    channels + channel]
+                top = interpolate(top_left, top_right, fraction_x,
+                                  OUT_WIDTH - 1)
+                bottom = interpolate(bottom_left, bottom_right, fraction_x,
+                                     OUT_WIDTH - 1)
+                channels_out.append(interpolate(
+                    top, bottom, fraction_y, OUT_HEIGHT - 1))
+            red, green, blue = channels_out
+            packed = ((red * 31 + 127) // 255) << 11
+            packed |= ((green * 63 + 127) // 255) << 5
+            packed |= (blue * 31 + 127) // 255
+            destination = (y * OUT_WIDTH + x) * 2
+            result[destination] = packed & 0xFF
+            result[destination + 1] = packed >> 8
+    return bytes(result)
 
 
-def main():
-    source = sys.argv[1] if len(sys.argv) > 1 else \
-        "assets/sapote-first-environment-wallpaper.png"
-    destination = sys.argv[2] if len(sys.argv) > 2 else "build/wallpaper.spw"
-    width, height, channels, pixels = read_png(source)
+def main() -> None:
+    if len(sys.argv) < 3:
+        raise SystemExit("usage: make-wallpaper-asset.py INPUT.png [...] OUTPUT.spw")
+    sources = [Path(value) for value in sys.argv[1:-1]]
+    destination = Path(sys.argv[-1])
+    if not 1 <= len(sources) <= MAX_FRAMES:
+        raise SystemExit(f"wallpaper frame count must be 1..{MAX_FRAMES}")
     blob = bytearray(MAGIC)
-    blob += struct.pack("<HHH", OUT_WIDTH, OUT_HEIGHT, 256)
-    blob += palette()
-    blob += build_indices(pixels, width, height, channels)
-    with open(destination, "wb") as handle:
-        handle.write(blob)
-    print(f"{source}: {width}x{height} -> {OUT_WIDTH}x{OUT_HEIGHT}, "
-          f"{len(blob)} bytes -> {destination}", file=sys.stderr)
+    blob += struct.pack("<HHHH", OUT_WIDTH, OUT_HEIGHT, PIXEL_BITS,
+                        len(sources))
+    for source in sources:
+        width, height, channels, pixels = read_png(source)
+        blob += build_pixels(pixels, width, height, channels)
+        print(f"{source}: {width}x{height} -> {OUT_WIDTH}x{OUT_HEIGHT}",
+              file=sys.stderr)
+    destination.write_bytes(blob)
+    print(f"SPW3 {len(sources)} frames, {len(blob)} bytes -> {destination}",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -50,6 +50,48 @@ pub enum ModelStatus {
     MediaContradiction,
     /// A location hint with no bytes in it.
     EmptyLocation,
+    /// A transform whose linear part flattens the picture onto a line.
+    TransformNotInvertible,
+    /// A scale at nought or below, which is not a size.
+    ScaleNotPositive,
+    /// A title with no words in it.
+    EmptyTitle,
+    /// A title longer than this describes.
+    TitleTooLong,
+    /// Type at or below no size.
+    TypeNotPositive,
+    /// An ink channel outside nought to one, which is not a colour.
+    InkOutOfRange,
+    /// An asset that is generated, where one that was recorded was wanted.
+    NotRecordedMedia,
+    /// An asset that was recorded, where a generated one was wanted.
+    NotGeneratedMedia,
+    /// A clip whose fades together outlast it.
+    FadesLongerThanClip,
+    /// A speed of nought, which shows one frame forever.
+    SpeedNotUsable,
+    /// Sound asked to play at a speed other than one.
+    SoundCannotBeRetimed,
+    /// A motion on a clip that has no transform to animate.
+    NoTransformToAnimate,
+    /// An animation of a mask on a clip that has none.
+    NoMaskToAnimate,
+    /// An animation of a grade's strength on a clip that has no grade.
+    NoGradeToAnimate,
+    /// A pair of numbers offered as a rotation that is not on the unit circle.
+    NotATurn,
+    /// An item was expected to be a gap of a stated length, and was not.
+    NotTheGapThatWasLifted,
+    /// A marker carrying more text than the bound allows.
+    MarkerTextTooLong,
+    /// A marker was asked for at an instant that has none.
+    NoSuchMarker,
+    /// A marker already sits at that instant.
+    MarkerExists,
+    /// A marker was placed before the programme starts.
+    MarkerBeforeStart,
+    /// An edit that would leave a transition dissolving from a gap.
+    TransitionWouldLoseItsClip,
     /// An operation that only a clip supports was asked of a gap.
     NotAClip,
     /// A fader set past the ends of its own travel.
@@ -125,6 +167,31 @@ impl ModelStatus {
             }
             Self::MediaContradiction => "the same content cannot be two different lengths",
             Self::EmptyLocation => "a hint that says nothing is worse than none",
+            Self::TransformNotInvertible => "that transform flattens the picture onto a line",
+            Self::ScaleNotPositive => "a scale of nought or less is not a size",
+            Self::EmptyTitle => "a title with no words in it is a gap",
+            Self::TitleTooLong => "that title is longer than this describes",
+            Self::TypeNotPositive => "type has to be some size",
+            Self::InkOutOfRange => "an ink channel runs from no light to full light",
+            Self::NotRecordedMedia => "that asset is generated, not recorded",
+            Self::NotGeneratedMedia => "that asset was recorded, not generated",
+            Self::FadesLongerThanClip => "those fades together outlast the clip",
+            Self::SpeedNotUsable => "a speed of nought is a freeze, not a speed",
+            Self::SoundCannotBeRetimed => "sound cannot yet be played at another speed",
+            Self::NoTransformToAnimate => "there is no transform on that clip to animate",
+            Self::NoMaskToAnimate => "there is no mask on that clip to animate",
+            Self::NoGradeToAnimate => "there is no grade on that clip to bring on",
+            Self::NotATurn => "a turn is a point on the unit circle, and that is not one",
+            Self::NotTheGapThatWasLifted => {
+                "that slot is not the gap of that length a lift left behind"
+            }
+            Self::MarkerTextTooLong => "a marker carries more text than one may",
+            Self::NoSuchMarker => "no marker sits at that instant",
+            Self::MarkerExists => "a marker already sits at that instant",
+            Self::MarkerBeforeStart => "a marker before the programme starts is a note on nothing",
+            Self::TransitionWouldLoseItsClip => {
+                "a transition at that cut needs a clip on both sides of it"
+            }
             Self::NotAClip => "that operation applies only to a clip",
             Self::FaderOutOfRange => "that level is past the ends of the fader",
             Self::TransitionExists => "that cut already has a dissolve on it",

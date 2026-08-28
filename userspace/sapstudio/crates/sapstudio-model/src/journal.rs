@@ -19,6 +19,19 @@ use crate::status::{ModelStatus, Result};
 /// How many edits one journal remembers. A policy bound: past this the oldest
 /// edits are dropped, which is a decision the editor should be told about
 /// rather than a silent one, so reaching it is refused instead.
+///
+/// It is not the bound that bites on Sapote, and reading it as a promise of
+/// four thousand undos would be reading it wrong. An entry is a pair of
+/// edits, an edit is a little over three hundred bytes, and a program is
+/// given nineteen mapped pages for everything it holds — so the address space
+/// runs out somewhere around a hundred pairs, with the project and its caches
+/// still to fit. What arrives there is [`ModelStatus::OutOfMemory`] from the
+/// fallible reservation rather than [`ModelStatus::CapacityExhausted`] from
+/// this constant, which is the difference between "you have edited enough"
+/// and "there is no room", and the two deserve different words.
+///
+/// `tests/size.rs` keeps the arithmetic honest, so the day the platform grows
+/// the ordering is re-checked rather than assumed.
 pub const MAX_HISTORY: usize = 4096;
 
 /// One applied edit and the edit that undoes it.

@@ -78,7 +78,7 @@ fn an_identity_look_leaves_a_frame_alone() {
         colour,
         Interpolation::Tetrahedral,
     );
-    let after = look.apply(&original).expect("a frame");
+    let after = look.apply(&original, Rational::ONE).expect("a frame");
     assert_eq!(
         after.to_packed().expect("bytes"),
         original.to_packed().expect("bytes"),
@@ -97,7 +97,7 @@ fn a_look_changes_the_numbers_and_not_what_they_mean() {
     let description = described(PixelFormat::Rgb8, colour);
     let original = frame(&description, &[200, 40, 10]);
     let look = Look::new(swap_red_and_blue(5), colour, Interpolation::Tetrahedral);
-    let after = look.apply(&original).expect("a frame");
+    let after = look.apply(&original, Rational::ONE).expect("a frame");
 
     assert_eq!(
         after.description(),
@@ -122,7 +122,7 @@ fn a_grey_survives_a_look_that_is_neutral_on_its_diagonal() {
     let look = Look::new(swap_red_and_blue(5), colour, Interpolation::Tetrahedral);
     for level in [0_u8, 1, 37, 128, 199, 254, 255] {
         let grey = frame(&description, &[level, level, level]);
-        let after = look.apply(&grey).expect("a frame");
+        let after = look.apply(&grey, Rational::ONE).expect("a frame");
         let bytes = after.to_packed().expect("bytes");
         assert_eq!(
             bytes[0],
@@ -152,7 +152,7 @@ fn a_frame_in_another_encoding_is_refused() {
     other.transfer = TransferFunction::Gamma22;
     let description = described(PixelFormat::Rgb8, other);
     assert_eq!(
-        look.apply(&frame(&description, &[128, 128, 128]))
+        look.apply(&frame(&description, &[128, 128, 128]), Rational::ONE)
             .map(|_| ()),
         Err(RenderStatus::LookSpaceMismatch)
     );
@@ -163,7 +163,7 @@ fn a_frame_in_another_encoding_is_refused() {
     limited.range = Range::Limited;
     let described_limited = described(PixelFormat::Rgb8, limited);
     assert_eq!(
-        look.apply(&frame(&described_limited, &[128, 128, 128]))
+        look.apply(&frame(&described_limited, &[128, 128, 128]), Rational::ONE)
             .map(|_| ()),
         Err(RenderStatus::LookSpaceMismatch)
     );
@@ -188,7 +188,8 @@ fn premultiplied_coverage_is_refused_rather_than_quietly_undone() {
         Interpolation::Tetrahedral,
     );
     assert!(
-        look.apply(&frame(&straight, &[10, 20, 30, 128])).is_ok(),
+        look.apply(&frame(&straight, &[10, 20, 30, 128]), Rational::ONE)
+            .is_ok(),
         "straight coverage was refused"
     );
 
@@ -201,7 +202,7 @@ fn premultiplied_coverage_is_refused_rather_than_quietly_undone() {
     )
     .expect("a description");
     assert_eq!(
-        look.apply(&frame(&premultiplied, &[10, 20, 30, 128]))
+        look.apply(&frame(&premultiplied, &[10, 20, 30, 128]), Rational::ONE)
             .map(|_| ()),
         Err(RenderStatus::LookPremultiplied)
     );
@@ -224,7 +225,7 @@ fn coverage_is_carried_through_untouched() {
         ],
     );
     let look = Look::new(swap_red_and_blue(5), colour, Interpolation::Tetrahedral);
-    let after = look.apply(&original).expect("a frame");
+    let after = look.apply(&original, Rational::ONE).expect("a frame");
 
     let before = original.to_packed().expect("bytes");
     let bytes = after.to_packed().expect("bytes");
@@ -278,7 +279,7 @@ fn a_format_that_is_not_red_green_blue_is_refused() {
             Interpolation::Tetrahedral,
         );
         assert_eq!(
-            look.apply(&Frame::blank(description).expect("a frame"))
+            look.apply(&Frame::blank(description).expect("a frame"), Rational::ONE)
                 .map(|_| ()),
             Err(RenderStatus::LookNotRgb),
             "{format:?} was accepted"
@@ -292,7 +293,169 @@ fn a_look_is_the_same_look_every_time() {
     let description = described(PixelFormat::Rgba8, colour);
     let original = frame(&description, &[3, 130, 250, 77, 199, 8, 44, 255]);
     let look = Look::new(swap_red_and_blue(9), colour, Interpolation::Tetrahedral);
-    let first = look.apply(&original).expect("a frame");
-    let second = look.apply(&original).expect("a frame");
+    let first = look.apply(&original, Rational::ONE).expect("a frame");
+    let second = look.apply(&original, Rational::ONE).expect("a frame");
     assert_eq!(first.digest(), second.digest());
+}
+
+/// A table that takes every colour to black.
+///
+/// Chosen because it makes the strength arithmetic readable by hand: at a
+/// strength of `s` the answer is the input scaled by `1 - s`, in whatever
+/// space the mix happens in, and the two candidate spaces disagree loudly
+/// about what that means.
+fn to_black(size: usize) -> Lut3D {
+    let samples = std::vec![[Fixed::ZERO; 3] as Colour; size * size * size];
+    Lut3D::new(size, samples).expect("a table")
+}
+
+#[test]
+fn half_a_look_mixes_code_values_and_not_light() {
+    // The decision this milestone rests on, asserted as a number derived from
+    // the definition rather than read out of the code.
+    //
+    // A mid-grey of 128 through a table that takes everything to black, half
+    // on. In *code values* the mix is `c + s(f(c) - c)` with `c = 128/255`,
+    // `f(c) = 0` and `s = 1/2`, which is `64/255`, which quantises to **64**.
+    //
+    // In *linear light* it would be sRGB's 128 decoded — 0.215861 — halved to
+    // 0.107930 and encoded again, which is 92.374 and quantises to 92.
+    //
+    // A mid-grey rather than black or white on purpose. At both of those the
+    // two spaces agree exactly, because nought and one are the fixed points of
+    // every transfer curve, and this file's own notes record a resampling test
+    // that could not tell light from code values for precisely that reason.
+    let colour = ColourDescription::srgb_full();
+    let description = described(PixelFormat::Rgb8, colour);
+    let look = Look::new(to_black(9), colour, Interpolation::Tetrahedral);
+
+    let after = look
+        .apply(
+            &frame(&description, &[128, 128, 128]),
+            Rational::new(1, 2).expect("a ratio"),
+        )
+        .expect("a frame");
+    let packed = after.to_packed().expect("bytes");
+    assert_eq!(
+        &packed[..3],
+        &[64, 64, 64],
+        "half a look landed somewhere other than half way along the table's \
+         own output; 92 would mean the mix moved into linear light"
+    );
+    assert_ne!(
+        packed[0], 92,
+        "and this is the answer it must not be, named so that a reader can \
+         see the two are far apart rather than taking it on trust"
+    );
+}
+
+#[test]
+fn a_look_at_no_strength_hands_back_the_frame_exactly() {
+    // Exactly, not nearly, and for every code value there is. That is a
+    // stronger claim than it looks: it says normalising a byte and quantising
+    // it back is the identity across the whole range, which is what lets the
+    // strength be a mix rather than a special case with a short circuit in
+    // front of it.
+    //
+    // It is also why the planner adds the node at every strength. Skipping it
+    // at nought would be an optimisation whose absence changes no answer, and
+    // a guard no test can hold is a guard this project has learned to delete.
+    let colour = ColourDescription::srgb_full();
+    let description = FrameDescription::square(
+        Geometry::new(256, 1).expect("a geometry"),
+        PixelFormat::Rgb8,
+        colour,
+        None,
+        None,
+    )
+    .expect("a description");
+    let every: std::vec::Vec<u8> = (0..=255_u8)
+        .flat_map(|code| [code, 255 - code, 128])
+        .collect();
+    let original = Frame::from_packed(description, &every).expect("a frame");
+    let look = Look::new(to_black(9), colour, Interpolation::Tetrahedral);
+
+    let after = look.apply(&original, Rational::ZERO).expect("a frame");
+    assert_eq!(
+        after.to_packed().expect("bytes"),
+        every,
+        "a look nobody turned on changed the picture"
+    );
+    // And the fixture can tell: at full strength the same table flattens it.
+    let graded = look.apply(&original, Rational::ONE).expect("a frame");
+    assert!(
+        graded
+            .to_packed()
+            .expect("bytes")
+            .iter()
+            .all(|code| *code == 0),
+        "the table does not reach the pixels, so the comparison above proves \
+         nothing"
+    );
+}
+
+#[test]
+fn a_look_at_full_strength_is_the_look_applied_flat() {
+    // The property every project written before a strength existed depends on:
+    // a grade nobody animated reads one, and one has to be the picture this
+    // crate produced when there was no strength at all — byte for byte, not
+    // within a code value.
+    //
+    // It holds because a `Fixed` multiplied by one is shifted back to exactly
+    // where it started -- a property of the multiply rather than of how the
+    // mix is arranged. `mix`'s comment says so, and says that the first
+    // version of it claimed more.
+    let colour = ColourDescription::srgb_full();
+    let description = described(PixelFormat::Rgb8, colour);
+    let original = frame(&description, &[7, 61, 128, 200, 255, 33]);
+    let look = Look::new(swap_red_and_blue(9), colour, Interpolation::Tetrahedral);
+
+    let full = look.apply(&original, Rational::ONE).expect("a frame");
+    // Computed the long way round, from the table alone, so this is not the
+    // mix compared against itself: red and blue swapped, green untouched.
+    let expected: std::vec::Vec<u8> = original
+        .to_packed()
+        .expect("bytes")
+        .chunks_exact(3)
+        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
+        .collect();
+    assert_eq!(
+        full.to_packed().expect("bytes"),
+        expected,
+        "a look all the way on is not the look"
+    );
+}
+
+#[test]
+fn a_strength_outside_none_to_all_is_refused() {
+    // Refused here rather than clamped, and the model clamps rather than
+    // refusing, and the two are not one guard written twice. A curve's
+    // verticals are deliberately unclamped so an ease may overshoot, and that
+    // overshoot is the model's to absorb. A *caller* asking for a picture on
+    // the far side of a table that was never sampled there is asking for
+    // arithmetic rather than for a grade.
+    let colour = ColourDescription::srgb_full();
+    let description = described(PixelFormat::Rgb8, colour);
+    let held = frame(&description, &[128, 128, 128]);
+    let look = Look::new(to_black(9), colour, Interpolation::Tetrahedral);
+
+    for outside in [
+        Rational::new(3, 2).expect("a ratio"),
+        Rational::new(-1, 100).expect("a ratio"),
+    ] {
+        assert_eq!(
+            look.apply(&held, outside).expect_err("a refusal"),
+            RenderStatus::LookStrengthOutOfRange,
+            "a strength of {outside:?} was accepted"
+        );
+    }
+    // And the ends themselves are inside. Making either comparison strict is
+    // the mutation that turns "none of it" and "all of it" — the two strengths
+    // every project actually holds — into the two that are refused.
+    for inside in [Rational::ZERO, Rational::ONE] {
+        assert!(
+            look.apply(&held, inside).is_ok(),
+            "a strength of {inside:?} is at an end of the range, not outside it"
+        );
+    }
 }

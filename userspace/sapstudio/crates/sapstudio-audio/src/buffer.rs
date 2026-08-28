@@ -19,7 +19,7 @@
 
 use alloc::vec::Vec;
 
-use sapstudio_core::{Digest, Sha256};
+use sapstudio_core::{CoreStatus, Digest, Rational, Sha256};
 
 use crate::status::{AudioStatus, Result};
 
@@ -264,6 +264,54 @@ impl AudioBuffer {
             })
             .collect()
     }
+
+    /// This buffer with a fade ramped across it, exactly.
+    ///
+    /// `from` is the fraction at the first sample and `to` is the fraction at
+    /// the sample *after* the last — the same half-open shape the fader ramp
+    /// uses, and for the same reason: consecutive blocks then tile a fade
+    /// rather than repeating one value at every seam, and a repetition at a
+    /// regular interval is a tone.
+    ///
+    /// Exact integer arithmetic, rounded once, half away from zero — the same
+    /// rounding the compositor uses on a coverage, so a picture fade and a
+    /// sound fade of the same length agree about where they are.
+    ///
+    /// # Errors
+    ///
+    /// [`AudioStatus::OutOfMemory`], or [`AudioStatus::Time`] wrapping an
+    /// overflow.
+    pub fn faded(&self, from: Rational, to: Rational) -> Result<Self> {
+        let count =
+            i64::try_from(self.len()).map_err(|_| AudioStatus::Time(CoreStatus::Overflow))?;
+        let travel = to.checked_sub(from).map_err(AudioStatus::Time)?;
+        let mut channels = Vec::new();
+        channels
+            .try_reserve(self.channels.len())
+            .map_err(|_| AudioStatus::OutOfMemory)?;
+        for channel in &self.channels {
+            let mut out = Vec::new();
+            out.try_reserve(channel.len())
+                .map_err(|_| AudioStatus::OutOfMemory)?;
+            for (index, sample) in channel.iter().enumerate() {
+                let along =
+                    i64::try_from(index).map_err(|_| AudioStatus::Time(CoreStatus::Overflow))?;
+                let fraction = if count == 0 {
+                    from
+                } else {
+                    from.checked_add(
+                        travel
+                            .checked_mul(Rational::new(along, count).map_err(AudioStatus::Time)?)
+                            .map_err(AudioStatus::Time)?,
+                    )
+                    .map_err(AudioStatus::Time)?
+                };
+                out.push(scaled(*sample, fraction)?);
+            }
+            channels.push(out);
+        }
+        Self::new(self.rate, channels)
+    }
 }
 
 /// The digest of a buffer's rate and every sample in it.
@@ -280,4 +328,21 @@ fn digest_of(rate: SampleRate, channels: &[Vec<i32>]) -> Digest {
         }
     }
     hasher.finish()
+}
+
+/// A sample at a fraction of itself, rounded once, half away from zero.
+fn scaled(sample: i32, fraction: Rational) -> Result<i32> {
+    let numerator = i64::from(sample)
+        .checked_mul(fraction.numerator())
+        .ok_or(AudioStatus::Time(CoreStatus::Overflow))?;
+    let denominator = fraction.denominator();
+    let doubled = numerator
+        .checked_mul(2)
+        .ok_or(AudioStatus::Time(CoreStatus::Overflow))?;
+    let rounded = if doubled >= 0 {
+        (doubled + denominator) / (denominator * 2)
+    } else {
+        (doubled - denominator) / (denominator * 2)
+    };
+    i32::try_from(rounded).map_err(|_| AudioStatus::Time(CoreStatus::Overflow))
 }
