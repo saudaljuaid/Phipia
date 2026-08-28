@@ -24,6 +24,25 @@ pub struct MediaAsset {
     timebase: Timebase,
     duration: Duration,
     location: Option<Location>,
+    source: MediaSource,
+}
+
+/// Where an asset's frames come from.
+///
+/// The only thing that separates a title from a recording. Everything else a
+/// project does to media — cutting, trimming, dissolving, grading, masking,
+/// moving — does not care and must not have to.
+///
+/// The *planner* acts on this, not the graph, and that is the same decision
+/// M8.7 made about offline media for the same reason: a node that chose for
+/// itself whether to fetch or to draw would be a node whose cache key did not
+/// record which it had done.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MediaSource {
+    /// Bytes somewhere, named by the digest of their content.
+    Recorded,
+    /// A picture the program makes out of words.
+    Title(crate::title::Title),
 }
 
 /// How many bytes a location hint may be.
@@ -97,7 +116,55 @@ impl MediaAsset {
             timebase,
             duration,
             location: None,
+            source: MediaSource::Recorded,
         })
+    }
+
+    /// An asset the program draws rather than reads.
+    ///
+    /// Its digest is the digest of the title's own description, which is what
+    /// content addressing already meant: the same title in two projects is the
+    /// same title, two clips of it share a cached frame, and changing a word
+    /// makes a *different* asset rather than quietly changing what every clip
+    /// of it shows.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::ModelStatus::Time`] wrapping a timebase mismatch or an
+    /// overflow.
+    pub fn titled(
+        title: crate::title::Title,
+        timebase: Timebase,
+        duration: Duration,
+    ) -> crate::Result<Self> {
+        if duration.timebase() != timebase {
+            return Err(sapstudio_core::CoreStatus::TimebaseMismatch.into());
+        }
+        Ok(Self {
+            digest: title.digest()?,
+            timebase,
+            duration,
+            // Nothing to find, so nothing to hint at. A title that carried a
+            // location would be inviting somebody to relink it to a file, and
+            // the file would be a different asset the moment it was opened.
+            location: None,
+            source: MediaSource::Title(title),
+        })
+    }
+
+    /// Where this asset's frames come from.
+    #[must_use]
+    pub const fn source(&self) -> &MediaSource {
+        &self.source
+    }
+
+    /// The title this asset draws, if it draws one.
+    #[must_use]
+    pub const fn title(&self) -> Option<&crate::title::Title> {
+        match &self.source {
+            MediaSource::Recorded => None,
+            MediaSource::Title(title) => Some(title),
+        }
     }
 
     /// What this asset is.
@@ -119,12 +186,21 @@ impl MediaAsset {
     }
 
     /// The same asset with a hint about where to find it.
-    #[must_use]
-    pub fn with_location(&self, location: Option<Location>) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`crate::ModelStatus::NotRecordedMedia`] for a generated asset, which
+    /// has nowhere to be. Accepting the hint and ignoring it would let a
+    /// project hold a title that claims to be a file, and the next thing to
+    /// read it would be entitled to believe that.
+    pub fn with_location(&self, location: Option<Location>) -> crate::Result<Self> {
+        if !matches!(self.source, MediaSource::Recorded) {
+            return Err(crate::ModelStatus::NotRecordedMedia);
+        }
+        Ok(Self {
             location,
             ..self.clone()
-        }
+        })
     }
 
     /// How long it runs.

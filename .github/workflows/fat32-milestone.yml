@@ -155,9 +155,9 @@ jobs:
                   cp build/release-uname/one/busybox "$release/busybox-uname"
                   cp build/release-cat/one/busybox "$release/busybox-cat"
                   cp build/fat32-persistence.png \
-                      "$release/first-light-fat32-persistence.png"
+                      "$release/redwood-proof-fat32-persistence.png"
                   cp build/fat32-persistence-22s.mp4 \
-                      "$release/first-light-fat32-persistence-22s.mp4"
+                      "$release/redwood-proof-fat32-persistence-22s.mp4"
                   cp build/evidence-logs/fat32-persistence.log \
                       "$release/clean-reboot-persistence.log"
                   cp build/evidence-logs/*.json \

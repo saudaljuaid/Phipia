@@ -38,7 +38,7 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
         BOOT_CAPABILITY_ELF64_LOADER_FOUNDATION_AVAILABLE,
         BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE,
         BOOT_CAPABILITY_LINUX_IMAGE_STACK_FOUNDATION_AVAILABLE,
-        BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE
+        BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
 
@@ -64,7 +64,7 @@ static bool ledger_authorizes(enum linux_userland_profile profile)
 
 static void evidence_selected(enum linux_userland_profile profile)
 {
-    console_serial_write("FL USERLAND deterministic read-only NVMe/");
+    console_serial_write("RW USERLAND deterministic read-only NVMe/");
     console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
         "FAT32" : "FAT16");
     console_serial_write(" profile selected ");
@@ -82,28 +82,28 @@ static void evidence_complete(const struct linux_userland_result *result)
 {
     const char *profile = linux_userland_profile_name(result->profile);
 
-    console_serial_write("FL USERLAND Rust ");
+    console_serial_write("RW USERLAND Rust ");
     console_serial_write(sapfs_drive(SAPFS_VOLUME_SYSTEM).mounted ?
         "FAT32" : "FAT16");
     console_serial_write(" SHA-256 ELF64 validation passed ");
     console_serial_write(profile);
     console_serial_write(" bytes ");
     console_serial_write_u64(result->file_bytes);
-    console_serial_write("\nFL USERLAND private CPL3 address space entered ");
+    console_serial_write("\nRW USERLAND private CPL3 address space entered ");
     console_serial_write(profile);
-    console_serial_write("\nFL USERLAND real SYSCALL entry observed ");
+    console_serial_write("\nRW USERLAND real SYSCALL entry observed ");
     console_serial_write(profile);
-    console_serial_write("\nFL USERLAND stdout bytes accepted ");
+    console_serial_write("\nRW USERLAND stdout bytes accepted ");
     console_serial_write(profile);
     console_serial_write(" bytes ");
     console_serial_write_u64(result->stdout_bytes);
-    console_serial_write("\nFL USERLAND exit status zero ");
+    console_serial_write("\nRW USERLAND exit status zero ");
     console_serial_write(profile);
-    console_serial_write("\nFL USERLAND teardown complete ");
+    console_serial_write("\nRW USERLAND teardown complete ");
     console_serial_write(profile);
     console_serial_write(" generation ");
     console_serial_write_u64(result->generation);
-    console_serial_write("\nFL USERLAND launch completed successfully ");
+    console_serial_write("\nRW USERLAND launch completed successfully ");
     console_serial_write(profile);
     console_serial_write(" ordinal ");
     console_serial_write_u64(completed[result->profile]);
@@ -121,7 +121,7 @@ static enum linux_userland_status finish_failure(
         !linux_cat_abi_resources_released()) {
         return LINUX_USERLAND_STATUS_TEARDOWN;
     }
-    console_serial_write("FL USERLAND launch refused and teardown complete\n");
+    console_serial_write("RW USERLAND launch refused and teardown complete\n");
     return status;
 }
 
@@ -239,7 +239,7 @@ enum linux_userland_status linux_userland_launch(
         result->resume_count = proof.resume_count;
         result->waiting_for_input = true;
         console_serial_write(
-            "FL USERLAND cat foreground launch yielded to First Light\n");
+            "RW USERLAND cat foreground launch yielded to Sapote Redwood\n");
         return LINUX_USERLAND_STATUS_WAITING;
     }
 

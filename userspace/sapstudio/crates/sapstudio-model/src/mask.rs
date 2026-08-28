@@ -136,6 +136,120 @@ impl Mask {
             inverted,
         }
     }
+
+    /// The point this shape balances on, exactly.
+    ///
+    /// The area-weighted centroid rather than the mean of the corners, which
+    /// are the same point only for a shape whose corners are evenly spread —
+    /// and an ellipse drawn as sixteen points is not, nor is a rectangle with
+    /// a corner cut off. Scaling about the wrong one would drift a shape
+    /// sideways while it grew, which reads as a bug in the animation rather
+    /// than as a choice about which point is the middle.
+    ///
+    /// All of it rational, so a mask that opens to a half and back is the same
+    /// mask it started as, exactly.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::Time`] wrapping an overflow. The division cannot fail:
+    /// [`Mask::new`] refuses a polygon with no area, so the denominator here
+    /// is never nought.
+    pub fn centroid(&self) -> Result<(Rational, Rational)> {
+        let mut twice_area = Rational::ZERO;
+        let mut across = Rational::ZERO;
+        let mut down = Rational::ZERO;
+        for index in 0..self.corners.len() {
+            let (x0, y0) = self.corners[index];
+            let (x1, y1) = self.corners[(index + 1) % self.corners.len()];
+            let cross = x0.checked_mul(y1)?.checked_sub(x1.checked_mul(y0)?)?;
+            twice_area = twice_area.checked_add(cross)?;
+            across = across.checked_add(x0.checked_add(x1)?.checked_mul(cross)?)?;
+            down = down.checked_add(y0.checked_add(y1)?.checked_mul(cross)?)?;
+        }
+        // Six times the area, which is twice the area times three -- and the
+        // sign cancels, so a mask wound either way gives the same point.
+        let scale = twice_area.checked_mul(Rational::new(3, 1)?)?;
+        Ok((across.checked_div(scale)?, down.checked_div(scale)?))
+    }
+
+    /// This mask scaled and turned about its own centroid, and moved.
+    ///
+    /// About its **own** centroid rather than the frame's centre, which is
+    /// what makes "open the iris" open in place instead of sliding toward the
+    /// middle of the picture while it grows. The frame's centre is right for a
+    /// transform, because a transform moves the whole picture and the picture's
+    /// middle is the frame's; a mask is a shape somebody put somewhere.
+    ///
+    /// A positive scale, a rotation and a translation are a similarity, so the
+    /// result is convex if this was and wound the same way — which is why this
+    /// returns a mask rather than a `Result<Mask>` that could refuse
+    /// mid-render. The turn carries no refusal of its own: its determinant is
+    /// one, so it cannot collapse a shape the scale did not already collapse.
+    ///
+    /// The scale and the turn are both about the centroid, so their order does
+    /// not matter — a scalar commutes with a rotation — and the move comes
+    /// after both, which is the only ordering that does matter here.
+    ///
+    /// ## In the frame's own coordinates, which is not the screen's
+    ///
+    /// A mask's corners are fractions of the frame, so this turns the shape in
+    /// **that** space rather than in pixels. On a frame that is not square the
+    /// two are different: a quarter turn of a shape twice as wide as it is
+    /// tall gives a shape twice as tall as it is wide *in fractions*, which on
+    /// a 16:9 delivery is not the same picture as rotating the drawn shape on
+    /// screen.
+    ///
+    /// That is not a compromise, it is the only rotation this type can mean. A
+    /// mask is already anisotropic by construction — the square from `(1/4,
+    /// 1/4)` to `(3/4, 3/4)` has never been square on screen — so the space
+    /// somebody dragged the corners in is the space the shape turns in. The
+    /// alternative would need the delivery aspect, which lives in
+    /// `sapstudio-media`, a crate this one is a sibling of and may not reach.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::ScaleNotPositive`] for a scale at or below nought: at
+    /// nought the shape collapses to a point with no area, and below it the
+    /// shape turns inside out through its own middle, which is a mirror and
+    /// belongs in the corners somebody drew rather than in a move that would
+    /// pass through nothing on the way there. [`ModelStatus::Time`] wrapping
+    /// an overflow.
+    pub fn moved_by(
+        &self,
+        scale: Rational,
+        across: Rational,
+        down: Rational,
+        turn: crate::transform::Turn,
+    ) -> Result<Self> {
+        if !scale.is_positive() {
+            return Err(ModelStatus::ScaleNotPositive);
+        }
+        let (middle_x, middle_y) = self.centroid()?;
+        let mut moved = Vec::new();
+        moved
+            .try_reserve(self.corners.len())
+            .map_err(|_| ModelStatus::OutOfMemory)?;
+        for (x, y) in &self.corners {
+            // Taken to the centroid's frame, scaled and turned there, and put
+            // back. Written as one journey rather than as a scale followed by
+            // a turn so that a corner crosses the centroid exactly once and
+            // there is one rounding point -- which, over exact rationals, is
+            // no rounding at all, and is the habit that stops being free the
+            // day any of this is computed in fixed point.
+            let turned = turn.applied_to((
+                x.checked_sub(middle_x)?.checked_mul(scale)?,
+                y.checked_sub(middle_y)?.checked_mul(scale)?,
+            ))?;
+            moved.push((
+                middle_x.checked_add(turned.0)?.checked_add(across)?,
+                middle_y.checked_add(turned.1)?.checked_add(down)?,
+            ));
+        }
+        Ok(Self {
+            corners: moved,
+            inverted: self.inverted,
+        })
+    }
 }
 
 /// Whether every turn goes the same way.

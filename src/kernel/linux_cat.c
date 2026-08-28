@@ -1440,7 +1440,7 @@ static enum linux_cat_abi_status linux_attempt(
         fill_result(result, true);
         installed_result = *result;
         console_serial_write(
-            "FL CAT process waiting; terminal owns input\n");
+            "RW CAT process waiting; terminal owns input\n");
         return LINUX_CAT_ABI_STATUS_WAITING;
     }
     if (table_failure_ordinal != 0U &&
@@ -1718,7 +1718,7 @@ enum linux_cat_abi_status linux_cat_abi_deliver_input(
         }
         ++runtime.robustness_tests;
         console_serial_write(
-            "FL CAT runtime negative controls 28/28 passed\n");
+            "RW CAT runtime negative controls 28/28 passed\n");
     }
     if (paging_process_activate(&runtime.address_space) != PAGING_STATUS_OK ||
         transition_process(&runtime.state, LINUX_CAT_PROCESS_RUNNING) !=
@@ -1742,7 +1742,7 @@ enum linux_cat_abi_status linux_cat_abi_deliver_input(
         fill_result(result, true);
         installed_result = *result;
         console_serial_write(
-            "FL CAT process waiting; terminal retains input ownership\n");
+            "RW CAT process waiting; terminal retains input ownership\n");
         if (interrupts_were_enabled) {
             cpu_interrupt_enable();
         }
@@ -1793,7 +1793,7 @@ cleanup:
     result->teardown_complete = true;
     result->resource_census_equal = true;
     installed_result = *result;
-    console_serial_write("FL CAT address-space teardown complete\n");
+    console_serial_write("RW CAT address-space teardown complete\n");
     if (interrupts_were_enabled) {
         cpu_interrupt_enable();
     }

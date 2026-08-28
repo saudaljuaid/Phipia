@@ -60,6 +60,25 @@ class Fat32HostTests(unittest.TestCase):
         with self.assertRaisesRegex(fat32.Fat32Error, "8.3"):
             fat32.populate_data_image(self.image, "TOO-LONG-NAME.BMP", payload)
 
+    def test_host_staging_populates_a_bounded_file_set(self) -> None:
+        image = fat32.populate_data_files(self.image, [
+            ("AURORA.BMP", bytes(range(256)) * 5),
+            ("NEW1.TXT", b"Sapote note"),
+        ])
+        report = fat32.inspect_image(image)
+        self.assertEqual(
+            [(item["path"], item["first_cluster"]) for item in report["files"]],
+            [("AURORA.BMP", 3), ("NEW1.TXT", 6)],
+        )
+        self.assertTrue(report["fat_copies_match"])
+        self.assertEqual(report["cycles"], 0)
+        self.assertEqual(report["cross_links"], 0)
+        self.assertEqual(report["leaked_clusters"], 0)
+        with self.assertRaisesRegex(fat32.Fat32Error, "unique"):
+            fat32.populate_data_files(self.image, [
+                ("SAME.TXT", b"one"), ("same.txt", b"two")
+            ])
+
     def test_all_supported_malformed_images_are_detected(self) -> None:
         kinds = (
             "boot-signature", "bpb-sector-size", "bpb-cluster-size",

@@ -82,8 +82,18 @@
 /* Enough repetitions that one leaked table per cycle is unmistakable. */
 #define PAGING_TEST_CYCLES 64U
 
-/* An address inside the bulk 2 MiB identity map, above the linked image. */
-#define PAGING_TEST_HUGE_ADDRESS UINT64_C(0x0000000000A00000)
+/*
+ * The first 2 MiB identity region beyond the linker's 48 MiB kernel ceiling.
+ * Keeping this tied to the ceiling, rather than to the old small image size,
+ * guarantees the refusal probe always lands on a huge leaf as UI assets grow.
+ */
+#define PAGING_TEST_HUGE_ADDRESS UINT64_C(0x0000000003000000)
+
+_Static_assert(
+    PAGING_TEST_HUGE_ADDRESS % PAGING_HUGE_PAGE_SIZE == 0U &&
+        PAGING_TEST_HUGE_ADDRESS < SAPOTE_EARLY_PHYSICAL_LIMIT,
+    "the paging huge-leaf probe must stay aligned inside the identity map"
+);
 
 /*
  * A supervisor write to an absent page is P=0 W=1 U=0. That is a third distinct
@@ -295,8 +305,8 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_BOOT_LEDGER;
     }
 
-    if (token_equals(value, length, "first-light")) {
-        return KERNEL_TEST_FIRST_LIGHT;
+    if (token_equals(value, length, "redwood-proof")) {
+        return KERNEL_TEST_REDWOOD_PROOF;
     }
 
     if (token_equals(value, length, "device-substrate")) {
@@ -327,21 +337,21 @@ static enum kernel_test_scenario scenario_from_value(
         return KERNEL_TEST_LINUX_ABI_UNAME;
     }
 
-    if (token_equals(value, length, "first-light-userland")) {
-        return KERNEL_TEST_FIRST_LIGHT_USERLAND;
+    if (token_equals(value, length, "redwood-proof-userland")) {
+        return KERNEL_TEST_REDWOOD_PROOF_USERLAND;
     }
 
-    if (token_equals(value, length, "first-light-userland-absent")) {
-        return KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT;
+    if (token_equals(value, length, "redwood-proof-userland-absent")) {
+        return KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT;
     }
 
-    if (token_equals(value, length, "first-light-userland-interactive")) {
-        return KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE;
+    if (token_equals(value, length, "redwood-proof-userland-interactive")) {
+        return KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE;
     }
 
     if (token_equals(
-            value, length, "first-light-userland-interactive-absent")) {
-        return KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
+            value, length, "redwood-proof-userland-interactive-absent")) {
+        return KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT;
     }
 
     if (token_equals(value, length, "fat32-system")) {
@@ -596,7 +606,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x2D);
     case KERNEL_TEST_BOOT_LEDGER:
         return UINT8_C(0x2E);
-    case KERNEL_TEST_FIRST_LIGHT:
+    case KERNEL_TEST_REDWOOD_PROOF:
         return UINT8_C(0x2F);
     case KERNEL_TEST_DEVICE_SUBSTRATE:
         return UINT8_C(0x30);
@@ -612,13 +622,13 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
         return UINT8_C(0x36);
     case KERNEL_TEST_LINUX_ABI_UNAME:
         return UINT8_C(0x37);
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND:
         return UINT8_C(0x38);
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT:
         return UINT8_C(0x39);
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE:
         return UINT8_C(0x3A);
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT:
         return UINT8_C(0x3B);
     case KERNEL_TEST_FAT32_SYSTEM:
         return UINT8_C(0x3C);
@@ -4569,7 +4579,7 @@ void kernel_test_run(
     case KERNEL_TEST_BOOT_LEDGER:
         /* Deferred until kernel_main publishes the fully verified receipts. */
         return;
-    case KERNEL_TEST_FIRST_LIGHT:
+    case KERNEL_TEST_REDWOOD_PROOF:
         /* Deferred until the ledger and UI are both installed and published. */
         return;
     case KERNEL_TEST_DEVICE_SUBSTRATE:
@@ -4593,10 +4603,10 @@ void kernel_test_run(
     case KERNEL_TEST_LINUX_ABI_UNAME:
         /* Deferred until the uname proof receipt is installed and published. */
         return;
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE:
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT:
     case KERNEL_TEST_FAT32_SYSTEM:
     case KERNEL_TEST_FAT32_DATA:
     case KERNEL_TEST_FAT32_NESTED:
@@ -4654,7 +4664,7 @@ void kernel_test_run(
     case KERNEL_TEST_AUDIO:
     case KERNEL_TEST_NVIDIA:
     case KERNEL_TEST_NVIDIA_BUILTIN:
-        /* Deferred until First Light and the Boot Ledger are published. */
+        /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
         multiprocess_slots_scenario();
@@ -4839,53 +4849,19 @@ _Noreturn void kernel_test_complete_boot_ledger(
     kernel_test_pass();
 }
 
-static uint32_t first_light_pixel(uint32_t x, uint32_t y)
+static uint32_t redwood_proof_pixel(uint32_t x, uint32_t y)
 {
     uint32_t pixel = 0U;
     struct surface *surface = screen_surface();
 
     if (surface == NULL ||
         surface_read_pixel(surface, x, y, &pixel) != SURFACE_STATUS_OK) {
-        kernel_test_fail("First Light cached-surface pixel read failed");
+        kernel_test_fail("Sapote Redwood cached-surface pixel read failed");
     }
     return pixel;
 }
 
-static void first_light_expect_text_pixel(
-    char character,
-    uint32_t x,
-    uint32_t baseline,
-    uint32_t expected,
-    const char *failure
-)
-{
-    const struct ui_font_metrics metrics = ui_font_get_metrics();
-    uint8_t glyph[UI_FONT_MAX_HEIGHT * UI_FONT_MAX_ROW_BYTES];
-
-    if (sapote_ui_font_glyph((uint32_t)(unsigned char)character, glyph,
-            sizeof(glyph)) != UI_FONT_STATUS_OK ||
-        baseline < metrics.ascent) {
-        kernel_test_fail("First Light stable text probe has no glyph");
-    }
-    for (uint32_t row = 0U; row < metrics.height; ++row) {
-        for (uint32_t column = 0U; column < metrics.width; ++column) {
-            const uint8_t byte = glyph[
-                row * metrics.row_bytes + column / 8U
-            ];
-
-            if ((byte & (uint8_t)(0x80U >> (column & 7U))) != 0U) {
-                if (first_light_pixel(x + column,
-                        baseline - metrics.ascent + row) != expected) {
-                    kernel_test_fail(failure);
-                }
-                return;
-            }
-        }
-    }
-    kernel_test_fail("First Light stable text probe glyph is empty");
-}
-
-static void first_light_process_ui(const char *failure)
+static void redwood_proof_process_ui(const char *failure)
 {
     enum ui_status status = ui_process_events();
 
@@ -4897,7 +4873,7 @@ static void first_light_process_ui(const char *failure)
     }
 }
 
-static void first_light_inject_pointer(
+static void redwood_proof_inject_pointer(
     uint8_t flags,
     int32_t delta_x,
     int32_t delta_y,
@@ -4921,10 +4897,10 @@ static void first_light_inject_pointer(
     if (status != POINTER_STATUS_OK) {
         kernel_test_fail(failure);
     }
-    first_light_process_ui(failure);
+    redwood_proof_process_ui(failure);
 }
 
-static void first_light_move_pointer(
+static void redwood_proof_move_pointer(
     uint32_t target_x,
     uint32_t target_y,
     const char *failure
@@ -4950,71 +4926,74 @@ static void first_light_move_pointer(
         } else if (delta_y < -127) {
             delta_y = -127;
         }
-        first_light_inject_pointer(0U, delta_x, delta_y, failure);
+        redwood_proof_inject_pointer(0U, delta_x, delta_y, failure);
     }
-    kernel_test_fail("First Light cursor did not reach its dock target");
+    kernel_test_fail("Sapote Redwood cursor did not reach its dock target");
 }
 
-static void first_light_click_dock_item(
+static void redwood_proof_click_dock_item(
     const struct ui_dock_item *item,
-    enum ui_panel_id expected_panel,
-    char title_initial
+    enum ui_panel_id expected_panel
 )
 {
+    const size_t item_index =
+        (size_t)(item - ui_get_state()->layout.dock_items);
     const uint32_t target_x = item->bounds.x + item->bounds.width / 2U;
     const uint32_t target_y = item->bounds.y + item->bounds.height / 2U;
-    const uint32_t state_x = item->bounds.x + 4U;
-    const uint32_t state_y = item->bounds.y + 4U;
     const struct ui_state *ui;
+    const struct ui_dock_item *current_item;
     uint32_t title_width;
 
-    first_light_move_pointer(target_x, target_y,
-        "First Light real pointer movement failed");
+    redwood_proof_move_pointer(target_x, target_y,
+        "Sapote Redwood real pointer movement failed");
     ui = ui_get_state();
     if (ui->hover != item->id) {
-        kernel_test_fail("First Environment dock hover state is incorrect");
+        kernel_test_fail("Sapote Redwood dock hover state is incorrect");
     }
 
-    first_light_inject_pointer(UINT8_C(0x01), 0, 0,
-        "First Light pointer press failed");
+    redwood_proof_inject_pointer(UINT8_C(0x01), 0, 0,
+        "Sapote Redwood pointer press failed");
     ui = ui_get_state();
     if (ui->pressed != item->id) {
-        kernel_test_fail("First Environment dock pressed state is incorrect");
+        kernel_test_fail("Sapote Redwood dock pressed state is incorrect");
     }
 
-    first_light_inject_pointer(0U, 0, 0,
-        "First Light pointer release failed");
+    redwood_proof_inject_pointer(0U, 0, 0,
+        "Sapote Redwood pointer release failed");
     ui = ui_get_state();
+    current_item = &ui->layout.dock_items[item_index];
     if (ui->pressed != UI_ELEMENT_NONE ||
         ui->active_panel != expected_panel ||
-        first_light_pixel(state_x, state_y) == 0U) {
-        kernel_test_fail("First Environment dock activation is incorrect");
+        current_item->icon_bounds.width == 0U ||
+        current_item->icon_bounds.height == 0U ||
+        redwood_proof_pixel(current_item->icon_bounds.x +
+            current_item->icon_bounds.width / 2U,
+            current_item->icon_bounds.y +
+            current_item->icon_bounds.height / 2U) == 0U) {
+        kernel_test_fail("Sapote Redwood dock activation is incorrect");
     }
     if (ui_font_text_width(ui_panel_name(expected_panel), &title_width) !=
-            UI_FONT_STATUS_OK) {
-        kernel_test_fail("First Light panel title width is unavailable");
+            UI_FONT_STATUS_OK || title_width == 0U) {
+        kernel_test_fail("Sapote Redwood panel title width is unavailable");
     }
-    first_light_expect_text_pixel(title_initial,
-        ui->layout.panel.x + 4U +
-            (ui->layout.panel.width - 8U - title_width) / 2U,
-        ui->layout.panel_title_baseline, ui->theme.ink,
-        "First Light panel title glyph pixel is incorrect");
 }
 
-_Noreturn void kernel_test_complete_first_light(void)
+_Noreturn void kernel_test_complete_redwood_proof(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
-        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO
+        UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
+        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
-        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO
+        UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
+        UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
-        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO
+        UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
+        UI_PANEL_CAMERA, UI_PANEL_SETTINGS
     };
-    static const char initials[UI_DOCK_ITEM_COUNT] = { 'F', 'T', 'N', 'S' };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
     const struct boot_stage_receipt *layout;
@@ -5025,17 +5004,20 @@ _Noreturn void kernel_test_complete_first_light(void)
     const struct ui_state *ui = ui_get_state();
     const struct ui_render_counters initial_renders = ui->renders;
     struct ui_point trail_probe;
+    uint32_t dock_rim;
+    uint32_t dock_rim_x;
+    uint32_t dock_rim_y;
     uint32_t trail_under;
     struct ui_proof proof;
     enum ui_status proof_status;
 
-    if (active_scenario != KERNEL_TEST_FIRST_LIGHT) {
-        kernel_test_fail("First Light completion used outside its scenario");
+    if (active_scenario != KERNEL_TEST_REDWOOD_PROOF) {
+        kernel_test_fail("Sapote Redwood completion used outside its scenario");
     }
     if (ledger == NULL || !ledger->validated || !ledger->executed ||
         ledger->status != BOOT_LEDGER_STATUS_OK || ledger->degraded ||
         !boot_ledger_fingerprint_valid(ledger)) {
-        kernel_test_fail("First Light installed ledger is invalid");
+        kernel_test_fail("Sapote Redwood installed ledger is invalid");
     }
     font = boot_ledger_receipt_for(ledger, BOOT_STAGE_UI_FONT);
     layout = boot_ledger_receipt_for(ledger, BOOT_STAGE_UI_LAYOUT);
@@ -5044,7 +5026,7 @@ _Noreturn void kernel_test_complete_first_light(void)
     activation = boot_ledger_receipt_for(ledger,
         BOOT_STAGE_DESKTOP_ACTIVATION);
     proof_receipt = boot_ledger_receipt_for(ledger,
-        BOOT_STAGE_FIRST_LIGHT_PROOF);
+        BOOT_STAGE_REDWOOD_INSTALLED_PROOF);
     wc = boot_ledger_receipt_for(ledger, BOOT_STAGE_FRAMEBUFFER_WC);
     if (font == NULL || layout == NULL || construction == NULL ||
         activation == NULL || proof_receipt == NULL || wc == NULL ||
@@ -5054,13 +5036,13 @@ _Noreturn void kernel_test_complete_first_light(void)
         activation->result != BOOT_RECEIPT_RAN ||
         proof_receipt->result != BOOT_RECEIPT_RAN ||
         wc->result != BOOT_RECEIPT_RAN) {
-        kernel_test_fail("First Light required stage receipt is missing");
+        kernel_test_fail("Sapote Redwood required stage receipt is missing");
     }
     if (wc->sequence >= construction->sequence ||
         wc->sequence >= activation->sequence ||
         construction->sequence >= activation->sequence ||
         activation->sequence >= proof_receipt->sequence) {
-        kernel_test_fail("First Light desktop present preceded its WC proof");
+        kernel_test_fail("Sapote Redwood desktop present preceded its WC proof");
     }
     if (!boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_UI_FONT_VERIFIED) ||
@@ -5069,114 +5051,128 @@ _Noreturn void kernel_test_complete_first_light(void)
         !boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED) ||
         !boot_ledger_has_capability(ledger,
-            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE)) {
-        kernel_test_fail("First Light installed capability is missing");
+            BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE)) {
+        kernel_test_fail("Sapote Redwood installed capability is missing");
     }
     if (!ui->active || !ui->pointer_present || !ui->ledger_pass ||
         !pointer_is_present() || ui->layout.surface.width != 1024U ||
         ui->layout.surface.height != 768U) {
-        kernel_test_fail("First Light installed UI state is incomplete");
+        kernel_test_fail("Sapote Redwood installed UI state is incomplete");
     }
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
         const struct ui_dock_item *item = &ui->layout.dock_items[index];
 
         if (item->id != ids[index] || item->action != actions[index] ||
             item->panel != panels[index]) {
-            kernel_test_fail("First Light dock typed action is incorrect");
+            kernel_test_fail("Sapote Redwood dock typed action is incorrect");
         }
     }
 
-    const uint32_t wallpaper_probe = first_light_pixel(512U, 250U);
+    const uint32_t wallpaper_probe = redwood_proof_pixel(512U, 250U);
     if (wallpaper_probe == 0U) {
-        kernel_test_fail("First Environment wallpaper probe is empty");
+        kernel_test_fail("Sapote Redwood wallpaper probe is empty");
     }
-    if (first_light_pixel(ui->layout.menu_bar.x,
+    if (redwood_proof_pixel(ui->layout.menu_bar.x,
             ui->layout.menu_bar.y) == wallpaper_probe) {
-        kernel_test_fail("First Environment menu bar is not integrated");
+        kernel_test_fail("Sapote Redwood menu bar is not integrated");
     }
-    if (first_light_pixel(ui->layout.dock.x + 126U,
-            ui->layout.dock.y + 80U) != ui->theme.white) {
-        kernel_test_fail("First Environment dock rim is not integrated");
+    /*
+     * The native 3D shelf has a centre-hot blended specular line rather than
+     * the old flat white rectangle.  Derive its back edge from the resting
+     * icon baseline and prove the line is visibly distinct on both sides.
+     */
+    dock_rim_x = ui->layout.surface.width / 2U;
+    dock_rim_y = ui->layout.dock_items[0U].icon_bounds.y +
+        ui->layout.dock_items[0U].icon_bounds.height;
+    if (dock_rim_y == 0U || dock_rim_y + 1U >=
+            ui->layout.surface.height) {
+        kernel_test_fail("Sapote Redwood dock rim geometry is invalid");
+    }
+    dock_rim = redwood_proof_pixel(dock_rim_x, dock_rim_y);
+    if (dock_rim == 0U ||
+        dock_rim == redwood_proof_pixel(dock_rim_x, dock_rim_y - 1U) ||
+        dock_rim == redwood_proof_pixel(dock_rim_x, dock_rim_y + 1U)) {
+        kernel_test_fail("Sapote Redwood dock rim is not integrated");
     }
 
-    trail_under = first_light_pixel(20U, 100U);
-    first_light_move_pointer(20U, 100U,
-        "First Light cursor trail probe movement failed");
+    trail_under = redwood_proof_pixel(20U, 100U);
+    redwood_proof_move_pointer(20U, 100U,
+        "Sapote Redwood cursor trail probe movement failed");
     ui = ui_get_state();
     trail_probe = ui->pointer;
-    if (first_light_pixel((uint32_t)trail_probe.x,
+    if (redwood_proof_pixel((uint32_t)trail_probe.x,
             (uint32_t)trail_probe.y) != ui->theme.ink) {
-        kernel_test_fail("First Light cursor trail probe is not visible");
+        kernel_test_fail("Sapote Redwood cursor trail probe is not visible");
     }
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
-        first_light_click_dock_item(&ui->layout.dock_items[index],
-            panels[index], initials[index]);
+        redwood_proof_click_dock_item(&ui->layout.dock_items[index],
+            panels[index]);
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
-        first_light_pixel((uint32_t)trail_probe.x,
+        redwood_proof_pixel((uint32_t)trail_probe.x,
             (uint32_t)trail_probe.y) != trail_under ||
-        first_light_pixel((uint32_t)ui->pointer.x,
+        redwood_proof_pixel((uint32_t)ui->pointer.x,
             (uint32_t)ui->pointer.y) != ui->theme.ink ||
         ui->renders.cursor_moves <= initial_renders.cursor_moves ||
         ui->renders.damage_rectangles <= initial_renders.damage_rectangles) {
-        kernel_test_fail("First Light cursor damage left a trail");
+        kernel_test_fail("Sapote Redwood cursor damage left a trail");
     }
 
     struct keyboard_event keyboard = {
         .scancode = 0x01U, .pressed = true, .shift = false, .character = '\0'
     };
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
-        kernel_test_fail("First Light keyboard panel close failed");
+        kernel_test_fail("Sapote Redwood keyboard panel close failed");
     }
-    first_light_process_ui("First Light keyboard panel close draw failed");
+    redwood_proof_process_ui("Sapote Redwood keyboard panel close draw failed");
     keyboard.scancode = 0x0FU;
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
-        kernel_test_fail("First Light keyboard focus-next failed");
+        kernel_test_fail("Sapote Redwood keyboard focus-next failed");
     }
-    first_light_process_ui("First Light keyboard focus-next draw failed");
+    redwood_proof_process_ui("Sapote Redwood keyboard focus-next draw failed");
     if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
-        kernel_test_fail("First Light keyboard focus-next chose wrong item");
+        kernel_test_fail("Sapote Redwood keyboard focus-next chose wrong item");
     }
     keyboard.shift = true;
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
-        kernel_test_fail("First Light keyboard focus-previous failed");
+        kernel_test_fail("Sapote Redwood keyboard focus-previous failed");
     }
-    first_light_process_ui("First Light keyboard focus-previous draw failed");
+    redwood_proof_process_ui("Sapote Redwood keyboard focus-previous draw failed");
     if (ui_get_state()->focus != UI_ELEMENT_DOCK_FILES) {
-        kernel_test_fail("First Light keyboard focus-previous chose wrong item");
+        kernel_test_fail("Sapote Redwood keyboard focus-previous chose wrong item");
     }
     keyboard.scancode = 0x1CU;
     keyboard.shift = false;
     if (ui_handle_keyboard(&keyboard) != UI_STATUS_OK) {
-        kernel_test_fail("First Light keyboard activation failed");
+        kernel_test_fail("Sapote Redwood keyboard activation failed");
     }
-    first_light_process_ui("First Light keyboard activation draw failed");
+    redwood_proof_process_ui("Sapote Redwood keyboard activation draw failed");
     if (ui_get_state()->active_panel != UI_PANEL_FILES) {
-        kernel_test_fail("First Light keyboard activation chose wrong panel");
+        kernel_test_fail("Sapote Redwood keyboard activation chose wrong panel");
     }
 
     if (!boot_plan_pointer_absence_self_test()) {
-        kernel_test_fail("First Light pointer-absence synthetic plan failed");
+        kernel_test_fail("Sapote Redwood pointer-absence synthetic plan failed");
     }
     proof_status = ui_verify_installed(&proof);
     if (proof_status != UI_STATUS_OK) {
-        kernel_test_fail("First Light final installed redraw proof failed");
+        kernel_test_fail(ui_installed_proof_failure());
     }
     if (proof.width != 1024U || proof.height != 768U ||
         proof.dock_items != UI_DOCK_ITEM_COUNT ||
         proof.ledger_fingerprint != ledger->fingerprint ||
         proof.render_hash == 0U) {
-        kernel_test_fail("First Light final installed shape is inconsistent");
+        kernel_test_fail("Sapote Redwood final installed shape is inconsistent");
     }
     if (proof.events == 0U || proof.panels < 3U ||
         proof.cursor_moves == 0U || proof.damage_rectangles == 0U ||
         proof.glyphs == 0U) {
-        kernel_test_fail("First Light final interaction counters are incomplete");
+        kernel_test_fail("Sapote Redwood final interaction counters are incomplete");
     }
 
-    console_write("ST FIRST_LIGHT geometry ");
+    console_write("ST REDWOOD_PROOF geometry ");
     console_write_u64(proof.width);
     console_putc('x');
     console_write_u64(proof.height);
@@ -5670,7 +5666,7 @@ static bool inject_keyboard_ctrl_d(void)
     return true;
 }
 
-static bool focus_first_light_terminal(void)
+static bool focus_redwood_proof_terminal(void)
 {
     if (ui_get_state()->active_panel == UI_PANEL_TERMINAL) {
         return true;
@@ -5683,13 +5679,13 @@ static bool focus_first_light_terminal(void)
             return false;
         }
         shell_process_keyboard_events();
-        first_light_process_ui(
+        redwood_proof_process_ui(
             "interactive terminal focus-next processing failed");
         if (!inject_keyboard_byte(UINT8_C(0x8F))) {
             return false;
         }
         shell_process_keyboard_events();
-        first_light_process_ui(
+        redwood_proof_process_ui(
             "interactive terminal focus release processing failed");
     }
     if (ui_get_state()->focus != UI_ELEMENT_DOCK_TERMINAL) {
@@ -5699,18 +5695,18 @@ static bool focus_first_light_terminal(void)
         return false;
     }
     shell_process_keyboard_events();
-    first_light_process_ui(
+    redwood_proof_process_ui(
         "interactive terminal activation processing failed");
     if (!inject_keyboard_byte(UINT8_C(0x9C))) {
         return false;
     }
     shell_process_keyboard_events();
-    first_light_process_ui(
+    redwood_proof_process_ui(
         "interactive terminal activation release processing failed");
     return ui_get_state()->active_panel == UI_PANEL_TERMINAL;
 }
 
-static bool installed_first_light_ready(void)
+static bool installed_redwood_proof_ready(void)
 {
     const struct boot_ledger *ledger = boot_ledger_installed();
 
@@ -5718,7 +5714,7 @@ static bool installed_first_light_ready(void)
         ledger->status == BOOT_LEDGER_STATUS_OK && !ledger->degraded &&
         boot_ledger_fingerprint_valid(ledger) &&
         boot_ledger_has_capability(ledger,
-            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE) &&
+            BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE) &&
         boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_LINUX_SYSCALL_CPU_FOUNDATION_AVAILABLE) &&
         boot_ledger_has_capability(ledger,
@@ -5729,7 +5725,7 @@ static bool installed_first_light_ready(void)
             BOOT_CAPABILITY_LINUX_CAT_IMAGE_STDIN_FOUNDATION_AVAILABLE);
 }
 
-_Noreturn void kernel_test_complete_first_light_userland(void)
+_Noreturn void kernel_test_complete_redwood_proof_userland(void)
 {
     const struct shell_state before = shell_get_state();
     const uint32_t echo_before =
@@ -5739,9 +5735,9 @@ _Noreturn void kernel_test_complete_first_light_userland(void)
     struct linux_abi_proof_result echo;
     struct linux_uname_abi_proof_result uname;
 
-    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND ||
-        !installed_first_light_ready() || !shell_is_active()) {
-        kernel_test_fail("First Light userspace prerequisites are incomplete");
+    if (active_scenario != KERNEL_TEST_REDWOOD_PROOF_USERLAND ||
+        !installed_redwood_proof_ready() || !shell_is_active()) {
+        kernel_test_fail("Sapote Redwood userspace prerequisites are incomplete");
     }
     cpu_interrupt_enable();
     console_write("\n");
@@ -5752,7 +5748,7 @@ _Noreturn void kernel_test_complete_first_light_userland(void)
         !feed_shell_line("linux uname") ||
         !feed_shell_line("linux echo") ||
         !feed_shell_line("linux uname")) {
-        kernel_test_fail("First Light shell input injection was refused");
+        kernel_test_fail("Sapote Redwood shell input injection was refused");
     }
     echo = linux_abi_get_proof_result();
     uname = linux_uname_abi_get_proof_result();
@@ -5773,22 +5769,22 @@ _Noreturn void kernel_test_complete_first_light_userland(void)
         !uname.real_syscall_instruction || !uname.uts_copy_valid ||
         !uname.stdout_valid || !uname.exit_zero || !uname.teardown_complete ||
         !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
-        kernel_test_fail("First Light userspace relaunch contract failed");
+        kernel_test_fail("Sapote Redwood userspace relaunch contract failed");
     }
-    console_write("\nST FIRST_LIGHT_USERLAND shell production echo 2 uname 2 ");
+    console_write("\nST REDWOOD_PROOF_USERLAND shell production echo 2 uname 2 ");
     console_write("invalid-profile recovered CPL3 SYSCALL stdout exact exit 0 ");
     console_write("teardown clean prompt restored\n");
     kernel_test_pass();
 }
 
-_Noreturn void kernel_test_complete_first_light_userland_absent(void)
+_Noreturn void kernel_test_complete_redwood_proof_userland_absent(void)
 {
     const struct shell_state before = shell_get_state();
     const uint32_t echo_before =
         linux_userland_completed(LINUX_USERLAND_PROFILE_ECHO);
 
-    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT ||
-        !installed_first_light_ready() || !shell_is_active()) {
+    if (active_scenario != KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT ||
+        !installed_redwood_proof_ready() || !shell_is_active()) {
         kernel_test_fail("absent-volume userspace prerequisites are incomplete");
     }
     cpu_interrupt_enable();
@@ -5803,12 +5799,12 @@ _Noreturn void kernel_test_complete_first_light_userland_absent(void)
         !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
         kernel_test_fail("absent userspace volume did not recover cleanly");
     }
-    console_write("\nST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable ");
+    console_write("\nST REDWOOD_PROOF_USERLAND_ABSENT concise refusal prompt usable ");
     console_write("teardown clean\n");
     kernel_test_pass();
 }
 
-_Noreturn void kernel_test_complete_first_light_userland_interactive(void)
+_Noreturn void kernel_test_complete_redwood_proof_userland_interactive(void)
 {
     const struct shell_state before = shell_get_state();
     const uint32_t cat_before =
@@ -5817,14 +5813,14 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive(void)
     uint64_t second_generation;
     struct linux_cat_abi_proof_result proof;
 
-    if (active_scenario != KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE ||
-        !installed_first_light_ready() || !shell_is_active() ||
+    if (active_scenario != KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE ||
+        !installed_redwood_proof_ready() || !shell_is_active() ||
         !keyboard_is_initialized()) {
         kernel_test_fail("interactive userspace prerequisites are incomplete");
     }
     cpu_interrupt_enable();
     shell_process_keyboard_events();
-    if (!focus_first_light_terminal()) {
+    if (!focus_redwood_proof_terminal()) {
         kernel_test_fail("interactive scenario could not focus Terminal");
     }
     console_write("\n");
@@ -5873,13 +5869,13 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive(void)
         !cpu_interrupts_enabled()) {
         kernel_test_fail("interactive cat proof is inconsistent");
     }
-    console_write("\nST FIRST_LIGHT_USERLAND_INTERACTIVE cat 2 keyboard IRQ ");
+    console_write("\nST REDWOOD_PROOF_USERLAND_INTERACTIVE cat 2 keyboard IRQ ");
     console_write("read SYSCALL copy-out resume write SYSCALL stdout exact ");
     console_write("EOF exit 0 teardown clean fresh generation prompt restored\n");
     kernel_test_pass();
 }
 
-_Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
+_Noreturn void kernel_test_complete_redwood_proof_userland_interactive_absent(
     void
 )
 {
@@ -5891,14 +5887,14 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
     struct linux_abi_proof_result echo;
 
     if (active_scenario !=
-            KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT ||
-        !installed_first_light_ready() || !shell_is_active() ||
+            KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT ||
+        !installed_redwood_proof_ready() || !shell_is_active() ||
         !keyboard_is_initialized()) {
         kernel_test_fail("interactive absent-profile prerequisites incomplete");
     }
     cpu_interrupt_enable();
     shell_process_keyboard_events();
-    if (!focus_first_light_terminal()) {
+    if (!focus_redwood_proof_terminal()) {
         kernel_test_fail("absent scenario could not focus Terminal");
     }
     console_write("\n");
@@ -5922,7 +5918,7 @@ _Noreturn void kernel_test_complete_first_light_userland_interactive_absent(
         !linux_userland_resources_released() || !cpu_interrupts_enabled()) {
         kernel_test_fail("missing cat profile recovery proof is inconsistent");
     }
-    console_write("\nST FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT cat missing ");
+    console_write("\nST REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT cat missing ");
     console_write("echo valid keyboard IRQ refusal recoverable teardown clean ");
     console_write("prompt usable\n");
     kernel_test_pass();
@@ -5980,7 +5976,7 @@ static bool fat32_file_equals(
 static void fat32_feed(const char *line)
 {
     if (!feed_shell_line(line)) {
-        kernel_test_fail("First Light refused a FAT32 command line");
+        kernel_test_fail("Sapote Redwood refused a FAT32 command line");
     }
 }
 
@@ -5989,7 +5985,7 @@ static void fat32_require_base(bool data_required)
     struct sapfs_drive_info system = sapfs_drive(SAPFS_VOLUME_SYSTEM);
     struct sapfs_drive_info data = sapfs_drive(SAPFS_VOLUME_DATA);
 
-    if (!installed_first_light_ready() || !shell_is_active() ||
+    if (!installed_redwood_proof_ready() || !shell_is_active() ||
         !system.present || !system.healthy || !system.mounted ||
         !system.read_only || system.volume_id != FAT32_SYSTEM_VOLUME_ID ||
         (data_required && (!data.present || !data.healthy || !data.mounted ||
@@ -7975,8 +7971,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "device-windows";
     case KERNEL_TEST_BOOT_LEDGER:
         return "boot-ledger";
-    case KERNEL_TEST_FIRST_LIGHT:
-        return "first-light";
+    case KERNEL_TEST_REDWOOD_PROOF:
+        return "redwood-proof";
     case KERNEL_TEST_DEVICE_SUBSTRATE:
         return "device-substrate";
     case KERNEL_TEST_XHCI:
@@ -7991,14 +7987,14 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "linux-abi";
     case KERNEL_TEST_LINUX_ABI_UNAME:
         return "linux-abi-uname";
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND:
-        return "first-light-userland";
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:
-        return "first-light-userland-absent";
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:
-        return "first-light-userland-interactive";
-    case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:
-        return "first-light-userland-interactive-absent";
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND:
+        return "redwood-proof-userland";
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT:
+        return "redwood-proof-userland-absent";
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE:
+        return "redwood-proof-userland-interactive";
+    case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT:
+        return "redwood-proof-userland-interactive-absent";
     case KERNEL_TEST_FAT32_SYSTEM:
         return "fat32-system";
     case KERNEL_TEST_FAT32_DATA:

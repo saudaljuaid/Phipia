@@ -36,7 +36,7 @@ The Makefile is the source of truth for the 101 names. They cover:
 - clock calibration, deadlines, paging, heap, and guarded threads;
 - PCI, framebuffer, surface, screen, keyboard, shell, device windows, and the
   Boot Ledger;
-- First Light rendering, interaction, measured userspace launch, bounded
+- Sapote Redwood rendering, interaction, measured userspace launch, bounded
   foreground stdin, sequential cat launches, and missing-profile recovery;
 - MSI-X/DMA, xHCI, NVMe, historical FAT16, Ring 3 ELF64, and the measured Linux
   profiles;
@@ -86,7 +86,7 @@ result cannot substitute for the installed path.
 The xHCI, NVMe, filesystem, process, Linux-profile and networking workflows add focused
 matrix checks. BusyBox workflows build twice from clean pinned sources, compare
 the binaries byte-for-byte, audit the ELF and exercised instructions, and check
-the exact syscall trace. The dedicated First Light interactive-userspace
+the exact syscall trace. The dedicated Sapote Redwood interactive-userspace
 workflow also builds the three-profile volume twice, runs every scenario,
 captures real QEMU media, and preserves the v1.1.0 release evidence. The
 dedicated v2.0.0 workflow reconstructs both FAT32 images, runs host positive
@@ -126,7 +126,7 @@ merge. Do not bypass hooks or protected-branch rules.
 ## Visual captures
 
 ```sh
-make capture-first-light
+make capture-redwood-proof
 make screenshot-proof
 make capture-boot-video
 python3 tools/capture-networking.py --iso build/sapote.iso \
@@ -135,6 +135,6 @@ python3 tools/capture-networking.py --iso build/sapote.iso \
     --output build/networking-capture
 ```
 
-These targets produce QEMU evidence for the committed First Light images and
+These targets produce QEMU evidence for the committed Sapote Redwood images and
 approximately 22-second FAT32 persistence video. Visual output supplements the
 installed framebuffer and transcript checks; it does not replace them.

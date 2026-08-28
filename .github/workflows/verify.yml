@@ -50,27 +50,63 @@ jobs:
                   qemu-system-x86_64 -device nvme,help
             - name: Verify the kernel artifact
               run: make verify
-            - name: Capture Sapote First Environment from QEMU
+            - name: Capture Sapote Redwood from QEMU
               run: |
                   make iso
-                  python3 tools/capture-first-environment.py \
+                  python3 tools/capture-redwood.py \
                       --iso build/sapote.iso \
                       --system build/userspace/sapote-system-fat32.raw \
                       --data build/userspace/sapote-data-fat32.raw \
-                      --output build/first-environment-captures \
+                      --output build/redwood-captures \
                       --ffmpeg ffmpeg
                   python3 tools/fat32_image.py inspect \
-                      build/first-environment-captures/sapote-first-environment-data.raw \
-                      --report build/first-environment-captures/fat32-report.json
-            - name: Upload Sapote First Environment captures
+                      build/redwood-captures/sapote-redwood-data.raw \
+                      --report build/redwood-captures/fat32-report.json
+                  python3 - <<'PY'
+                  import json
+                  import subprocess
+                  from pathlib import Path
+
+                  captures = Path("build/redwood-captures")
+                  required = (
+                      "sapote-settings-all.png",
+                      "sapote-settings-desktop.png",
+                      "sapote-settings-appearance-light.png",
+                      "sapote-settings-appearance-dark.png",
+                      "sapote-redwood-files.png",
+                      "sapote-redwood-notes.png",
+                      "sapote-redwood-studio.png",
+                      "sapote-ui-redesign-final-dock.png",
+                  )
+                  for name in required:
+                      if not (captures / name).is_file():
+                          raise SystemExit(f"missing QEMU UI evidence: {name}")
+                  video = captures / "sapote-ui-redesign-25s.mp4"
+                  duration = float(subprocess.check_output((
+                      "ffprobe", "-v", "error", "-show_entries",
+                      "format=duration", "-of", "default=nk=1:nw=1",
+                      str(video),
+                  ), text=True).strip())
+                  if not 24.99 <= duration <= 25.01:
+                      raise SystemExit(f"UI recording is not exact: {duration}")
+                  report = json.loads((captures / "fat32-report.json").read_text())
+                  names = {item["path"] for item in report["files"]}
+                  # QEMU deliberately has no webcam source. Camera's real
+                  # publisher/snapshot contract is exercised by make verify;
+                  # the UI must not invent PHOTO00.BMP without a device.
+                  for name in ("NEW1.TXT", "SAPSTUDI.SAP", "EXPORT.BMP"):
+                      if name not in names:
+                          raise SystemExit(f"missing retained guest artifact: {name}")
+                  PY
+            - name: Upload Sapote Redwood captures
               uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:
-                  name: sapote-first-environment-captures
-                  path: build/first-environment-captures
+                  name: sapote-redwood-captures
+                  path: build/redwood-captures
                   if-no-files-found: error
             - name: Prove faults and interrupts in QEMU
               run: |
-                  make qemu-test-first-light-userland-interactive
+                  make qemu-test-redwood-proof-userland-interactive
                   make qemu-test-fat32-data
                   make qemu-test-fat32-nested qemu-test-fat32-growth \
                       qemu-test-fat32-random qemu-test-fat32-truncate \

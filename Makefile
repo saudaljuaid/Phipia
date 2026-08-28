@@ -10,10 +10,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	double-fault apic ioapic ioapic-level retired apic-timer tsc pm-timer \
 	pit-retired timers paging heap pci pci-ecam threads thread-guard framebuffer \
 	screen keyboard shell surface write-combining device-windows \
-	boot-ledger first-light device-substrate xhci nvme filesystem process \
-	linux-abi linux-abi-uname first-light-userland \
-	first-light-userland-absent first-light-userland-interactive \
-	first-light-userland-interactive-absent \
+	boot-ledger redwood-proof device-substrate xhci nvme filesystem process \
+	linux-abi linux-abi-uname redwood-proof-userland \
+	redwood-proof-userland-absent redwood-proof-userland-interactive \
+	redwood-proof-userland-interactive-absent \
 	fat32-system fat32-data fat32-nested fat32-growth fat32-random \
 	fat32-truncate fat32-rename fat32-delete fat32-full fat32-corrupt \
 	fat32-missing fat32-persistence fat32-cache fat32-immutable fat32-handles \
@@ -61,33 +61,61 @@ RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
+LOGO_CANONICAL_SOURCE := assets/sapote-logo-source.png
 LOGO_SOURCE := assets/sapote-logo.png
 LOGO_BLOB := $(BUILD_DIR)/logo.srl
 LOGO_MAX_DIMENSION := 280
 STUDIO_ICON_SOURCE := assets/sapstudio-icon.png
 STUDIO_ICON_BLOB := $(BUILD_DIR)/sapstudio-icon.srl
 STUDIO_ICON_MAX_DIMENSION := 80
-WALLPAPER_SOURCE := assets/sapote-first-environment-wallpaper.png
+SETTINGS_ICON_SOURCE := assets/settings-icon-dock.png
+SETTINGS_ICON_ORIGINAL := assets/settings-icon.png
+SETTINGS_ICON_BLOB := $(BUILD_DIR)/settings-icon.srl
+SETTINGS_ICON_MAX_DIMENSION := 80
+FILES_ICON_SOURCE := assets/files-icon-dock.png
+FILES_ICON_ORIGINAL := assets/files-icon.png
+FILES_ICON_BLOB := $(BUILD_DIR)/files-icon.srl
+FILES_ICON_MAX_DIMENSION := 80
+TERMINAL_ICON_SOURCE := assets/terminal-icon-dock.png
+TERMINAL_ICON_ORIGINAL := assets/terminal-icon.png
+TERMINAL_ICON_BLOB := $(BUILD_DIR)/terminal-icon.srl
+TERMINAL_ICON_MAX_DIMENSION := 80
+CAMERA_ICON_SOURCE := assets/camera-icon-dock.png
+CAMERA_ICON_ORIGINAL := assets/camera-icon.png
+CAMERA_ICON_BLOB := $(BUILD_DIR)/camera-icon.srl
+CAMERA_ICON_MAX_DIMENSION := 80
+SETTINGS_CATEGORY_ICONS_SOURCE := assets/settings-category-icons.png
+SETTINGS_CATEGORY_ICONS_BLOB := $(BUILD_DIR)/settings-category-icons.srl
+SETTINGS_CATEGORY_ICONS_MAX_DIMENSION := 256
+SETTINGS_CATEGORY_ICONS_LICENSE := assets/icons/lucide/LICENSE
+WALLPAPER_SOURCES := assets/sapote-redwood-wallpaper.png \
+	$(sort $(wildcard assets/wallpapers/*.png))
 WALLPAPER_BLOB := $(BUILD_DIR)/wallpaper.spw
 FONT_SOURCE := tools/font8x16.txt
 FONT_BLOB := $(BUILD_DIR)/font.snf
-UI_FONT_SOURCE := assets/fonts/spleen-8x16.bdf
-UI_FONT_LICENSE := assets/fonts/Spleen-LICENSE
+UI_FONT_SOURCE := assets/fonts/inter-ui-atlas.png
+UI_FONT_METRICS := assets/fonts/inter-ui-metrics.txt
+UI_FONT_LICENSE := assets/fonts/Inter-LICENSE.txt
+UI_FONT_TTF := assets/fonts/InterVariable.ttf
 UI_FONT_BLOB := $(BUILD_DIR)/ui-font.suf
-FIRST_LIGHT_IMAGE := assets/sapote-v2-first-light.png
-FIRST_LIGHT_FOCUS_IMAGE := assets/sapote-v2-first-light-focus.png
-FIRST_LIGHT_TERMINAL_IMAGE := assets/sapote-v2-first-light-terminal.png
-FIRST_LIGHT_CAPTURE_DIR := $(BUILD_DIR)/first-light-captures
-FIRST_LIGHT_BOOT_VIDEO := assets/sapote-first-light-boot-20s.mp4
-FIRST_ENVIRONMENT_CAPTURE_DIR := $(BUILD_DIR)/first-environment-captures
-FIRST_ENVIRONMENT_IMAGE := assets/sapote-first-environment.png
-FIRST_ENVIRONMENT_DOCK_IMAGE := assets/sapote-first-environment-dock.png
-FIRST_ENVIRONMENT_TERMINAL_IMAGE := \
-	assets/sapote-first-environment-terminal.png
-FIRST_ENVIRONMENT_FILES_IMAGE := assets/sapote-first-environment-files.png
-FIRST_ENVIRONMENT_NOTES_IMAGE := assets/sapote-first-environment-notes.png
-FIRST_ENVIRONMENT_STUDIO_IMAGE := assets/sapote-first-environment-studio.png
-FIRST_ENVIRONMENT_VIDEO := assets/sapote-first-environment-20s.mp4
+REDWOOD_PROOF_IMAGE := assets/sapote-v2-redwood-proof.png
+REDWOOD_PROOF_FOCUS_IMAGE := assets/sapote-v2-redwood-proof-focus.png
+REDWOOD_PROOF_TERMINAL_IMAGE := assets/sapote-v2-redwood-proof-terminal.png
+REDWOOD_PROOF_CAPTURE_DIR := $(BUILD_DIR)/redwood-proof-captures
+REDWOOD_PROOF_BOOT_VIDEO := assets/sapote-redwood-proof-boot-20s.mp4
+REDWOOD_CAPTURE_DIR := $(BUILD_DIR)/redwood-captures
+REDWOOD_IMAGE := assets/sapote-redwood.png
+REDWOOD_DOCK_IMAGE := assets/sapote-redwood-dock.png
+REDWOOD_FILES_IMAGE := assets/sapote-redwood-files.png
+REDWOOD_NOTES_IMAGE := assets/sapote-redwood-notes.png
+REDWOOD_STUDIO_IMAGE := assets/sapote-redwood-studio.png
+SETTINGS_ALL_IMAGE := assets/sapote-settings-all.png
+SETTINGS_DESKTOP_IMAGE := assets/sapote-settings-desktop.png
+SETTINGS_LIGHT_IMAGE := assets/sapote-settings-appearance-light.png
+SETTINGS_DARK_IMAGE := assets/sapote-settings-appearance-dark.png
+MULTITASK_IMAGE := assets/sapote-multitasking.png
+UI_FINAL_DOCK_IMAGE := assets/sapote-ui-redesign-final-dock.png
+REDWOOD_VIDEO := assets/sapote-ui-redesign-25s.mp4
 NETWORK_CAPTURE_DIR := $(BUILD_DIR)/networking-capture
 NVME_FIXTURE := $(TEST_BUILD_DIR)/nvme/nvme-fixture.raw
 FILESYSTEM_FIXTURE := $(TEST_BUILD_DIR)/filesystem/fat16-fixture.raw
@@ -104,8 +132,8 @@ LINUX_UNAME_FIXTURE := $(BUILD_DIR)/fixtures/linux-uname-fat16.raw
 BUSYBOX_CAT_OUTPUT_DIR := $(BUILD_DIR)/busybox-cat-contract
 BUSYBOX_CAT_WORK_DIR := $(BUILD_DIR)/busybox-cat-work
 BUSYBOX_CAT_BINARY := $(BUSYBOX_CAT_OUTPUT_DIR)/busybox
-FIRST_LIGHT_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
-FIRST_LIGHT_USERLAND_NO_CAT_IMAGE := \
+REDWOOD_PROOF_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
+REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE := \
 	$(BUILD_DIR)/userspace/sapote-userland-no-cat-fat16.raw
 FAT32_SYSTEM_IMAGE := $(BUILD_DIR)/userspace/sapote-system-fat32.raw
 FAT32_DATA_IMAGE := $(BUILD_DIR)/userspace/sapote-data-fat32.raw
@@ -153,7 +181,7 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # implicit and pattern rule search for a phony target, so declaring them phony
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
-.PHONY: all capture-boot-video capture-first-environment capture-first-light capture-networking clean contract-counts contract-scenarios fat32-images hooks \
+.PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios fat32-images hooks \
 	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
 
 all: kernel
@@ -179,28 +207,61 @@ $(BUILD_DIR)/%.o: src/kernel/%.c | $(BUILD_DIR)
 # Regenerated only when the logo itself changes. The result is a build
 # artifact and is deliberately not committed; src/rust/abi.rs includes it.
 $(LOGO_BLOB): $(LOGO_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
-	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) $(LOGO_MAX_DIMENSION) $@
+	$(PYTHON) tools/make-logo-asset.py $(LOGO_SOURCE) \
+		$(LOGO_MAX_DIMENSION) $@ --keep-canvas
 
 $(STUDIO_ICON_BLOB): $(STUDIO_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(STUDIO_ICON_SOURCE) \
 		$(STUDIO_ICON_MAX_DIMENSION) $@
 
-$(WALLPAPER_BLOB): $(WALLPAPER_SOURCE) tools/make-wallpaper-asset.py | $(BUILD_DIR)
-	$(PYTHON) tools/make-wallpaper-asset.py $(WALLPAPER_SOURCE) $@
+$(SETTINGS_ICON_BLOB): $(SETTINGS_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(SETTINGS_ICON_SOURCE) \
+		$(SETTINGS_ICON_MAX_DIMENSION) $@
 
-# Regenerated only when the glyph art changes. Also a build artifact; the
-# committed source is the ASCII art in $(FONT_SOURCE), so a clone needs nothing
-# but Python to build the kernel.
+$(FILES_ICON_BLOB): $(FILES_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(FILES_ICON_SOURCE) \
+		$(FILES_ICON_MAX_DIMENSION) $@
+
+$(TERMINAL_ICON_BLOB): $(TERMINAL_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(TERMINAL_ICON_SOURCE) \
+		$(TERMINAL_ICON_MAX_DIMENSION) $@
+
+$(CAMERA_ICON_BLOB): $(CAMERA_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(CAMERA_ICON_SOURCE) \
+		$(CAMERA_ICON_MAX_DIMENSION) $@
+
+$(SETTINGS_CATEGORY_ICONS_BLOB): $(SETTINGS_CATEGORY_ICONS_SOURCE) \
+		tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(SETTINGS_CATEGORY_ICONS_SOURCE) \
+		$(SETTINGS_CATEGORY_ICONS_MAX_DIMENSION) $@ --keep-canvas
+
+$(WALLPAPER_BLOB): $(WALLPAPER_SOURCES) tools/make-wallpaper-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-wallpaper-asset.py $(WALLPAPER_SOURCES) $@
+
+# The terminal font still comes from committed ASCII art, so a clone needs
+# nothing but Python to pack it for the kernel.
 $(FONT_BLOB): $(FONT_SOURCE) tools/make-font-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-font-asset.py $(FONT_SOURCE) $@
 
-$(UI_FONT_BLOB): $(UI_FONT_SOURCE) tools/make-ui-font-asset.py | $(BUILD_DIR)
-	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) $@
+$(UI_FONT_BLOB): $(UI_FONT_SOURCE) $(UI_FONT_METRICS) \
+		tools/make-ui-font-asset.py | $(BUILD_DIR)
+	# Inter was rasterized ahead of time; the normal build only packs committed
+	# alpha and metrics and therefore needs no host font or imaging library.
+	$(PYTHON) tools/make-ui-font-asset.py $(UI_FONT_SOURCE) \
+		$(UI_FONT_METRICS) $@
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
+		$(SETTINGS_ICON_BLOB) $(FILES_ICON_BLOB) $(TERMINAL_ICON_BLOB) \
+		$(CAMERA_ICON_BLOB) \
+		$(SETTINGS_CATEGORY_ICONS_BLOB) \
 		$(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
 	SAPOTE_STUDIO_ICON_BLOB='$(CURDIR)/$(STUDIO_ICON_BLOB)' \
+	SAPOTE_SETTINGS_ICON_BLOB='$(CURDIR)/$(SETTINGS_ICON_BLOB)' \
+	SAPOTE_FILES_ICON_BLOB='$(CURDIR)/$(FILES_ICON_BLOB)' \
+	SAPOTE_TERMINAL_ICON_BLOB='$(CURDIR)/$(TERMINAL_ICON_BLOB)' \
+	SAPOTE_CAMERA_ICON_BLOB='$(CURDIR)/$(CAMERA_ICON_BLOB)' \
+	SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB='$(CURDIR)/$(SETTINGS_CATEGORY_ICONS_BLOB)' \
 	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
 	SAPOTE_UI_FONT_BLOB='$(CURDIR)/$(UI_FONT_BLOB)' \
@@ -240,17 +301,17 @@ $(BUSYBOX_CAT_BINARY): tools/build-busybox-cat-proof.sh \
 	SAPOTE_BUSYBOX_BUILD_ONLY=1 bash tools/build-busybox-cat-proof.sh \
 		$(BUSYBOX_CAT_OUTPUT_DIR) $(BUSYBOX_CAT_WORK_DIR)
 
-$(FIRST_LIGHT_USERLAND_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
+$(REDWOOD_PROOF_USERLAND_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
 		$(BUSYBOX_CAT_BINARY) \
-		tools/make-first-light-userland.py
+		tools/make-redwood-proof-userland.py
 	mkdir -p $(dir $@)
-	$(PYTHON) tools/make-first-light-userland.py \
+	$(PYTHON) tools/make-redwood-proof-userland.py \
 		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) $(BUSYBOX_CAT_BINARY) $@
 
-$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE): $(BUSYBOX_BINARY) \
-		$(BUSYBOX_UNAME_BINARY) tools/make-first-light-userland.py
+$(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE): $(BUSYBOX_BINARY) \
+		$(BUSYBOX_UNAME_BINARY) tools/make-redwood-proof-userland.py
 	mkdir -p $(dir $@)
-	$(PYTHON) tools/make-first-light-userland.py \
+	$(PYTHON) tools/make-redwood-proof-userland.py \
 		$(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) --without-cat $@
 
 $(FAT32_SYSTEM_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
@@ -279,7 +340,7 @@ $(KERNEL): $(OBJECTS) $(RUST_LIB) linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) $(RUST_LIB) || { \
 		rm -f $@; \
 		sed -n '/__got_start/,/__got_end/p' $(BUILD_DIR)/sapote.map; \
-		sed 's/ASSERT(__got_end == __got_start,/ASSERT(1,/' \
+		sed 's/ASSERT(__got_end - __got_start <= 0x400,/ASSERT(1,/' \
 			linker.ld >$(BUILD_DIR)/linker-got-diagnostic.ld; \
 		$(LD) -nostdlib -z max-page-size=0x1000 -z noexecstack \
 			--orphan-handling=error --build-id=none --emit-relocs \
@@ -317,26 +378,14 @@ lint:
 verify: toolchain lint
 	$(MAKE) clean
 	$(MAKE) kernel
-	@test "$$(sha256sum $(LOGO_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'16EC9B0CB3DCB098EB52EF6FB27A2EBF6BBB615B1A0F9EB0B67D21D1D1F77317'
-	@test "$$(sha256sum assets/sapote-logo-source.jpeg | awk '{ print toupper($$1) }')" = \
-		'0743231ED884F16A8D973A5E7C6D51F2EF97D2F1E386D59FF8A35024AC2EDE3C'
-	@test "$$(sha256sum $(WALLPAPER_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'3984C670E9788B3E9858834FD1696D9213630A19F64D6691B7AF5D511CE099C4'
-	@test "$$(sha256sum $(WALLPAPER_BLOB) | awk '{ print toupper($$1) }')" = \
-		'3D09707C534D24D834210345CDB61CAA10E31F4C706FD389C2F1B6374AA486D0'
+	$(PYTHON) tools/verify-ui-assets.py
 	@test '$(LOGO_MAX_DIMENSION)' -eq 280
-	@test "$$(sha256sum $(STUDIO_ICON_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'C5D706B274132B5FCAF0BB016D0DA56DDD1DC54B417709364874AD1A58611EB5'
-	@test "$$(sha256sum $(STUDIO_ICON_BLOB) | awk '{ print toupper($$1) }')" = \
-		'0E30BA0BFD43EE19ECBEF903AE2BF05CAB4C0F1E9E28E0C9233907FF6F3BCDDD'
 	@test '$(STUDIO_ICON_MAX_DIMENSION)' -eq 80
-	@test "$$(sha256sum $(UI_FONT_SOURCE) | awk '{ print toupper($$1) }')" = \
-		'4A3D97EE61A8C86A7525D8C723CB8A14081F395CD2FEB4227BA5E3BAF0629BAE'
-	@test "$$(sha256sum $(UI_FONT_LICENSE) | awk '{ print toupper($$1) }')" = \
-		'F33FE8679D5B2ABECC4F1313CE6C6BFA58262964DE5F7BCA146596A7318047AF'
-	@test "$$(sha256sum $(UI_FONT_BLOB) | awk '{ print toupper($$1) }')" = \
-		'D6AD364D9E4A932EB753B83C7EF866DDAF09DDFF8B66BC9669F844267A26CE74'
+	@test '$(SETTINGS_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(FILES_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(TERMINAL_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(CAMERA_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(SETTINGS_CATEGORY_ICONS_MAX_DIMENSION)' -eq 256
 	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
 	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'B8FE53B80AAC718B36B545CC7A741ADCA52DF3BFE0DEE580D2A179B49DEBA5AC'
@@ -390,11 +439,11 @@ verify: toolchain lint
 		tools/linux-cat-elf64-host-test.rs \
 		-o $(RUST_LINUX_CAT_ELF64_TEST)
 	$(RUST_LINUX_CAT_ELF64_TEST)
-	$(MAKE) $(FIRST_LIGHT_USERLAND_IMAGE)
-	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_IMAGE) | awk '{ print toupper($$1) }')" = \
+	$(MAKE) $(REDWOOD_PROOF_USERLAND_IMAGE)
+	@test "$$(sha256sum $(REDWOOD_PROOF_USERLAND_IMAGE) | awk '{ print toupper($$1) }')" = \
 		'F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB'
-	$(MAKE) $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)
-	@test "$$(sha256sum $(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE) | awk '{ print toupper($$1) }')" = \
+	$(MAKE) $(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE)
+	@test "$$(sha256sum $(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE) | awk '{ print toupper($$1) }')" = \
 		'12F7EB4B4EE2F39CA721623AFCC6D337964FB32D2F081893DF182101514211CE'
 	$(MAKE) $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE) \
 		$(FAT32_FULL_IMAGE) $(FAT32_CORRUPT_IMAGE)
@@ -527,7 +576,7 @@ verify: toolchain lint
 		'\b(ui_font_initialize|pointer_initialize|ui_construct|ui_activate)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=boot_plan.c \
 		--exclude=ui.c --exclude=ui_font.c --exclude=pointer.c; then \
-		echo 'First Light boot stage bypasses the Boot Ledger'; exit 1; \
+		echo 'Sapote Redwood boot stage bypasses the Boot Ledger'; exit 1; \
 	fi
 	@if grep -ERn \
 		'\b(pci_resource_initialize|interrupt_vector_initialize|dma_initialize|device_substrate_prove)[[:space:]]*[(]' \
@@ -785,7 +834,7 @@ verify: toolchain lint
 		{ echo 'measured launch entry escaped its userspace owner'; exit 1; }
 	@! grep -Eq 'console_(write|putc)[[:space:]]*\([[:space:]]*"(SAPOTE|Linux)' \
 		src/kernel/shell.c || \
-		{ echo 'First Light shell contains prerecorded userspace output'; exit 1; }
+		{ echo 'Sapote Redwood shell contains prerecorded userspace output'; exit 1; }
 	@if grep -ERn '\bfilesystem_private_read_(open|close)[[:space:]]*[(]' \
 		src/kernel --include='*.c' --exclude=filesystem.c \
 		--exclude=process.c; then \
@@ -942,53 +991,53 @@ verify: toolchain lint
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" && \
 		test "$$((0x36 * 2 + 1))" -ne "$$host_exit" || \
 		{ echo 'Linux uname ABI guest and host exit contracts disagree'; exit 1; }
-	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND:' src/kernel/test.c
+	@grep -Fq 'case KERNEL_TEST_REDWOOD_PROOF_USERLAND:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x38);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
-		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		'/case KERNEL_TEST_REDWOOD_PROOF_USERLAND:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
 		src/kernel/test.c); \
 		host_exit=$$(sed -n \
-		's/^[[:space:]]*first-light-userland) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		's/^[[:space:]]*redwood-proof-userland) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
 		Makefile | head -n 1); \
 		test -n "$$guest_exit" && test -n "$$host_exit" && \
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
-		{ echo 'First Light userland guest and host exits disagree'; exit 1; }
-	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:' src/kernel/test.c
+		{ echo 'Sapote Redwood userland guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x39);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
-		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		'/case KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
 		src/kernel/test.c); \
 		host_exit=$$(sed -n \
-		's/^[[:space:]]*first-light-userland-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		's/^[[:space:]]*redwood-proof-userland-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
 		Makefile | head -n 1); \
 		test -n "$$guest_exit" && test -n "$$host_exit" && \
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
-		{ echo 'First Light absent-volume guest and host exits disagree'; exit 1; }
-	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:' src/kernel/test.c
+		{ echo 'Sapote Redwood absent-volume guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x3A);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
-		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		'/case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
 		src/kernel/test.c); \
 		host_exit=$$(sed -n \
-		's/^[[:space:]]*first-light-userland-interactive) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		's/^[[:space:]]*redwood-proof-userland-interactive) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
 		Makefile | head -n 1); \
 		test -n "$$guest_exit" && test -n "$$host_exit" && \
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
-		{ echo 'Interactive First Light guest and host exits disagree'; exit 1; }
-	@grep -Fq 'case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:' src/kernel/test.c
+		{ echo 'Interactive Sapote Redwood guest and host exits disagree'; exit 1; }
+	@grep -Fq 'case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT:' src/kernel/test.c
 	@grep -Fq '        return UINT8_C(0x3B);' src/kernel/test.c
 	@guest_exit=$$(sed -n \
-		'/case KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
+		'/case KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT:/{n;s/.*UINT8_C(\(0x[0-9A-Fa-f]*\)).*/\1/p;}' \
 		src/kernel/test.c); \
 		host_exit=$$(sed -n \
-		's/^[[:space:]]*first-light-userland-interactive-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
+		's/^[[:space:]]*redwood-proof-userland-interactive-absent) expected=\([0-9][0-9]*\) ;;.*/\1/p' \
 		Makefile | head -n 1); \
 		test -n "$$guest_exit" && test -n "$$host_exit" && \
 		test "$$((guest_exit * 2 + 1))" -eq "$$host_exit" || \
 		{ echo 'Interactive absent-profile guest and host exits disagree'; exit 1; }
 	@if grep -En '\bframebuffer_(write_pixel|fill|scroll_up)[[:space:]]*[(]' \
 		src/kernel/ui.c src/kernel/ui_font.c src/kernel/pointer.c; then \
-		echo 'First Light bypasses the cached surface'; exit 1; \
+		echo 'Sapote Redwood bypasses the cached surface'; exit 1; \
 	fi
 	@if grep -En \
 		'\b(ui_process_events|ui_flush|surface_present)[[:space:]]*[(]' \
@@ -997,51 +1046,61 @@ verify: toolchain lint
 	fi
 	@grep -Fq '    cpu_store_fence();' src/kernel/surface.c || \
 		{ echo 'cached-surface WC present lost its sfence'; exit 1; }
-	@grep -Fq 'Sapote: First Light installed proof passed' \
+	@grep -Fq 'Sapote: Redwood installed proof passed' \
 		src/kernel/boot_plan.c
 	$(MAKE) screenshot-proof
 
 screenshot-proof:
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
-		--self-test $(FIRST_LIGHT_IMAGE)
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode focus \
-		--self-test $(FIRST_LIGHT_FOCUS_IMAGE)
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
-		--self-test $(FIRST_LIGHT_TERMINAL_IMAGE)
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode clean \
+		--self-test $(REDWOOD_PROOF_IMAGE)
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode focus \
+		--self-test $(REDWOOD_PROOF_FOCUS_IMAGE)
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode terminal \
+		--self-test $(REDWOOD_PROOF_TERMINAL_IMAGE)
 
-capture-first-light: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
-	rm -rf $(FIRST_LIGHT_CAPTURE_DIR)
-	$(PYTHON) tools/capture-first-light.py --iso $(ISO) \
+capture-redwood-proof: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	rm -rf $(REDWOOD_PROOF_CAPTURE_DIR)
+	$(PYTHON) tools/capture-redwood-proof.py --iso $(ISO) \
 		--system $(FAT32_SYSTEM_IMAGE) --data $(FAT32_DATA_IMAGE) \
-		--output $(FIRST_LIGHT_CAPTURE_DIR)
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode clean \
-		$(FIRST_LIGHT_IMAGE) $(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light.png
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode focus \
-		$(FIRST_LIGHT_FOCUS_IMAGE) \
-		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-focus.png
-	$(PYTHON) tools/compare-first-light-screenshot.py --mode terminal \
-		$(FIRST_LIGHT_TERMINAL_IMAGE) \
-		$(FIRST_LIGHT_CAPTURE_DIR)/sapote-first-light-terminal.png
+		--output $(REDWOOD_PROOF_CAPTURE_DIR)
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode clean \
+		$(REDWOOD_PROOF_IMAGE) $(REDWOOD_PROOF_CAPTURE_DIR)/sapote-redwood-proof.png
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode focus \
+		$(REDWOOD_PROOF_FOCUS_IMAGE) \
+		$(REDWOOD_PROOF_CAPTURE_DIR)/sapote-redwood-proof-focus.png
+	$(PYTHON) tools/compare-redwood-proof-screenshot.py --mode terminal \
+		$(REDWOOD_PROOF_TERMINAL_IMAGE) \
+		$(REDWOOD_PROOF_CAPTURE_DIR)/sapote-redwood-proof-terminal.png
 
-capture-first-environment: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
-	rm -rf $(FIRST_ENVIRONMENT_CAPTURE_DIR)
-	$(PYTHON) tools/capture-first-environment.py --iso $(ISO) \
+capture-redwood: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+	rm -rf $(REDWOOD_CAPTURE_DIR)
+	$(PYTHON) tools/capture-redwood.py --iso $(ISO) \
 		--system $(FAT32_SYSTEM_IMAGE) --data $(FAT32_DATA_IMAGE) \
-		--output $(FIRST_ENVIRONMENT_CAPTURE_DIR) --ffmpeg $(FFMPEG)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment.png \
-		$(FIRST_ENVIRONMENT_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-dock.png \
-		$(FIRST_ENVIRONMENT_DOCK_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-terminal.png \
-		$(FIRST_ENVIRONMENT_TERMINAL_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-files.png \
-		$(FIRST_ENVIRONMENT_FILES_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-notes.png \
-		$(FIRST_ENVIRONMENT_NOTES_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-studio.png \
-		$(FIRST_ENVIRONMENT_STUDIO_IMAGE)
-	cp $(FIRST_ENVIRONMENT_CAPTURE_DIR)/sapote-first-environment-20s.mp4 \
-		$(FIRST_ENVIRONMENT_VIDEO)
+		--output $(REDWOOD_CAPTURE_DIR) --ffmpeg $(FFMPEG)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-redwood.png \
+		$(REDWOOD_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-redwood-dock.png \
+		$(REDWOOD_DOCK_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-redwood-files.png \
+		$(REDWOOD_FILES_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-redwood-notes.png \
+		$(REDWOOD_NOTES_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-redwood-studio.png \
+		$(REDWOOD_STUDIO_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-settings-all.png \
+		$(SETTINGS_ALL_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-settings-desktop.png \
+		$(SETTINGS_DESKTOP_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-settings-appearance-light.png \
+		$(SETTINGS_LIGHT_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-settings-appearance-dark.png \
+		$(SETTINGS_DARK_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-multitasking.png \
+		$(MULTITASK_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-ui-redesign-final-dock.png \
+		$(UI_FINAL_DOCK_IMAGE)
+	cp $(REDWOOD_CAPTURE_DIR)/sapote-ui-redesign-25s.mp4 \
+		$(REDWOOD_VIDEO)
 
 capture-networking: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	rm -rf $(NETWORK_CAPTURE_DIR)
@@ -1055,7 +1114,7 @@ capture-boot-video: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 		--system $(FAT32_SYSTEM_IMAGE) \
 		--data $(BUILD_DIR)/capture-video-data-fat32.raw \
 		--screenshot $(BUILD_DIR)/fat32-persistence.png \
-		--video $(FIRST_LIGHT_BOOT_VIDEO) \
+		--video $(REDWOOD_PROOF_BOOT_VIDEO) \
 		--transcript $(BUILD_DIR)/fat32-persistence.log \
 		--ffmpeg $(FFMPEG)
 
@@ -1179,7 +1238,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		write-combining) expected=89 ;; \
 		device-windows) expected=91 ;; \
 		boot-ledger) expected=93 ;; \
-		first-light) expected=95 ;; \
+		redwood-proof) expected=95 ;; \
 		device-substrate) expected=97 ;; \
 		xhci) expected=99 ;; \
 		nvme) expected=101 ;; \
@@ -1187,10 +1246,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		process) expected=105 ;; \
 		linux-abi) expected=109 ;; \
 		linux-abi-uname) expected=111 ;; \
-		first-light-userland) expected=113 ;; \
-		first-light-userland-absent) expected=115 ;; \
-		first-light-userland-interactive) expected=117 ;; \
-		first-light-userland-interactive-absent) expected=119 ;; \
+		redwood-proof-userland) expected=113 ;; \
+		redwood-proof-userland-absent) expected=115 ;; \
+		redwood-proof-userland-interactive) expected=117 ;; \
+		redwood-proof-userland-interactive-absent) expected=119 ;; \
 		fat32-system) expected=121 ;; \
 		fat32-data) expected=123 ;; \
 		fat32-nested) expected=125 ;; \
@@ -1267,18 +1326,18 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				test -f '$(LINUX_UNAME_FIXTURE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(LINUX_UNAME_FIXTURE),node-name=linux-uname-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=linux-uname-file,node-name=linux-uname-raw,read-only=on -device nvme,serial=sapote-linux-uname,drive=linux-uname-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
-			first-light-userland) \
-				$(MAKE) '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
-				test -f '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
-				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=first-light-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=first-light-userland-file,node-name=first-light-userland-raw,read-only=on -device nvme,serial=sapote-userland,drive=first-light-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
-			first-light-userland-interactive) \
-				$(MAKE) '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
-				test -f '$(FIRST_LIGHT_USERLAND_IMAGE)' || exit 1; \
-				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_IMAGE),node-name=interactive-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-userland-file,node-name=interactive-userland-raw,read-only=on -device nvme,serial=sapote-interactive,drive=interactive-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
-			first-light-userland-interactive-absent) \
-				$(MAKE) '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
-				test -f '$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE)' || exit 1; \
-				hardware='-boot order=d -blockdev driver=file,filename=$(FIRST_LIGHT_USERLAND_NO_CAT_IMAGE),node-name=interactive-absent-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-absent-file,node-name=interactive-absent-raw,read-only=on -device nvme,serial=sapote-interactive-absent,drive=interactive-absent-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			redwood-proof-userland) \
+				$(MAKE) '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
+				test -f '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(REDWOOD_PROOF_USERLAND_IMAGE),node-name=redwood-proof-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=redwood-proof-userland-file,node-name=redwood-proof-userland-raw,read-only=on -device nvme,serial=sapote-userland,drive=redwood-proof-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			redwood-proof-userland-interactive) \
+				$(MAKE) '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
+				test -f '$(REDWOOD_PROOF_USERLAND_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(REDWOOD_PROOF_USERLAND_IMAGE),node-name=interactive-userland-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-userland-file,node-name=interactive-userland-raw,read-only=on -device nvme,serial=sapote-interactive,drive=interactive-userland-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
+			redwood-proof-userland-interactive-absent) \
+				$(MAKE) '$(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE)' || exit 1; \
+				test -f '$(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE)' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE),node-name=interactive-absent-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=interactive-absent-file,node-name=interactive-absent-raw,read-only=on -device nvme,serial=sapote-interactive-absent,drive=interactive-absent-raw,logical_block_size=4096,physical_block_size=4096,max_ioqpairs=1,msix_qsize=1' ;; \
 			fat32-missing) \
 				$(MAKE) '$(FAT32_SYSTEM_IMAGE)' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=fat32-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=fat32-system-file,node-name=fat32-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=fat32-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
@@ -1416,12 +1475,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		  ! grep -Fq 'Sapote: keyboard established' "$$log" || \
 		  ! grep -Fq 'Sapote: keyboard passed' "$$log" || \
 		  ! grep -Fq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
-		  ! grep -Fq 'Sapote: First Light font verified' "$$log" || \
+		  ! grep -Fq 'Sapote: Redwood font verified' "$$log" || \
 		  ! grep -Eq '^Sapote: PS/2 pointer (available|unavailable: .+)$$' "$$log" || \
-		  ! grep -Fq 'Sapote: First Light layout validated' "$$log" || \
-		  ! grep -Fq 'Sapote: First Light desktop constructed' "$$log" || \
-		  ! grep -Fq 'Sapote: First Light desktop activated' "$$log" || \
-		  ! grep -Fq 'Sapote: First Light installed proof passed' "$$log" || \
+		  ! grep -Fq 'Sapote: Redwood layout validated' "$$log" || \
+		  ! grep -Fq 'Sapote: Redwood desktop constructed' "$$log" || \
+		  ! grep -Fq 'Sapote: Redwood desktop activated' "$$log" || \
+		  ! grep -Fq 'Sapote: Redwood installed proof passed' "$$log" || \
 		  ! grep -Fxq 'Sapote: shell ran "echo hi" from 8 injected scancodes' "$$log" || \
 		  ! grep -Fq 'Sapote: shell output verified on screen' "$$log" || \
 		  ! grep -Fq 'Sapote: shell established' "$$log" || \
@@ -1485,9 +1544,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Eq '^ST LEDGER stages [1-9][0-9]* receipts [1-9][0-9]* capabilities [1-9][0-9]* skips [0-9]+ fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
-		first-light) \
-			grep -Eq '^ST FIRST_LIGHT geometry 1024x768 dock 4 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
-			grep -Fxq 'Sapote: First Light installed proof passed' "$$log" || \
+		redwood-proof) \
+		grep -Eq '^ST REDWOOD_PROOF geometry 1024x768 dock 6 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+			grep -Fxq 'Sapote: Redwood installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		device-substrate) \
 			grep -Fxq 'ST DEVICE_SUBSTRATE dma 64 msix 1 used 0->1 ownership CPU-DEVICE-CPU teardown clean negatives 14' "$$log" && \
@@ -1540,60 +1599,60 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: BusyBox uname image and UTS controls 50/50 passed' "$$log" && \
 			grep -Fqx 'Linux' "$$log" || \
 				diagnostics_ok=false ;; \
-		first-light-userland) \
-			grep -Fxq 'ST FIRST_LIGHT_USERLAND shell production echo 2 uname 2 invalid-profile recovered CPL3 SYSCALL stdout exact exit 0 teardown clean prompt restored' "$$log" && \
+		redwood-proof-userland) \
+			grep -Fxq 'ST REDWOOD_PROOF_USERLAND shell production echo 2 uname 2 invalid-profile recovered CPL3 SYSCALL stdout exact exit 0 teardown clean prompt restored' "$$log" && \
 			test "$$(grep -Fxc 'SAPOTE' "$$log")" -eq 2 && \
 			test "$$(grep -Fxc 'Linux' "$$log")" -eq 2 && \
-			grep -Fxq 'FL USERLAND launch completed successfully echo ordinal 2' "$$log" && \
-			grep -Fxq 'FL USERLAND launch completed successfully uname ordinal 2' "$$log" && \
-			grep -Fxq 'FL USERLAND First Light prompt restored' "$$log" || \
+			grep -Fxq 'RW USERLAND launch completed successfully echo ordinal 2' "$$log" && \
+			grep -Fxq 'RW USERLAND launch completed successfully uname ordinal 2' "$$log" && \
+			grep -Fxq 'RW USERLAND Sapote Redwood prompt restored' "$$log" || \
 				diagnostics_ok=false ;; \
-		first-light-userland-absent) \
+		redwood-proof-userland-absent) \
 			grep -Fxq 'linux: userspace volume unavailable' "$$log" && \
 			grep -Fxq 'still usable' "$$log" && \
-			grep -Fxq 'ST FIRST_LIGHT_USERLAND_ABSENT concise refusal prompt usable teardown clean' "$$log" && \
-			grep -Fxq 'FL USERLAND launch refused and teardown complete' "$$log" && \
-			grep -Fxq 'FL USERLAND First Light prompt restored' "$$log" || \
+			grep -Fxq 'ST REDWOOD_PROOF_USERLAND_ABSENT concise refusal prompt usable teardown clean' "$$log" && \
+			grep -Fxq 'RW USERLAND launch refused and teardown complete' "$$log" && \
+			grep -Fxq 'RW USERLAND Sapote Redwood prompt restored' "$$log" || \
 				diagnostics_ok=false ;; \
-		first-light-userland-interactive) \
-			grep -Fxq 'ST FIRST_LIGHT_USERLAND_INTERACTIVE cat 2 keyboard IRQ read SYSCALL copy-out resume write SYSCALL stdout exact EOF exit 0 teardown clean fresh generation prompt restored' "$$log" && \
-			test "$$(grep -Fxc 'FL USERLAND command accepted through First Light shell linux cat' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL USERLAND Rust FAT16 SHA-256 ELF64 validation passed cat bytes 38632' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL USERLAND private CPL3 address space entered cat' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT authentic read SYSCALL observed' "$$log")" -eq 4 && \
-			test "$$(grep -Fxc 'FL CAT suspended with kernel CR3 and safe stack restored' "$$log")" -eq 4 && \
-			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 7' "$$log" && \
-			grep -Fxq 'FL CAT terminal input accepted through keyboard events bytes 6' "$$log" && \
-			test "$$(grep -Fxc 'FL CAT destination validated and all-or-nothing copy-out complete' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT runtime negative controls 28/28 passed' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT authenticated process generation ready to resume' "$$log")" -eq 4 && \
-			test "$$(grep -Fxc 'FL CAT authentic write SYSCALL observed' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT userspace stdout accepted' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT EOF converted to zero-length read result' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT exit status zero observed' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL CAT address-space teardown complete' "$$log")" -eq 2 && \
-			test "$$(grep -Fxc 'FL USERLAND First Light prompt restored' "$$log")" -eq 2 && \
+		redwood-proof-userland-interactive) \
+			grep -Fxq 'ST REDWOOD_PROOF_USERLAND_INTERACTIVE cat 2 keyboard IRQ read SYSCALL copy-out resume write SYSCALL stdout exact EOF exit 0 teardown clean fresh generation prompt restored' "$$log" && \
+			test "$$(grep -Fxc 'RW USERLAND command accepted through Sapote Redwood shell linux cat' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW USERLAND Rust FAT16 SHA-256 ELF64 validation passed cat bytes 38632' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW USERLAND private CPL3 address space entered cat' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT authentic read SYSCALL observed' "$$log")" -eq 4 && \
+			test "$$(grep -Fxc 'RW CAT suspended with kernel CR3 and safe stack restored' "$$log")" -eq 4 && \
+			grep -Fxq 'RW CAT terminal input accepted through keyboard events bytes 7' "$$log" && \
+			grep -Fxq 'RW CAT terminal input accepted through keyboard events bytes 6' "$$log" && \
+			test "$$(grep -Fxc 'RW CAT destination validated and all-or-nothing copy-out complete' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT runtime negative controls 28/28 passed' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT authenticated process generation ready to resume' "$$log")" -eq 4 && \
+			test "$$(grep -Fxc 'RW CAT authentic write SYSCALL observed' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT userspace stdout accepted' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT EOF converted to zero-length read result' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT exit status zero observed' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW CAT address-space teardown complete' "$$log")" -eq 2 && \
+			test "$$(grep -Fxc 'RW USERLAND Sapote Redwood prompt restored' "$$log")" -eq 2 && \
 			test "$$(grep -Fxc 'pebble' "$$log")" -eq 2 && \
 			test "$$(grep -Fxc 'again' "$$log")" -eq 2 && \
-			grep -Fxq 'FL USERLAND launch completed successfully cat ordinal 2' "$$log" || \
+			grep -Fxq 'RW USERLAND launch completed successfully cat ordinal 2' "$$log" || \
 				diagnostics_ok=false ;; \
-		first-light-userland-interactive-absent) \
-			grep -Fxq 'ST FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT cat missing echo valid keyboard IRQ refusal recoverable teardown clean prompt usable' "$$log" && \
+		redwood-proof-userland-interactive-absent) \
+			grep -Fxq 'ST REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT cat missing echo valid keyboard IRQ refusal recoverable teardown clean prompt usable' "$$log" && \
 			grep -Fxq 'linux: measured profile refused' "$$log" && \
-			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log" && \
-			grep -Fxq 'FL USERLAND launch refused and teardown complete' "$$log" && \
-			grep -Fxq 'FL USERLAND command accepted through First Light shell linux echo' "$$log" && \
+			grep -Fxq 'RW USERLAND deterministic read-only NVMe/FAT16 profile selected cat CATBOX' "$$log" && \
+			grep -Fxq 'RW USERLAND launch refused and teardown complete' "$$log" && \
+			grep -Fxq 'RW USERLAND command accepted through Sapote Redwood shell linux echo' "$$log" && \
 			grep -Fqx 'SAPOTE' "$$log" && \
-			grep -Fxq 'FL USERLAND launch completed successfully echo ordinal 1' "$$log" && \
-			test "$$(grep -Fxc 'FL USERLAND First Light prompt restored' "$$log")" -eq 2 || \
+			grep -Fxq 'RW USERLAND launch completed successfully echo ordinal 1' "$$log" && \
+			test "$$(grep -Fxc 'RW USERLAND Sapote Redwood prompt restored' "$$log")" -eq 2 || \
 				diagnostics_ok=false ;; \
 		fat32-system) \
 			grep -Fxq 'ST FAT32 SYSTEM authenticated echo uname FAT32 immutable' "$$log" && \
-			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT32 profile selected echo BUSYBOX' "$$log" && \
-			grep -Fxq 'FL USERLAND deterministic read-only NVMe/FAT32 profile selected uname UNAMEBOX' "$$log" && \
-			grep -Fxq 'FL USERLAND Rust FAT32 SHA-256 ELF64 validation passed echo bytes 33584' "$$log" && \
-			grep -Fxq 'FL USERLAND Rust FAT32 SHA-256 ELF64 validation passed uname bytes 38368' "$$log" || \
+			grep -Fxq 'RW USERLAND deterministic read-only NVMe/FAT32 profile selected echo BUSYBOX' "$$log" && \
+			grep -Fxq 'RW USERLAND deterministic read-only NVMe/FAT32 profile selected uname UNAMEBOX' "$$log" && \
+			grep -Fxq 'RW USERLAND Rust FAT32 SHA-256 ELF64 validation passed echo bytes 33584' "$$log" && \
+			grep -Fxq 'RW USERLAND Rust FAT32 SHA-256 ELF64 validation passed uname bytes 38368' "$$log" || \
 				diagnostics_ok=false ;; \
 		fat32-data) \
 			grep -Fxq 'ST FAT32 DATA create read write append sync exact' "$$log" && \

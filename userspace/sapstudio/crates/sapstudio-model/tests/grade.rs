@@ -335,7 +335,13 @@ fn a_grade_reaches_the_layer_stack() {
         .stack_at(Lane::Picture, sapstudio_core::Instant::new(10, RATE))
         .expect("a stack");
     assert_eq!(stack.len(), 1);
-    assert_eq!(stack[0].grade(), Some(look(11)));
+    let graded = stack[0].grade().expect("a look on the layer");
+    assert_eq!(graded.look(), look(11));
+    assert_eq!(
+        graded.strength(),
+        sapstudio_core::Rational::ONE,
+        "a grade nobody animated is all the way on"
+    );
 }
 
 #[test]

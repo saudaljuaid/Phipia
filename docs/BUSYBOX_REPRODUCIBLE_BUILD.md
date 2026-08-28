@@ -55,7 +55,7 @@ dynamic section, runtime relocation, PIE, shared object, or RWX segment. Their
 exact syscall traces and allowlists are committed beside the configurations.
 
 Version 1.1.0 places all three exact executables in one 16 MiB read-only FAT16
-volume. `tools/make-first-light-userland.py` rebuilds every byte, independently
+volume. `tools/make-redwood-proof-userland.py` rebuilds every byte, independently
 verifies each file and root entry, runs negative mutations, and pins the volume
 SHA-256 to
 `F2115B909842ADACB8460287515E5145E36B34DE7E0B8C658E92D22DDFA7EBDB`.

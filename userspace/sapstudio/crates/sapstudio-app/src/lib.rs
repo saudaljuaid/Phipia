@@ -425,17 +425,27 @@ fn picture(console: &mut dyn Console) -> Result<(), SlateStatus> {
     say(console, "picture size   ", rendered.bytes())?;
     say(console, "picture digest ", rendered.digest())?;
     // Worked out rather than read off. At frame 12 of a 24-frame rise the
-    // track is at half opacity, and fading a premultiplied layer scales every
-    // channel including its coverage — so the top becomes red 64 at coverage
-    // 64. Over the dark grey, in linear light: 64 decodes to 0.0513, 40 to
-    // 0.0212, and `0.0513 + 0.0212·(1 − 64/255)` is 0.0672, which encodes back
-    // to 73.
+    // track is at half opacity. Fading a premultiplied layer scales its
+    // **colour in light** and its **coverage in its stored value**, because
+    // only one of the two is light — so the top's red 128 becomes light
+    // 0.2159 × ½ = 0.1080, and its coverage 128 becomes 64.
     //
-    // An earlier version of this comment said 148, from adding the code
-    // values — the exact mistake `over` exists to prevent, in the project
-    // whose own documents pin that error at a different pixel. The arithmetic
-    // was right and the comment was wrong, which is the way round it should be
-    // and is still worth writing down.
+    // Over the dark grey, in linear light: 40 decodes to 0.0212, and
+    // `0.1080 + 0.0212·(1 − 64/255)` is 0.1238, which encodes back to 98.
+    //
+    // This number has been wrong twice and each time for a different reason,
+    // which is why it is derived here in full rather than recorded.
+    //
+    // It read 148 once, from adding code values — the exact mistake `over`
+    // exists to prevent. The arithmetic was right and the comment was wrong.
+    //
+    // It read 73 until M8.17, and that time the *arithmetic* was wrong:
+    // `faded` scaled the colour in code values too, so the top arrived as red
+    // 64 (light 0.0513) instead of light 0.1080. Every test the project had
+    // faded a layer that was black, where nought times anything is nought and
+    // the two arithmetics agree — so nothing caught it until a dissolve
+    // between two *identical* pictures was asked to be that picture, and
+    // sagged by twenty-eight code values in the middle instead.
     //
     // The frame is opaque because the programme is: an empty instant is black
     // leader rather than a hole.

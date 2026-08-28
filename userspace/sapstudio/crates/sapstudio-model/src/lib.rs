@@ -28,6 +28,7 @@ pub mod curve;
 pub mod edit;
 pub mod item;
 pub mod journal;
+pub mod marker;
 pub mod mask;
 pub mod media;
 pub mod project;
@@ -35,19 +36,24 @@ pub mod sequence;
 pub mod stack;
 pub mod status;
 pub mod store;
+pub mod title;
 pub mod track;
+pub mod transform;
 
 pub use curve::{Automation, Curve, Interpolation, Keyframe, KeyframeEdit, MAX_KEYFRAMES};
 pub use edit::Edit;
-pub use item::{Clip, Item};
+pub use item::{Clip, Item, Playback};
 pub use journal::EditJournal;
+pub use marker::{MAX_MARKER_TEXT, MAX_MARKERS_PER_SEQUENCE, Marker};
 pub use mask::{MAX_CORNERS, Mask};
-pub use media::{Digest, Location, MAX_LOCATION_BYTES, MediaAsset, MediaId};
+pub use media::{Digest, Location, MAX_LOCATION_BYTES, MediaAsset, MediaId, MediaSource};
 pub use project::Project;
-pub use sequence::{Sequence, SequenceId};
-pub use stack::{Lane, Layer, Revealed};
+pub use sequence::{MAX_TRACKS_PER_SEQUENCE, Sequence, SequenceId, TrackSet};
+pub use stack::{Graded, Lane, Layer, Revealed};
 pub use status::{ModelStatus, Result};
 pub use store::Store;
+pub use title::{Alignment, Ink, MAX_TITLE_LINES, MAX_TITLE_TEXT, Title};
 pub use track::{
     Fader, MAXIMUM_DECIBELS, MINIMUM_DECIBELS, Track, TrackKind, Transition, TransitionKind, Wipe,
 };
+pub use transform::{Motion, Resampling, Transform, Turn};

@@ -35,7 +35,7 @@
 
 /*
  * Black on white is the deliberate classic Sapote console contract. It keeps
- * the shell legible while matching First Light's one-bit computer-era chrome.
+ * the shell legible while matching Sapote Redwood's one-bit computer-era chrome.
  */
 #define SCREEN_BACKGROUND_RED UINT8_C(0xFF)
 #define SCREEN_BACKGROUND_GREEN UINT8_C(0xFF)
@@ -93,14 +93,16 @@ static bool font_covers(uint32_t code)
 }
 
 /*
- * Draw one glyph with its top-left corner at a cell. Every pixel of the cell is
- * written, lit or not, so a character always replaces what was under it rather
- * than being drawn over it.
+ * Draw one glyph with its top-left corner at a cell. Every requested pixel of
+ * the cell is written, lit or not, so a character replaces what was under it
+ * rather than being drawn over it. Region redraws pass their exact clip: an
+ * intersecting edge cell must never leak into another compositor layer.
  */
 static enum screen_status paint_cell(
     uint32_t column,
     uint32_t row,
-    char character
+    char character,
+    const struct surface_rect *clip
 )
 {
     uint8_t glyph_rows[FONT_MAX_CELL_HEIGHT];
@@ -118,6 +120,12 @@ static enum screen_status paint_cell(
 
     const uint32_t origin_x = state.viewport.x + column * state.cell_width;
     const uint32_t origin_y = state.viewport.y + row * state.cell_height;
+    uint32_t destination_x = origin_x;
+    uint32_t destination_y = origin_y;
+    uint32_t source_x = 0U;
+    uint32_t source_y = 0U;
+    uint32_t copy_width = state.cell_width;
+    uint32_t copy_height = state.cell_height;
 
     for (uint32_t y = 0U; y < state.cell_height; ++y) {
         const uint8_t bits = glyph_rows[y];
@@ -129,8 +137,32 @@ static enum screen_status paint_cell(
         }
     }
 
-    if (surface_blit(&back_buffer, origin_x, origin_y, pixels,
-            state.cell_width, state.cell_height,
+    if (clip != NULL) {
+        const uint32_t cell_right = origin_x + state.cell_width;
+        const uint32_t cell_bottom = origin_y + state.cell_height;
+        const uint32_t clip_right = clip->x + clip->width;
+        const uint32_t clip_bottom = clip->y + clip->height;
+
+        if (origin_x >= clip_right || clip->x >= cell_right ||
+                origin_y >= clip_bottom || clip->y >= cell_bottom) {
+            return SCREEN_STATUS_OK;
+        }
+        destination_x = origin_x > clip->x ? origin_x : clip->x;
+        destination_y = origin_y > clip->y ? origin_y : clip->y;
+        const uint32_t destination_right = cell_right < clip_right ?
+            cell_right : clip_right;
+        const uint32_t destination_bottom = cell_bottom < clip_bottom ?
+            cell_bottom : clip_bottom;
+
+        source_x = destination_x - origin_x;
+        source_y = destination_y - origin_y;
+        copy_width = destination_right - destination_x;
+        copy_height = destination_bottom - destination_y;
+    }
+
+    if (surface_blit(&back_buffer, destination_x, destination_y,
+            &pixels[source_y * state.cell_width + source_x],
+            copy_width, copy_height,
             state.cell_width * SURFACE_BYTES_PER_PIXEL) != SURFACE_STATUS_OK) {
         return SCREEN_STATUS_DRAW_FAILURE;
     }
@@ -149,7 +181,7 @@ static enum screen_status draw_cell(
     if (!state.visible) {
         return SCREEN_STATUS_OK;
     }
-    status = paint_cell(column, row, character);
+    status = paint_cell(column, row, character, NULL);
     if (status != SCREEN_STATUS_OK) {
         return status;
     }
@@ -572,7 +604,7 @@ enum screen_status screen_redraw_region(struct surface_rect clip)
 
             if (rectangles_intersect(cell, redraw) &&
                 paint_cell(column, row,
-                    cells[row * SCREEN_MAX_COLUMNS + column]) !=
+                    cells[row * SCREEN_MAX_COLUMNS + column], &redraw) !=
                     SCREEN_STATUS_OK) {
                 return SCREEN_STATUS_DRAW_FAILURE;
             }

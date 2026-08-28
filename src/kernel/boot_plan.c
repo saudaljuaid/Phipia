@@ -64,12 +64,12 @@
 #include <sapote/ui_font.h>
 #include <sapote/xhci.h>
 
-static bool test_uses_first_light_userland(enum kernel_test_scenario scenario)
+static bool test_uses_redwood_proof_userland(enum kernel_test_scenario scenario)
 {
-    return scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND ||
-        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_ABSENT ||
-        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE ||
-        scenario == KERNEL_TEST_FIRST_LIGHT_USERLAND_INTERACTIVE_ABSENT;
+    return scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND ||
+        scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND_ABSENT ||
+        scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE ||
+        scenario == KERNEL_TEST_REDWOOD_PROOF_USERLAND_INTERACTIVE_ABSENT;
 }
 
 static bool test_uses_fat32_volumes(enum kernel_test_scenario scenario)
@@ -658,7 +658,7 @@ static void execute_ui_font(
         return;
     }
 
-    console_write("Sapote: First Light font verified\n");
+    console_write("Sapote: Redwood font verified\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = sapote_ui_font_size();
     result->proof_counters[1] = sapote_ui_font_fingerprint();
@@ -720,7 +720,7 @@ static void execute_ui_layout(
         return;
     }
 
-    console_write("Sapote: First Light layout validated\n");
+    console_write("Sapote: Redwood layout validated\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = framebuffer.width;
     result->proof_counters[1] = framebuffer.height;
@@ -1313,7 +1313,7 @@ static void execute_nvme_read_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        test_uses_first_light_userland(context->test_scenario) ||
+        test_uses_redwood_proof_userland(context->test_scenario) ||
         test_uses_fat32_volumes(context->test_scenario)) {
         console_write("Sapote: NVMe fixture absent\n");
         boot_stage_result_skip(descriptor, result);
@@ -1436,7 +1436,7 @@ static void execute_filesystem_file_proof(
         context->test_scenario == KERNEL_TEST_PROCESS ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI ||
         context->test_scenario == KERNEL_TEST_LINUX_ABI_UNAME ||
-        test_uses_first_light_userland(context->test_scenario) ||
+        test_uses_redwood_proof_userland(context->test_scenario) ||
         test_uses_fat32_volumes(context->test_scenario)) {
         console_write("Sapote: FAT16 fixture absent\n");
         boot_stage_result_skip(descriptor, result);
@@ -2070,7 +2070,7 @@ static void execute_desktop_construction(
         return;
     }
 
-    console_write("Sapote: First Light desktop constructed\n");
+    console_write("Sapote: Redwood desktop constructed\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
@@ -2087,11 +2087,11 @@ static void execute_desktop_activation(
         return;
     }
 
-    console_write("Sapote: First Light desktop activated\n");
+    console_write("Sapote: Redwood desktop activated\n");
     boot_stage_result_succeed(descriptor, result);
 }
 
-static void execute_first_light_proof(
+static void execute_redwood_installed_proof(
     struct boot_context *context,
     const struct boot_stage_descriptor *descriptor,
     struct boot_stage_result *result
@@ -2105,7 +2105,7 @@ static void execute_first_light_proof(
         return;
     }
 
-    console_write("Sapote: First Light installed proof passed\n");
+    console_write("Sapote: Redwood installed proof passed\n");
     boot_stage_result_succeed(descriptor, result);
     result->proof_counters[0] = proof.render_hash;
     result->proof_counters[1] = proof.glyphs;
@@ -2773,7 +2773,7 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
         execute_keyboard),
     OPTIONAL_STAGE(BOOT_STAGE_SHELL, "interactive shell",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_shell),
-    OPTIONAL_STAGE(BOOT_STAGE_UI_FONT, "First Light UI font",
+    OPTIONAL_STAGE(BOOT_STAGE_UI_FONT, "Sapote Redwood UI font",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_ui_font),
     OPTIONAL_STAGE(BOOT_STAGE_POINTER_DECISION,
         "pointer availability decision", BOOT_PHASE_RUNTIME,
@@ -2781,7 +2781,7 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_NEUTRAL_STAGE(BOOT_STAGE_POINTER_OUTCOME,
         "pointer availability outcome", BOOT_PHASE_RUNTIME,
         BOOT_IRREVERSIBLE_NONE, execute_pointer_outcome),
-    OPTIONAL_STAGE(BOOT_STAGE_UI_LAYOUT, "First Light layout",
+    OPTIONAL_STAGE(BOOT_STAGE_UI_LAYOUT, "Sapote Redwood layout",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_ui_layout),
     REQUIRED_STAGE(BOOT_STAGE_EARLY_SCENARIO, "early scenario gate",
         BOOT_PHASE_RUNTIME, BOOT_IRREVERSIBLE_NONE, execute_early_scenario),
@@ -2889,9 +2889,9 @@ static const struct boot_stage_descriptor installed_descriptors[] = {
     OPTIONAL_STAGE(BOOT_STAGE_DESKTOP_ACTIVATION, "desktop activation",
         BOOT_PHASE_PROOFS, BOOT_IRREVERSIBLE_NONE,
         execute_desktop_activation),
-    OPTIONAL_STAGE(BOOT_STAGE_FIRST_LIGHT_PROOF,
-        "First Light installed proof", BOOT_PHASE_PROOFS,
-        BOOT_IRREVERSIBLE_NONE, execute_first_light_proof)
+    OPTIONAL_STAGE(BOOT_STAGE_REDWOOD_INSTALLED_PROOF,
+        "Sapote Redwood installed proof", BOOT_PHASE_PROOFS,
+        BOOT_IRREVERSIBLE_NONE, execute_redwood_installed_proof)
 };
 
 _Static_assert(sizeof(installed_descriptors) /
@@ -3740,7 +3740,7 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED;
         descriptor->provided_capability_count = 1U;
         break;
-    case BOOT_STAGE_FIRST_LIGHT_PROOF:
+    case BOOT_STAGE_REDWOOD_INSTALLED_PROOF:
         descriptor->required_capabilities[0] =
             BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED;
         descriptor->required_capabilities[1] =
@@ -3749,7 +3749,7 @@ static bool declare_dependencies(
             BOOT_CAPABILITY_BOOT_PROOFS_COMPLETE;
         descriptor->required_capability_count = 3U;
         descriptor->provided_capabilities[0] =
-            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE;
+            BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE;
         descriptor->provided_capability_count = 1U;
         break;
     case BOOT_STAGE_INVALID:

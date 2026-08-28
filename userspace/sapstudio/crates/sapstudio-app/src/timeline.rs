@@ -53,6 +53,67 @@ use sapstudio_render::{Graph, Library, Node, NodeId};
 
 use crate::SlateStatus;
 
+/// How many characters of a digest a slate shows.
+///
+/// Eight. Enough to pick one clip out of a bin by eye, short enough to read
+/// off a screen at a glance, and the same prefix the conform module already
+/// writes into a reel name — so the slate and the edit decision list name the
+/// same thing the same way.
+const SLATE_DIGEST_CHARACTERS: usize = 8;
+
+/// What a slate says about a clip whose media is not there.
+///
+/// The hex is written out here rather than taken from the digest's `Display`,
+/// because that would want a `String` built by an allocation nobody can refuse
+/// — and everything in this program allocates by asking first (R-5.2).
+fn missing(
+    media: sapstudio_core::Digest,
+) -> Result<(alloc::string::String, alloc::string::String), SlateStatus> {
+    const LABEL: &str = "MEDIA OFFLINE ";
+    const HEX: [u8; 16] = *b"0123456789ABCDEF";
+    let out_of_memory = || SlateStatus::Render(sapstudio_render::RenderStatus::OutOfMemory);
+    let mut brief = alloc::string::String::new();
+    brief
+        .try_reserve(SLATE_DIGEST_CHARACTERS)
+        .map_err(|_| out_of_memory())?;
+    for byte in media.bytes().iter().take(SLATE_DIGEST_CHARACTERS / 2) {
+        brief.push(char::from(HEX[usize::from(byte >> 4)]));
+        brief.push(char::from(HEX[usize::from(byte & 0x0F)]));
+    }
+    let mut text = alloc::string::String::new();
+    text.try_reserve(LABEL.len() + brief.len())
+        .map_err(|_| out_of_memory())?;
+    text.push_str(LABEL);
+    text.push_str(&brief);
+    Ok((text, brief))
+}
+
+/// The node that draws a title card.
+///
+/// The alignment is translated rather than shared, because the model and the
+/// renderer are *siblings* and neither may depend on the other: the model owns
+/// which alignment somebody chose, and the renderer owns what the choice
+/// means. This one `match` is the price of that, and it is the price the
+/// resampler's filter already pays.
+fn typeset(title: &sapstudio_model::Title, description: FrameDescription) -> Node {
+    Node::Type {
+        description,
+        lines: title.lines().to_vec(),
+        size: title.size(),
+        across: title.across(),
+        down: title.down(),
+        alignment: match title.alignment() {
+            sapstudio_model::Alignment::Left => sapstudio_render::font::Alignment::Left,
+            sapstudio_model::Alignment::Centre => sapstudio_render::font::Alignment::Centre,
+            sapstudio_model::Alignment::Right => sapstudio_render::font::Alignment::Right,
+        },
+        // The ink crosses as three rationals rather than as a type, because
+        // both sides already agree on what a fraction of full light is and
+        // neither has to learn the other's name for a colour.
+        ink: title.ink().channels(),
+    }
+}
+
 /// Build the graph that renders one instant of a sequence.
 ///
 /// Separate from evaluating it, because they are separate questions and a
@@ -109,16 +170,42 @@ pub fn plan(
         // during evaluation would put that slate in the cache under the real
         // picture's key and hand it back after the drive came home. The
         // fallback belongs here, where nothing is cached by it.
-        let source = if library.available(asset.digest()) {
+        let source = if let Some(title) = asset.title() {
+            // A title is media the program *makes*, so it goes where a source
+            // would and everything above it -- the grade, the mask, the
+            // transform, the fade -- is the machinery a recording already goes
+            // through. Nothing else in this function had to be told.
+            //
+            // And it is never offline. There is nothing to find, so the
+            // question the branch below asks does not arise: asking the
+            // library whether it has a title would be asking about a file that
+            // does not exist, and a library that answered "no" would put a
+            // slate where somebody's card should be.
+            graph.add(typeset(title, fetched))?
+        } else if library.available(asset.digest()) {
             graph.add(Node::Source {
                 media: asset.digest(),
                 tick: layer.source(),
                 description: fetched,
             })?
         } else {
-            graph.add(Node::Pattern {
+            let slate = graph.add(Node::Pattern {
                 pattern: TestPattern::Offline,
                 description: fetched,
+            })?;
+            // And it says *which* media. "Offline media renders a slate but
+            // cannot say which media is missing" stood in the risk section for
+            // three milestones, and it is the whole reason the face exists.
+            //
+            // The digest rather than a file name, because the digest is what
+            // the clip actually refers to: a name is a hint that may have
+            // moved, and two clips pointing at one digest are pointing at one
+            // thing whatever they were called when they were imported.
+            let (text, brief) = missing(asset.digest())?;
+            graph.add(Node::Legend {
+                input: slate,
+                text,
+                brief,
             })?
         };
         // The grade goes on before the fade, and that order is a decision. A
@@ -128,16 +215,52 @@ pub fn plan(
         // So: graded, then shown at whatever opacity it is at.
         let graded = match layer.grade() {
             None => source,
-            Some(look) => {
+            Some(grade) => {
+                // The node is added whatever the strength reads, including
+                // nought. Skipping it there would be an optimisation whose
+                // absence changes no answer — a look at no strength hands back
+                // the frame's own code values exactly — and this project has
+                // four entries in its notes about guards no test can hold.
+                // The look is fetched straight for the same reason at every
+                // strength, so there would be nothing else to skip either.
                 let looked = graph.add(Node::Look {
                     input: source,
-                    look,
+                    look: grade.look(),
+                    strength: grade.strength(),
                 })?;
                 graph.add(Node::Associate {
                     input: looked,
                     target: description,
                 })?
             }
+        };
+        // The transform goes between the grade and the mask, and both halves
+        // of that are decisions. After the grade, because a look is a function
+        // of colour and resampling averages colours -- grading the average is
+        // not the average of the grade, and the table was written for the
+        // clip's own values rather than for whatever a scale produced. Before
+        // the mask, because a mask is in *frame* coordinates: moving a clip
+        // moves the picture through a stationary mask, which is what a
+        // garbage matte and a split screen both want. A mask that travelled
+        // with its clip would be a different feature, and it would have to say
+        // so.
+        //
+        // A transform that moves nothing is skipped entirely rather than
+        // resampled by the identity. Exact is a stronger promise than "the
+        // arithmetic works out", and it is the promise a project deserves
+        // after being opened and saved a hundred times.
+        let placed = match layer.transform() {
+            Some(transform) if !transform.is_still() => graph.add(Node::Transform {
+                input: graded,
+                linear: transform.linear(),
+                offset: transform.offset(),
+                anchor: transform.anchor(),
+                bilinear: matches!(
+                    transform.resampling(),
+                    sapstudio_model::Resampling::Bilinear
+                ),
+            })?,
+            _ => graded,
         };
         // The mask goes on after the grade and before the fade, and both
         // halves of that are decisions. After the grade, because a mask is
@@ -148,19 +271,27 @@ pub fn plan(
         // first would then be masked away in the places the mask cuts, which
         // is the same number by accident and the wrong order in principle.
         let shaped = match layer.mask() {
-            None => graded,
+            None => placed,
             Some(mask) => graph.add(Node::Mask {
-                input: graded,
+                input: placed,
                 corners: mask.corners().to_vec(),
                 inverted: mask.is_inverted(),
             })?,
         };
-        let faded = if layer.opacity() == sapstudio_core::Rational::ONE {
+        // The track's opacity and the clip's own fade multiply, and they go
+        // into one node rather than two. Two would be two rounding points and
+        // two cache entries for one picture; one is exact, because the product
+        // of two rationals is a rational.
+        let showing = layer
+            .opacity()
+            .checked_mul(layer.fade())
+            .map_err(sapstudio_model::ModelStatus::from)?;
+        let faded = if showing == sapstudio_core::Rational::ONE {
             shaped
         } else {
             graph.add(Node::Fade {
                 input: shaped,
-                opacity: layer.opacity(),
+                opacity: showing,
             })?
         };
         // A wipe after the fade, and that order is the same decision the grade

@@ -106,6 +106,26 @@ pub enum IoStatus {
     UnknownMaskTag(u8),
     /// A file listing one piece of content as two assets.
     DuplicateMedia,
+    /// A transform tag this format does not define.
+    UnknownTransformTag(u8),
+    /// A motion tag this format does not define.
+    UnknownMotionTag(u8),
+    /// A media source tag this format does not define.
+    UnknownMediaSourceTag(u8),
+    /// A title whose words are not text.
+    TitleNotText,
+    /// A marker whose text is not text.
+    MarkerNotText,
+    /// A title whose digest is not the digest of its own description.
+    TitleDigestMismatch,
+    /// An alignment tag this format does not define.
+    UnknownAlignmentTag(u8),
+    /// An ink tag this build does not read.
+    UnknownInkTag(u8),
+    /// A fade tag this format does not define.
+    UnknownFadeTag(u8),
+    /// A speed tag this format does not define.
+    UnknownSpeedTag(u8),
     /// An exact arithmetic or timecode refusal from the core types.
     Time(sapstudio_core::CoreStatus),
     /// An edit decision list line is longer than any real one.
@@ -218,6 +238,16 @@ impl IoStatus {
             Self::UnknownTransitionTag(_) => "that transition tag is not one this build reads",
             Self::UnknownMaskTag(_) => "that mask tag is not one this build reads",
             Self::DuplicateMedia => "this file lists the same content twice",
+            Self::UnknownTransformTag(_) => "that transform tag is not one this build reads",
+            Self::UnknownMotionTag(_) => "that motion tag is not one this build reads",
+            Self::UnknownMediaSourceTag(_) => "that media source tag is not one this build reads",
+            Self::TitleNotText => "this title's words are not text",
+            Self::MarkerNotText => "this marker's text is not text",
+            Self::TitleDigestMismatch => "this title is not named by what it says",
+            Self::UnknownAlignmentTag(_) => "that alignment tag is not one this build reads",
+            Self::UnknownInkTag(_) => "that ink tag is not one this build reads",
+            Self::UnknownFadeTag(_) => "that fade tag is not one this build reads",
+            Self::UnknownSpeedTag(_) => "that speed tag is not one this build reads",
             Self::Time(status) => status.describe(),
             Self::EdlLineTooLong => "this edit decision list line is longer than any real one",
             Self::EdlMalformedEvent => "this event line does not have an event's fields",

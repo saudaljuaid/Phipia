@@ -59,13 +59,13 @@ static const char *const stage_names[] = {
     "threading",
     "scheduler",
     "closing boot proofs",
-    "First Light UI font",
+    "Sapote Redwood UI font",
     "pointer availability decision",
     "pointer availability outcome",
-    "First Light layout",
+    "Sapote Redwood layout",
     "desktop construction",
     "desktop activation",
-    "First Light installed proof",
+    "Sapote Redwood installed proof",
     "PCI resource ownership",
     "dynamic interrupt vectors",
     "DMA foundation",
@@ -135,7 +135,7 @@ static const char *const capability_names[] = {
     "UI layout validated",
     "desktop shell available",
     "desktop shell activated",
-    "First Light installed proof complete",
+    "Sapote Redwood installed proof complete",
     "PCI resource ownership available",
     "dynamic vector foundation available",
     "DMA foundation available",
@@ -1740,7 +1740,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
     }
 
     if (boot_ledger_has_capability(ledger,
-            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE)) {
+            BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE)) {
         const struct boot_stage_receipt *font = boot_ledger_receipt_for(ledger,
             BOOT_STAGE_UI_FONT);
         const struct boot_stage_receipt *pointer_decision =
@@ -1755,7 +1755,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
         const struct boot_stage_receipt *activation =
             boot_ledger_receipt_for(ledger, BOOT_STAGE_DESKTOP_ACTIVATION);
         const struct boot_stage_receipt *proof = boot_ledger_receipt_for(ledger,
-            BOOT_STAGE_FIRST_LIGHT_PROOF);
+            BOOT_STAGE_REDWOOD_INSTALLED_PROOF);
         const struct boot_stage_receipt *wc = boot_ledger_receipt_for(ledger,
             BOOT_STAGE_FRAMEBUFFER_WC);
         const struct boot_stage_receipt *closing =
@@ -1774,9 +1774,9 @@ enum boot_ledger_status boot_ledger_verify_installed(
             font->proof_counter_count != 2U ||
             font->proof_counters[0] != sapote_ui_font_size() ||
             font->proof_counters[1] != sapote_ui_font_fingerprint() ||
-            !ui_font_is_verified() || metrics.width != 8U ||
-            metrics.height != 16U || metrics.ascent != 12U ||
-            metrics.descent != 4U || metrics.advance != 8U ||
+            !ui_font_is_verified() || metrics.width != 16U ||
+            metrics.height != 19U || metrics.ascent != 15U ||
+            metrics.descent != 4U || metrics.advance != 15U ||
             metrics.first != 0x20U || metrics.count != 95U) {
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
                 BOOT_STAGE_UI_FONT, BOOT_CAPABILITY_UI_FONT_VERIFIED);
@@ -1834,7 +1834,7 @@ enum boot_ledger_status boot_ledger_verify_installed(
             closing->sequence >= activation->sequence ||
             activation->sequence >= proof->sequence) {
             set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
-                BOOT_STAGE_FIRST_LIGHT_PROOF,
+                BOOT_STAGE_REDWOOD_INSTALLED_PROOF,
                 BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED);
             return ledger->status;
         }
@@ -1851,8 +1851,8 @@ enum boot_ledger_status boot_ledger_verify_installed(
     } else if (boot_ledger_has_capability(ledger,
             BOOT_CAPABILITY_DESKTOP_SHELL_ACTIVATED)) {
         set_refusal(ledger, BOOT_LEDGER_STATUS_RECEIPT_MISMATCH,
-            BOOT_STAGE_FIRST_LIGHT_PROOF,
-            BOOT_CAPABILITY_FIRST_LIGHT_INSTALLED_PROOF_COMPLETE);
+            BOOT_STAGE_REDWOOD_INSTALLED_PROOF,
+            BOOT_CAPABILITY_REDWOOD_INSTALLED_PROOF_COMPLETE);
         return ledger->status;
     }
 

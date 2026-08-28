@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-"""Pack printable ASCII from Spleen 8x16 BDF into Sapote UI Font v1."""
+"""Pack Sapote's pre-rasterized, antialiased Inter UI atlas as SUF2.
+
+The committed atlas and metrics are the reproducible build inputs. Creating
+them from the pinned InterVariable.ttf is a developer-only step performed by
+``tools/rasterize-inter-ui.py``; ordinary builds require only Python's standard
+library and never carry a TrueType parser into the kernel.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 
-MAGIC = b"SUF1"
-VERSION = 1
+MAGIC = b"SUF2"
+VERSION = 2
 HEADER_LENGTH = 24
-WIDTH = 8
-HEIGHT = 16
-ASCENT = 12
+WIDTH = 16
+HEIGHT = 19
+ASCENT = 15
 DESCENT = 4
-ADVANCE = 8
-ROW_BYTES = 1
+MAX_ADVANCE = 15
+ROW_BYTES = WIDTH
 FIRST = 0x20
 COUNT = 0x7F - FIRST
 
@@ -26,107 +33,135 @@ def fail(message: str) -> "NoReturn":
     raise SystemExit(f"UI font source refusal: {message}")
 
 
-def parse_bdf(path: Path) -> dict[int, bytes]:
-    lines = path.read_text(encoding="ascii").splitlines()
-    required = {
-        f"FONTBOUNDINGBOX {WIDTH} {HEIGHT} 0 -4",
-        f"FONT_ASCENT {ASCENT}",
-        f"FONT_DESCENT {DESCENT}",
-    }
-    if not required.issubset(set(lines)):
-        fail("Spleen metrics do not match the pinned 8x16 contract")
+def unfilter(raw: bytes, width: int, height: int) -> bytes:
+    stride = width
+    output = bytearray()
+    previous = bytearray(stride)
+    offset = 0
+    for _ in range(height):
+        if offset + stride + 1 > len(raw):
+            fail("truncated PNG scanline")
+        kind = raw[offset]
+        line = bytearray(raw[offset + 1:offset + 1 + stride])
+        offset += stride + 1
+        for index in range(stride):
+            left = line[index - 1] if index else 0
+            up = previous[index]
+            upper_left = previous[index - 1] if index else 0
+            if kind == 1:
+                line[index] = (line[index] + left) & 0xFF
+            elif kind == 2:
+                line[index] = (line[index] + up) & 0xFF
+            elif kind == 3:
+                line[index] = (line[index] + (left + up) // 2) & 0xFF
+            elif kind == 4:
+                estimate = left + up - upper_left
+                distances = (abs(estimate - left), abs(estimate - up),
+                             abs(estimate - upper_left))
+                nearest = (left, up, upper_left)[distances.index(min(distances))]
+                line[index] = (line[index] + nearest) & 0xFF
+            elif kind != 0:
+                fail("unsupported PNG filter")
+        output += line
+        previous = line
+    if offset != len(raw):
+        fail("unexpected PNG scanline tail")
+    return bytes(output)
 
-    glyphs: dict[int, bytes] = {}
-    index = 0
-    while index < len(lines):
-        if not lines[index].startswith("STARTCHAR "):
-            index += 1
+
+def read_atlas(path: Path) -> bytes:
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        fail("atlas is not a PNG")
+    offset = 8
+    header = None
+    compressed = bytearray()
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        end = offset + 12 + length
+        if end > len(data):
+            fail("truncated PNG chunk")
+        kind = data[offset + 4:offset + 8]
+        body = data[offset + 8:offset + 8 + length]
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            compressed += body
+        elif kind == b"IEND":
+            break
+        offset = end
+    if header is None:
+        fail("atlas PNG has no IHDR")
+    width, height, depth, colour, compression, filtering, interlace = header
+    if (width, height) != (WIDTH * COUNT, HEIGHT):
+        fail(f"atlas geometry must be {WIDTH * COUNT}x{HEIGHT}")
+    if (depth, colour, compression, filtering, interlace) != (8, 0, 0, 0, 0):
+        fail("atlas must be a non-interlaced 8-bit grayscale PNG")
+    try:
+        raw = zlib.decompress(bytes(compressed))
+    except zlib.error as error:
+        fail(f"atlas decompression failed: {error}")
+    rows = unfilter(raw, width, height)
+    glyphs = bytearray()
+    for glyph in range(COUNT):
+        glyph_x = glyph * WIDTH
+        for y in range(HEIGHT):
+            start = y * width + glyph_x
+            glyphs += rows[start:start + WIDTH]
+    return bytes(glyphs)
+
+
+def read_advances(path: Path) -> bytes:
+    values: dict[int, int] = {}
+    for number, raw in enumerate(path.read_text(encoding="ascii").splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
             continue
-
-        encoding: int | None = None
-        dwidth: tuple[int, int] | None = None
-        box: tuple[int, int, int, int] | None = None
-        bitmap: list[str] = []
-        index += 1
-
-        while index < len(lines) and lines[index] != "ENDCHAR":
-            line = lines[index]
-            if line.startswith("ENCODING "):
-                encoding = int(line.split()[1], 10)
-            elif line.startswith("DWIDTH "):
-                parts = line.split()
-                dwidth = (int(parts[1], 10), int(parts[2], 10))
-            elif line.startswith("BBX "):
-                parts = line.split()
-                box = tuple(int(value, 10) for value in parts[1:5])
-            elif line == "BITMAP":
-                bitmap = lines[index + 1:index + 1 + HEIGHT]
-                index += HEIGHT
-            index += 1
-
-        if index >= len(lines):
-            fail("unterminated BDF glyph")
-
-        if encoding is not None and FIRST <= encoding < FIRST + COUNT:
-            if encoding in glyphs:
-                fail(f"duplicate glyph U+{encoding:04X}")
-            if dwidth != (ADVANCE, 0):
-                fail(f"bad advance for U+{encoding:04X}")
-            if box != (WIDTH, HEIGHT, 0, -DESCENT):
-                fail(f"bad bitmap box for U+{encoding:04X}")
-            if len(bitmap) != HEIGHT:
-                fail(f"truncated bitmap for U+{encoding:04X}")
-
-            packed = bytearray()
-            for row in bitmap:
-                if len(row) != ROW_BYTES * 2:
-                    fail(f"bad row width for U+{encoding:04X}")
-                try:
-                    value = int(row, 16)
-                except ValueError:
-                    fail(f"non-hex row for U+{encoding:04X}")
-                if value >= (1 << (ROW_BYTES * 8)):
-                    fail(f"glyph U+{encoding:04X} uses pixels past width {WIDTH}")
-                packed.extend(value.to_bytes(ROW_BYTES, "big"))
-            glyphs[encoding] = bytes(packed)
-
-        index += 1
-
-    missing = [code for code in range(FIRST, FIRST + COUNT) if code not in glyphs]
+        parts = line.split()
+        if len(parts) != 2:
+            fail(f"bad metrics line {number}")
+        try:
+            code = int(parts[0], 16)
+            advance = int(parts[1], 10)
+        except ValueError:
+            fail(f"non-numeric metrics line {number}")
+        if code in values or not FIRST <= code < FIRST + COUNT:
+            fail(f"bad or duplicate code point on line {number}")
+        if not 1 <= advance <= MAX_ADVANCE:
+            fail(f"bad advance on line {number}")
+        values[code] = advance
+    missing = [code for code in range(FIRST, FIRST + COUNT) if code not in values]
     if missing:
-        fail("missing printable ASCII glyph " + f"U+{missing[0]:04X}")
-    return glyphs
+        fail(f"missing advance U+{missing[0]:04X}")
+    return bytes(values[code] for code in range(FIRST, FIRST + COUNT))
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: make-ui-font-asset.py INPUT.bdf OUTPUT.suf")
-
-    source = Path(sys.argv[1])
-    output = Path(sys.argv[2])
-    glyphs = parse_bdf(source)
-    data = b"".join(glyphs[code] for code in range(FIRST, FIRST + COUNT))
+    if len(sys.argv) != 4:
+        raise SystemExit(
+            "usage: make-ui-font-asset.py ATLAS.png METRICS.txt OUTPUT.suf"
+        )
+    atlas = Path(sys.argv[1])
+    metrics = Path(sys.argv[2])
+    output = Path(sys.argv[3])
+    advances = read_advances(metrics)
+    bitmaps = read_atlas(atlas)
+    glyph_bytes = WIDTH * HEIGHT
+    data = bytearray()
+    for index, advance in enumerate(advances):
+        data.append(advance)
+        start = index * glyph_bytes
+        data += bitmaps[start:start + glyph_bytes]
     header = struct.pack(
-        "<4s8BIII",
-        MAGIC,
-        VERSION,
-        HEADER_LENGTH,
-        WIDTH,
-        HEIGHT,
-        ASCENT,
-        DESCENT,
-        ADVANCE,
-        ROW_BYTES,
-        FIRST,
-        COUNT,
-        len(data),
+        "<4s8BIII", MAGIC, VERSION, HEADER_LENGTH, WIDTH, HEIGHT,
+        ASCENT, DESCENT, MAX_ADVANCE, ROW_BYTES, FIRST, COUNT, len(data)
     )
     blob = header + data
     output.write_bytes(blob)
     digest = hashlib.sha256(blob).hexdigest().upper()
     print(
-        f"{source}: {COUNT} glyphs U+{FIRST:04X}-U+{FIRST + COUNT - 1:04X}, "
-        f"{WIDTH}x{HEIGHT}, {len(blob)} bytes, SHA-256 {digest} -> {output}"
+        f"{atlas} + {metrics}: Inter UI {COUNT} glyphs, {WIDTH}x{HEIGHT} "
+        f"alpha, {len(blob)} bytes, SHA-256 {digest} -> {output}"
     )
 
 

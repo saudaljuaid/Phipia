@@ -31,14 +31,46 @@
 //! a frame breaks nothing — which a negative control demonstrated before this
 //! line existed.
 //!
-//! The saved size moved 247 → 255 → 263 → 266. The first two steps are eight
-//! bytes each: two tracks times the four-byte keyframe count of an automation
-//! lane with nothing on it. The third is three: one flag byte per clip, and
-//! the slate lays three clips.
+//! The saved size moved 247 → 255 → 263 → 266, and on to 301 and now 313. The
+//! first two steps are eight bytes each: two tracks times the four-byte
+//! keyframe count of an automation lane with nothing on it. The third is
+//! three: one flag byte per clip, and the slate lays three clips. The last is
+//! twelve: four bytes per clip for the keyframe count of a grade strength
+//! nobody set, measured against the previous commit in a worktree at one,
+//! three and seven clips — 203 → 207, 267 → 279, 395 → 423 — which is what
+//! says the step is per clip rather than per file.
 //!
 //! Each difference is *evidence* that nothing else in the format moved, rather
 //! than a number accepted because the test asked for one. A step of any other
 //! size would mean looking, not editing.
+//!
+//! And `picture digest` did **not** move for this one, which is the other half
+//! of the same evidence: no clip here carries a grade, so nothing the strength
+//! reaches is in the picture. A commit that moved both numbers would need two
+//! accounts, and this one has one.
+//!
+//! The turn lane moved the file's digest and **not** its length, and that was
+//! checked rather than assumed, because "only the version byte changed" is the
+//! easiest thing to believe and the easiest to be wrong about. Encoding a
+//! motionless project under both versions gives two files of 207 bytes that
+//! differ in exactly one byte, at offset four. A project that *does* carry a
+//! motion grows by four — the turn's own keyframe count of nought — which is
+//! why the slate, which animates nothing, pays nothing.
+//!
+//! The anchor did the same again, and was checked the same way: 207 bytes
+//! under versions twenty-two and twenty-three, one byte apart at offset four,
+//! and **thirty-two** bytes on any clip that carries a transform — two
+//! rationals for the pivot. The slate frames nothing, so once more only its
+//! digest moved. Two consecutive commits where the length did not change is
+//! exactly when it is worth running the comparison rather than recognising
+//! the pattern.
+//!
+//! Markers took it to 317: **four bytes a sequence** for a count of nought,
+//! measured at one sequence (207 → 211) and again at two (227 → 235), which is
+//! what says the step is per sequence rather than per file. The slate lays one
+//! sequence and writes no notes on it. A marker that says something costs
+//! twelve bytes plus its own text — eight for the instant, four for the
+//! length — measured at one and at three.
 
 use sapstudio_abi::seam::{Console, Result, SeamStatus};
 use sapstudio_app::{EXIT_FAILURE, EXIT_SUCCESS, run};
@@ -61,8 +93,8 @@ tracks now     0
 redone         7 edits
 restored       true
 
-saved          273
-digest         6A52085EC23635B952DD45FC38FB6F8169A775D6D27AF80F326CF7D551049EF3
+saved          317
+digest         D6245B0168B3C9EF53D15D0AAC948B7FABEE496F77E49583FDE65E69F15EC449
 round trip     true
 
 reel frames    3
@@ -74,8 +106,8 @@ pool bytes     288
 pool evictions 1
 
 picture size   576
-picture digest 613C8B71C1EDEB25560F54B1086CCC12745EEC1D502C24D253DB941215A32F03
-picture red    73
+picture digest 74202C026AAA084C24490F8ED394BF021782A396882F2632B51949E8A20F9D20
+picture red    98
 picture alpha  255
 
 slate complete

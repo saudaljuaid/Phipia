@@ -356,37 +356,9 @@ impl Track {
         if transition.duration.timebase() != self.timebase {
             return Err(sapstudio_core::CoreStatus::TimebaseMismatch.into());
         }
-        for side in [boundary - 1, boundary] {
-            if !matches!(self.items[side], Item::Clip(_)) {
-                // A dissolve to black is a dissolve to a clip of black, not a
-                // dissolve to nothing. Making a gap mean black here would be
-                // deciding what the programme shows in a place that does not
-                // decide that.
-                return Err(ModelStatus::NotAClip);
-            }
-            if transition.duration.compare(self.items[side].duration())?
-                == core::cmp::Ordering::Greater
-            {
-                // A dissolve longer than the clip it dissolves from would need
-                // material from before that clip began, which is a different
-                // edit.
-                return Err(ModelStatus::TransitionTooLong);
-            }
-        }
+        self.transition_fits(&transition, &[])?;
         if self.transition_at(boundary).is_some() {
             return Err(ModelStatus::TransitionExists);
-        }
-        // The incoming clip has to start early, into material before its in
-        // point. How much of that exists is a question about the media, which
-        // this does not know — but whether the clip's in point is even far
-        // enough into its source for there to be room is a question about the
-        // clip, which it does. Half a dissolve of handle, rounded down, which
-        // is where the dissolve begins relative to the cut.
-        let opening = transition.duration.ticks() / 2;
-        if let Item::Clip(incoming) = &self.items[boundary]
-            && incoming.source_start() < opening
-        {
-            return Err(ModelStatus::SourceBeforeStart);
         }
         let position = self
             .transitions
@@ -399,6 +371,60 @@ impl Track {
             transition,
             MAX_ITEMS_PER_TRACK,
         )
+    }
+
+    /// Whether the items around a transition can still carry it.
+    ///
+    /// Out of [`Track::add_transition`] because it is not only asked when one
+    /// is added. A **roll** or a **slide** changes the very lengths and in
+    /// points these two conditions are about, so either can turn a dissolve
+    /// that fitted into one that does not — and a check that only ran at the
+    /// moment somebody drew the dissolve would let a later trim leave the
+    /// track describing a transition it cannot perform.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::NotAClip`], [`ModelStatus::TransitionTooLong`], and
+    /// [`ModelStatus::SourceBeforeStart`].
+    ///
+    /// `proposed` names items that are about to change, so a trim can ask
+    /// whether a dissolve survives it *before* writing anything.
+    fn transition_fits(&self, transition: &Transition, proposed: &[(usize, Item)]) -> Result<()> {
+        let boundary = transition.boundary;
+        let at = |index: usize| -> &Item {
+            proposed
+                .iter()
+                .find(|(held, _)| *held == index)
+                .map_or(&self.items[index], |(_, item)| item)
+        };
+        for side in [boundary - 1, boundary] {
+            if !matches!(at(side), Item::Clip(_)) {
+                // A dissolve to black is a dissolve to a clip of black, not a
+                // dissolve to nothing. Making a gap mean black here would be
+                // deciding what the programme shows in a place that does not
+                // decide that.
+                return Err(ModelStatus::NotAClip);
+            }
+            if transition.duration.compare(at(side).duration())? == core::cmp::Ordering::Greater {
+                // A dissolve longer than the clip it dissolves from would need
+                // material from before that clip began, which is a different
+                // edit.
+                return Err(ModelStatus::TransitionTooLong);
+            }
+        }
+        // The incoming clip has to start early, into material before its in
+        // point. How much of that exists is a question about the media, which
+        // this does not know — but whether the clip's in point is even far
+        // enough into its source for there to be room is a question about the
+        // clip, which it does. Half a dissolve of handle, rounded down, which
+        // is where the dissolve begins relative to the cut.
+        let opening = transition.duration.ticks() / 2;
+        if let Item::Clip(incoming) = at(boundary)
+            && incoming.source_start() < opening
+        {
+            return Err(ModelStatus::SourceBeforeStart);
+        }
+        Ok(())
     }
 
     /// Take a dissolve off a cut, returning it.
@@ -427,6 +453,91 @@ impl Track {
         self.transitions
             .iter()
             .any(|held| held.boundary >= boundary)
+    }
+
+    /// Everything a split at `index` can refuse, and the room it will need.
+    ///
+    /// The first half of [`crate::Sequence`]'s column cut. `split` reserves
+    /// before it mutates so that one track's cut is atomic; a *column* of cuts
+    /// needs the reservation made on every track before any of them is
+    /// written, which is what this is for.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::TransitionInTheWay`], [`ModelStatus::UnknownItem`],
+    /// [`ModelStatus::CapacityExhausted`] or [`ModelStatus::OutOfMemory`].
+    pub(crate) fn make_room_to_split(&mut self, index: usize) -> Result<()> {
+        if self.transition_from(index + 1) {
+            return Err(ModelStatus::TransitionInTheWay);
+        }
+        if index >= self.items.len() {
+            return Err(ModelStatus::UnknownItem);
+        }
+        if self.items.len() >= MAX_ITEMS_PER_TRACK {
+            return Err(ModelStatus::CapacityExhausted);
+        }
+        self.items
+            .try_reserve(1)
+            .map_err(|_| ModelStatus::OutOfMemory)
+    }
+
+    /// Write a split that [`Track::make_room_to_split`] has already cleared.
+    ///
+    /// Infallible, and that is the point rather than an observation: it is
+    /// what lets a column of cuts be published all at once. Everything that
+    /// could refuse has refused already, in a pass that touched nothing.
+    pub(crate) fn place_split(&mut self, index: usize, head: Item, tail: Item) {
+        if let Some(slot) = self.items.get_mut(index) {
+            *slot = head;
+            self.items.insert(index + 1, tail);
+        }
+    }
+
+    /// Write a join whose result has already been computed.
+    ///
+    /// Infallible for the same reason, and easier: a track loses an item, so
+    /// there is nothing to reserve.
+    pub(crate) fn place_join(&mut self, boundary: usize, joined: Item) {
+        if boundary == 0 || boundary >= self.items.len() {
+            return;
+        }
+        if let Some(slot) = self.items.get_mut(boundary - 1) {
+            *slot = joined;
+            self.items.remove(boundary);
+        }
+    }
+
+    /// Whether a transition sits on either boundary of an item.
+    ///
+    /// The two an item touches: the cut before it and the cut after it. A
+    /// transition on either would be left mixing a gap if the item became one,
+    /// which the layer stack refuses at the frame rather than at the edit.
+    ///
+    /// Deliberately narrower than [`Track::transition_from`], and the
+    /// difference is what an edit does to the *numbering*. A split or a join
+    /// inserts or removes an item, so every boundary after it moves and a
+    /// transition beyond the edit would end up on a cut nobody put it on --
+    /// hence "at or after". A lift replaces in place, so nothing is renumbered
+    /// and only these two boundaries can be affected. The coarser check would
+    /// refuse a lift at the head of a programme because somebody drew a
+    /// dissolve at the end of it, which is a refusal with nothing behind it.
+    ///
+    /// It asks [`Track::transition_at`] rather than searching the list again,
+    /// so there is one place that knows where a transition sits.
+    pub(crate) fn transition_touching(&self, index: usize) -> bool {
+        self.transition_at(index).is_some() || self.transition_at(index + 1).is_some()
+    }
+
+    /// The same question, for a caller outside this crate.
+    ///
+    /// [`crate::Sequence::cuttable_at`] and [`crate::Sequence::healable_at`]
+    /// leave a track out when a dissolve is in the way, and they have to ask
+    /// the *same* question `split` and `join` ask or the two drift: a set that
+    /// named a track those refuse would turn a razor into a refusal at the
+    /// moment somebody dragged it, which is the worst place to find out.
+    #[must_use]
+    pub fn has_transition_from(&self, boundary: usize) -> bool {
+        self.transition_from(boundary)
     }
 
     /// Where this track's fader is set.
@@ -857,6 +968,142 @@ impl Track {
             .map_err(|_| ModelStatus::OutOfMemory)?;
         self.replace(index, head)?;
         self.items.insert(index + 1, tail);
+        Ok(())
+    }
+
+    /// Move a cut, taking from one side and giving to the other.
+    ///
+    /// The roll every editor has. `boundary` names the cut between items
+    /// `boundary - 1` and `boundary`, and a positive `by` moves it later: the
+    /// outgoing item gets longer and the incoming one gets shorter *and starts
+    /// further into its source*, so the material either side of the cut is
+    /// unbroken and the programme is exactly as long as it was.
+    ///
+    /// That last clause is what makes this a different operation from
+    /// trimming twice. Two trims change the length of the programme in between
+    /// and every position after the cut moves and moves back; a roll never
+    /// leaves the track in a state anything downstream could observe.
+    ///
+    /// **It is its own inverse.** Rolling by `-by` restores exactly what was
+    /// there, which is what makes the edit's inverse a value rather than a
+    /// saved copy of two items.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::UnknownItem`] if the cut is not between two items,
+    /// [`ModelStatus::EmptyItem`] if either side would be consumed entirely —
+    /// a roll that eats a clip is a delete, and saying so is better than
+    /// performing one — [`ModelStatus::SourceBeforeStart`] if the incoming
+    /// side would have to start before its media does, and
+    /// [`ModelStatus::TransitionTooLong`], [`ModelStatus::NotAClip`] or
+    /// [`ModelStatus::SourceBeforeStart`] if a dissolve at or beside the cut
+    /// would no longer fit what is left.
+    pub fn roll(&mut self, boundary: usize, by: i64) -> Result<()> {
+        // Only the lower end is checked here. A boundary past the last item
+        // is refused by `self.item` a line later, and a control proved that:
+        // adding the upper check as well was two mechanisms enforcing one
+        // rule, and the rule was resting on whichever ran first. This one has
+        // to stay, though — it is not a duplicate of anything, it is what
+        // keeps `boundary - 1` from going round the houses.
+        if boundary == 0 {
+            return Err(ModelStatus::UnknownItem);
+        }
+        let outgoing = self.lengthened(boundary - 1, by)?;
+        let incoming = self.shortened_from_the_front(boundary, by)?;
+        self.commit(&[(boundary - 1, outgoing), (boundary, incoming)])
+    }
+
+    /// Move an item along its track, its neighbours absorbing the difference.
+    ///
+    /// The slide. The item itself does not change at all — same source, same
+    /// length, same everything — it simply happens later or earlier, and the
+    /// items either side give and take to make room. A positive `by` moves it
+    /// later.
+    ///
+    /// So it needs a neighbour on both sides. An item at either end of a track
+    /// has nothing to take the difference, and inventing a gap to absorb it
+    /// would be a different edit performed silently.
+    ///
+    /// Its own inverse, like [`Track::roll`], and for the same reason.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStatus::UnknownItem`] if the item has no neighbour on one side,
+    /// [`ModelStatus::EmptyItem`] if a neighbour would be consumed entirely,
+    /// [`ModelStatus::SourceBeforeStart`] if the following item would have to
+    /// start before its media does, and whatever a dissolve beside it refuses.
+    pub fn slide(&mut self, index: usize, by: i64) -> Result<()> {
+        // As in [`Track::roll`]: the item after is checked by `self.item`, and
+        // the item before is checked here because there is a subtraction.
+        if index == 0 {
+            return Err(ModelStatus::UnknownItem);
+        }
+        let before = self.lengthened(index - 1, by)?;
+        let after = self.shortened_from_the_front(index + 1, by)?;
+        self.commit(&[(index - 1, before), (index + 1, after)])
+    }
+
+    /// An item `by` ticks longer, keeping where it starts in its source.
+    fn lengthened(&self, index: usize, by: i64) -> Result<Item> {
+        let held = self.item(index)?;
+        let ticks = held
+            .duration()
+            .ticks()
+            .checked_add(by)
+            .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+        held.with_duration(Duration::new(ticks, self.timebase)?)
+    }
+
+    /// An item `by` ticks shorter, starting `by` ticks further into its media.
+    ///
+    /// Which is the half of a trim that is easy to leave out. Shortening an
+    /// item from the front without moving its in point would keep the same
+    /// opening frame and throw away the end, and that is a different edit —
+    /// the one [`Track::split`] and [`Item::with_duration`] already do.
+    fn shortened_from_the_front(&self, index: usize, by: i64) -> Result<Item> {
+        let held = self.item(index)?;
+        let ticks = held
+            .duration()
+            .ticks()
+            .checked_sub(by)
+            .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+        let shorter = held.with_duration(Duration::new(ticks, self.timebase)?)?;
+        Ok(match shorter {
+            Item::Gap(duration) => Item::Gap(duration),
+            Item::Clip(clip) => {
+                let source = clip
+                    .source_start()
+                    .checked_add(by)
+                    .ok_or(ModelStatus::Time(sapstudio_core::CoreStatus::Overflow))?;
+                Item::Clip(clip.with_source(source)?)
+            }
+        })
+    }
+
+    /// Put replacements in place, or leave the track exactly as it was.
+    ///
+    /// Every check happens before the first write. A trim that refused halfway
+    /// would leave a track holding one side of a cut somebody did not make —
+    /// which is the failure R-1.4 exists to forbid, and the one a two-item
+    /// edit is most likely to produce.
+    ///
+    /// The check is asked of the *proposed* items rather than of a copy of the
+    /// track, because a copy of a track is up to sixty-five thousand items and
+    /// this runs on every frame of a drag.
+    fn commit(&mut self, replacements: &[(usize, Item)]) -> Result<()> {
+        for transition in &self.transitions {
+            // Only a dissolve touching something that changed can have stopped
+            // fitting. Checking every one would be correct and would make a
+            // trim's cost the number of dissolves on the track.
+            if replacements.iter().any(|(index, _)| {
+                *index == transition.boundary || *index + 1 == transition.boundary
+            }) {
+                self.transition_fits(transition, replacements)?;
+            }
+        }
+        for (index, item) in replacements {
+            self.items[*index] = item.clone();
+        }
         Ok(())
     }
 

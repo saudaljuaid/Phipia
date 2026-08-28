@@ -207,10 +207,10 @@ static void command_linux(const char *arguments)
     } else {
         console_write(
             "linux: use 'linux echo', 'linux uname', or 'linux cat'\n");
-        console_serial_write("FL USERLAND unsupported profile refused\n");
+        console_serial_write("RW USERLAND unsupported profile refused\n");
         return;
     }
-    console_serial_write("FL USERLAND command accepted through First Light shell linux ");
+    console_serial_write("RW USERLAND command accepted through Sapote Redwood shell linux ");
     console_serial_write(linux_userland_profile_name(profile));
     console_serial_write("\n");
     status = linux_userland_launch(profile, &result);
@@ -934,7 +934,7 @@ static void command_fetch(void)
         console_write("  [ Sapote ]\n");
     }
     console_write("\n");
-    console_write("  Sapote First Environment\n");
+    console_write("  Sapote Redwood\n");
     console_write("  kernel      Sapote 2.1.0 / x86_64\n");
     console_write("  terminal    ");
     console_write_u64(screen.columns);
@@ -1328,7 +1328,7 @@ static void write_prompt_restored(void)
 {
     console_write(SHELL_PROMPT);
     if (linux_prompt_evidence_pending) {
-        console_serial_write("\nFL USERLAND First Light prompt restored\n");
+        console_serial_write("\nRW USERLAND Sapote Redwood prompt restored\n");
         console_serial_write(SHELL_PROMPT);
         linux_prompt_evidence_pending = false;
     }
@@ -1372,7 +1372,7 @@ static void foreground_deliver(bool eof)
         byte_count = foreground.length + 1U;
         console_putc('\n');
         console_serial_write(
-            "FL CAT terminal input accepted through keyboard events bytes ");
+            "RW CAT terminal input accepted through keyboard events bytes ");
         console_serial_write_u64(byte_count);
         console_serial_write("\n");
     } else {
@@ -1615,7 +1615,7 @@ _Noreturn void shell_run(void)
                 (void)screen_set_viewport((struct surface_rect){
                     0U, 0U, framebuffer.width, framebuffer.height
                 }, true);
-                console_write("Sapote: First Light runtime disabled: ");
+                console_write("Sapote: Redwood runtime disabled: ");
                 console_write(ui_status_string(status));
                 console_putc('\n');
             }

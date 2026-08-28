@@ -32,7 +32,7 @@ libraries before any NetSurf code enters this repository.
    census.
 3. **Frontend surface.** Expose a bounded shared or copied pixel surface,
    damage rectangles, keyboard/pointer events, clipboard refusal, and one
-   First Environment window. The NetSurf plotter API remains above this seam.
+   Sapote Redwood window. The NetSurf plotter API remains above this seam.
 4. **URL fetcher.** Implement the NetSurf fetch callbacks over networking ABI
    v1: DNS, stream open/connect/read/write/shutdown/close, poll, cancel, and
    monotonic deadlines. HTTP parsing should move to the browser only after its
