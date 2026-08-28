@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Check the numbers the documents assert against the tree.
+"""Check documented test totals against the tracked Rust sources.
 
-`docs/ARCHITECTURE.md` gives a test count for every crate, `README.md` gives a
-total and a count of negative controls, and every one of those has been kept up
-to date by hand after every change. A number maintained by hand is a number
-that goes stale, and a stale number in a document whose whole claim is that it
-does not overstate is worse than no number.
-
-So this reads them and refuses a disagreement. It is the same bargain as
-`layering.py`: prose for the reasoning, a machine-readable fact beside it, and
-one check that they agree.
+`docs/ARCHITECTURE.md` gives a test count for every crate and `README.md` gives
+the total. This script keeps those two compact summaries aligned with the tree.
 
 It counts *tracked* files, like the hygiene check does, so a test in a file
 that has not been staged yet is invisible to it. That fails safe — the count
@@ -33,7 +26,6 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 ARCHITECTURE = REPOSITORY / "docs" / "ARCHITECTURE.md"
-VERIFICATION = REPOSITORY / "docs" / "VERIFICATION.md"
 README = REPOSITORY / "README.md"
 
 #: A crate row in the architecture table, and the count it claims.
@@ -44,10 +36,6 @@ ANY_ROW = re.compile(r"^\| `(sapstudio-[a-z]+)` \|", re.MULTILINE)
 
 #: The total, in the README's status paragraph.
 TOTAL = re.compile(r"^(\d+) tests, no third-party dependencies", re.MULTILINE)
-
-#: The control count, in the same paragraph.
-CONTROLS = re.compile(r"\b(\d+) invariants have been checked", re.MULTILINE)
-
 
 def tracked(pattern: str) -> list[Path]:
     output = subprocess.run(
@@ -68,15 +56,6 @@ def tests_per_crate() -> dict[str, int]:
         count = sum(1 for line in text.splitlines() if line.strip() == "#[test]")
         found[crate] = found.get(crate, 0) + count
     return found
-
-
-def controls() -> int:
-    """How many rows the negative-control table holds."""
-    text = VERIFICATION.read_text(encoding="utf-8")
-    body = text.split("## Negative controls", 1)[1].split("## Fuzzing", 1)[0]
-    rows = [line for line in body.splitlines() if line.startswith("| ")]
-    # Two of them are the header and its rule.
-    return len(rows) - 2
 
 
 def main() -> int:
@@ -110,22 +89,12 @@ def main() -> int:
     elif int(stated.group(1)) != total:
         findings.append(f"the README says {stated.group(1)} tests, the tree has {total}")
 
-    held = controls()
-    said = CONTROLS.search(readme)
-    if said is None:
-        findings.append("the README states no count of negative controls")
-    elif int(said.group(1)) != held:
-        findings.append(
-            f"the README says {said.group(1)} negative controls, "
-            f"the table has {held}"
-        )
-
     for finding in findings:
         print(finding)
     if findings:
         print(f"\n{len(findings)} counting findings", file=sys.stderr)
         return 1
-    print(f"counts: clean, {total} tests and {held} negative controls, as documented")
+    print(f"counts: clean, {total} tests, as documented")
     return 0
 
 

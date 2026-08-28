@@ -205,7 +205,7 @@ capture contract are in [`REDWOOD.md`](REDWOOD.md).
 
 For current behavior, read a subsystem header, its self-test, and then its
 implementation. Use `git log -- <path>` for historical reasoning instead of
-keeping milestone diaries in the active documentation set.
+keeping development diaries in the active documentation set.
 
 ## Current limits
 

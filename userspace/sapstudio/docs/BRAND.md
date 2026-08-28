@@ -5,8 +5,8 @@
 `SapStudio` is the only public name of this application. Public prose uses
 `SapStudio`; paths, command-line keys, symbols, crate names, and build
 artefacts use `sapstudio`; preprocessor guards and build environment variables
-use `SAPSTUDIO`. Milestone names follow Sapote's habit — `SapStudio Slate` is
-the first workspace, part of SapStudio and not a separate product.
+use `SAPSTUDIO`. `SapStudio Slate` is the historical name of the first
+workspace, part of SapStudio and not a separate product.
 
 The application is part of the Sapote project and says so. It never claims to
 be an operating system, and Sapote never claims to be an editor.

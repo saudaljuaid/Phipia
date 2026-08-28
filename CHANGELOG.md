@@ -4,140 +4,49 @@
 
 ## Sapote Redwood
 
-- Updated the vendored SapStudio `engineering-foundation` snapshot to upstream
-  commit `034ba9336f6dee3cd5a524a42b740b41013ca852`.
-- Retained and modestly reduced the reflective 3D dock while expanding it to
-  Files, Terminal, Notes, SapStudio, Camera, and Settings.
-- Replaced the square pixel UI face with build-rasterized, antialiased,
-  proportional Inter while keeping the kernel free of a TrueType parser.
-- Added a classic twelve-category Settings app. Appearance switches only the
-  dock shelf colour between Light and Dark; Desktop exposes Aurora plus
-  thirteen additional photographic wallpapers.
-- Added bounded fixed-point spring window opening with one controlled overshoot
-  and damage-only animation frames.
-- Added a deliberately spare Camera app backed by a bounded double-buffered
-  RGB provider, a truthful device state, a camera-marked shutter, and
-  recovery-safe synchronized 320×180 BMP capture. It never substitutes a
-  wallpaper, generated scene, or fake live frame when no camera is present.
-- Rebuilt supplied Camera and Settings dock artwork with clean alpha edges,
-  removed rectangular icon shadows, increased dock breathing room, and added
-  a coherent Lucide-based Settings category sheet.
-- Reduced repaint cost with native wallpaper blits, row-blitted Camera preview,
-  quantized parallax, targeted Camera control damage, and a shorter spring.
-- Restyled Notes and Files around the supplied classic references and made the
-  Notes plus action create a real new note.
-- Extended authentic QEMU capture to an exact 25-second UI interaction with
-  screenshots and retained FAT32 note, project, and export evidence. Camera is
-  deliberately left closed because the QEMU proof machine has no webcam.
+- Replaced the former shell presentation with the Redwood desktop and the
+  canonical Sapote identity.
+- Added the six-application 3D Dock with magnification, reflections, tooltips,
+  launch feedback, and light and dark shelf colours.
+- Added overlapping movable windows with focus, stacking, close controls, and
+  spring opening animation.
+- Added fourteen photographic desktops and a functional Settings application.
+- Added Files and Notes over the writable FAT32 data volume.
+- Added the Camera application and double-buffered frame-provider interface.
+  The default QEMU profile reports that no camera is connected.
+- Added the native SapStudio window with BMP import, timeline editing, project
+  persistence, and BMP export.
+- Updated the vendored SapStudio source to commit
+  `034ba9336f6dee3cd5a524a42b740b41013ca852`.
+- Added high-resolution screenshots and a 25-second QEMU demonstration.
 
-Explicit non-feature: physical webcam video requires UVC enumeration and
-streaming support that Sapote's xHCI layer does not yet provide.
+## 2.2.0
 
-## 2.2.0 — Several Processes, Thirty-Two Bounded Drivers and HD Audio
+- Added up to four isolated user processes with private address spaces and a
+  round-robin scheduler.
+- Added fault containment and full saved-register restoration for user tasks.
+- Added thirteen PCI drivers for Intel, Realtek, AMD, Cirrus Logic, and Bochs
+  devices.
+- Added an HD Audio command/response transport and codec discovery.
+- Added a TCP listener with accepted child connections, retransmission limits,
+  cleanup, readiness, and closed-port resets.
+- Added fifteen NVIDIA register and configuration readers plus a Rust VBIOS
+  validator and device-model tests.
+- Increased the QEMU suite to 101 scenarios.
 
-- Replaced the one-process-ever address-space model with up to four private
-  hierarchies live at once, each with its own image, stack, generation and
-  saved CPL3 register set.
-- Added a bounded round-robin scheduler over those processes, a saved-context
-  Ring 3 entry, a re-armable proof gate, and per-resume and per-trap
-  authentication of the whole user register set.
-- Added contained user faults: a process that stores into its guard page is
-  terminated while its neighbours run to completion and everything is released
-  together.
-- Added an ordering rule for private identity-alias restores so one process's
-  teardown cannot free a page table another still has a leaf in.
-- Added a second admitted ELF64 profile, its instruction stream pinned
-  independently in the kernel, in freestanding Rust, and in a Python record
-  that `make verify` compares against the kernel's table.
-- Added thirteen bounded drivers for real Intel, Realtek, AMD, Cirrus Logic and
-  Bochs Display Interface devices, each binding through the typed PCI
-  substrate, resetting where its specification defines a reset, and identifying
-  its device against a property that specification guarantees.
-- Added station addresses pinned on the host command line and required back out
-  of four of those drivers, so a bind cannot be satisfied by a plausible value
-  the driver did not fetch.
-- Added an HD Audio driver that identifies every codec on the link over
-  bus-mastering command and response rings, refusing bus mastering before the
-  rings are prepared and withdrawing it before they are reclaimed, with the
-  teardown order enforced by the build.
-- Added a TCP passive open: `LISTEN` and `SYN_RECEIVED` states, a declared
-  backlog bounded at four, `network_tcp_listen` and `network_tcp_accept`,
-  listener-owned children reclaimed on close, and readiness reporting for a
-  connection waiting to be accepted.
-- Added a reset for TCP segments matching no connection and no listener, with
-  RFC 793 section 3.4 sequence numbers and no reset in answer to a reset.
-- Fixed a remote-triggerable buffer reuse: a handler answering the frame it was
-  parsing could reach an ARP wait that pumped the device again, overwriting the
-  receive and transmit buffers its own caller held. The pump now refuses
-  recursive entry and an unresolved send from the receive path defers to
-  retransmission instead.
-- Added fifteen bounded NVIDIA drivers written from envytools, Nouveau,
-  Mesa/NVK, NVIDIA's open kernel modules and the PCI and PCI Express
-  specifications: the master control identity decode, the configuration-space
-  mirror cross-check, the timer and its rate pair, the video BIOS window, the
-  HD Audio function, the board straps, the engine enable mask, the memory
-  aperture shape, the PCI Express link and endpoint type, the add-in-board
-  subsystem identity, the power-management state, the message-interrupt state
-  and the expansion ROM declaration. Eight map one register window each, one
-  reads only the aperture descriptions a claim produces and touches no
-  register at all, and six read configuration space and take nothing. Exactly
-  one of the fifteen writes a register, and it proves the write reversed. Four
-  of the fifteen read capabilities every PCI function carries and earn their
-  place as cross-checks rather than as vendor knowledge; the documentation
-  says so rather than counting them as NVIDIA expertise.
-- Added a foundation control that states, pair by pair, which NVIDIA drivers
-  depend on an earlier one having run, so a reordered table is refused at boot
-  instead of silently producing a weaker result.
-- Added a freestanding Rust VBIOS validator with sixteen controls, and a
-  synthesised reference image stated three independent times in C, Rust and
-  Python with the build comparing all three.
-- Fixed every CPL3 boundary treating the processor's RF flag as user state.
-  RF is the processor's own note about a trap, not a choice the program made,
-  so the Ring 3 proof, the multiprocess trap and saved context, and the Linux
-  syscall boundary now discard it rather than requiring it clear. Sapote used
-  to panic on QEMU 9.1.0, which sets the bit on some traps, and boots on both
-  9.1.0 and 8.2.2 now.
-- Added a QEMU device model of the NVIDIA register interface so those fifteen
-  drivers can be executed end to end without the silicon, with the boot
-  register, the ROM image, the timer rate pair, the configuration mirror, the
-  standard PCI capabilities and the clock all supplied from outside both the
-  driver and the model, and with eleven injectable defects each refused by
-  name.
-- Fixed the Express capability driver decoding a field out of a neighbouring
-  capability when the capability itself sits at an offset PCI forbids. It now
-  reads the capability's own identifier byte back from the device first, so an
-  unreachable capability is a named refusal rather than a wrong answer. The
-  device model exposed this by packing its capabilities the way QEMU's
-  automatic placement does, which real parts do not.
-- Added eight typed Boot Ledger stages, nine QEMU scenarios and a 101-scenario
-  total contract.
+The process layer does not yet provide `fork`, `exec`, signals, process IDs,
+IPC, or preemptive user scheduling. HD Audio does not stream samples. The
+NVIDIA layer does not perform graphics acceleration or mode setting.
 
-Explicit non-features: no preemptive user scheduling, no fork, exec, signals,
-process identifiers or inter-process communication; the thirteen bounded
-drivers move no data, enable no bus mastering, allocate no DMA and take no
-interrupt; the HD Audio driver identifies codecs and plays nothing; a TCP
-listener has no background retransmission timer, no listen queue that outlives
-its caller, and no rate limit on refusals; the fifteen NVIDIA drivers have
-never run against NVIDIA silicon, read fifteen register and configuration
-contracts rather than driving a graphics part, and do no mode setting,
-framebuffer programming, command submission, memory management or power
-management despite one of them reading the capability of that name; the device
-model that executes them is a stand-in sharing their register offsets, not
-hardware.
-## 2.1.0 — Advanced Networking and Browser Foundation
+## 2.1.0
 
-- Added a modern virtio-net PCI/MSI-X/DMA driver with bounded queues, explicit
-  ownership and complete reset teardown.
-- Added validated Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP and HTTP/1.1,
-  including streamed synchronized FAT32 downloads and recovery-safe replace.
-- Added authenticated version-1 native networking syscalls, readiness,
-  cancellation, monotonic time and bounded entropy with degraded-state
-  reporting.
-- Added Terminal networking commands and a typed Boot Ledger networking stage.
-- Added a deterministic offline Ethernet peer, PCAP reconstruction, negative
-  modes, 34 new production QEMU scenarios and a 92-scenario total contract.
-- Added an authentic interactive networking screenshot/video/PCAP bundle,
-  a concrete NetSurf port plan, and a TLS prerequisite evaluation.
+- Added modern virtio-net PCI, MSI-X, and DMA support.
+- Added Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS, TCP, and HTTP/1.1.
+- Added native networking handles with polling, cancellation, time, and random
+  byte services.
+- Added Terminal networking commands and streamed downloads to FAT32.
+- Added an offline network peer, PCAP reconstruction, and 34 QEMU scenarios.
+- Added browser-port and TLS prerequisite documents.
 
-Explicit non-features: no browser, Chromium, browser icon, JavaScript, TLS,
-HTTPS, IPv6, firewall, Wi-Fi, physical-NIC support, or secure-Internet claim.
+This release is IPv4-only and does not include TLS, HTTPS, a browser, Wi-Fi,
+firewalling, routing, or physical-NIC support.

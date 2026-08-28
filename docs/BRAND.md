@@ -6,7 +6,7 @@ Sapote is the only current public name of this project. Public prose uses
 The interactive prompt is `sap>`.
 
 `Sapote Redwood` names the current graphical shell. `Sapote Redwood`
-remains the historical v1/v2.0 milestone name; neither is a separate product.
+remains the historical v1/v2.0 release name; neither is a separate product.
 
 ## Canonical mark
 
