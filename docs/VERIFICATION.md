@@ -12,7 +12,7 @@ untested hardware support or a broader ABI.
 make lint         # repository whitespace policy
 make verify       # clean build, host tests, ELF/link/layout checks
 make smoke        # normal QEMU boot and transcript
-make qemu-tests   # all 92 bounded QEMU scenarios
+make qemu-tests   # all 101 bounded QEMU scenarios
 ```
 
 Useful inspection targets:
@@ -30,7 +30,7 @@ reconstruction, failed host filesystem checks, and failed Rust parser tests.
 
 ## QEMU scenarios
 
-The Makefile is the source of truth for the 92 names. They cover:
+The Makefile is the source of truth for the 101 names. They cover:
 
 - exception entry, IST handling, APIC/I/O APIC routing, and legacy retirement;
 - clock calibration, deadlines, paging, heap, and guarded threads;
@@ -47,7 +47,27 @@ The Makefile is the source of truth for the 92 names. They cover:
 - modern virtio-net discovery, initialization, absence, link-down and reset;
   DHCP/static configuration, ARP, ICMP, UDP, DNS A/CNAME/malformed handling,
   TCP close/retransmission/reset, HTTP framing/redirect/recovery, FAT32 streamed
-  download/persistence, syscall isolation and existing-environment regressions.
+  download/persistence, syscall isolation and existing-environment regressions;
+- a TCP passive open driven from outside: a peer that connects *to* Sapote,
+  exchanges bytes both ways and closes, with the acknowledgement to its SYN
+  deferred out of the receive path, retransmitted, and only then completed; and
+  a SYN to a port nothing is listening on, refused with a reset the peer
+  independently reports back over UDP;
+- several private address spaces live at once, the round-robin schedule, saved
+  register sets, isolation, a contained user fault, the address-space slot
+  bound and the ordering rule for identity-alias restores;
+- thirteen bounded device drivers binding, resetting and identifying real
+  Intel, Realtek, AMD, Cirrus Logic and Bochs Display Interface devices, with
+  four station addresses pinned on the host command line and required back out
+  of the drivers, and with absence reported as absence;
+- an HD Audio codec conversation over bus-mastering command and response rings,
+  including the refusal of bus mastering before the rings are prepared and its
+  withdrawal before they are reclaimed;
+- fifteen NVIDIA register and configuration contracts refusing every display
+  and multimedia function that is not NVIDIA's, with the identity decode
+  re-derived from thirteen published encodings and a VBIOS parser held to a
+  reference image stated in C, Rust and Python. No NVIDIA hardware has ever run
+  this code, and the scenarios prove the refusal rather than a bind.
 
 Each scenario has a stable guest debug-exit value, expected host status, and
 required serial transcript. A scenario target is deliberately not phony so GNU
@@ -70,12 +90,12 @@ the exact syscall trace. The dedicated First Light interactive-userspace
 workflow also builds the three-profile volume twice, runs every scenario,
 captures real QEMU media, and preserves the v1.1.0 release evidence. The
 dedicated v2.0.0 workflow reconstructs both FAT32 images, runs host positive
-and negative checks plus all 92 guest scenarios, captures clean-reboot media,
+and negative checks plus all 101 guest scenarios, captures clean-reboot media,
 and assembles exact-commit release evidence. See
 [`BUSYBOX_REPRODUCIBLE_BUILD.md`](BUSYBOX_REPRODUCIBLE_BUILD.md).
 
-The v2.1.0 networking workflow self-tests the deterministic peer, runs all 92
-scenarios, requires all 34 networking scenarios, reconstructs the production
+The v2.1.0 networking workflow self-tests the deterministic peer, runs all 101
+scenarios, requires all 36 networking scenarios, reconstructs the production
 PCAP through every protocol layer, inspects the synchronized Data image, and
 captures an interactive 20–25 second QEMU session. Screenshot/video evidence
 supplements the serial, packet and storage proofs; it never substitutes for

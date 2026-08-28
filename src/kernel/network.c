@@ -101,7 +101,9 @@ enum arp_entry_state {
 enum tcp_connection_state {
     TCP_CONNECTION_CLOSED = 0,
     TCP_CONNECTION_OPEN,
+    TCP_CONNECTION_LISTEN,
     TCP_CONNECTION_SYN_SENT,
+    TCP_CONNECTION_SYN_RECEIVED,
     TCP_CONNECTION_ESTABLISHED,
     TCP_CONNECTION_FIN_WAIT,
     TCP_CONNECTION_CLOSE_WAIT,
@@ -157,12 +159,15 @@ struct tcp_connection {
     uint16_t peer_mss;
     uint8_t retransmit_flags;
     uint8_t retransmit_count;
+    uint8_t backlog;
+    uint8_t listener;
     enum tcp_connection_state state;
     enum network_status error;
     bool active;
     bool cancelled;
     bool peer_closed;
     bool fin_sent;
+    bool pending;
 };
 
 struct dns_cache_entry {
@@ -227,6 +232,11 @@ struct network_runtime {
     uint16_t ipv4_identifier;
     uint16_t next_ephemeral;
     size_t timers;
+    /*
+     * The receive path shares one frame buffer with the transmit path, so a
+     * send issued while a frame is being parsed must never re-enter the pump.
+     */
+    bool servicing;
 };
 
 static struct network_runtime runtime;
@@ -660,6 +670,17 @@ static enum network_status arp_resolve(
         entry = arp_slot(address);
     }
     entry->state = ARP_ENTRY_PENDING;
+    if (runtime.servicing) {
+        /*
+         * A send raised while a received frame is still being parsed cannot
+         * wait: waiting means pumping the device, and the pump would overwrite
+         * the frame its own caller is reading. Ask once and refuse now; the
+         * caller's retransmission carries the send after the reply lands.
+         */
+        ++runtime.public.statistics.arp_deferred;
+        (void)arp_request(address);
+        return NETWORK_STATUS_WOULD_BLOCK;
+    }
     if (!timer_acquire()) {
         return NETWORK_STATUS_NO_RESOURCES;
     }
@@ -1148,13 +1169,10 @@ static void ethernet_receive(const uint8_t *frame, size_t length)
     }
 }
 
-enum network_status network_service(void)
+static enum network_status network_service_pump(void)
 {
     enum virtio_net_status device_status;
 
-    if (!runtime.public.active) {
-        return NETWORK_STATUS_NOT_INITIALIZED;
-    }
     device_status = virtio_net_service();
     if (device_status == VIRTIO_NET_STATUS_RESET) {
         enum virtio_net_status reset_status = virtio_net_reset();
@@ -1221,6 +1239,31 @@ enum network_status network_service(void)
         arp_invalidate();
     }
     return NETWORK_STATUS_OK;
+}
+
+/*
+ * One receive buffer and one transmit buffer serve the whole stack, so the
+ * pump must run alone. A handler that answers the frame it is reading -- an
+ * ICMP echo, a TCP acknowledgement, a refusal -- reaches a send, and a send
+ * that waits for anything used to wait by pumping again, from inside the very
+ * loop that owns the buffer being parsed. This is the guard: recursive entry
+ * is refused rather than served, and arp_resolve turns its wait into a single
+ * request while it holds.
+ */
+enum network_status network_service(void)
+{
+    enum network_status status;
+
+    if (!runtime.public.active) {
+        return NETWORK_STATUS_NOT_INITIALIZED;
+    }
+    if (runtime.servicing) {
+        return NETWORK_STATUS_WOULD_BLOCK;
+    }
+    runtime.servicing = true;
+    status = network_service_pump();
+    runtime.servicing = false;
+    return status;
 }
 
 enum network_status network_initialize(void)
@@ -2048,13 +2091,185 @@ static struct tcp_connection *tcp_match(
     for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
         struct tcp_connection *connection = &runtime.tcp[index];
 
-        if (connection->active && connection->remote_address == source &&
+        if (connection->active &&
+            connection->state != TCP_CONNECTION_LISTEN &&
+            connection->remote_address == source &&
             connection->remote_port == source_port &&
             connection->local_port == destination_port) {
             return connection;
         }
     }
     return NULL;
+}
+
+static struct tcp_connection *tcp_listener_for(uint16_t destination_port)
+{
+    for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
+        struct tcp_connection *connection = &runtime.tcp[index];
+
+        if (connection->active &&
+            connection->state == TCP_CONNECTION_LISTEN &&
+            connection->local_port == destination_port &&
+            !connection->cancelled) {
+            return connection;
+        }
+    }
+    return NULL;
+}
+
+static size_t tcp_index_of(const struct tcp_connection *connection)
+{
+    return (size_t)(connection - &runtime.tcp[0]);
+}
+
+static size_t tcp_pending_count(const struct tcp_connection *listener)
+{
+    const size_t parent = tcp_index_of(listener);
+    size_t count = 0U;
+
+    for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
+        const struct tcp_connection *connection = &runtime.tcp[index];
+
+        if (connection->active && connection->pending &&
+            connection->listener == parent) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+/*
+ * A segment nobody is listening for is answered, not swallowed. RFC 793
+ * section 3.4 gives the sequence numbers: a segment carrying an
+ * acknowledgement is refused at that acknowledgement, and one without is
+ * refused with an acknowledgement of everything it occupied. A reset is never
+ * answered with a reset, which is what keeps two closed ports from talking
+ * forever.
+ */
+static void tcp_refuse(
+    uint32_t peer,
+    uint16_t peer_port,
+    uint16_t local_port,
+    uint32_t sequence,
+    uint32_t acknowledgment,
+    uint8_t flags,
+    size_t payload_length
+)
+{
+    uint8_t segment[TCP_HEADER_BYTES];
+    uint32_t reset_sequence = 0U;
+    uint32_t reset_acknowledgment = 0U;
+    uint8_t reset_flags = TCP_FLAG_RST;
+
+    if ((flags & TCP_FLAG_RST) != 0U ||
+        !runtime.public.configuration.configured ||
+        !ipv4_is_unicast(peer)) {
+        return;
+    }
+    if ((flags & TCP_FLAG_ACK) != 0U) {
+        reset_sequence = acknowledgment;
+    } else {
+        reset_acknowledgment = sequence + (uint32_t)payload_length +
+            (((flags & TCP_FLAG_SYN) != 0U) ? 1U : 0U) +
+            (((flags & TCP_FLAG_FIN) != 0U) ? 1U : 0U);
+        reset_flags |= TCP_FLAG_ACK;
+    }
+    zero_bytes(segment, sizeof(segment));
+    write_be16(segment + 0U, local_port);
+    write_be16(segment + 2U, peer_port);
+    write_be32(segment + 4U, reset_sequence);
+    write_be32(segment + 8U, reset_acknowledgment);
+    segment[12] = (uint8_t)((TCP_HEADER_BYTES / 4U) << 4U);
+    segment[13] = reset_flags;
+    write_be16(segment + 16U, transport_checksum(
+        runtime.public.configuration.address, peer, IPV4_PROTOCOL_TCP,
+        segment, sizeof(segment)));
+    if (ipv4_send(runtime.public.configuration.address, peer,
+            IPV4_PROTOCOL_TCP, segment, sizeof(segment),
+            ARP_TIMEOUT_NS) == NETWORK_STATUS_OK) {
+        ++runtime.public.statistics.tcp_refusals;
+    }
+}
+
+/*
+ * A listener's answer to a SYN is a whole connection, so it costs a slot and
+ * is bounded twice: by the listener's declared backlog and by the connection
+ * table itself. The acknowledgement is armed before it is sent, because the
+ * send can legitimately fail -- the peer's hardware address may not be known
+ * yet -- and the handshake must survive that by retransmission rather than by
+ * blocking inside the receive path.
+ */
+static struct tcp_connection *tcp_open_child(
+    struct tcp_connection *listener,
+    uint32_t source,
+    uint16_t source_port,
+    uint32_t sequence,
+    uint16_t peer_window
+)
+{
+    if (tcp_pending_count(listener) >= listener->backlog) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
+        struct tcp_connection *connection = &runtime.tcp[index];
+
+        if (connection->active) {
+            continue;
+        }
+        zero_bytes(connection, sizeof(*connection));
+        connection->owner = listener->owner;
+        connection->generation = allocate_generation();
+        connection->device_generation =
+            runtime.public.device.device_generation;
+        connection->remote_address = source;
+        connection->remote_port = source_port;
+        connection->local_port = listener->local_port;
+        connection->peer_window = peer_window;
+        connection->peer_mss = TCP_MSS;
+        connection->receive_next = sequence + 1U;
+        connection->send_unacknowledged = random_u32();
+        connection->send_next = connection->send_unacknowledged + 1U;
+        connection->state = TCP_CONNECTION_SYN_RECEIVED;
+        connection->listener = (uint8_t)tcp_index_of(listener);
+        connection->pending = true;
+        connection->active = true;
+        connection->retransmit_flags = TCP_FLAG_SYN | TCP_FLAG_ACK;
+        connection->retransmit_bytes = 0U;
+        connection->retransmit_count = 0U;
+        connection->retransmit_deadline_ns = clock_monotonic_ns() +
+            TCP_RETRANSMISSION_NS;
+        ++runtime.public.tcp_connections;
+        (void)tcp_emit(connection, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0U,
+            connection->send_unacknowledged, false, false);
+        return connection;
+    }
+    ++runtime.public.statistics.socket_exhaustion;
+    return NULL;
+}
+
+static void tcp_release(struct tcp_connection *connection)
+{
+    zero_bytes(connection, sizeof(*connection));
+    if (runtime.public.tcp_connections != 0U) {
+        --runtime.public.tcp_connections;
+    }
+}
+
+static void tcp_release_children(const struct tcp_connection *listener)
+{
+    const size_t parent = tcp_index_of(listener);
+
+    for (size_t slot = 0U; slot < NETWORK_MAX_TCP_CONNECTIONS; ++slot) {
+        struct tcp_connection *child = &runtime.tcp[slot];
+
+        if (!child->active || !child->pending || child->listener != parent) {
+            continue;
+        }
+        tcp_refuse(child->remote_address, child->remote_port,
+            child->local_port, child->receive_next, child->send_next,
+            TCP_FLAG_ACK, 0U);
+        tcp_release(child);
+    }
 }
 
 static void tcp_receive_segment(
@@ -2093,8 +2308,23 @@ static void tcp_receive_segment(
         ++runtime.public.statistics.malformed_packets;
         return;
     }
+    payload_length = length - header_length;
     connection = tcp_match(source, source_port, destination_port);
     if (connection == NULL) {
+        struct tcp_connection *listener = NULL;
+
+        if ((flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) == TCP_FLAG_SYN &&
+            ipv4_is_unicast(source)) {
+            listener = tcp_listener_for(destination_port);
+        }
+        if (listener == NULL ||
+            tcp_open_child(listener, source, source_port, sequence,
+                read_be16(bytes + 14U)) == NULL) {
+            tcp_refuse(source, source_port, destination_port, sequence,
+                acknowledgment, flags, payload_length);
+            return;
+        }
+        ++runtime.public.statistics.tcp_accepted;
         return;
     }
     ++runtime.public.statistics.tcp_accepted;
@@ -2103,6 +2333,27 @@ static void tcp_receive_segment(
         connection->state = TCP_CONNECTION_RESET;
         connection->error = NETWORK_STATUS_CONNECTION_RESET;
         return;
+    }
+    if (connection->state == TCP_CONNECTION_LISTEN) {
+        return;
+    }
+    if (connection->state == TCP_CONNECTION_SYN_RECEIVED) {
+        /*
+         * Only the acknowledgement this side asked for finishes a passive
+         * open: the exact sequence the SYN acknowledged, and the exact
+         * sequence number the peer's SYN promised. Anything else is a stray
+         * segment wearing an established connection's four-tuple.
+         */
+        if ((flags & TCP_FLAG_ACK) == 0U ||
+            acknowledgment != connection->send_next ||
+            sequence != connection->receive_next) {
+            return;
+        }
+        connection->send_unacknowledged = acknowledgment;
+        connection->retransmit_flags = 0U;
+        connection->retransmit_bytes = 0U;
+        connection->state = TCP_CONNECTION_ESTABLISHED;
+        ++runtime.public.statistics.tcp_passive_opens;
     }
     if (connection->state == TCP_CONNECTION_SYN_SENT) {
         if ((flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) !=
@@ -2126,7 +2377,6 @@ static void tcp_receive_segment(
             connection->retransmit_bytes = 0U;
         }
     }
-    payload_length = length - header_length;
     if (payload_length != 0U || (flags & TCP_FLAG_FIN) != 0U) {
         if (sequence != connection->receive_next) {
             (void)tcp_ack(connection);
@@ -2419,6 +2669,157 @@ enum network_status network_tcp_connect(
     return status;
 }
 
+/*
+ * A passive open is the one place where the stack, rather than a caller,
+ * decides that a connection exists. Everything about it is therefore bounded
+ * in advance: one port, a declared backlog no larger than
+ * NETWORK_TCP_MAX_BACKLOG, and children drawn from the same fixed connection
+ * table an active open draws from. A handshake completes on any pump, but the
+ * retransmission and reaping of half-open children happen only inside
+ * network_tcp_accept -- that is deliberate, and it is what keeps half-open
+ * state from outliving the caller that asked for it.
+ */
+enum network_status network_tcp_listen(
+    uint64_t owner,
+    network_handle handle,
+    uint16_t port,
+    size_t backlog
+)
+{
+    enum network_status status;
+    struct tcp_connection *connection = tcp_for(owner, handle, &status);
+
+    if (connection == NULL) {
+        return status;
+    }
+    if (port == 0U || backlog == 0U || backlog > NETWORK_TCP_MAX_BACKLOG) {
+        return NETWORK_STATUS_INVALID_ARGUMENT;
+    }
+    if (connection->state != TCP_CONNECTION_OPEN) {
+        return NETWORK_STATUS_WRONG_MODE;
+    }
+    if (tcp_port_used(port)) {
+        return NETWORK_STATUS_PORT_IN_USE;
+    }
+    connection->local_port = port;
+    connection->backlog = (uint8_t)backlog;
+    connection->state = TCP_CONNECTION_LISTEN;
+    ++runtime.public.tcp_listeners;
+    return NETWORK_STATUS_OK;
+}
+
+static struct tcp_connection *tcp_acceptable(
+    const struct tcp_connection *listener
+)
+{
+    const size_t parent = tcp_index_of(listener);
+
+    for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
+        struct tcp_connection *connection = &runtime.tcp[index];
+
+        if (connection->active && connection->pending &&
+            connection->listener == parent &&
+            connection->state == TCP_CONNECTION_ESTABLISHED) {
+            return connection;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Accepting is also when a listener's half-open children are driven. Their
+ * acknowledgement is retransmitted here when its deadline passes, and a child
+ * that exhausts the retransmission limit is reclaimed rather than left to hold
+ * a slot: a peer that opens and vanishes must cost this side nothing durable.
+ */
+static void tcp_service_pending(const struct tcp_connection *listener)
+{
+    const size_t parent = tcp_index_of(listener);
+    const uint64_t now = clock_monotonic_ns();
+
+    for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
+        struct tcp_connection *connection = &runtime.tcp[index];
+
+        if (!connection->active || !connection->pending ||
+            connection->listener != parent) {
+            continue;
+        }
+        if (connection->state == TCP_CONNECTION_RESET ||
+            connection->error != NETWORK_STATUS_OK) {
+            tcp_release(connection);
+            continue;
+        }
+        if (connection->state != TCP_CONNECTION_SYN_RECEIVED ||
+            now < connection->retransmit_deadline_ns) {
+            continue;
+        }
+        if (tcp_retransmit(connection) != NETWORK_STATUS_OK &&
+            connection->error != NETWORK_STATUS_OK) {
+            tcp_release(connection);
+        }
+    }
+}
+
+enum network_status network_tcp_accept(
+    uint64_t owner,
+    network_handle handle,
+    network_handle *accepted,
+    uint32_t *source,
+    uint16_t *port,
+    uint64_t timeout_ns
+)
+{
+    enum network_status status;
+    struct tcp_connection *listener = tcp_for(owner, handle, &status);
+    uint64_t deadline;
+
+    if (listener == NULL) {
+        return status;
+    }
+    if (accepted == NULL || source == NULL || port == NULL ||
+        !deadline_valid(timeout_ns)) {
+        return NETWORK_STATUS_NULL_ARGUMENT;
+    }
+    *accepted = 0U;
+    *source = 0U;
+    *port = 0U;
+    if (listener->state != TCP_CONNECTION_LISTEN) {
+        return listener->error != NETWORK_STATUS_OK ? listener->error :
+            NETWORK_STATUS_WRONG_MODE;
+    }
+    if (!timer_acquire()) {
+        return NETWORK_STATUS_NO_RESOURCES;
+    }
+    deadline = clock_monotonic_ns() + timeout_ns;
+    do {
+        struct tcp_connection *child;
+
+        (void)network_service();
+        if (listener->cancelled) {
+            timer_release();
+            return NETWORK_STATUS_CANCELLED;
+        }
+        if (listener->error != NETWORK_STATUS_OK) {
+            status = listener->error;
+            timer_release();
+            return status;
+        }
+        tcp_service_pending(listener);
+        child = tcp_acceptable(listener);
+        if (child != NULL) {
+            child->pending = false;
+            *accepted = make_handle(HANDLE_KIND_TCP, tcp_index_of(child),
+                child->generation);
+            *source = child->remote_address;
+            *port = child->remote_port;
+            timer_release();
+            return NETWORK_STATUS_OK;
+        }
+    } while (clock_monotonic_ns() < deadline);
+    timer_release();
+    return NETWORK_STATUS_TIMEOUT;
+}
+
 enum network_status network_tcp_write(
     uint64_t owner,
     network_handle handle,
@@ -2494,6 +2895,11 @@ enum network_status network_tcp_read(
         return NETWORK_STATUS_NULL_ARGUMENT;
     }
     *read_bytes = 0U;
+    if (connection->state == TCP_CONNECTION_LISTEN ||
+        connection->state == TCP_CONNECTION_OPEN ||
+        connection->state == TCP_CONNECTION_SYN_RECEIVED) {
+        return NETWORK_STATUS_WRONG_MODE;
+    }
     if (!timer_acquire()) {
         return NETWORK_STATUS_NO_RESOURCES;
     }
@@ -2694,8 +3100,21 @@ enum network_status network_close(uint64_t owner, network_handle handle)
         struct tcp_connection *connection = tcp_for(owner, handle, &status);
 
         if (connection == NULL) { return status; }
-        zero_bytes(connection, sizeof(*connection));
-        --runtime.public.tcp_connections;
+        if (connection->backlog != 0U) {
+            /*
+             * A listener owns every child it produced that nobody has accepted
+             * yet. Closing it refuses those peers rather than orphaning their
+             * slots; a child already handed out is an independent connection
+             * with its own handle and is left alone. The test is the backlog
+             * and not the state, because a device reset moves every connection
+             * to RESET and these children are reachable through nothing else.
+             */
+            tcp_release_children(connection);
+            if (runtime.public.tcp_listeners != 0U) {
+                --runtime.public.tcp_listeners;
+            }
+        }
+        tcp_release(connection);
         return NETWORK_STATUS_OK;
     }
     return NETWORK_STATUS_STALE_HANDLE;
@@ -2759,6 +3178,14 @@ enum network_status network_poll(
                 if (connection == NULL) {
                     result->ready = NETWORK_READY_ERROR;
                     result->error = status;
+                } else if (connection->state == TCP_CONNECTION_LISTEN) {
+                    if (tcp_acceptable(connection) != NULL) {
+                        result->ready |= NETWORK_READY_ACCEPTABLE |
+                            NETWORK_READY_READABLE;
+                    }
+                    if (connection->cancelled) {
+                        result->ready |= NETWORK_READY_CANCELLED;
+                    }
                 } else {
                     if (connection->state == TCP_CONNECTION_ESTABLISHED) {
                         result->ready |= NETWORK_READY_CONNECTED |
@@ -2784,7 +3211,7 @@ enum network_status network_poll(
             }
             result->ready &= requests[index].interests |
                 NETWORK_READY_ERROR | NETWORK_READY_CANCELLED |
-                NETWORK_READY_PEER_CLOSED;
+                NETWORK_READY_PEER_CLOSED | NETWORK_READY_ACCEPTABLE;
             if (result->ready != NETWORK_READY_NONE) {
                 ++*result_count;
             }
@@ -2815,8 +3242,11 @@ void network_process_terminated(uint64_t owner)
     }
     for (size_t index = 0U; index < NETWORK_MAX_TCP_CONNECTIONS; ++index) {
         if (runtime.tcp[index].active && runtime.tcp[index].owner == owner) {
-            zero_bytes(&runtime.tcp[index], sizeof(runtime.tcp[index]));
-            --runtime.public.tcp_connections;
+            if (runtime.tcp[index].backlog != 0U &&
+                runtime.public.tcp_listeners != 0U) {
+                --runtime.public.tcp_listeners;
+            }
+            tcp_release(&runtime.tcp[index]);
         }
     }
 }
@@ -3840,6 +4270,7 @@ enum network_status network_shutdown(void)
     }
     runtime.public.udp_sockets = 0U;
     runtime.public.tcp_connections = 0U;
+    runtime.public.tcp_listeners = 0U;
     runtime.timers = 0U;
     runtime.public.timers = 0U;
     ++runtime.public.statistics.resets;
@@ -3974,8 +4405,23 @@ bool network_self_test(size_t *completed_tests)
         return false;
     }
     completed += 4U;
+    if (NETWORK_TCP_MAX_BACKLOG == 0U ||
+        NETWORK_TCP_MAX_BACKLOG > NETWORK_MAX_TCP_CONNECTIONS - 1U) {
+        return false;
+    }
+    ++completed;
+    if (TCP_CONNECTION_LISTEN == TCP_CONNECTION_OPEN ||
+        TCP_CONNECTION_SYN_RECEIVED == TCP_CONNECTION_SYN_SENT ||
+        TCP_CONNECTION_SYN_RECEIVED == TCP_CONNECTION_ESTABLISHED) {
+        return false;
+    }
+    ++completed;
+    if (runtime.servicing) {
+        return false;
+    }
+    ++completed;
     *completed_tests = completed;
-    return completed == 22U;
+    return completed == 25U;
 }
 
 const char *network_status_string(enum network_status status)

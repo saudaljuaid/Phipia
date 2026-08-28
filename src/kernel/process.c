@@ -303,7 +303,8 @@ static bool return_frame_authenticated(const struct interrupt_frame *frame)
         runtime.address_space.state == PAGING_PROCESS_SPACE_ACTIVE &&
         frame->vector == INTERRUPT_PROCESS_PROOF_VECTOR &&
         frame->error_code == 0U && frame->rip == PROCESS_EXPECTED_RETURN_RIP &&
-        frame->cs == CPU_GDT_USER_CODE_SELECTOR && frame->rflags == UINT64_C(2) &&
+        frame->cs == CPU_GDT_USER_CODE_SELECTOR &&
+        (frame->rflags & ~CPU_RFLAGS_PROCESSOR_BOOKKEEPING) == UINT64_C(2) &&
         interrupt_frame_has_stack_tail(frame) &&
         interrupt_frame_stack_pointer(frame) == PAGING_PROCESS_STACK_END &&
         interrupt_frame_stack_selector(frame) == CPU_GDT_USER_DATA_SELECTOR &&
@@ -815,6 +816,34 @@ enum process_status process_installed_prove(
 struct process_proof_result process_get_proof_result(void)
 {
     return installed_result;
+}
+
+bool process_user_context_layout_self_test(void)
+{
+    /*
+     * The assembly boundary reads this structure by fixed byte offset, so the
+     * only way the two can be kept honest is to state the offsets here as
+     * well. src/arch/x86_64/process.S carries the same numbers.
+     */
+    return sizeof(struct process_user_context) == 144U &&
+        offsetof(struct process_user_context, rax) == 0U &&
+        offsetof(struct process_user_context, rbx) == 8U &&
+        offsetof(struct process_user_context, rcx) == 16U &&
+        offsetof(struct process_user_context, rdx) == 24U &&
+        offsetof(struct process_user_context, rsi) == 32U &&
+        offsetof(struct process_user_context, rdi) == 40U &&
+        offsetof(struct process_user_context, rbp) == 48U &&
+        offsetof(struct process_user_context, r8) == 56U &&
+        offsetof(struct process_user_context, r9) == 64U &&
+        offsetof(struct process_user_context, r10) == 72U &&
+        offsetof(struct process_user_context, r11) == 80U &&
+        offsetof(struct process_user_context, r12) == 88U &&
+        offsetof(struct process_user_context, r13) == 96U &&
+        offsetof(struct process_user_context, r14) == 104U &&
+        offsetof(struct process_user_context, r15) == 112U &&
+        offsetof(struct process_user_context, rip) == 120U &&
+        offsetof(struct process_user_context, rsp) == 128U &&
+        offsetof(struct process_user_context, rflags) == 136U;
 }
 
 bool process_resources_released(void)

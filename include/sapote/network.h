@@ -32,6 +32,7 @@
 #define NETWORK_DEFAULT_READ_TIMEOUT_NS UINT64_C(3000000000)
 #define NETWORK_DEFAULT_OPERATION_TIMEOUT_NS UINT64_C(5000000000)
 #define NETWORK_TCP_RETRANSMISSION_LIMIT 4U
+#define NETWORK_TCP_MAX_BACKLOG 4U
 #define NETWORK_PING_MAX_COUNT 8U
 
 typedef uint64_t network_handle;
@@ -85,7 +86,8 @@ enum network_readiness {
     NETWORK_READY_PEER_CLOSED = 1U << 3,
     NETWORK_READY_ERROR = 1U << 4,
     NETWORK_READY_CANCELLED = 1U << 5,
-    NETWORK_READY_TIMEOUT = 1U << 6
+    NETWORK_READY_TIMEOUT = 1U << 6,
+    NETWORK_READY_ACCEPTABLE = 1U << 7
 };
 
 struct network_ipv4_configuration {
@@ -144,6 +146,9 @@ struct network_statistics {
     uint64_t dns_accepted;
     uint64_t tcp_accepted;
     uint64_t tcp_retransmissions;
+    uint64_t tcp_passive_opens;
+    uint64_t tcp_refusals;
+    uint64_t arp_deferred;
     uint64_t malformed_packets;
     uint64_t socket_exhaustion;
     uint64_t timer_exhaustion;
@@ -159,6 +164,7 @@ struct network_state {
     size_t dns_entries;
     size_t udp_sockets;
     size_t tcp_connections;
+    size_t tcp_listeners;
     size_t timers;
     bool active;
 };
@@ -217,6 +223,20 @@ enum network_status network_tcp_connect(
     network_handle handle,
     uint32_t destination,
     uint16_t port,
+    uint64_t timeout_ns
+);
+enum network_status network_tcp_listen(
+    uint64_t owner,
+    network_handle handle,
+    uint16_t port,
+    size_t backlog
+);
+enum network_status network_tcp_accept(
+    uint64_t owner,
+    network_handle handle,
+    network_handle *accepted,
+    uint32_t *source,
+    uint16_t *port,
     uint64_t timeout_ns
 );
 enum network_status network_tcp_write(

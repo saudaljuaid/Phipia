@@ -46,6 +46,8 @@ FIXTURE_MODE = {
     "network-dns-malformed": "dns-truncated",
     "network-tcp-retransmit": "tcp-retransmit",
     "network-tcp-reset": "tcp-reset",
+    "network-tcp-listen": "tcp-listen",
+    "network-tcp-refused": "tcp-refused",
     "network-http-chunked": "http-chunked",
     "network-http-redirect": "http-redirect",
     "network-http-malformed": "http-malformed",

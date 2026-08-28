@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml"><img src="https://github.com/saudaljuaid/Sapote/actions/workflows/verify.yml/badge.svg" alt="verification status"></a>
-  <img src="https://img.shields.io/badge/version-2.1.0-18181C" alt="version 2.1.0">
+  <img src="https://img.shields.io/badge/version-2.2.0-18181C" alt="version 2.2.0">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--only-595976" alt="GPL-3.0-only"></a>
 </p>
 
@@ -55,15 +55,36 @@ interactive `linux cat` profiles remain available.
   growth and truncation, random access, rename, deletion, and clean persistence.
 - A read-only FAT32 system volume and a separate read-write FAT32 data volume.
 - Ring 3 execution with private address spaces and checked ELF64 loading.
+- Up to four user processes live at once, each with its own hierarchy, image,
+  stack and saved register set, scheduled round robin, isolated from one
+  another, and contained when one of them faults.
+- Thirteen bounded drivers that bind, reset and identify real Intel, Realtek,
+  AMD, Cirrus Logic and Bochs Display Interface devices through the typed PCI
+  substrate.
+- An HD Audio driver that talks to codecs over bus-mastering command and
+  response rings, with bus mastering withdrawn before the rings are reclaimed.
+- Fifteen bounded NVIDIA drivers written from envytools, Nouveau, Mesa/NVK,
+  NVIDIA's published material and the PCI and PCI Express specifications, with
+  a freestanding Rust VBIOS validator. Eight map a register window, one reads
+  only aperture descriptions, six read configuration space and take nothing.
+  Four of the fifteen read PCI capabilities every function carries and earn
+  their place as cross-checks rather than as vendor knowledge, which the
+  documentation says outright. They have never run against NVIDIA silicon; what
+  is proved is the decode, the parser, the refusal of every function that is
+  not NVIDIA's, and an end-to-end bind against a device model with eleven
+  injected defects each refused by name.
 - Linux `SYSCALL` support for measured BusyBox `echo`, `uname`, and interactive
   `cat` programs.
 - Modern virtio-net PCI/MSI-X/DMA with bounded Ethernet, ARP, IPv4, ICMP,
   UDP, DHCP, DNS, TCP, HTTP/1.1, and streamed FAT32 downloads.
+- TCP in both directions: an outbound connection, and a bounded passive open
+  that accepts a peer connecting in, with segments for closed ports refused by
+  a reset rather than dropped.
 - An experimental versioned native networking syscall boundary with checked
   user ranges, authenticated process generations, polling, cancellation, time,
   and bounded random bytes.
 - First Environment, a framebuffer console, networking and filesystem
-  commands, and 92 QEMU scenarios.
+  commands, and 101 QEMU scenarios.
 - SapStudio's deterministic editor foundation, mirrored at upstream commit
   `70295ebc08a1825452f7c08256aac14270f4cc7b`, with native FAT32 BMP import,
   timeline trim/save, and bounded BMP frame export.
@@ -104,11 +125,24 @@ fixed four-application shell rather than a general window manager. FAT32 support
 is one bounded 64 MiB geometry with an ASCII 8.3 filename subset, 16 MiB files,
 no journal, and a clean-sync persistence contract. Networking is intentionally
 IPv4-only and supports one modern emulated virtio-net device; it has no IPv6,
-TLS, firewall, routing, Wi-Fi, physical-hardware claim, or browser. General
-process services, an IOMMU, and broad hardware coverage remain future work.
-Version 2.1.0 is not a claim of POSIX compliance, a general VFS, production
-crash consistency, multi-user security, broad Linux compatibility, secure
-Internet access, or a generally stable userspace ABI.
+TLS, firewall, routing, Wi-Fi, physical-hardware claim, or browser. A TCP
+listener makes progress only while an accept is outstanding: there is no
+background retransmission timer, no listen queue that survives a caller, and no
+concurrent server loop.
+Multiprocessing is cooperative and kernel-created: there is no preemptive user scheduling, no
+fork, exec, signals, process identifiers or inter-process communication. The
+thirteen bounded drivers bind, reset and identify their devices; none of them
+moves data, enables bus mastering, allocates DMA, or takes an interrupt. The
+HD Audio driver identifies codecs over DMA rings but plays nothing: there is no
+stream descriptor, format negotiation, widget graph, mixer or capture.
+The fifteen NVIDIA drivers read fifteen register and configuration contracts
+and are not a graphics driver: no mode setting, no framebuffer programming, no
+channel, no command submission, no power management despite reading the
+capability of that name, and no hardware has ever run them.
+General process services, an IOMMU, and broad hardware coverage remain future
+work. Version 2.2.0 is not a claim of POSIX compliance, a general VFS,
+production crash consistency, multi-user security, broad Linux compatibility,
+secure Internet access, or a generally stable userspace ABI.
 
 ## Documentation
 
@@ -118,6 +152,10 @@ Internet access, or a generally stable userspace ABI.
 - [First Light](docs/FIRST_LIGHT.md) — retained v2.0.0 interface contract
 - [Persistent FAT32](docs/FAT32.md) — volumes, filesystem rules, and persistence
 - [Networking](docs/NETWORKING.md) — virtio-net, protocol, syscall, and test bounds
+- [Several processes](docs/MULTIPROCESS.md) — private address spaces, the round robin, and its bounds
+- [Bounded drivers](docs/DRIVERS.md) — the thirteen devices Sapote binds and identifies
+- [HD Audio](docs/AUDIO.md) — codec conversation over DMA rings, and the order that makes it safe
+- [NVIDIA](docs/NVIDIA.md) — five register contracts, the VBIOS parser, a device model, and what has never been run
 - [Browser port plan](docs/BROWSER_PORT.md) — concrete future engine work and gaps
 - [TLS evaluation](docs/TLS_EVALUATION.md) — prerequisites and explicit non-claims
 - [Linux syscall boundary](docs/LINUX_SYSCALL_ABI.md) — measured BusyBox profiles

@@ -29,6 +29,7 @@ pub(crate) mod linux_fat16;
 pub(crate) mod linux_elf64;
 pub mod font;
 pub mod logo;
+pub mod nvbios;
 pub mod ui_font;
 pub mod wallpaper;
 

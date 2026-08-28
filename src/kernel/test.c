@@ -23,6 +23,10 @@
 #include <sapote/memory.h>
 #include <sapote/network.h>
 #include <sapote/network_syscall.h>
+#include <sapote/audio.h>
+#include <sapote/nvidia.h>
+#include <sapote/driver.h>
+#include <sapote/multiprocess.h>
 #include <sapote/nvme.h>
 #include <sapote/paging.h>
 #include <sapote/pci.h>
@@ -487,6 +491,33 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "network-socket-isolation")) {
         return KERNEL_TEST_NETWORK_SOCKET_ISOLATION;
     }
+    if (token_equals(value, length, "network-tcp-listen")) {
+        return KERNEL_TEST_NETWORK_TCP_LISTEN;
+    }
+    if (token_equals(value, length, "network-tcp-refused")) {
+        return KERNEL_TEST_NETWORK_TCP_REFUSED;
+    }
+    if (token_equals(value, length, "multiprocess")) {
+        return KERNEL_TEST_MULTIPROCESS;
+    }
+    if (token_equals(value, length, "multiprocess-slots")) {
+        return KERNEL_TEST_MULTIPROCESS_SLOTS;
+    }
+    if (token_equals(value, length, "driver-matrix")) {
+        return KERNEL_TEST_DRIVER_MATRIX;
+    }
+    if (token_equals(value, length, "driver-matrix-builtin")) {
+        return KERNEL_TEST_DRIVER_MATRIX_BUILTIN;
+    }
+    if (token_equals(value, length, "audio")) {
+        return KERNEL_TEST_AUDIO;
+    }
+    if (token_equals(value, length, "nvidia")) {
+        return KERNEL_TEST_NVIDIA;
+    }
+    if (token_equals(value, length, "nvidia-builtin")) {
+        return KERNEL_TEST_NVIDIA_BUILTIN;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -653,6 +684,15 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NETWORK_STUDIO: return UINT8_C(0x6A);
     case KERNEL_TEST_NETWORK_PERSISTENCE: return UINT8_C(0x6B);
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION: return UINT8_C(0x6C);
+    case KERNEL_TEST_NETWORK_TCP_LISTEN: return UINT8_C(0x6D);
+    case KERNEL_TEST_NETWORK_TCP_REFUSED: return UINT8_C(0x6E);
+    case KERNEL_TEST_MULTIPROCESS: return UINT8_C(0x6F);
+    case KERNEL_TEST_MULTIPROCESS_SLOTS: return UINT8_C(0x70);
+    case KERNEL_TEST_DRIVER_MATRIX: return UINT8_C(0x71);
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN: return UINT8_C(0x72);
+    case KERNEL_TEST_AUDIO: return UINT8_C(0x73);
+    case KERNEL_TEST_NVIDIA: return UINT8_C(0x74);
+    case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -739,6 +779,83 @@ bool kernel_test_linux_uname_exit_self_test(void)
             scenario_exit_value(KERNEL_TEST_LINUX_ABI_UNAME)) &&
         !linux_uname_exit_contract(UINT8_C(0x36)) &&
         !linux_uname_exit_contract(UINT8_C(0x38));
+}
+
+/*
+ * The passive-open pair sits inside the networking block, so inserting a
+ * scenario shifts every later exit value. This contract is what makes that a
+ * refusal rather than a silent renumbering.
+ */
+static bool tcp_listen_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x6D);
+}
+
+bool kernel_test_tcp_listen_exit_self_test(void)
+{
+    return tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_TCP_LISTEN)) &&
+        !tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_TCP_REFUSED)) &&
+        !tcp_listen_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NETWORK_SOCKET_ISOLATION)) &&
+        scenario_exit_value(KERNEL_TEST_NETWORK_TCP_REFUSED) ==
+            UINT8_C(0x6E);
+}
+
+static bool multiprocess_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x6F);
+}
+
+bool kernel_test_multiprocess_exit_self_test(void)
+{
+    return multiprocess_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS)) &&
+        !multiprocess_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS_SLOTS)) &&
+        !multiprocess_exit_contract(UINT8_C(0x34));
+}
+
+static bool driver_matrix_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x71);
+}
+
+bool kernel_test_driver_matrix_exit_self_test(void)
+{
+    return driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX)) &&
+        !driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN)) &&
+        !driver_matrix_exit_contract(
+            scenario_exit_value(KERNEL_TEST_MULTIPROCESS));
+}
+
+static bool nvidia_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x74);
+}
+
+bool kernel_test_nvidia_exit_self_test(void)
+{
+    return nvidia_exit_contract(scenario_exit_value(KERNEL_TEST_NVIDIA)) &&
+        !nvidia_exit_contract(
+            scenario_exit_value(KERNEL_TEST_NVIDIA_BUILTIN)) &&
+        !nvidia_exit_contract(scenario_exit_value(KERNEL_TEST_AUDIO));
+}
+
+static bool audio_exit_contract(uint8_t value)
+{
+    return value == UINT8_C(0x73);
+}
+
+bool kernel_test_audio_exit_self_test(void)
+{
+    return audio_exit_contract(scenario_exit_value(KERNEL_TEST_AUDIO)) &&
+        !audio_exit_contract(scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX)) &&
+        !audio_exit_contract(
+            scenario_exit_value(KERNEL_TEST_DRIVER_MATRIX_BUILTIN));
 }
 
 static void test_marker(const char *kind, enum kernel_test_scenario scenario)
@@ -3885,6 +4002,158 @@ static void write_combining_scenario(
     console_write(" PAGES\n");
 }
 
+/*
+ * The address-space slot bound, proved directly rather than through the
+ * scheduler. Sapote used to hold exactly one private hierarchy, so "another
+ * one" was not a state the kernel could be in; this builds every slot at once,
+ * checks that they are genuinely separate, that one more is refused, and that
+ * a narrowing may only be undone while it is the newest - which is what stops
+ * one process's teardown from freeing a page table another still has a leaf
+ * in.
+ */
+static void multiprocess_slots_scenario(void)
+{
+    struct paging_process_space spaces[MULTIPROCESS_MAX_PROCESSES];
+    struct paging_process_image_alias aliases[MULTIPROCESS_MAX_PROCESSES];
+    uintptr_t image_frames[MULTIPROCESS_MAX_PROCESSES];
+    uintptr_t stack_frames[MULTIPROCESS_MAX_PROCESSES]
+        [PAGING_PROCESS_STACK_PAGES];
+    struct paging_process_space overflow;
+    struct paging_translation translation;
+    const struct frame_allocator_stats before = frame_allocator_get_stats();
+    const struct paging_state paging_before = paging_get_state();
+    const bool restore_interrupts = cpu_interrupts_enabled();
+    struct frame_allocator_stats after;
+
+    if (!multiprocess_resources_released() ||
+        !paging_process_resources_released()) {
+        kernel_test_fail("multiprocess slots began with resources held");
+    }
+    cpu_interrupt_disable();
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        image_frames[index] = 0U;
+        if (frame_allocate(&image_frames[index]) != FRAME_STATUS_OK) {
+            kernel_test_fail("multiprocess slot image frame allocation failed");
+        }
+        for (size_t page = 0U; page < PAGING_PROCESS_STACK_PAGES; ++page) {
+            stack_frames[index][page] = 0U;
+            if (frame_allocate(&stack_frames[index][page]) !=
+                    FRAME_STATUS_OK) {
+                kernel_test_fail(
+                    "multiprocess slot stack frame allocation failed");
+            }
+            for (size_t offset = 0U; offset < PAGING_PAGE_SIZE; ++offset) {
+                ((volatile uint8_t *)(void *)stack_frames[index][page])
+                    [offset] = 0U;
+            }
+        }
+        for (size_t offset = 0U; offset < PAGING_PAGE_SIZE; ++offset) {
+            ((volatile uint8_t *)(void *)image_frames[index])[offset] = 0U;
+        }
+        if (paging_process_space_build(&spaces[index]) != PAGING_STATUS_OK ||
+            paging_process_image_alias_narrow(&spaces[index],
+                image_frames[index], &aliases[index]) != PAGING_STATUS_OK ||
+            paging_process_map_user_page(&spaces[index],
+                PAGING_PROCESS_MAPPING_IMAGE, PAGING_PROCESS_IMAGE_ADDRESS,
+                image_frames[index], PAGING_EXECUTE) != PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent private address space was refused");
+        }
+        for (size_t page = 0U; page < PAGING_PROCESS_STACK_PAGES; ++page) {
+            if (paging_process_map_user_page(&spaces[index],
+                    PAGING_PROCESS_MAPPING_STACK,
+                    PAGING_PROCESS_STACK_BASE +
+                        (uint64_t)page * PAGING_PAGE_SIZE,
+                    stack_frames[index][page], PAGING_WRITE) !=
+                    PAGING_STATUS_OK) {
+                kernel_test_fail("a concurrent private stack was refused");
+            }
+        }
+        if (paging_process_validate(&spaces[index], image_frames[index],
+                stack_frames[index]) != PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent address space failed its walk");
+        }
+    }
+
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        for (size_t other = 0U; other < index; ++other) {
+            if (spaces[index].root_physical_address ==
+                    spaces[other].root_physical_address ||
+                spaces[index].generation == spaces[other].generation ||
+                image_frames[index] == image_frames[other]) {
+                kernel_test_fail("two concurrent address spaces are the same");
+            }
+        }
+        if (paging_process_translate(&spaces[index],
+                PAGING_PROCESS_IMAGE_ADDRESS, &translation) !=
+                PAGING_STATUS_OK ||
+            !translation.user ||
+            translation.permissions != PAGING_EXECUTE ||
+            translation.physical_address != image_frames[index]) {
+            kernel_test_fail("a private image mapping is not its own");
+        }
+    }
+    if (paging_process_space_build(&overflow) != PAGING_STATUS_PROCESS_BUSY ||
+        overflow.state != PAGING_PROCESS_SPACE_INVALID) {
+        kernel_test_fail("the address-space slot bound was not enforced");
+    }
+
+    for (size_t index = 0U; index < MULTIPROCESS_MAX_PROCESSES; ++index) {
+        for (size_t page = PAGING_PROCESS_STACK_PAGES; page > 0U; --page) {
+            if (paging_process_unmap_user_page(&spaces[index],
+                    PAGING_PROCESS_MAPPING_STACK,
+                    PAGING_PROCESS_STACK_BASE +
+                        (uint64_t)(page - 1U) * PAGING_PAGE_SIZE) !=
+                    PAGING_STATUS_OK) {
+                kernel_test_fail("a private stack mapping refused removal");
+            }
+        }
+        if (paging_process_unmap_user_page(&spaces[index],
+                PAGING_PROCESS_MAPPING_IMAGE, PAGING_PROCESS_IMAGE_ADDRESS) !=
+                PAGING_STATUS_OK) {
+            kernel_test_fail("a private image mapping refused removal");
+        }
+    }
+    if (paging_process_image_alias_restore(&spaces[0], &aliases[0]) !=
+            PAGING_STATUS_PROCESS_ALIAS_STATE) {
+        kernel_test_fail("an out-of-order alias restore was accepted");
+    }
+    for (size_t count = MULTIPROCESS_MAX_PROCESSES; count > 0U; --count) {
+        const size_t index = count - 1U;
+
+        if (paging_process_image_alias_restore(&spaces[index],
+                &aliases[index]) != PAGING_STATUS_OK ||
+            paging_process_space_release(&spaces[index]) !=
+                PAGING_STATUS_OK) {
+            kernel_test_fail("a concurrent address space refused teardown");
+        }
+        for (size_t page = PAGING_PROCESS_STACK_PAGES; page > 0U; --page) {
+            if (frame_release(stack_frames[index][page - 1U]) !=
+                    FRAME_STATUS_OK) {
+                kernel_test_fail("a private stack frame refused release");
+            }
+        }
+        if (frame_release(image_frames[index]) != FRAME_STATUS_OK) {
+            kernel_test_fail("a private image frame refused release");
+        }
+    }
+    if (restore_interrupts) {
+        cpu_interrupt_enable();
+    }
+
+    after = frame_allocator_get_stats();
+    if (after.free_frames != before.free_frames ||
+        after.allocated_frames != before.allocated_frames ||
+        paging_get_state().table_frames != paging_before.table_frames ||
+        paging_verify() != PAGING_STATUS_OK ||
+        !paging_process_resources_released() ||
+        !multiprocess_resources_released()) {
+        kernel_test_fail("concurrent address spaces leaked on teardown");
+    }
+    console_write("ST MULTIPROCESS-SLOTS concurrent address spaces ");
+    console_write_u64(MULTIPROCESS_MAX_PROCESSES);
+    console_write(" bound enforced alias order enforced teardown clean\n");
+}
+
 static void device_windows_scenario(
     const struct paging_device_windows *expected
 )
@@ -4377,8 +4646,19 @@ void kernel_test_run(
     case KERNEL_TEST_NETWORK_STUDIO:
     case KERNEL_TEST_NETWORK_PERSISTENCE:
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
+    case KERNEL_TEST_MULTIPROCESS:
+    case KERNEL_TEST_DRIVER_MATRIX:
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
+    case KERNEL_TEST_AUDIO:
+    case KERNEL_TEST_NVIDIA:
+    case KERNEL_TEST_NVIDIA_BUILTIN:
         /* Deferred until First Light and the Boot Ledger are published. */
         return;
+    case KERNEL_TEST_MULTIPROCESS_SLOTS:
+        multiprocess_slots_scenario();
+        kernel_test_pass();
     case KERNEL_TEST_DOUBLE_FAULT:
         kernel_test_double_fault_armed = 1U;
         interrupt_test_set_gate_present(14U, false);
@@ -6346,6 +6626,303 @@ static void network_tcp_connect_close(bool expect_reset)
     }
 }
 
+/*
+ * The peer cannot know a port is open until this side says so, and it has no
+ * clock of its own: it answers frames. So a passive-open scenario announces
+ * its port over UDP and the peer opens a TCP connection back. The announcement
+ * also decides what the scenario proves. Sent to the gateway, it leaves the
+ * peer's hardware address unknown, so the acknowledgement to its SYN has to be
+ * deferred out of the receive path and retransmitted -- which is exactly the
+ * hazard the service guard exists for. Sent to the peer itself, the hardware
+ * address is known and a refusal can leave immediately.
+ */
+#define NETWORK_TEST_KNOCK_PORT UINT16_C(4243)
+#define NETWORK_TEST_KNOCK_SOURCE UINT16_C(50003)
+#define NETWORK_TEST_SECOND_KNOCK_SOURCE UINT16_C(50004)
+#define NETWORK_TEST_LISTEN_PORT UINT16_C(7777)
+#define NETWORK_TEST_CLOSED_PORT UINT16_C(7778)
+
+static const uint8_t network_listen_request[] = "SAPOTE LISTEN\n";
+static const uint8_t network_refusal_notice[] = "REFUSED";
+
+static network_handle network_announce_port(
+    uint32_t destination,
+    uint16_t announced,
+    uint16_t from_port
+)
+{
+    network_handle knock;
+    uint8_t message[6];
+
+    message[0] = (uint8_t)'S';
+    message[1] = (uint8_t)'A';
+    message[2] = (uint8_t)'P';
+    message[3] = (uint8_t)'L';
+    message[4] = (uint8_t)(announced >> 8U);
+    message[5] = (uint8_t)announced;
+    if (network_udp_open(NETWORK_TEST_OWNER, &knock) != NETWORK_STATUS_OK ||
+        network_udp_bind(NETWORK_TEST_OWNER, knock, from_port) !=
+            NETWORK_STATUS_OK ||
+        network_udp_send(NETWORK_TEST_OWNER, knock, destination,
+            NETWORK_TEST_KNOCK_PORT, message, sizeof(message),
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the listening port could not be announced");
+    }
+    return knock;
+}
+
+static void network_tcp_listen_controls(network_handle listener)
+{
+    network_handle stranger;
+    network_handle accepted = 0U;
+    uint8_t buffer[8];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t written = 0U;
+
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener, 0U, 1U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, 0U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, NETWORK_TCP_MAX_BACKLOG + 1U) !=
+            NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_listen(NETWORK_TEST_OWNER + 1U, listener,
+            NETWORK_TEST_LISTEN_PORT, 1U) != NETWORK_STATUS_WRONG_OWNER) {
+        kernel_test_fail("a listen outside its declared bounds was admitted");
+    }
+    if (network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted, &source,
+            &port, UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        accepted != 0U) {
+        kernel_test_fail("accept was admitted before listen");
+    }
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_LISTEN_PORT, 2U) != NETWORK_STATUS_OK ||
+        network_get_state().tcp_listeners != 1U) {
+        kernel_test_fail("the listening socket was refused its port");
+    }
+    if (network_tcp_open(NETWORK_TEST_OWNER, &stranger) != NETWORK_STATUS_OK ||
+        network_tcp_listen(NETWORK_TEST_OWNER, stranger,
+            NETWORK_TEST_LISTEN_PORT, 1U) != NETWORK_STATUS_PORT_IN_USE ||
+        network_close(NETWORK_TEST_OWNER, stranger) != NETWORK_STATUS_OK) {
+        kernel_test_fail("two sockets were allowed to listen on one port");
+    }
+    if (network_tcp_listen(NETWORK_TEST_OWNER, listener,
+            NETWORK_TEST_CLOSED_PORT, 1U) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_connect(NETWORK_TEST_OWNER, listener, NETWORK_TEST_HTTP,
+            80U, UINT64_C(1000000)) != NETWORK_STATUS_INVALID_ARGUMENT ||
+        network_tcp_read(NETWORK_TEST_OWNER, listener, buffer,
+            sizeof(buffer), &length, UINT64_C(1000000)) !=
+            NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_write(NETWORK_TEST_OWNER, listener, network_welcome, 1U,
+            &written, UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_shutdown(NETWORK_TEST_OWNER, listener,
+            UINT64_C(1000000)) != NETWORK_STATUS_WRONG_MODE ||
+        network_tcp_accept(NETWORK_TEST_OWNER + 1U, listener, &accepted,
+            &source, &port, UINT64_C(1000000)) !=
+            NETWORK_STATUS_WRONG_OWNER) {
+        kernel_test_fail("a listening socket answered a client operation");
+    }
+}
+
+/*
+ * A second peer, deliberately never accepted. It proves the two halves of the
+ * listener's ownership: a completed connection waiting to be accepted is what
+ * `network_poll` calls acceptable, and closing the listener refuses that peer
+ * rather than orphaning its slot. The refusal is confirmed by the peer, which
+ * reports the reset back over UDP.
+ */
+static network_handle network_tcp_listen_unaccepted(network_handle listener)
+{
+    struct network_poll_request request;
+    struct network_poll_result result;
+    struct network_state before = network_get_state();
+    struct network_state after;
+    network_handle knock;
+    uint8_t received[16];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t ready = 0U;
+
+    knock = network_announce_port(NETWORK_TEST_HTTP, NETWORK_TEST_LISTEN_PORT,
+        NETWORK_TEST_SECOND_KNOCK_SOURCE);
+    request.handle = listener;
+    request.interests = NETWORK_READY_ACCEPTABLE;
+    if (network_poll(NETWORK_TEST_OWNER, &request, 1U, &result, 1U, &ready,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK || ready != 1U ||
+        (result.ready & NETWORK_READY_ACCEPTABLE) == 0U ||
+        (result.ready & NETWORK_READY_CONNECTED) != 0U ||
+        result.error != NETWORK_STATUS_OK) {
+        kernel_test_fail("a waiting connection was not reported acceptable");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 2U || after.tcp_listeners != 1U ||
+        after.statistics.tcp_passive_opens !=
+            before.statistics.tcp_passive_opens + 1U) {
+        kernel_test_fail("the second passive open was not counted once");
+    }
+    if (network_close(NETWORK_TEST_OWNER, listener) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the listener refused to close");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U) {
+        kernel_test_fail("closing a listener orphaned the peer it produced");
+    }
+    if (after.statistics.tcp_refusals !=
+            before.statistics.tcp_refusals + 1U) {
+        kernel_test_fail("the unaccepted peer was dropped rather than refused");
+    }
+    if (network_udp_receive(NETWORK_TEST_OWNER, knock, &source, &port,
+            received, sizeof(received), &length,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK ||
+        source != NETWORK_TEST_HTTP || port != NETWORK_TEST_KNOCK_PORT ||
+        length != sizeof(network_refusal_notice) - 1U ||
+        !network_bytes_equal(received, network_refusal_notice, length)) {
+        kernel_test_fail("the refused peer never saw the reset");
+    }
+    return knock;
+}
+
+static void network_tcp_listen_scenario(void)
+{
+    network_handle listener;
+    network_handle knock;
+    network_handle accepted = 0U;
+    struct network_state before;
+    struct network_state after;
+    uint8_t received[64];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+    size_t written = 0U;
+    enum network_status status;
+
+    if (!kernel_test_tcp_listen_exit_self_test()) {
+        kernel_test_fail("the passive-open exit contract drifted");
+    }
+    network_require_dhcp();
+    if (network_tcp_open(NETWORK_TEST_OWNER, &listener) !=
+            NETWORK_STATUS_OK) {
+        kernel_test_fail("listening socket allocation failed");
+    }
+    network_tcp_listen_controls(listener);
+    before = network_get_state();
+    knock = network_announce_port(NETWORK_TEST_GATEWAY,
+        NETWORK_TEST_LISTEN_PORT, NETWORK_TEST_KNOCK_SOURCE);
+    status = network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted,
+        &source, &port, UINT64_C(10000000000));
+    if (status != NETWORK_STATUS_OK || accepted == 0U ||
+        source != NETWORK_TEST_HTTP || port == 0U) {
+        kernel_test_fail("the peer's connection was not accepted");
+    }
+    after = network_get_state();
+    if (after.statistics.tcp_passive_opens !=
+            before.statistics.tcp_passive_opens + 1U) {
+        kernel_test_fail("the accepted connection was not a passive open");
+    }
+    if (after.statistics.arp_deferred <= before.statistics.arp_deferred) {
+        kernel_test_fail("the receive path did not defer its unresolved send");
+    }
+    if (after.statistics.tcp_retransmissions <=
+            before.statistics.tcp_retransmissions) {
+        kernel_test_fail("the deferred acknowledgement was never retransmitted");
+    }
+    if (after.tcp_connections != 2U || after.tcp_listeners != 1U) {
+        kernel_test_fail("the passive open did not cost exactly one slot");
+    }
+    if (network_tcp_read(NETWORK_TEST_OWNER, accepted, received,
+            sizeof(received), &length,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        length != sizeof(network_listen_request) - 1U ||
+        !network_bytes_equal(received, network_listen_request, length)) {
+        kernel_test_fail("the accepted connection lost the peer's request");
+    }
+    if (network_tcp_write(NETWORK_TEST_OWNER, accepted, network_welcome,
+            sizeof(network_welcome) - 1U, &written,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK ||
+        written != sizeof(network_welcome) - 1U) {
+        kernel_test_fail("the accepted connection could not answer its peer");
+    }
+    status = network_tcp_read(NETWORK_TEST_OWNER, accepted, received,
+        sizeof(received), &length, NETWORK_DEFAULT_OPERATION_TIMEOUT_NS);
+    if (status != NETWORK_STATUS_CONNECTION_CLOSED || length != 0U) {
+        kernel_test_fail("the peer's close was not reported to the reader");
+    }
+    if (network_tcp_shutdown(NETWORK_TEST_OWNER, accepted,
+            NETWORK_DEFAULT_OPERATION_TIMEOUT_NS) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the accepted connection did not close cleanly");
+    }
+    if (network_close(NETWORK_TEST_OWNER, accepted) != NETWORK_STATUS_OK ||
+        network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("the accepted connection did not release cleanly");
+    }
+    knock = network_tcp_listen_unaccepted(listener);
+    if (network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("passive-open teardown failed");
+    }
+    after = network_get_state();
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U ||
+        after.udp_sockets != 0U || after.timers != 0U) {
+        kernel_test_fail("a passive open left endpoints behind");
+    }
+    if (network_tcp_accept(NETWORK_TEST_OWNER, listener, &accepted, &source,
+            &port, UINT64_C(1000000)) != NETWORK_STATUS_STALE_HANDLE) {
+        kernel_test_fail("a closed listener still accepted connections");
+    }
+}
+
+static void network_tcp_refused_scenario(void)
+{
+    network_handle knock;
+    struct network_state before;
+    struct network_state after;
+    uint8_t received[16];
+    uint32_t source = 0U;
+    uint16_t port = 0U;
+    size_t length = 0U;
+
+    if (!kernel_test_tcp_listen_exit_self_test()) {
+        kernel_test_fail("the passive-open exit contract drifted");
+    }
+    network_require_dhcp();
+    before = network_get_state();
+    /*
+     * Announced to the peer itself, so the peer's hardware address is resolved
+     * before its SYN arrives and the refusal can leave the receive path at
+     * once. Nothing is listening on the announced port.
+     */
+    knock = network_announce_port(NETWORK_TEST_HTTP, NETWORK_TEST_CLOSED_PORT,
+        NETWORK_TEST_KNOCK_SOURCE);
+    if (network_udp_receive(NETWORK_TEST_OWNER, knock, &source, &port,
+            received, sizeof(received), &length,
+            UINT64_C(10000000000)) != NETWORK_STATUS_OK ||
+        source != NETWORK_TEST_HTTP || port != NETWORK_TEST_KNOCK_PORT ||
+        length != sizeof(network_refusal_notice) - 1U ||
+        !network_bytes_equal(received, network_refusal_notice, length)) {
+        kernel_test_fail("the peer did not report a reset from a closed port");
+    }
+    after = network_get_state();
+    if (after.statistics.tcp_refusals != before.statistics.tcp_refusals + 1U) {
+        kernel_test_fail("a SYN to a closed port was not refused exactly once");
+    }
+    if (after.statistics.tcp_accepted != before.statistics.tcp_accepted) {
+        kernel_test_fail("a refused SYN was counted as an accepted segment");
+    }
+    if (after.tcp_connections != 0U || after.tcp_listeners != 0U) {
+        kernel_test_fail("a refused SYN consumed a connection slot");
+    }
+    if (network_close(NETWORK_TEST_OWNER, knock) != NETWORK_STATUS_OK) {
+        kernel_test_fail("refusal teardown failed");
+    }
+    after = network_get_state();
+    if (after.udp_sockets != 0U || after.timers != 0U) {
+        kernel_test_fail("a refusal left endpoints behind");
+    }
+}
+
 static void network_udp_scenario(bool isolate)
 {
     network_handle first;
@@ -6435,7 +7012,7 @@ static void network_linux_cat_twice(void)
 _Noreturn void kernel_test_complete_network(void)
 {
     if (active_scenario < KERNEL_TEST_NETWORK_NIC_DISCOVERY ||
-        active_scenario > KERNEL_TEST_NETWORK_SOCKET_ISOLATION) {
+        active_scenario > KERNEL_TEST_NETWORK_TCP_REFUSED) {
         kernel_test_fail("network completion used outside its scenario");
     }
     cpu_interrupt_enable();
@@ -6725,10 +7302,552 @@ _Noreturn void kernel_test_complete_network(void)
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         network_udp_scenario(true);
         break;
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+        network_tcp_listen_scenario();
+        break;
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
+        network_tcp_refused_scenario();
+        break;
     default:
         kernel_test_fail("unreachable network scenario");
     }
     console_write("\nST NETWORK production path bounded and recoverable\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_multiprocess(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct multiprocess_proof_result proof =
+        multiprocess_get_proof_result();
+
+    if (active_scenario != KERNEL_TEST_MULTIPROCESS) {
+        kernel_test_fail("multiprocess completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_MULTIPROCESS_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_MULTIPROCESS_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != MULTIPROCESS_EXPECTED_SWITCHES ||
+        receipt->proof_counters[1] != MULTIPROCESS_MAX_PROCESSES ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_MULTIPROCESS_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_MULTIPROCESS_PROOF_COMPLETE) ||
+        !kernel_test_multiprocess_exit_self_test()) {
+        kernel_test_fail("multiprocess installed receipt is invalid");
+    }
+    if (proof.process_count != MULTIPROCESS_MAX_PROCESSES ||
+        proof.rounds != MULTIPROCESS_ROUNDS ||
+        proof.switches != MULTIPROCESS_EXPECTED_SWITCHES ||
+        proof.completed != MULTIPROCESS_MAX_PROCESSES ||
+        proof.terminated != 0U ||
+        proof.address_space_table_frames == 0U ||
+        proof.robustness_tests !=
+            MULTIPROCESS_CONTROLLED_ROBUSTNESS_TESTS ||
+        !proof.concurrent_address_spaces ||
+        !proof.round_robin_interleaved || !proof.contexts_preserved ||
+        !proof.isolation_confirmed || !proof.fault_contained ||
+        !proof.teardown_complete || !proof.resource_census_equal ||
+        !multiprocess_resources_released()) {
+        kernel_test_fail("multiprocess installed proof is inconsistent");
+    }
+    kernel_test_pass();
+}
+
+/*
+ * The station addresses the host hands QEMU on its command line, in the order
+ * the driver matrix declares the devices that carry them. Nothing inside the
+ * kernel could produce these values: they travel from the Makefile, through
+ * QEMU's device models, into each part's own EEPROM or address registers, and
+ * back out through the driver that read them. A driver that reported a
+ * plausible-looking address it had not actually fetched would have to invent
+ * all four of these exactly.
+ */
+#define DRIVER_PINNED_STATION_ADDRESSES 4U
+
+static const struct {
+    size_t driver;
+    uint64_t station;
+} driver_pinned_stations[DRIVER_PINNED_STATION_ADDRESSES] = {
+    { 4U, UINT64_C(0x01BBAA005452) },
+    { 5U, UINT64_C(0x02BBAA005452) },
+    { 8U, UINT64_C(0x03BBAA005452) },
+    { 12U, UINT64_C(0x04BBAA005452) }
+};
+
+_Noreturn void kernel_test_complete_driver_matrix(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct driver_matrix_result matrix = driver_matrix_get_result();
+    const bool every_device = active_scenario == KERNEL_TEST_DRIVER_MATRIX;
+    const uint32_t expected_present = every_device ?
+        (uint32_t)driver_matrix_count() : 5U;
+    uint32_t reset_capable = 0U;
+
+    if (active_scenario != KERNEL_TEST_DRIVER_MATRIX &&
+        active_scenario != KERNEL_TEST_DRIVER_MATRIX_BUILTIN) {
+        kernel_test_fail("driver completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger,
+        BOOT_STAGE_DRIVER_MATRIX_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_DRIVER_MATRIX_PROBE);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != matrix.bound ||
+        receipt->proof_counters[1] != matrix.present ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_PROBE_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_DRIVER_MATRIX_DEVICES_ABSENT) ||
+        !kernel_test_driver_matrix_exit_self_test()) {
+        kernel_test_fail("driver matrix receipt is invalid");
+    }
+    if (matrix.declared != driver_matrix_count() ||
+        matrix.controls != DRIVER_MATRIX_CONTROLLED_CONTROLS ||
+        matrix.present != expected_present ||
+        matrix.bound != matrix.present ||
+        !matrix.every_present_device_bound || !matrix.teardown_complete ||
+        !matrix.resource_census_equal || matrix.register_reads == 0U ||
+        matrix.register_writes == 0U ||
+        !driver_matrix_resources_released()) {
+        kernel_test_fail("driver matrix result is inconsistent");
+    }
+    for (size_t index = 0U; index < driver_matrix_count(); ++index) {
+        const struct driver_probe *probe = &matrix.probes[index];
+        const bool memory_driver =
+            driver_matrix_access(index) == DRIVER_ACCESS_MEMORY;
+
+        if (!every_device && !probe->present) {
+            if (probe->bound || probe->identity != 0U) {
+                kernel_test_fail("an absent device reported a bound driver");
+            }
+            continue;
+        }
+        if (!probe->present || !probe->bound ||
+            probe->vendor_id != driver_matrix_vendor(index) ||
+            probe->device_id != driver_matrix_device(index) ||
+            probe->identity == 0U) {
+            kernel_test_fail("a declared driver did not bind its device");
+        }
+        if (memory_driver) {
+            if (probe->register_bytes == 0U ||
+                probe->reset_observed != driver_matrix_defines_reset(index)) {
+                kernel_test_fail("a driver did not honour its reset contract");
+            }
+            if (driver_matrix_defines_reset(index)) {
+                ++reset_capable;
+            }
+        } else if (probe->register_bytes != 0U || probe->reset_observed ||
+            driver_matrix_defines_reset(index)) {
+            kernel_test_fail("a configuration driver mapped a window");
+        }
+    }
+    if (matrix.resets != reset_capable) {
+        kernel_test_fail("the recorded reset count is inconsistent");
+    }
+    if (every_device) {
+        for (size_t index = 0U; index < DRIVER_PINNED_STATION_ADDRESSES;
+             ++index) {
+            const size_t driver = driver_pinned_stations[index].driver;
+
+            if (driver >= driver_matrix_count() ||
+                matrix.probes[driver].identity !=
+                    driver_pinned_stations[index].station) {
+                kernel_test_fail(
+                    "a driver did not read its device's real station address");
+            }
+        }
+    }
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_audio(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+    const struct audio_proof_result proof = audio_get_proof_result();
+    uint32_t identified = 0U;
+
+    if (active_scenario != KERNEL_TEST_AUDIO) {
+        kernel_test_fail("audio completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger, BOOT_STAGE_AUDIO_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_AUDIO_CODEC_PROOF);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        receipt->result != BOOT_RECEIPT_RAN ||
+        receipt->proof_counter_count != 2U ||
+        receipt->proof_counters[0] != proof.responses_received ||
+        receipt->proof_counters[1] != proof.codecs_identified ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_FOUNDATION_AVAILABLE) ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_CODEC_PROOF_COMPLETE) ||
+        boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_AUDIO_CONTROLLER_ABSENT) ||
+        !kernel_test_audio_exit_self_test()) {
+        kernel_test_fail("HD Audio receipt is invalid");
+    }
+    if (proof.controls != AUDIO_CONTROLLED_CONTROLS ||
+        (proof.version >> 8U) != 1U || proof.capability == 0U ||
+        proof.output_streams == 0U || proof.corb_entries == 0U ||
+        proof.rirb_entries == 0U || proof.codecs_present == 0U ||
+        proof.codecs_identified != proof.codecs_present ||
+        proof.verbs_issued == 0U ||
+        proof.responses_received != proof.verbs_issued ||
+        !proof.controller_reset || !proof.rings_running ||
+        !proof.audio_function_group_found ||
+        !proof.device_wrote_response_ring ||
+        !proof.bus_master_withdrawn_before_release ||
+        !proof.teardown_complete || !proof.resource_census_equal ||
+        !audio_resources_released()) {
+        kernel_test_fail("HD Audio proof is inconsistent");
+    }
+    for (size_t index = 0U; index < AUDIO_MAX_CODECS; ++index) {
+        const struct audio_codec *codec = &proof.codecs[index];
+
+        if (!codec->identified) {
+            continue;
+        }
+        ++identified;
+        if (codec->address != index || codec->vendor_device == 0U ||
+            (codec->vendor_device >> 16U) == 0U ||
+            codec->vendor_device == UINT32_C(0xFFFFFFFF) ||
+            codec->first_group_node == 0U || codec->group_node_count == 0U) {
+            kernel_test_fail("a codec did not identify itself");
+        }
+    }
+    if (identified != proof.codecs_identified) {
+        kernel_test_fail("the recorded codec count is inconsistent");
+    }
+    /*
+     * Nothing this side of the link produces a codec identity, and no other
+     * scenario reaches this device. The bounded proof leaves no allocation,
+     * no claim and no bus master behind.
+     */
+    if (dma_get_state().active_allocations != 0U ||
+        pci_resource_get_state().bus_masters != 0U ||
+        pci_resource_get_state().active_claims != 0U) {
+        kernel_test_fail("the HD Audio proof left the machine holding memory");
+    }
+    kernel_test_pass();
+}
+
+/*
+ * The published encodings this scenario re-derives independently of the
+ * driver's own table. Each is a master control register value built from the
+ * documented field layout -- part number in bits 20 through 28, revision in
+ * the low byte -- and the family Nouveau's device table puts it in. They are
+ * constructed from that encoding rather than captured from a board, and this
+ * scenario exists to make that construction check the same decode the driver
+ * would use on real silicon.
+ */
+static const struct {
+    uint32_t boot0;
+    uint32_t chipset;
+    enum nvidia_architecture architecture;
+} nvidia_published_encodings[] = {
+    { UINT32_C(0x050000A2), UINT32_C(0x050), NVIDIA_ARCHITECTURE_TESLA },
+    { UINT32_C(0x0A0000A3), UINT32_C(0x0A0), NVIDIA_ARCHITECTURE_TESLA },
+    { UINT32_C(0x0C0000A3), UINT32_C(0x0C0), NVIDIA_ARCHITECTURE_FERMI },
+    { UINT32_C(0x0D9000A1), UINT32_C(0x0D9), NVIDIA_ARCHITECTURE_FERMI },
+    { UINT32_C(0x0E4000A1), UINT32_C(0x0E4), NVIDIA_ARCHITECTURE_KEPLER },
+    { UINT32_C(0x108000A1), UINT32_C(0x108), NVIDIA_ARCHITECTURE_KEPLER },
+    { UINT32_C(0x117000A1), UINT32_C(0x117), NVIDIA_ARCHITECTURE_MAXWELL },
+    { UINT32_C(0x124000A1), UINT32_C(0x124), NVIDIA_ARCHITECTURE_MAXWELL },
+    { UINT32_C(0x134000A1), UINT32_C(0x134), NVIDIA_ARCHITECTURE_PASCAL },
+    { UINT32_C(0x140000A1), UINT32_C(0x140), NVIDIA_ARCHITECTURE_VOLTA },
+    { UINT32_C(0x164000A1), UINT32_C(0x164), NVIDIA_ARCHITECTURE_TURING },
+    { UINT32_C(0x172000A1), UINT32_C(0x172), NVIDIA_ARCHITECTURE_AMPERE },
+    { UINT32_C(0x192000A1), UINT32_C(0x192), NVIDIA_ARCHITECTURE_ADA }
+};
+
+#define NVIDIA_PUBLISHED_ENCODINGS \
+    (sizeof(nvidia_published_encodings) / \
+        sizeof(nvidia_published_encodings[0]))
+
+/*
+ * The declared shape of the fifteen drivers, restated outside the driver so a
+ * table that changed quietly has to change in two places. Eight map one
+ * register window each, one reads the aperture descriptions a claim produces,
+ * six read configuration space and take nothing, and exactly one writes.
+ */
+static const struct {
+    uint8_t class_code;
+    uint8_t subclass;
+    enum nvidia_access access;
+    bool writes_registers;
+} nvidia_declared_drivers[NVIDIA_DRIVER_COUNT] = {
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, true },
+    { UINT8_C(0x04), UINT8_C(0x03), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_APERTURE, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_CONFIGURATION, false },
+    { UINT8_C(0x03), UINT8_C(0xFF), NVIDIA_ACCESS_MEMORY, false }
+};
+
+static void nvidia_require_pure_layer(void)
+{
+    size_t controls = 0U;
+    size_t reference_length = 0U;
+    const uint8_t *reference;
+    uint32_t writers = 0U;
+
+    if (!kernel_test_nvidia_exit_self_test()) {
+        kernel_test_fail("the NVIDIA exit contract drifted");
+    }
+    if (!nvidia_foundation_self_test(&controls) ||
+        controls != NVIDIA_CONTROLLED_CONTROLS) {
+        kernel_test_fail("the NVIDIA foundation controls did not all pass");
+    }
+    if (nvidia_driver_count() != NVIDIA_DRIVER_COUNT) {
+        kernel_test_fail("the NVIDIA driver table changed size");
+    }
+    for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+        if (nvidia_driver_name(index) == NULL ||
+            nvidia_driver_class(index) !=
+                nvidia_declared_drivers[index].class_code ||
+            nvidia_driver_subclass(index) !=
+                nvidia_declared_drivers[index].subclass ||
+            nvidia_driver_access(index) !=
+                nvidia_declared_drivers[index].access ||
+            nvidia_driver_interface(index) != UINT8_C(0xFF) ||
+            nvidia_driver_writes_registers(index) !=
+                nvidia_declared_drivers[index].writes_registers) {
+            kernel_test_fail("an NVIDIA driver is not the one declared");
+        }
+        if (nvidia_driver_writes_registers(index)) {
+            ++writers;
+        }
+    }
+    if (writers != 1U) {
+        kernel_test_fail("the NVIDIA drivers gained a second writer");
+    }
+    /*
+     * Every published encoding, decoded again here rather than trusted from
+     * the driver's own self-test.
+     */
+    for (size_t index = 0U; index < NVIDIA_PUBLISHED_ENCODINGS; ++index) {
+        const struct nvidia_identity identity =
+            nvidia_decode_identity(nvidia_published_encodings[index].boot0);
+
+        if (!identity.recognized ||
+            identity.chipset != nvidia_published_encodings[index].chipset ||
+            identity.architecture !=
+                nvidia_published_encodings[index].architecture ||
+            identity.revision !=
+                (nvidia_published_encodings[index].boot0 & UINT32_C(0xFF)) ||
+            identity.family != (identity.chipset & UINT32_C(0x1F0))) {
+            kernel_test_fail("a published NVIDIA encoding decoded wrongly");
+        }
+    }
+    /* An absent aperture and a dead bus are both refused, never guessed. */
+    if (nvidia_decode_identity(0U).recognized ||
+        nvidia_decode_identity(UINT32_MAX).recognized ||
+        nvidia_decode_identity(UINT32_C(0x180000A1)).recognized) {
+        kernel_test_fail("the NVIDIA decode invented a part");
+    }
+    reference = nvidia_reference_vbios(&reference_length);
+    if (reference == NULL || reference_length != 1024U ||
+        reference[0] != UINT8_C(0x55) || reference[1] != UINT8_C(0xAA) ||
+        reference[0x40] != (uint8_t)'P' || reference[0x41] != (uint8_t)'C' ||
+        reference[0x42] != (uint8_t)'I' || reference[0x43] != (uint8_t)'R' ||
+        reference[0x44] != UINT8_C(0xDE) || reference[0x45] != UINT8_C(0x10) ||
+        reference[0x100] != UINT8_C(0xFF) ||
+        reference[0x101] != UINT8_C(0xB8) ||
+        reference[0x102] != (uint8_t)'B') {
+        kernel_test_fail("the reference VBIOS image is not the pinned one");
+    }
+    if (!nvidia_resources_released()) {
+        kernel_test_fail("the NVIDIA drivers are holding a claim");
+    }
+}
+
+_Noreturn void kernel_test_complete_nvidia(void)
+{
+    const struct boot_ledger *ledger = boot_ledger_installed();
+    const struct boot_stage_receipt *foundation;
+    const struct boot_stage_receipt *receipt;
+
+    if (active_scenario != KERNEL_TEST_NVIDIA &&
+        active_scenario != KERNEL_TEST_NVIDIA_BUILTIN) {
+        kernel_test_fail("NVIDIA completion used outside its scenario");
+    }
+    foundation = boot_ledger_receipt_for(ledger, BOOT_STAGE_NVIDIA_FOUNDATION);
+    receipt = boot_ledger_receipt_for(ledger, BOOT_STAGE_NVIDIA_PROBE);
+    if (ledger == NULL || foundation == NULL || receipt == NULL ||
+        foundation->result != BOOT_RECEIPT_RAN ||
+        !boot_ledger_has_capability(ledger,
+            BOOT_CAPABILITY_NVIDIA_FOUNDATION_AVAILABLE)) {
+        kernel_test_fail("the NVIDIA foundation receipt is invalid");
+    }
+    nvidia_require_pure_layer();
+
+    if (active_scenario == KERNEL_TEST_NVIDIA_BUILTIN) {
+        /*
+         * The probe was never asked for, so the ledger must say it was
+         * skipped and say why, and nothing may have been claimed.
+         */
+        if (receipt->result != BOOT_RECEIPT_SKIPPED ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_FUNCTIONS_ABSENT) ||
+            boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_PROBE_COMPLETE)) {
+            kernel_test_fail("a skipped NVIDIA probe was not recorded as one");
+        }
+        if (pci_resource_get_state().active_claims != 0U ||
+            pci_resource_get_state().active_mappings != 0U ||
+            dma_get_state().active_allocations != 0U) {
+            kernel_test_fail("the skipped NVIDIA probe still took resources");
+        }
+        kernel_test_pass();
+    }
+
+    {
+        const struct nvidia_result probe = nvidia_get_result();
+
+        if (receipt->result != BOOT_RECEIPT_RAN ||
+            receipt->proof_counter_count != 2U ||
+            receipt->proof_counters[0] != probe.bound ||
+            receipt->proof_counters[1] != probe.controls ||
+            !boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_PROBE_COMPLETE) ||
+            boot_ledger_has_capability(ledger,
+                BOOT_CAPABILITY_NVIDIA_FUNCTIONS_ABSENT)) {
+            kernel_test_fail("the NVIDIA probe receipt is invalid");
+        }
+        if (probe.declared != NVIDIA_DRIVER_COUNT ||
+            probe.controls != NVIDIA_CONTROLLED_CONTROLS ||
+            probe.bound != probe.present ||
+            !probe.every_present_function_bound ||
+            !probe.teardown_complete || !probe.resource_census_equal) {
+            kernel_test_fail("the NVIDIA probe is inconsistent");
+        }
+        /*
+         * Absence is the answer this machine gives, and it has to be given
+         * honestly: no function present means no register was read, no claim
+         * was taken, and no identity was invented.
+         */
+        if (!probe.any_function_present) {
+            /*
+             * Absence has to be a refusal rather than an empty machine. This
+             * scenario attaches display and HD Audio functions of exactly the
+             * classes these drivers match on, from vendors that are not
+             * NVIDIA, so "no function present" means every one of them was
+             * turned down on the one field that decides it.
+             */
+            size_t candidates = 0U;
+
+            for (size_t index = 0U; index < pci_function_count(); ++index) {
+                const struct pci_function *function = pci_function_at(index);
+
+                if (function == NULL) {
+                    continue;
+                }
+                if (function->vendor_id == NVIDIA_VENDOR_ID) {
+                    kernel_test_fail(
+                        "an NVIDIA function was present and reported absent");
+                }
+                for (size_t driver = 0U; driver < NVIDIA_DRIVER_COUNT;
+                     ++driver) {
+                    const uint8_t subclass = nvidia_driver_subclass(driver);
+
+                    if (function->class_code != nvidia_driver_class(driver)) {
+                        continue;
+                    }
+                    if (subclass == UINT8_C(0xFF) ?
+                            (function->subclass == 0U ||
+                                function->subclass == 2U) :
+                            function->subclass == subclass) {
+                        ++candidates;
+                        break;
+                    }
+                }
+            }
+            if (candidates < 3U) {
+                kernel_test_fail("the NVIDIA refusal had nothing to refuse");
+            }
+            if (probe.present != 0U || probe.bound != 0U ||
+                probe.register_reads != 0U || probe.register_writes != 0U ||
+                probe.identity.recognized || probe.vbios_valid ||
+                probe.identity.boot0 != 0U) {
+                kernel_test_fail("an absent NVIDIA board reported readings");
+            }
+            for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+                if (probe.probes[index].present ||
+                    probe.probes[index].bound ||
+                    probe.probes[index].identity != 0U) {
+                    kernel_test_fail("an absent NVIDIA driver reported a bind");
+                }
+            }
+        } else {
+            /*
+             * Never yet observed on any machine this has run on. If it ever
+             * is, every bound driver has to have read something, and only the
+             * video BIOS driver may have written.
+             */
+            for (size_t index = 0U; index < NVIDIA_DRIVER_COUNT; ++index) {
+                const struct nvidia_driver_probe *entry = &probe.probes[index];
+
+                if (!entry->bound) {
+                    continue;
+                }
+                if (entry->vendor_id != NVIDIA_VENDOR_ID ||
+                    (entry->register_writes != 0U &&
+                        !nvidia_driver_writes_registers(index))) {
+                    kernel_test_fail("a bound NVIDIA driver broke its bounds");
+                }
+                /*
+                 * The aperture driver reads the BAR descriptions a claim
+                 * produced and touches no register at all, which is a
+                 * stronger statement than "it read something" and is worth
+                 * asserting as exactly zero. Everything else has to have
+                 * actually asked the device a question.
+                 */
+                if (nvidia_driver_access(index) ==
+                        NVIDIA_ACCESS_APERTURE) {
+                    if (entry->register_reads != 0U ||
+                        entry->register_writes != 0U) {
+                        kernel_test_fail(
+                            "the NVIDIA aperture driver touched a register");
+                    }
+                } else if (entry->register_reads == 0U) {
+                    kernel_test_fail("a bound NVIDIA driver read nothing");
+                }
+            }
+            if (!probe.identity.recognized) {
+                kernel_test_fail("a present NVIDIA board was not identified");
+            }
+        }
+        if (pci_resource_get_state().active_claims != 0U ||
+            pci_resource_get_state().bus_masters != 0U ||
+            dma_get_state().active_allocations != 0U ||
+            !nvidia_resources_released()) {
+            kernel_test_fail("the NVIDIA probe left the machine holding a claim");
+        }
+    }
     kernel_test_pass();
 }
 
@@ -6978,6 +8097,24 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "network-persistence";
     case KERNEL_TEST_NETWORK_SOCKET_ISOLATION:
         return "network-socket-isolation";
+    case KERNEL_TEST_NETWORK_TCP_LISTEN:
+        return "network-tcp-listen";
+    case KERNEL_TEST_NETWORK_TCP_REFUSED:
+        return "network-tcp-refused";
+    case KERNEL_TEST_MULTIPROCESS:
+        return "multiprocess";
+    case KERNEL_TEST_MULTIPROCESS_SLOTS:
+        return "multiprocess-slots";
+    case KERNEL_TEST_DRIVER_MATRIX:
+        return "driver-matrix";
+    case KERNEL_TEST_DRIVER_MATRIX_BUILTIN:
+        return "driver-matrix-builtin";
+    case KERNEL_TEST_AUDIO:
+        return "audio";
+    case KERNEL_TEST_NVIDIA:
+        return "nvidia";
+    case KERNEL_TEST_NVIDIA_BUILTIN:
+        return "nvidia-builtin";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

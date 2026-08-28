@@ -227,6 +227,16 @@ struct process_alias_runtime {
     uint64_t generation;
     struct process_alias_page_runtime pages[PAGING_PROCESS_ALIAS_MAX_PAGES];
     size_t count;
+    /*
+     * Where this narrowing sits in the order narrowings were installed.
+     * Narrowing the kernel identity alias of a frame can split the 2 MiB page
+     * that contains it, and a second frame in the same region then borrows
+     * that split table rather than making its own. Restoring the splitter
+     * first would free a table the borrower still has a leaf in, so a
+     * narrowing may only be restored while it is the newest one owned. The
+     * order is what makes that check possible.
+     */
+    size_t order;
     bool owned;
 };
 
@@ -237,8 +247,20 @@ struct supervisor_mapping_intent {
     uint32_t permissions;
 };
 
-static struct process_space_runtime process_space_runtime;
-static struct process_alias_runtime process_alias_runtime;
+/*
+ * Sapote used to hold exactly one private hierarchy, so ownership was a single
+ * boolean and every operation could reach the runtime directly. A scheduler
+ * that runs several processes needs their hierarchies to exist at the same
+ * time, so ownership became a bounded set of slots and every operation now
+ * resolves the caller's token to one of them. The token already carried the
+ * root address, generation and state, so nothing new crosses the boundary:
+ * what changed is that a token now identifies a slot instead of confirming the
+ * only one. A space and its narrowings share an index, which is what makes a
+ * process's aliases that process's rather than the kernel's.
+ */
+static struct process_space_runtime process_spaces[PAGING_PROCESS_SPACE_SLOTS];
+static struct process_alias_runtime process_aliases[PAGING_PROCESS_SPACE_SLOTS];
+static size_t next_alias_order = 1U;
 static struct {
     size_t failure_ordinal;
     size_t allocation_count;
@@ -766,6 +788,16 @@ enum paging_status paging_device_windows_validate(
     return PAGING_STATUS_OK;
 }
 
+static bool hierarchy_is_process(const struct page_hierarchy *hierarchy)
+{
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        if (hierarchy == &process_spaces[index].hierarchy) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static enum paging_status allocate_table(
     struct page_hierarchy *hierarchy,
     uint64_t *physical_address
@@ -773,8 +805,7 @@ static enum paging_status allocate_table(
 {
     uintptr_t frame = 0U;
 
-    if (process_table_failure.armed &&
-        hierarchy == &process_space_runtime.hierarchy) {
+    if (process_table_failure.armed && hierarchy_is_process(hierarchy)) {
         ++process_table_failure.allocation_count;
         if (process_table_failure.allocation_count ==
                 process_table_failure.failure_ordinal) {
@@ -2008,20 +2039,91 @@ static void zero_process_alias_set(struct paging_process_alias_set *alias)
     alias->active = false;
 }
 
-static bool process_space_matches(const struct paging_process_space *space)
+/*
+ * A token names one slot. Every field it carries is compared, so a stale token
+ * from a released space cannot name the slot that replaced it: the generation
+ * is monotonic and never reused within a boot.
+ */
+static struct process_space_runtime *resolve_process_space(
+    const struct paging_process_space *space
+)
 {
-    return space != NULL && process_space_runtime.owned &&
-        space->root_physical_address == process_space_runtime.hierarchy.root &&
-        space->generation == process_space_runtime.generation &&
-        space->state == process_space_runtime.state;
+    if (space == NULL) {
+        return NULL;
+    }
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        struct process_space_runtime *slot = &process_spaces[index];
+
+        if (slot->owned &&
+            space->root_physical_address == slot->hierarchy.root &&
+            space->generation == slot->generation &&
+            space->state == slot->state) {
+            return slot;
+        }
+    }
+    return NULL;
 }
 
-static void sync_process_space(struct paging_process_space *space)
+static size_t process_space_index(const struct process_space_runtime *slot)
 {
-    space->root_physical_address = process_space_runtime.hierarchy.root;
-    space->generation = process_space_runtime.generation;
-    space->table_frames = process_space_runtime.hierarchy.table_frames;
-    space->state = process_space_runtime.state;
+    return (size_t)(slot - &process_spaces[0]);
+}
+
+static struct process_alias_runtime *process_space_alias(
+    const struct process_space_runtime *slot
+)
+{
+    return &process_aliases[process_space_index(slot)];
+}
+
+static bool any_process_space_owned(void)
+{
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        if (process_spaces[index].owned) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool any_process_alias_owned(void)
+{
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        if (process_aliases[index].owned) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The newest narrowing still owned. Restoring anything older would free or
+ * rewrite a split table a newer narrowing still depends on, so this is the
+ * only alias a restore may name.
+ */
+static size_t newest_owned_alias_order(void)
+{
+    size_t newest = 0U;
+
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        const struct process_alias_runtime *alias = &process_aliases[index];
+
+        if (alias->owned && alias->order > newest) {
+            newest = alias->order;
+        }
+    }
+    return newest;
+}
+
+static void sync_process_space(
+    const struct process_space_runtime *slot,
+    struct paging_process_space *space
+)
+{
+    space->root_physical_address = slot->hierarchy.root;
+    space->generation = slot->generation;
+    space->table_frames = slot->hierarchy.table_frames;
+    space->state = slot->state;
 }
 
 static void release_table_tree(
@@ -2182,14 +2284,18 @@ static bool process_mapping_request_valid(
     return false;
 }
 
-static bool process_alias_contains(uint64_t physical_address)
+static bool process_alias_contains(
+    const struct process_space_runtime *slot,
+    uint64_t physical_address
+)
 {
-    if (!process_alias_runtime.owned) {
+    const struct process_alias_runtime *alias = process_space_alias(slot);
+
+    if (!alias->owned) {
         return false;
     }
-    for (size_t index = 0U; index < process_alias_runtime.count; ++index) {
-        if (process_alias_runtime.pages[index].physical_address ==
-                physical_address) {
+    for (size_t index = 0U; index < alias->count; ++index) {
+        if (alias->pages[index].physical_address == physical_address) {
             return true;
         }
     }
@@ -2355,6 +2461,7 @@ enum paging_status paging_process_space_build(
     struct paging_process_space *space
 )
 {
+    struct process_space_runtime *slot = NULL;
     struct paging_audit audit;
     uint64_t root = 0U;
     enum paging_status status;
@@ -2366,61 +2473,73 @@ enum paging_status paging_process_space_build(
     if (!state.active) {
         return PAGING_STATUS_NOT_INITIALIZED;
     }
-    if (process_space_runtime.owned || process_alias_runtime.owned) {
+    for (size_t index = 0U; index < PAGING_PROCESS_SPACE_SLOTS; ++index) {
+        if (!process_spaces[index].owned &&
+            !process_aliases[index].owned) {
+            slot = &process_spaces[index];
+            break;
+        }
+    }
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BUSY;
     }
+    /*
+     * A hierarchy is built from the installed one, so the processor has to be
+     * running on the installed one. That stays true with several slots: a new
+     * space may only be built from the kernel's own tables, never from inside
+     * another process's.
+     */
     if ((cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    process_space_runtime.hierarchy.root = 0U;
-    process_space_runtime.hierarchy.arena_base = 0U;
-    process_space_runtime.hierarchy.arena_capacity = 0U;
-    process_space_runtime.hierarchy.arena_used = 0U;
-    process_space_runtime.hierarchy.table_frames = 0U;
-    process_space_runtime.hierarchy.live = false;
-    status = allocate_table(&process_space_runtime.hierarchy, &root);
+    slot->hierarchy.root = 0U;
+    slot->hierarchy.arena_base = 0U;
+    slot->hierarchy.arena_capacity = 0U;
+    slot->hierarchy.arena_used = 0U;
+    slot->hierarchy.table_frames = 0U;
+    slot->hierarchy.live = false;
+    status = allocate_table(&slot->hierarchy, &root);
     if (status != PAGING_STATUS_OK) {
         return status;
     }
-    process_space_runtime.hierarchy.root = root;
-    process_space_runtime.owned = true;
-    process_space_runtime.generation = next_process_generation++;
+    slot->hierarchy.root = root;
+    slot->owned = true;
+    slot->generation = next_process_generation++;
     if (next_process_generation == 0U) {
         next_process_generation = 1U;
     }
-    process_space_runtime.state = PAGING_PROCESS_SPACE_BUILDING;
-    status = build_identity_map(&process_space_runtime.hierarchy,
-        &installed_device_windows);
+    slot->state = PAGING_PROCESS_SPACE_BUILDING;
+    status = build_identity_map(&slot->hierarchy, &installed_device_windows);
     if (status == PAGING_STATUS_OK) {
-        status = validate_identity_map(&process_space_runtime.hierarchy,
+        status = validate_identity_map(&slot->hierarchy,
             &installed_device_windows, state.pat_after);
     }
     if (status == PAGING_STATUS_OK) {
-        status = replay_supervisor_intent(&process_space_runtime.hierarchy);
+        status = replay_supervisor_intent(&slot->hierarchy);
     }
     if (status == PAGING_STATUS_OK) {
-        audit_hierarchy(&process_space_runtime.hierarchy, &audit);
+        audit_hierarchy(&slot->hierarchy, &audit);
         if (audit.write_execute_leaves != 0U || audit.user_leaves != 0U ||
-            !no_user_bits_in_table(process_space_runtime.hierarchy.root,
+            !no_user_bits_in_table(slot->hierarchy.root,
                 PAGING_LEVEL_COUNT)) {
             status = PAGING_STATUS_VALIDATION_FAILURE;
         }
     }
     if (status != PAGING_STATUS_OK) {
-        release_table_tree(&process_space_runtime.hierarchy,
-            process_space_runtime.hierarchy.root, PAGING_LEVEL_COUNT);
-        process_space_runtime.owned = false;
-        process_space_runtime.state = PAGING_PROCESS_SPACE_INVALID;
+        release_table_tree(&slot->hierarchy, slot->hierarchy.root,
+            PAGING_LEVEL_COUNT);
+        slot->owned = false;
+        slot->state = PAGING_PROCESS_SPACE_INVALID;
         return status;
     }
-    sync_process_space(space);
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
 bool paging_process_table_failure_arm(size_t allocation_ordinal)
 {
     if (allocation_ordinal == 0U || process_table_failure.armed ||
-        process_space_runtime.owned || process_alias_runtime.owned ||
+        any_process_space_owned() || any_process_alias_owned() ||
         !state.active || (cpu_read_cr3() & PAGE_FRAME_MASK) !=
             live_hierarchy.root) {
         return false;
@@ -2448,8 +2567,8 @@ bool paging_process_table_failure_result(
 
 bool paging_process_table_failure_disarm(void)
 {
-    if (!process_table_failure.armed || process_space_runtime.owned ||
-        process_alias_runtime.owned ||
+    if (!process_table_failure.armed || any_process_space_owned() ||
+        any_process_alias_owned() ||
         (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return false;
     }
@@ -2466,6 +2585,7 @@ bool paging_process_table_failure_armed(void)
 }
 
 static enum paging_status restore_alias_page(
+    struct process_space_runtime *slot,
     struct process_alias_page_runtime *page,
     bool private_hierarchy
 )
@@ -2474,7 +2594,7 @@ static enum paging_status restore_alias_page(
         if (page->private_saved_entry == 0U) {
             return PAGING_STATUS_OK;
         }
-        return restore_identity_alias(&process_space_runtime.hierarchy,
+        return restore_identity_alias(&slot->hierarchy,
             page->physical_address, page->private_saved_entry,
             page->private_split_table, page->private_split);
     }
@@ -2485,18 +2605,22 @@ static enum paging_status restore_alias_page(
         page->saved_entry, page->split_table, page->split);
 }
 
-static enum paging_status rollback_alias_pages(size_t count)
+static enum paging_status rollback_alias_pages(
+    struct process_space_runtime *slot,
+    size_t count
+)
 {
+    struct process_alias_runtime *alias = process_space_alias(slot);
     enum paging_status result = PAGING_STATUS_OK;
 
     for (size_t remaining = count; remaining > 0U; --remaining) {
-        if (restore_alias_page(&process_alias_runtime.pages[remaining - 1U],
+        if (restore_alias_page(slot, &alias->pages[remaining - 1U],
                 true) != PAGING_STATUS_OK) {
             result = PAGING_STATUS_PROCESS_ALIAS_STATE;
         }
     }
     for (size_t remaining = count; remaining > 0U; --remaining) {
-        if (restore_alias_page(&process_alias_runtime.pages[remaining - 1U],
+        if (restore_alias_page(slot, &alias->pages[remaining - 1U],
                 false) != PAGING_STATUS_OK) {
             result = PAGING_STATUS_PROCESS_ALIAS_STATE;
         }
@@ -2511,21 +2635,24 @@ static enum paging_status narrow_alias_pages(
     size_t count
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
+    struct process_alias_runtime *alias;
     enum paging_status status;
 
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
+    alias = process_space_alias(slot);
     if (physical_addresses == NULL || count == 0U ||
         count > PAGING_PROCESS_ALIAS_MAX_PAGES) {
         return PAGING_STATUS_PROCESS_ALIAS_STATE;
     }
-    if (process_space_runtime.state != PAGING_PROCESS_SPACE_BUILDING ||
-        process_alias_runtime.owned || cpu_interrupts_enabled() ||
+    if (slot->state != PAGING_PROCESS_SPACE_BUILDING ||
+        alias->owned || cpu_interrupts_enabled() ||
         (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_PROCESS_ALIAS_STATE;
     }
-    process_alias_runtime.count = 0U;
+    alias->count = 0U;
     for (size_t index = 0U; index < count; ++index) {
         const uint64_t physical_address = physical_addresses[index];
 
@@ -2539,10 +2666,25 @@ static enum paging_status narrow_alias_pages(
                 return PAGING_STATUS_PROCESS_ALIAS_STATE;
             }
         }
+        /*
+         * A frame another live space has already narrowed is not this space's
+         * to narrow again: the two would save and restore the same entry.
+         */
+        for (size_t other = 0U; other < PAGING_PROCESS_SPACE_SLOTS; ++other) {
+            const struct process_alias_runtime *held = &process_aliases[other];
+
+            if (held == alias || !held->owned) {
+                continue;
+            }
+            for (size_t page = 0U; page < held->count; ++page) {
+                if (held->pages[page].physical_address == physical_address) {
+                    return PAGING_STATUS_PROCESS_ALIAS_STATE;
+                }
+            }
+        }
     }
     for (size_t index = 0U; index < count; ++index) {
-        struct process_alias_page_runtime *page =
-            &process_alias_runtime.pages[index];
+        struct process_alias_page_runtime *page = &alias->pages[index];
 
         page->physical_address = physical_addresses[index];
         page->saved_entry = 0U;
@@ -2555,32 +2697,33 @@ static enum paging_status narrow_alias_pages(
             page->physical_address, &page->saved_entry, &page->split_table,
             &page->split);
         if (status != PAGING_STATUS_OK) {
-            (void)restore_alias_page(page, false);
-            if (rollback_alias_pages(index) != PAGING_STATUS_OK) {
+            (void)restore_alias_page(slot, page, false);
+            if (rollback_alias_pages(slot, index) != PAGING_STATUS_OK) {
                 return PAGING_STATUS_PROCESS_ALIAS_STATE;
             }
             return status;
         }
         state.table_frames = live_hierarchy.table_frames;
-        status = narrow_identity_alias(&process_space_runtime.hierarchy,
+        status = narrow_identity_alias(&slot->hierarchy,
             page->physical_address, &page->private_saved_entry,
             &page->private_split_table, &page->private_split);
         if (status != PAGING_STATUS_OK) {
-            (void)restore_alias_page(page, true);
-            (void)restore_alias_page(page, false);
-            if (rollback_alias_pages(index) != PAGING_STATUS_OK) {
+            (void)restore_alias_page(slot, page, true);
+            (void)restore_alias_page(slot, page, false);
+            if (rollback_alias_pages(slot, index) != PAGING_STATUS_OK) {
                 return PAGING_STATUS_PROCESS_ALIAS_STATE;
             }
             state.table_frames = live_hierarchy.table_frames;
             return status;
         }
-        process_alias_runtime.count = index + 1U;
+        alias->count = index + 1U;
     }
-    process_alias_runtime.generation = next_alias_generation++;
+    alias->generation = next_alias_generation++;
     if (next_alias_generation == 0U) {
         next_alias_generation = 1U;
     }
-    process_alias_runtime.owned = true;
+    alias->order = next_alias_order++;
+    alias->owned = true;
     return PAGING_STATUS_OK;
 }
 
@@ -2590,6 +2733,7 @@ enum paging_status paging_process_image_alias_narrow(
     struct paging_process_image_alias *alias
 )
 {
+    const struct process_space_runtime *narrowed;
     enum paging_status status;
 
     if (alias == NULL) {
@@ -2600,8 +2744,12 @@ enum paging_status paging_process_image_alias_narrow(
     if (status != PAGING_STATUS_OK) {
         return status;
     }
+    narrowed = resolve_process_space(space);
+    if (narrowed == NULL) {
+        return PAGING_STATUS_PROCESS_BAD_TOKEN;
+    }
     alias->physical_address = physical_address;
-    alias->generation = process_alias_runtime.generation;
+    alias->generation = process_space_alias(narrowed)->generation;
     alias->active = true;
     return PAGING_STATUS_OK;
 }
@@ -2613,6 +2761,7 @@ enum paging_status paging_process_alias_set_narrow(
     struct paging_process_alias_set *alias
 )
 {
+    const struct process_space_runtime *narrowed;
     enum paging_status status;
 
     if (alias == NULL) {
@@ -2623,10 +2772,14 @@ enum paging_status paging_process_alias_set_narrow(
     if (status != PAGING_STATUS_OK) {
         return status;
     }
+    narrowed = resolve_process_space(space);
+    if (narrowed == NULL) {
+        return PAGING_STATUS_PROCESS_BAD_TOKEN;
+    }
     for (size_t index = 0U; index < count; ++index) {
         alias->physical_addresses[index] = physical_addresses[index];
     }
-    alias->generation = process_alias_runtime.generation;
+    alias->generation = process_space_alias(narrowed)->generation;
     alias->count = count;
     alias->active = true;
     return PAGING_STATUS_OK;
@@ -2640,6 +2793,7 @@ enum paging_status paging_process_map_user_page(
     uint32_t permissions
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
     struct paging_translation supervisor;
     uint64_t *entry = NULL;
     const bool executable = (permissions & PAGING_EXECUTE) != 0U;
@@ -2648,25 +2802,25 @@ enum paging_status paging_process_map_user_page(
         kind == PAGING_PROCESS_MAPPING_LINUX_ANON;
     enum paging_status status;
 
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if ((!runtime_mapping && process_space_runtime.state !=
+    if ((!runtime_mapping && slot->state !=
             PAGING_PROCESS_SPACE_BUILDING) ||
-        (runtime_mapping && process_space_runtime.state !=
+        (runtime_mapping && slot->state !=
             PAGING_PROCESS_SPACE_BUILDING &&
-            process_space_runtime.state != PAGING_PROCESS_SPACE_INSTALLED &&
-            process_space_runtime.state != PAGING_PROCESS_SPACE_ACTIVE) ||
+            slot->state != PAGING_PROCESS_SPACE_INSTALLED &&
+            slot->state != PAGING_PROCESS_SPACE_ACTIVE) ||
         !process_mapping_request_valid(kind, virtual_address, permissions) ||
         (physical_address & (PAGING_PAGE_SIZE - 1U)) != 0U ||
         !frame_range_overlaps_allocatable_memory(physical_address,
             PAGING_PAGE_SIZE)) {
         return PAGING_STATUS_PROCESS_BAD_MAPPING;
     }
-    if (executable && !process_alias_contains(physical_address)) {
+    if (executable && !process_alias_contains(slot, physical_address)) {
         return PAGING_STATUS_PROCESS_ALIAS_STATE;
     }
-    status = translate_address(&process_space_runtime.hierarchy,
+    status = translate_address(&slot->hierarchy,
         physical_address, &supervisor, state.pat_after);
     if (status != PAGING_STATUS_OK || supervisor.user ||
         supervisor.physical_address != physical_address ||
@@ -2675,18 +2829,17 @@ enum paging_status paging_process_map_user_page(
         (!executable && supervisor.permissions != PAGING_WRITE)) {
         return PAGING_STATUS_PROCESS_BAD_MAPPING;
     }
-    status = entry_for_user(&process_space_runtime.hierarchy, virtual_address,
-        &entry);
+    status = entry_for_user(&slot->hierarchy, virtual_address, &entry);
     if (status != PAGING_STATUS_OK) {
-        sync_process_space(space);
+        sync_process_space(slot, space);
         return status;
     }
     if ((*entry & PAGE_PRESENT) != 0U) {
         return PAGING_STATUS_ALREADY_MAPPED;
     }
     *entry = physical_address | permissions_to_flags(permissions) | PAGE_USER;
-    invalidate(&process_space_runtime.hierarchy, virtual_address);
-    sync_process_space(space);
+    invalidate(&slot->hierarchy, virtual_address);
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
@@ -2696,30 +2849,30 @@ enum paging_status paging_process_unmap_user_page(
     uint64_t virtual_address
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
     uint64_t *entry = NULL;
     const bool runtime_mapping =
         kind == PAGING_PROCESS_MAPPING_LINUX_HEAP ||
         kind == PAGING_PROCESS_MAPPING_LINUX_ANON;
     enum paging_status status;
 
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if ((!runtime_mapping && process_space_runtime.state ==
+    if ((!runtime_mapping && slot->state ==
             PAGING_PROCESS_SPACE_ACTIVE) ||
         !process_unmap_request_valid(kind, virtual_address)) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    status = entry_for(&process_space_runtime.hierarchy, virtual_address, 1U,
-        false, &entry);
+    status = entry_for(&slot->hierarchy, virtual_address, 1U, false, &entry);
     if (status != PAGING_STATUS_OK || (*entry & PAGE_PRESENT) == 0U ||
         (*entry & PAGE_USER) == 0U) {
         return PAGING_STATUS_NOT_MAPPED;
     }
     *entry = 0U;
-    invalidate(&process_space_runtime.hierarchy, virtual_address);
-    reclaim_empty_tables(&process_space_runtime.hierarchy, virtual_address);
-    sync_process_space(space);
+    invalidate(&slot->hierarchy, virtual_address);
+    reclaim_empty_tables(&slot->hierarchy, virtual_address);
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
@@ -2729,6 +2882,8 @@ enum paging_status paging_process_translate(
     struct paging_translation *translation
 )
 {
+    struct process_space_runtime *slot;
+
     if (translation == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
@@ -2737,10 +2892,11 @@ enum paging_status paging_process_translate(
     translation->memory_type = PAGING_MEMORY_INVALID;
     translation->level = 0U;
     translation->user = false;
-    if (!process_space_matches(space)) {
+    slot = resolve_process_space(space);
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    return translate_address(&process_space_runtime.hierarchy, virtual_address,
+    return translate_address(&slot->hierarchy, virtual_address,
         translation, state.pat_after);
 }
 
@@ -2750,31 +2906,32 @@ enum paging_status paging_process_validate(
     const uintptr_t stack_frames[PAGING_PROCESS_STACK_PAGES]
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
+    const struct process_alias_runtime *alias;
     struct paging_translation translation;
     struct paging_audit audit;
 
     if (stack_frames == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if (process_space_runtime.state != PAGING_PROCESS_SPACE_BUILDING ||
-        !process_alias_runtime.owned ||
-        process_alias_runtime.count != 1U ||
-        process_alias_runtime.pages[0].physical_address !=
-            image_physical_address ||
-        !no_user_bits_in_kernel_branch(&process_space_runtime.hierarchy)) {
+    alias = process_space_alias(slot);
+    if (slot->state != PAGING_PROCESS_SPACE_BUILDING ||
+        !alias->owned || alias->count != 1U ||
+        alias->pages[0].physical_address != image_physical_address ||
+        !no_user_bits_in_kernel_branch(&slot->hierarchy)) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    if (translate_address(&process_space_runtime.hierarchy, 0U, &translation,
+    if (translate_address(&slot->hierarchy, 0U, &translation,
             state.pat_after) != PAGING_STATUS_NOT_MAPPED ||
-        translate_address(&process_space_runtime.hierarchy,
+        translate_address(&slot->hierarchy,
             PAGING_PROCESS_STACK_GUARD, &translation, state.pat_after) !=
             PAGING_STATUS_NOT_MAPPED) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    if (translate_address(&process_space_runtime.hierarchy,
+    if (translate_address(&slot->hierarchy,
             PAGING_PROCESS_IMAGE_ADDRESS, &translation, state.pat_after) !=
             PAGING_STATUS_OK || !translation.user ||
         translation.permissions != PAGING_EXECUTE || translation.level != 1U ||
@@ -2782,7 +2939,7 @@ enum paging_status paging_process_validate(
         translation.memory_type != PAGING_MEMORY_WRITE_BACK) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    if (translate_address(&process_space_runtime.hierarchy,
+    if (translate_address(&slot->hierarchy,
             image_physical_address, &translation, state.pat_after) !=
             PAGING_STATUS_OK || translation.user ||
         translation.permissions != PAGING_READ ||
@@ -2793,7 +2950,7 @@ enum paging_status paging_process_validate(
         const uint64_t address = PAGING_PROCESS_STACK_BASE +
             index * PAGING_PAGE_SIZE;
 
-        if (translate_address(&process_space_runtime.hierarchy, address,
+        if (translate_address(&slot->hierarchy, address,
                 &translation, state.pat_after) != PAGING_STATUS_OK ||
             !translation.user || translation.permissions != PAGING_WRITE ||
             translation.level != 1U ||
@@ -2801,16 +2958,16 @@ enum paging_status paging_process_validate(
             return PAGING_STATUS_VALIDATION_FAILURE;
         }
     }
-    audit_hierarchy(&process_space_runtime.hierarchy, &audit);
+    audit_hierarchy(&slot->hierarchy, &audit);
     if (audit.write_execute_leaves != 0U ||
         audit.user_leaves != 1U + PAGING_PROCESS_STACK_PAGES ||
-        (table_at(process_space_runtime.hierarchy.root)[0] & PAGE_USER) != 0U ||
-        (table_at(process_space_runtime.hierarchy.root)
+        (table_at(slot->hierarchy.root)[0] & PAGE_USER) != 0U ||
+        (table_at(slot->hierarchy.root)
             [table_index(PAGING_PROCESS_IMAGE_ADDRESS, 4U)] & PAGE_USER) == 0U) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    process_space_runtime.state = PAGING_PROCESS_SPACE_INSTALLED;
-    sync_process_space(space);
+    slot->state = PAGING_PROCESS_SPACE_INSTALLED;
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
@@ -2820,6 +2977,8 @@ enum paging_status paging_process_validate_linux(
     size_t page_count
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
+    const struct process_alias_runtime *alias;
     struct paging_translation translation;
     struct paging_audit audit;
     size_t executable_pages = 0U;
@@ -2827,24 +2986,25 @@ enum paging_status paging_process_validate_linux(
     if (pages == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if (process_space_runtime.state != PAGING_PROCESS_SPACE_BUILDING ||
-        !process_alias_runtime.owned || page_count == 0U ||
+    alias = process_space_alias(slot);
+    if (slot->state != PAGING_PROCESS_SPACE_BUILDING ||
+        !alias->owned || page_count == 0U ||
         page_count > PAGING_PROCESS_EXPECTED_MAX_PAGES ||
-        !no_user_bits_in_kernel_branch(&process_space_runtime.hierarchy)) {
+        !no_user_bits_in_kernel_branch(&slot->hierarchy)) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    if (translate_address(&process_space_runtime.hierarchy, 0U, &translation,
+    if (translate_address(&slot->hierarchy, 0U, &translation,
             state.pat_after) != PAGING_STATUS_NOT_MAPPED ||
-        translate_address(&process_space_runtime.hierarchy,
+        translate_address(&slot->hierarchy,
             PAGING_LINUX_STACK_GUARD, &translation, state.pat_after) !=
             PAGING_STATUS_NOT_MAPPED ||
-        translate_address(&process_space_runtime.hierarchy,
+        translate_address(&slot->hierarchy,
             PAGING_LINUX_HEAP_BASE, &translation, state.pat_after) !=
             PAGING_STATUS_NOT_MAPPED ||
-        translate_address(&process_space_runtime.hierarchy,
+        translate_address(&slot->hierarchy,
             PAGING_LINUX_ANON_ADDRESS, &translation, state.pat_after) !=
             PAGING_STATUS_NOT_MAPPED) {
         return PAGING_STATUS_VALIDATION_FAILURE;
@@ -2865,7 +3025,7 @@ enum paging_status paging_process_validate_linux(
             expected->permissions);
 
         if ((!image && !uname_image && !cat_image && !stack) ||
-            translate_address(&process_space_runtime.hierarchy,
+            translate_address(&slot->hierarchy,
                 expected->virtual_address, &translation, state.pat_after) !=
                 PAGING_STATUS_OK || !translation.user ||
             translation.permissions != expected->permissions ||
@@ -2882,8 +3042,8 @@ enum paging_status paging_process_validate_linux(
         }
         if ((expected->permissions & PAGING_EXECUTE) != 0U) {
             ++executable_pages;
-            if (!process_alias_contains(expected->physical_address) ||
-                translate_address(&process_space_runtime.hierarchy,
+            if (!process_alias_contains(slot, expected->physical_address) ||
+                translate_address(&slot->hierarchy,
                     expected->physical_address, &translation,
                     state.pat_after) != PAGING_STATUS_OK ||
                 translation.user || translation.permissions != PAGING_READ ||
@@ -2892,40 +3052,47 @@ enum paging_status paging_process_validate_linux(
             }
         }
     }
-    audit_hierarchy(&process_space_runtime.hierarchy, &audit);
-    if (executable_pages != process_alias_runtime.count ||
+    audit_hierarchy(&slot->hierarchy, &audit);
+    if (executable_pages != alias->count ||
         audit.write_execute_leaves != 0U ||
         audit.user_leaves != page_count ||
-        (table_at(process_space_runtime.hierarchy.root)[0] & PAGE_USER) != 0U ||
-        (table_at(process_space_runtime.hierarchy.root)
+        (table_at(slot->hierarchy.root)[0] & PAGE_USER) != 0U ||
+        (table_at(slot->hierarchy.root)
             [table_index(PAGING_LINUX_IMAGE_BASE, 4U)] & PAGE_USER) == 0U ||
-        (table_at(process_space_runtime.hierarchy.root)
+        (table_at(slot->hierarchy.root)
             [table_index(PAGING_LINUX_STACK_BASE, 4U)] & PAGE_USER) == 0U) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    process_space_runtime.state = PAGING_PROCESS_SPACE_INSTALLED;
-    sync_process_space(space);
+    slot->state = PAGING_PROCESS_SPACE_INSTALLED;
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
 enum paging_status paging_process_activate(struct paging_process_space *space)
 {
-    if (!process_space_matches(space)) {
+    struct process_space_runtime *slot = resolve_process_space(space);
+
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if (process_space_runtime.state != PAGING_PROCESS_SPACE_INSTALLED ||
-        cpu_interrupts_enabled() || !process_alias_runtime.owned ||
+    /*
+     * Only ever entered from the kernel's own tables. With several spaces
+     * live, a scheduler switching from one process to another has to return
+     * through the installed hierarchy rather than write one private root over
+     * another: that is what keeps every space's state machine honest.
+     */
+    if (slot->state != PAGING_PROCESS_SPACE_INSTALLED ||
+        cpu_interrupts_enabled() || !process_space_alias(slot)->owned ||
         (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    cpu_write_cr3(process_space_runtime.hierarchy.root);
-    if ((cpu_read_cr3() & PAGE_FRAME_MASK) !=
-            process_space_runtime.hierarchy.root) {
+    cpu_write_cr3(slot->hierarchy.root);
+    if ((cpu_read_cr3() & PAGE_FRAME_MASK) != slot->hierarchy.root) {
         cpu_write_cr3(live_hierarchy.root);
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    process_space_runtime.state = PAGING_PROCESS_SPACE_ACTIVE;
-    sync_process_space(space);
+    slot->state = PAGING_PROCESS_SPACE_ACTIVE;
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
@@ -2933,21 +3100,22 @@ enum paging_status paging_process_restore_kernel(
     struct paging_process_space *space
 )
 {
-    if (!process_space_matches(space)) {
+    struct process_space_runtime *slot = resolve_process_space(space);
+
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    if (process_space_runtime.state != PAGING_PROCESS_SPACE_ACTIVE ||
+    if (slot->state != PAGING_PROCESS_SPACE_ACTIVE ||
         cpu_interrupts_enabled() ||
-        (cpu_read_cr3() & PAGE_FRAME_MASK) !=
-            process_space_runtime.hierarchy.root) {
+        (cpu_read_cr3() & PAGE_FRAME_MASK) != slot->hierarchy.root) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
     cpu_write_cr3(live_hierarchy.root);
     if ((cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    process_space_runtime.state = PAGING_PROCESS_SPACE_INSTALLED;
-    sync_process_space(space);
+    slot->state = PAGING_PROCESS_SPACE_INSTALLED;
+    sync_process_space(slot, space);
     return PAGING_STATUS_OK;
 }
 
@@ -2955,29 +3123,32 @@ static enum paging_status restore_active_aliases(
     const struct paging_process_space *space
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
+    struct process_alias_runtime *alias;
     struct paging_audit audit;
 
-    if (!process_space_matches(space) || !process_alias_runtime.owned) {
+    if (slot == NULL || !process_space_alias(slot)->owned) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    audit_hierarchy(&process_space_runtime.hierarchy, &audit);
-    if (process_space_runtime.state == PAGING_PROCESS_SPACE_ACTIVE ||
+    alias = process_space_alias(slot);
+    audit_hierarchy(&slot->hierarchy, &audit);
+    if (slot->state == PAGING_PROCESS_SPACE_ACTIVE ||
         cpu_interrupts_enabled() || audit.user_leaves != 0U ||
+        alias->order != newest_owned_alias_order() ||
         (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_PROCESS_ALIAS_STATE;
     }
-    for (size_t remaining = process_alias_runtime.count;
-         remaining > 0U; --remaining) {
-        if (restore_alias_page(
-                &process_alias_runtime.pages[remaining - 1U], false) !=
+    for (size_t remaining = alias->count; remaining > 0U; --remaining) {
+        if (restore_alias_page(slot, &alias->pages[remaining - 1U], false) !=
                 PAGING_STATUS_OK) {
             state.table_frames = live_hierarchy.table_frames;
             return PAGING_STATUS_PROCESS_ALIAS_STATE;
         }
     }
     state.table_frames = live_hierarchy.table_frames;
-    process_alias_runtime.count = 0U;
-    process_alias_runtime.owned = false;
+    alias->count = 0U;
+    alias->order = 0U;
+    alias->owned = false;
     return PAGING_STATUS_OK;
 }
 
@@ -2986,16 +3157,21 @@ enum paging_status paging_process_image_alias_restore(
     struct paging_process_image_alias *alias
 )
 {
+    const struct process_space_runtime *held;
+    const struct process_alias_runtime *narrowed;
     enum paging_status status;
 
     if (alias == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
-    if (!alias->active || !process_alias_runtime.owned ||
-        process_alias_runtime.count != 1U ||
-        alias->generation != process_alias_runtime.generation ||
-        alias->physical_address !=
-            process_alias_runtime.pages[0].physical_address) {
+    held = resolve_process_space(space);
+    if (held == NULL) {
+        return PAGING_STATUS_PROCESS_BAD_TOKEN;
+    }
+    narrowed = process_space_alias(held);
+    if (!alias->active || !narrowed->owned || narrowed->count != 1U ||
+        alias->generation != narrowed->generation ||
+        alias->physical_address != narrowed->pages[0].physical_address) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
     status = restore_active_aliases(space);
@@ -3011,19 +3187,26 @@ enum paging_status paging_process_alias_set_restore(
     struct paging_process_alias_set *alias
 )
 {
+    const struct process_space_runtime *held;
+    const struct process_alias_runtime *narrowed;
     enum paging_status status;
 
     if (alias == NULL) {
         return PAGING_STATUS_NULL_ARGUMENT;
     }
-    if (!alias->active || !process_alias_runtime.owned ||
-        alias->generation != process_alias_runtime.generation ||
-        alias->count != process_alias_runtime.count) {
+    held = resolve_process_space(space);
+    if (held == NULL) {
+        return PAGING_STATUS_PROCESS_BAD_TOKEN;
+    }
+    narrowed = process_space_alias(held);
+    if (!alias->active || !narrowed->owned ||
+        alias->generation != narrowed->generation ||
+        alias->count != narrowed->count) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
     for (size_t index = 0U; index < alias->count; ++index) {
         if (alias->physical_addresses[index] !=
-                process_alias_runtime.pages[index].physical_address) {
+                narrowed->pages[index].physical_address) {
             return PAGING_STATUS_PROCESS_BAD_TOKEN;
         }
     }
@@ -3039,24 +3222,25 @@ enum paging_status paging_process_space_release(
     struct paging_process_space *space
 )
 {
+    struct process_space_runtime *slot = resolve_process_space(space);
     struct paging_audit audit;
 
-    if (!process_space_matches(space)) {
+    if (slot == NULL) {
         return PAGING_STATUS_PROCESS_BAD_TOKEN;
     }
-    audit_hierarchy(&process_space_runtime.hierarchy, &audit);
-    if (process_space_runtime.state == PAGING_PROCESS_SPACE_ACTIVE ||
-        process_alias_runtime.owned || audit.user_leaves != 0U ||
+    audit_hierarchy(&slot->hierarchy, &audit);
+    if (slot->state == PAGING_PROCESS_SPACE_ACTIVE ||
+        process_space_alias(slot)->owned || audit.user_leaves != 0U ||
         (cpu_read_cr3() & PAGE_FRAME_MASK) != live_hierarchy.root) {
         return PAGING_STATUS_PROCESS_BAD_STATE;
     }
-    release_table_tree(&process_space_runtime.hierarchy,
-        process_space_runtime.hierarchy.root, PAGING_LEVEL_COUNT);
-    if (process_space_runtime.hierarchy.table_frames != 0U) {
+    release_table_tree(&slot->hierarchy, slot->hierarchy.root,
+        PAGING_LEVEL_COUNT);
+    if (slot->hierarchy.table_frames != 0U) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
-    process_space_runtime.owned = false;
-    process_space_runtime.state = PAGING_PROCESS_SPACE_RELEASED;
+    slot->owned = false;
+    slot->state = PAGING_PROCESS_SPACE_RELEASED;
     space->root_physical_address = 0U;
     space->table_frames = 0U;
     space->state = PAGING_PROCESS_SPACE_RELEASED;
@@ -3065,7 +3249,7 @@ enum paging_status paging_process_space_release(
 
 bool paging_process_resources_released(void)
 {
-    return !process_space_runtime.owned && !process_alias_runtime.owned &&
+    return !any_process_space_owned() && !any_process_alias_owned() &&
         !process_table_failure.armed &&
         (!state.active ||
             (cpu_read_cr3() & PAGE_FRAME_MASK) == live_hierarchy.root);

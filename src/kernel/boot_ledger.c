@@ -84,7 +84,15 @@ static const char *const stage_names[] = {
     "static BusyBox image and initial-stack foundation",
     "installed static BusyBox proof",
     "static BusyBox uname image and UTS foundation",
-    "installed static BusyBox uname proof"
+    "installed static BusyBox uname proof",
+    "bounded multiprocess foundation",
+    "installed multiprocess proof",
+    "bounded PCI driver matrix foundation",
+    "installed PCI driver matrix probe",
+    "bounded HD Audio foundation",
+    "installed HD Audio codec proof",
+    "bounded NVIDIA driver foundation",
+    "installed NVIDIA driver probe"
 };
 
 _Static_assert(sizeof(stage_names) / sizeof(stage_names[0]) ==
@@ -159,7 +167,18 @@ static const char *const capability_names[] = {
     "Linux cat image and stdin foundation available",
     "Linux uname installed proof complete",
     "Linux uname fixture absent",
-    "Linux uname outcome decided"
+    "Linux uname outcome decided",
+    "multiprocess foundation available",
+    "multiprocess installed proof complete",
+    "PCI driver matrix foundation available",
+    "PCI driver matrix probe complete",
+    "PCI driver matrix devices absent",
+    "HD Audio foundation available",
+    "HD Audio codec proof complete",
+    "HD Audio controller absent",
+    "NVIDIA driver foundation available",
+    "NVIDIA driver probe complete",
+    "NVIDIA functions absent"
 };
 
 _Static_assert(sizeof(capability_names) / sizeof(capability_names[0]) ==

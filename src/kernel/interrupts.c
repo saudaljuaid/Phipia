@@ -564,6 +564,38 @@ enum interrupt_status interrupt_process_gate_disarm(
     return INTERRUPT_STATUS_OK;
 }
 
+enum interrupt_status interrupt_process_gate_rearm(
+    struct interrupt_process_gate *gate
+)
+{
+    if (gate == NULL) {
+        return INTERRUPT_STATUS_BAD_ARGUMENT;
+    }
+    if (!gate->active || !process_gate_runtime.owned ||
+        gate->generation != process_gate_runtime.generation) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_TOKEN;
+    }
+    if (cpu_interrupts_enabled()) {
+        return INTERRUPT_STATUS_INTERRUPTS_ENABLED;
+    }
+    /*
+     * Only the state moves. A gate that never entered CPL3, or that is still
+     * inside a dispatch, is not something a caller may declare ready again.
+     */
+    if (process_gate_runtime.state != INTERRUPT_PROCESS_GATE_RETURNED ||
+        process_gate_runtime.dispatch_frame != NULL ||
+        handlers[INTERRUPT_PROCESS_PROOF_VECTOR].handler == NULL) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_STATE;
+    }
+    if (!process_gate_descriptor_valid()) {
+        return INTERRUPT_STATUS_PROOF_GATE_BAD_DESCRIPTOR;
+    }
+    process_gate_runtime.resume_stack = 0U;
+    process_gate_runtime.state = INTERRUPT_PROCESS_GATE_ARMED;
+    gate->state = INTERRUPT_PROCESS_GATE_ARMED;
+    return INTERRUPT_STATUS_OK;
+}
+
 enum interrupt_status interrupt_request_kernel_resume(
     const struct interrupt_frame *frame,
     uintptr_t resume_stack
