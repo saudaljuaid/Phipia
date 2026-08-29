@@ -159,6 +159,7 @@ static struct interrupt_process_gate native_gate;
 static bool scheduler_active;
 static size_t scheduler_process_cursor;
 static uint32_t futex_trace_count;
+static bool futex_trace_waiting;
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -3423,6 +3424,7 @@ static int64_t syscall_futex_wait(
         console_write("\n");
         ++futex_trace_count;
     }
+    futex_trace_waiting = true;
     thread->futex_address = request.address;
     thread->deadline_ns = request.deadline_ns;
     thread->state = NATIVE_THREAD_FUTEX_WAIT;
@@ -3440,7 +3442,29 @@ static int64_t syscall_futex_wake(
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
+        if (futex_trace_waiting) {
+            console_write("Sapote: futex wake request copy failed\n");
+            futex_trace_waiting = false;
+        }
         return -SAPOTE_EFAULT;
+    }
+    if (futex_trace_waiting) {
+        console_write("Sapote: futex wake request size ");
+        console_write_u64(request.size);
+        console_write(" version ");
+        console_write_u64(request.version);
+        console_write(" address ");
+        console_write_hex(request.address);
+        console_write(" deadline ");
+        console_write_u64(request.deadline_ns);
+        console_write(" expected ");
+        console_write_u64(request.expected);
+        console_write(" count ");
+        console_write_u64(request.count);
+        console_write(" writable ");
+        console_write(validate_user_range(process, request.address,
+            sizeof(uint32_t), true) ? "yes\n" : "no\n");
+        futex_trace_waiting = false;
     }
     if (request.size != sizeof(request) ||
         request.version != SAPOTE_ABI_VERSION || request.expected != 0U ||
