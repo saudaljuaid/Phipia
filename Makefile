@@ -34,7 +34,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	native-abi-refusal native-relaunch
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 112
-EXPECTED_SHELL_ASSERTION_COUNT := 432
+EXPECTED_SHELL_ASSERTION_COUNT := 439
 
 CC := gcc
 LD := ld
