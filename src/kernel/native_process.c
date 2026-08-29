@@ -3435,6 +3435,7 @@ static int64_t syscall_futex_wake(
 )
 {
     struct sapote_futex_request request;
+    uint32_t observed = UINT32_MAX;
     size_t woken = 0U;
 
     if (!copy_from_user(process, &request, request_address,
@@ -3462,11 +3463,9 @@ static int64_t syscall_futex_wake(
             ++woken;
         }
     }
-    if (futex_trace_count < 24U) {
-        uint32_t observed = UINT32_MAX;
-
-        (void)copy_from_user(process, &observed, request.address,
-            sizeof(observed));
+    (void)copy_from_user(process, &observed, request.address,
+        sizeof(observed));
+    if (futex_trace_count < 64U && (observed != 0U || woken != 0U)) {
         console_write("Sapote: futex wake thread ");
         console_write_u64(process->current_thread);
         console_write(" address ");
