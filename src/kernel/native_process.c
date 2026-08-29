@@ -2700,9 +2700,14 @@ static int64_t syscall_window_create(
         return -SAPOTE_ENOMEM;
     }
     window->event_object_open = true;
-    if (ui_native_window_open(window->ui_slot, title, window->shadow_pixels,
-            window->width, window->height, window->stride_bytes,
-            native_ui_event, process) != UI_STATUS_OK) {
+    const enum ui_status ui_status = ui_native_window_open(window->ui_slot,
+        title, window->shadow_pixels, window->width, window->height,
+        window->stride_bytes, native_ui_event, process);
+
+    if (ui_status != UI_STATUS_OK) {
+        console_write("Sapote: native window open failed: ");
+        console_write(ui_status_string(ui_status));
+        console_write("\n");
         (void)native_handle_close(&process->handles, event_handle,
             close_resource, process);
         (void)native_handle_close(&process->handles, window_handle,

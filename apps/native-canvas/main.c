@@ -2,6 +2,7 @@
 #include <sapote/runtime.h>
 #include <sapote/window.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -365,7 +366,7 @@ static int present(sapote_handle_t window, uint32_t x, uint32_t y,
 
 int main(int argc, char **argv, char **environment)
 {
-    struct sapote_window_create_response response;
+    struct sapote_window_create_response response = {0};
     struct canvas canvas;
     uint64_t started;
     uint64_t next_pulse;
@@ -387,10 +388,16 @@ int main(int argc, char **argv, char **environment)
     int running = 1;
 
     (void)environment;
-    if (sapote_window_create("Canvas", CANVAS_WIDTH,
-            CANVAS_HEIGHT, &response) != 0 ||
+    const int create_status = sapote_window_create("Canvas", CANVAS_WIDTH,
+        CANVAS_HEIGHT, &response);
+
+    if (create_status != 0 ||
         response.surface_address == 0U ||
         response.stride_bytes != CANVAS_WIDTH * sizeof(uint32_t)) {
+        printf("SAPOTE CANVAS CREATE FAIL status=%d errno=%d surface=%llu "
+            "stride=%u expected=%u\n", create_status, errno,
+            (unsigned long long)response.surface_address,
+            response.stride_bytes, CANVAS_WIDTH * (uint32_t)sizeof(uint32_t));
         return 20;
     }
     canvas.pixels = (uint32_t *)(uintptr_t)response.surface_address;
