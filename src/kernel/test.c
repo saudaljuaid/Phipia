@@ -4751,7 +4751,7 @@ _Noreturn void kernel_test_complete_normal(void)
 _Noreturn void kernel_test_complete_native(void)
 {
     static const uint8_t expected[] = "native ABI v1\n";
-    struct native_process_result result;
+    struct native_process_result result = { 0 };
     struct sapfs_stat output;
     sapfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
@@ -4956,22 +4956,26 @@ _Noreturn void kernel_test_complete_native_canvas(void)
 _Noreturn void kernel_test_complete_native_network(void)
 {
     static const uint8_t expected[] = "hello from the Sapote network\n";
-    struct native_process_result result;
+    struct native_process_result result = { 0 };
     struct sapfs_stat output;
     struct network_state network;
     sapfs_handle file;
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool matches = true;
+    enum native_process_status launch_status;
 
     if (active_scenario != KERNEL_TEST_NATIVE_NETWORK) {
         kernel_test_fail("native network completion used outside its scenario");
     }
-    if (native_process_launch("NETAPP.MAN", &result) != NATIVE_PROCESS_OK ||
+    launch_status = native_process_launch("NETAPP.MAN", &result);
+    if (launch_status != NATIVE_PROCESS_OK ||
         !result.exited || result.faulted || result.exit_status != 0 ||
         !result.resources_released || result.syscall_count < 25U ||
         !native_process_resources_released()) {
-        console_write("Sapote: native network result exit ");
+        console_write("Sapote: native network launch ");
+        console_write(native_process_status_string(launch_status));
+        console_write(" result exit ");
         if (result.exit_status < 0) {
             console_putc('-');
             console_write_u64((uint64_t)(-(int64_t)result.exit_status));
