@@ -396,6 +396,19 @@ static bool deadline_valid(uint64_t timeout_ns)
     return timeout_ns != 0U && timeout_ns <= UINT64_C(30000000000);
 }
 
+/*
+ * Synchronous protocol operations are permitted to block their caller, but
+ * must not burn Sapote's single core while waiting for a packet or deadline.
+ * Every caller invokes this only after pumping the device and rechecking its
+ * completion state.  sti;hlt also closes the check-to-sleep interrupt race.
+ */
+static void network_wait_for_interrupt(void)
+{
+    if (cpu_interrupts_enabled()) {
+        cpu_enable_and_halt();
+    }
+}
+
 static bool timer_acquire(void)
 {
     if (runtime.timers >= NETWORK_MAX_TIMERS) {
@@ -698,6 +711,10 @@ static enum network_status arp_resolve(
                 copy_bytes(destination, entry->mac, 6U);
                 timer_release();
                 return NETWORK_STATUS_OK;
+            }
+            if (clock_monotonic_ns() < deadline &&
+                clock_monotonic_ns() < attempt_end) {
+                network_wait_for_interrupt();
             }
         }
     }
@@ -1397,6 +1414,7 @@ static enum network_status wait_dhcp(uint64_t deadline, uint8_t expected)
     while (clock_monotonic_ns() < deadline) {
         (void)network_service();
         if (!runtime.dhcp.received) {
+            network_wait_for_interrupt();
             continue;
         }
         if (runtime.dhcp.message == DHCP_NAK) {
@@ -1406,6 +1424,7 @@ static enum network_status wait_dhcp(uint64_t deadline, uint8_t expected)
             return NETWORK_STATUS_OK;
         }
         runtime.dhcp.received = false;
+        network_wait_for_interrupt();
     }
     return NETWORK_STATUS_TIMEOUT;
 }
@@ -1948,6 +1967,10 @@ enum network_status network_resolve(
                 status = runtime.dns_query.status;
                 break;
             }
+            if (clock_monotonic_ns() < deadline &&
+                clock_monotonic_ns() < attempt_end) {
+                network_wait_for_interrupt();
+            }
         }
         if (runtime.dns_query.received) {
             break;
@@ -2422,6 +2445,10 @@ static enum network_status tcp_wait_ack(
             tcp_retransmit(connection) != NETWORK_STATUS_OK) {
             return connection->error;
         }
+        if (connection->send_unacknowledged != connection->send_next &&
+            clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
+        }
     }
     return NETWORK_STATUS_TIMEOUT;
 }
@@ -2545,6 +2572,9 @@ enum network_status network_udp_receive(
             timer_release();
             return socket->error;
         }
+        if (socket->queue_count == 0U && clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
+        }
     }
     if (socket->queue_count == 0U) {
         timer_release();
@@ -2658,6 +2688,10 @@ enum network_status network_tcp_connect(
             tcp_retransmit(connection) != NETWORK_STATUS_OK) {
             status = connection->error;
             break;
+        }
+        if (connection->state == TCP_CONNECTION_SYN_SENT &&
+            clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
         }
     }
     if (connection->state == TCP_CONNECTION_ESTABLISHED) {
@@ -2815,6 +2849,9 @@ enum network_status network_tcp_accept(
             timer_release();
             return NETWORK_STATUS_OK;
         }
+        if (clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
+        }
     } while (clock_monotonic_ns() < deadline);
     timer_release();
     return NETWORK_STATUS_TIMEOUT;
@@ -2912,6 +2949,11 @@ enum network_status network_tcp_read(
             timer_release();
             return NETWORK_STATUS_CANCELLED;
         }
+        if (connection->receive_bytes == 0U && !connection->peer_closed &&
+            connection->error == NETWORK_STATUS_OK &&
+            clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
+        }
     }
     if (connection->error != NETWORK_STATUS_OK) {
         timer_release();
@@ -2988,6 +3030,10 @@ enum network_status network_tcp_shutdown(
             tcp_retransmit(connection) != NETWORK_STATUS_OK) {
             status = connection->error;
             break;
+        }
+        if (connection->state != TCP_CONNECTION_CLOSED &&
+            clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
         }
     }
     if (connection->state == TCP_CONNECTION_CLOSED) {
@@ -3084,6 +3130,10 @@ enum network_status network_ping(
         deadline = clock_monotonic_ns() + timeout_ns;
         while (!runtime.ping.received && clock_monotonic_ns() < deadline) {
             (void)network_service();
+            if (!runtime.ping.received &&
+                clock_monotonic_ns() < deadline) {
+                network_wait_for_interrupt();
+            }
         }
         result->result[index] = runtime.ping.received ?
             runtime.ping.status : NETWORK_STATUS_TIMEOUT;
@@ -3255,6 +3305,9 @@ enum network_status network_poll(
         if (*result_count != 0U) {
             timer_release();
             return NETWORK_STATUS_OK;
+        }
+        if (clock_monotonic_ns() < deadline) {
+            network_wait_for_interrupt();
         }
     } while (clock_monotonic_ns() < deadline);
     for (size_t index = 0U; index < request_count; ++index) {

@@ -42,6 +42,11 @@ foreign-process, immutable executable, or read-only output mapping.
 Directory enumeration reports the canonical printable form of each accepted
 ASCII 8.3 name in lower case. Path lookup remains case-insensitive.
 
+Network readiness waits park a native thread in the scheduler. Synchronous
+DNS and stream/datagram operations pump bounded protocol state, recheck their
+absolute deadline and completion state, then halt the core until a device or
+timer interrupt. They never poll in a userspace or kernel spin loop.
+
 `include/sapote/abi/base.h` is the syscall-number and error-number registry.
 The service-specific headers define exact records, limits, flags, event values,
 pixel format, IPv4 endpoint encoding, and static size checks.

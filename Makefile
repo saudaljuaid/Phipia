@@ -1776,7 +1776,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
 			--serial "$$log" --marker 'SAPOTE CANVAS READY' \
 			--marker-count 2 --text k --hmp 'mouse_move 80 60' \
-			--hmp 'mouse_button 1' --hmp 'mouse_button 0' --timeout 50 \
+			--hmp 'mouse_button 1' --hmp 'mouse_button 0' \
+			--capture-dir '$(abspath $(TEST_BUILD_DIR)/$*/canvas-frames)' \
+			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/canvas.png)' \
+			--video '$(abspath $(TEST_BUILD_DIR)/$*/canvas.mp4)' \
+			--ffmpeg '$(FFMPEG)' --timeout 50 \
 			& injector=$$!; \
 	fi; \
 	set +e; \
@@ -2131,6 +2135,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: upstream SQLite retained and verified three rows after reboot' "$$log" || \
 				diagnostics_ok=false ;; \
 		native-canvas) \
+			test -s '$(TEST_BUILD_DIR)/$*/canvas.png' && \
+			test -s '$(TEST_BUILD_DIR)/$*/canvas.mp4' && \
 			test "$$(grep -Ec '^SAPOTE CANVAS READY width=340 height=220$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \

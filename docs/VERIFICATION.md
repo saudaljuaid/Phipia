@@ -23,6 +23,12 @@ non-reproducible filesystem images.
 `make qemu-tests` runs the complete 112-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
 
+The `native-canvas` scenario captures `canvas.png` and `canvas.mp4` directly
+from QEMU's guest framebuffer while two independently loaded native Canvas
+processes are alive. The same run injects hardware keyboard and pointer input;
+the serial proof requires both applications to report focus and partial-damage
+activity before their resource census is checked.
+
 ## Coverage
 
 The QEMU suite covers:

@@ -29,7 +29,7 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
                       binutils build-essential clang grub-common grub-pc-bin \
-                      lld make mtools qemu-system-x86 xorriso
+                      ffmpeg lld make mtools qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
             - name: Rebuild the offline SDK and applications
@@ -55,5 +55,7 @@ jobs:
                       build/native-porting-qemu.txt
                       build/tests/native*/serial.log
                       build/tests/native*/data.raw
+                      build/tests/native-canvas/canvas.png
+                      build/tests/native-canvas/canvas.mp4
                       build/tests/network-native/serial.log
                       build/tests/network-native/data.raw
