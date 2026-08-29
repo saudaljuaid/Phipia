@@ -236,17 +236,37 @@ def verify_busybox(binary: bytes, profile: str, size: int, digest: str) -> None:
         raise Fat32Error(f"{profile} BusyBox ELF64 identity changed")
 
 
-def build_image(volume: str, binaries: Iterable[bytes] = ()) -> bytes:
+def build_image(
+    volume: str,
+    binaries: Iterable[bytes] = (),
+    extra_files: Iterable[tuple[str, bytes]] = (),
+) -> bytes:
     """Construct a deterministic, byte-complete system or data image."""
     if volume not in ("system", "data"):
         raise Fat32Error("volume role must be system or data")
     label = SYSTEM_LABEL if volume == "system" else DATA_LABEL
     volume_id = SYSTEM_VOLUME_ID if volume == "system" else DATA_VOLUME_ID
     payloads = tuple(binaries)
-    if volume == "system" and len(payloads) != len(SYSTEM_FILES):
-        raise Fat32Error("system volume needs echo, uname, and cat binaries")
+    extras = tuple(extra_files)
+    if volume == "system" and len(payloads) not in (0, len(SYSTEM_FILES)):
+        raise Fat32Error("system volume needs either no legacy profiles or echo, uname, and cat")
     if volume == "data" and payloads:
         raise Fat32Error("data volume formatter does not accept payloads")
+    if volume == "data" and extras:
+        raise Fat32Error("data volume formatter does not accept extra files")
+    prepared_extras: list[tuple[bytes, bytes]] = []
+    occupied = ({record[1] for record in SYSTEM_FILES}
+                if volume == "system" and payloads else set())
+    for name, payload in extras:
+        short_name = short_name_bytes(name)
+        if short_name in occupied:
+            raise Fat32Error("extra system filenames must be unique")
+        if not payload or len(payload) > 16 * 1024 * 1024:
+            raise Fat32Error("extra system file violates the file-size bound")
+        occupied.add(short_name)
+        prepared_extras.append((short_name, payload))
+    if 1 + len(payloads) + len(prepared_extras) >= SECTOR_BYTES // ENTRY_BYTES:
+        raise Fat32Error("system root entries exceed the one-cluster package bound")
 
     image = bytearray(IMAGE_BYTES)
     boot = _boot_sector(volume_id, label)
@@ -275,6 +295,23 @@ def build_image(volume: str, binaries: Iterable[bytes] = ()) -> bytes:
                 image[offset:offset + min(SECTOR_BYTES, len(payload) - start)] = (
                     payload[start:start + SECTOR_BYTES]
                 )
+            entry = _directory_entry(name, 0x21, first_cluster, len(payload))
+            image[root + slot * ENTRY_BYTES:root + (slot + 1) * ENTRY_BYTES] = entry
+            slot += 1
+            next_cluster += cluster_count
+        for name, payload in prepared_extras:
+            cluster_count = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
+            first_cluster = next_cluster
+            if first_cluster + cluster_count - 1 > CLUSTER_COUNT + 1:
+                raise Fat32Error("system packages exceed the volume capacity")
+            for ordinal in range(cluster_count):
+                cluster = first_cluster + ordinal
+                following = cluster + 1 if ordinal + 1 < cluster_count else FAT32_EOC
+                _set_fat(image, cluster, following)
+                offset = _cluster_offset(cluster)
+                start = ordinal * SECTOR_BYTES
+                block = payload[start:start + SECTOR_BYTES]
+                image[offset:offset + len(block)] = block
             entry = _directory_entry(name, 0x21, first_cluster, len(payload))
             image[root + slot * ENTRY_BYTES:root + (slot + 1) * ENTRY_BYTES] = entry
             slot += 1
@@ -675,7 +712,11 @@ def inspect_image(image: bytes | bytearray | memoryview) -> dict[str, object]:
     }
 
 
-def verify_system(image: bytes, payloads: tuple[bytes, ...]) -> dict[str, object]:
+def verify_system(
+    image: bytes,
+    payloads: tuple[bytes, ...],
+    extra_files: tuple[tuple[str, bytes], ...] = (),
+) -> dict[str, object]:
     report = inspect_image(image)
     records = {item["path"]: item for item in report["files"]}  # type: ignore[index]
     geometry = parse_geometry(image)
@@ -694,7 +735,11 @@ def verify_system(image: bytes, payloads: tuple[bytes, ...]) -> dict[str, object
             body.extend(image[offset:offset + SECTOR_BYTES])
         if bytes(body[:len(payload)]) != payload or any(body[len(payload):]):
             raise Fat32Error(f"{profile} contents or zero padding changed")
-    rebuilt = build_image("system", payloads)
+    for name, payload in extra_files:
+        item = records.get(name.upper())
+        if item is None or item["directory"] or item["size"] != len(payload):
+            raise Fat32Error(f"extra system entry {name} changed")
+    rebuilt = build_image("system", payloads, extra_files)
     if image != rebuilt:
         raise Fat32Error("system image is not the deterministic reconstruction")
     return report
@@ -781,13 +826,23 @@ def atomic_write(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def parse_extra_file(value: str) -> tuple[str, bytes]:
+    """Read one deterministic NAME=PATH system-volume input."""
+    name, separator, path = value.partition("=")
+    if not separator or not name or not path:
+        raise Fat32Error("--extra requires one 8.3 NAME=PATH value")
+    short_name_bytes(name)
+    return name.upper(), read_regular(Path(path))
+
+
 def command_format(args: argparse.Namespace) -> None:
     payloads: tuple[bytes, ...] = ()
     if args.role == "system":
         payloads = tuple(read_regular(Path(path)) for path in (args.echo, args.uname, args.cat))
-    image = build_full_data_image() if args.full else build_image(args.role, payloads)
+    extras = tuple(parse_extra_file(value) for value in args.extra)
+    image = build_full_data_image() if args.full else build_image(args.role, payloads, extras)
     atomic_write(Path(args.output), image)
-    report = verify_system(image, payloads) if args.role == "system" else (
+    report = verify_system(image, payloads, extras) if args.role == "system" else (
         verify_full_data(image) if args.full else verify_data(image))
     print(json.dumps({"output": str(Path(args.output)),
                       "sha256": hashlib.sha256(image).hexdigest().upper(),
@@ -808,7 +863,8 @@ def command_verify(args: argparse.Namespace) -> None:
     image = read_regular(Path(args.image))
     if args.role == "system":
         payloads = tuple(read_regular(Path(path)) for path in (args.echo, args.uname, args.cat))
-        report = verify_system(image, payloads)
+        extras = tuple(parse_extra_file(value) for value in args.extra)
+        report = verify_system(image, payloads, extras)
     else:
         report = verify_full_data(image) if args.full else verify_data(image)
     print(json.dumps({"sha256": hashlib.sha256(image).hexdigest().upper(), **report}, sort_keys=True))
@@ -848,6 +904,7 @@ def parser() -> argparse.ArgumentParser:
     formatter.add_argument("--echo")
     formatter.add_argument("--uname")
     formatter.add_argument("--cat")
+    formatter.add_argument("--extra", action="append", default=[])
     formatter.add_argument("--full", action="store_true")
     formatter.set_defaults(function=command_format)
     inspector = commands.add_parser("inspect")
@@ -860,6 +917,7 @@ def parser() -> argparse.ArgumentParser:
     verifier.add_argument("--echo")
     verifier.add_argument("--uname")
     verifier.add_argument("--cat")
+    verifier.add_argument("--extra", action="append", default=[])
     verifier.add_argument("--full", action="store_true")
     verifier.set_defaults(function=command_verify)
     malformed = commands.add_parser("malform")

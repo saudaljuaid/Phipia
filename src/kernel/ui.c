@@ -196,6 +196,21 @@ static const char *event_queue_failure = "UI event queue self-test not run";
 static const char *installed_proof_failure =
     "Sapote Redwood installed proof not run";
 
+struct ui_native_window_record {
+    char title[UI_NATIVE_TITLE_BYTES];
+    const uint32_t *pixels;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride_bytes;
+    ui_native_event_fn event_handler;
+    void *context;
+    bool active;
+    bool pointer_capture;
+};
+
+static struct ui_native_window_record
+    native_windows[UI_NATIVE_WINDOW_COUNT];
+
 static enum ui_status draw_button(
     struct ui_rect button,
     struct ui_rect damage,
@@ -209,6 +224,45 @@ static enum ui_status draw_circle(
     uint32_t pixel
 );
 static struct ui_rect camera_preview_rect(void);
+static enum ui_status render_region(struct ui_rect damage, bool full_draw);
+
+static bool native_panel_slot(enum ui_panel_id panel, uint32_t *slot)
+{
+    if (panel < UI_PANEL_NATIVE_0 || panel > UI_PANEL_NATIVE_3) {
+        return false;
+    }
+    if (slot != NULL) {
+        *slot = (uint32_t)(panel - UI_PANEL_NATIVE_0);
+    }
+    return true;
+}
+
+static void native_event_emit(
+    enum ui_panel_id panel,
+    const struct ui_native_event *event
+)
+{
+    uint32_t slot;
+
+    if (event == NULL || !native_panel_slot(panel, &slot) ||
+        !native_windows[slot].active ||
+        native_windows[slot].event_handler == NULL) {
+        return;
+    }
+    native_windows[slot].event_handler(slot, event,
+        native_windows[slot].context);
+}
+
+static void native_focus_emit(enum ui_panel_id panel, bool focused)
+{
+    const struct ui_native_event event = {
+        .type = UI_NATIVE_EVENT_FOCUS,
+        .monotonic_ns = clock_monotonic_ns(),
+        .value = focused ? 1U : 0U
+    };
+
+    native_event_emit(panel, &event);
+}
 
 static void panel_spring_timer_wake(uint64_t deadline_ns, void *context);
 
@@ -4571,6 +4625,7 @@ static struct ui_rect spring_panel_rect(void)
 static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
 {
     enum ui_status status;
+    uint32_t native_slot;
 
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_STATUS_OK;
@@ -4631,6 +4686,31 @@ static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
     }
     if (status != UI_STATUS_OK) {
         return status;
+    }
+
+    if (native_panel_slot(state.active_panel, &native_slot)) {
+        const struct ui_native_window_record *native =
+            &native_windows[native_slot];
+        const struct ui_rect clipped = rect_intersection(
+            state.layout.panel_client, damage);
+
+        if (!native->active || native->pixels == NULL ||
+            native->width != state.layout.panel_client.width ||
+            native->height != state.layout.panel_client.height) {
+            return UI_STATUS_BAD_PANEL;
+        }
+        if (clipped.width == 0U || clipped.height == 0U) {
+            return UI_STATUS_OK;
+        }
+        const uint32_t source_x = clipped.x - state.layout.panel_client.x;
+        const uint32_t source_y = clipped.y - state.layout.panel_client.y;
+        const uint32_t *source = native->pixels +
+            (size_t)source_y * (native->stride_bytes /
+                SURFACE_BYTES_PER_PIXEL) + source_x;
+
+        return surface_blit(canvas, clipped.x, clipped.y, source,
+            clipped.width, clipped.height, native->stride_bytes) ==
+                SURFACE_STATUS_OK ? UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
     }
 
     if (state.active_panel == UI_PANEL_FILES) {
@@ -5314,6 +5394,9 @@ enum ui_status ui_construct(bool pointer_present)
         panel_open[index] = false;
         panel_windows[index] = panel_home;
     }
+    for (size_t index = 0U; index < UI_NATIVE_WINDOW_COUNT; ++index) {
+        native_windows[index] = (struct ui_native_window_record){ 0 };
+    }
     install_panel_geometry(UI_PANEL_NONE);
     state.ledger_pass = false;
     terminal_welcomed = false;
@@ -5494,11 +5577,30 @@ static bool pop_event(struct ui_event *event)
 enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
 {
     struct ui_event ui_event = { 0 };
+    uint32_t native_slot;
 
     if (event == NULL) {
         return UI_STATUS_NULL_ARGUMENT;
     }
-    if (!state.active || !event->pressed) {
+    if (!state.active) {
+        return UI_STATUS_OK;
+    }
+    if (native_panel_slot(state.active_panel, &native_slot) &&
+        native_windows[native_slot].active) {
+        const struct ui_native_event native_event = {
+            .type = UI_NATIVE_EVENT_KEY,
+            .monotonic_ns = clock_monotonic_ns(),
+            .code = (uint32_t)event->scancode |
+                ((uint32_t)(uint8_t)event->character << 8U),
+            .value = event->pressed ? 1U : 0U,
+            .modifiers = (event->shift ? 1U : 0U) |
+                (event->control ? 2U : 0U)
+        };
+
+        native_event_emit(state.active_panel, &native_event);
+        return UI_STATUS_OK;
+    }
+    if (!event->pressed) {
         return UI_STATUS_OK;
     }
     if ((state.active_panel == UI_PANEL_NOTES ||
@@ -5564,6 +5666,16 @@ static enum ui_status set_panel(
     if (old_panel == panel) {
         return UI_STATUS_OK;
     }
+    if (panel == UI_PANEL_NONE &&
+        native_panel_slot(old_panel, NULL)) {
+        const struct ui_native_event close_event = {
+            .type = UI_NATIVE_EVENT_CLOSE,
+            .monotonic_ns = clock_monotonic_ns()
+        };
+
+        native_event_emit(old_panel, &close_event);
+    }
+    native_focus_emit(old_panel, false);
     if (panel == UI_PANEL_NONE && old_panel == UI_PANEL_NOTES && note_dirty &&
             note_save() != SAPFS_STATUS_OK) {
         *damage = rect_union(*damage, state.layout.panel);
@@ -5615,10 +5727,12 @@ static enum ui_status set_panel(
         state.active_panel = panel;
         install_panel_geometry(panel);
     }
+    native_focus_emit(state.active_panel, true);
     state.renders.panel_transitions += 1U;
     *damage = rect_union(*damage, state.layout.surface);
 
-    if (panel != UI_PANEL_NONE && opening && spring_motion) {
+    if (panel >= UI_PANEL_FILES && panel <= UI_PANEL_SETTINGS && opening &&
+        spring_motion) {
         const size_t dock_index = (size_t)panel - 1U;
         panel_spring_origin = state.layout.dock_items[dock_index].icon_bounds;
         panel_spring_active = true;
@@ -6045,6 +6159,36 @@ static void note_input(char character, bool control)
     }
 }
 
+static void native_pointer_emit(
+    enum ui_native_event_type type,
+    struct ui_point point,
+    struct ui_point previous,
+    enum ui_pointer_button button,
+    bool pressed
+)
+{
+    uint32_t slot;
+
+    if (!native_panel_slot(state.active_panel, &slot) ||
+        !native_windows[slot].active ||
+        (!native_windows[slot].pointer_capture &&
+            !rect_contains_point(state.layout.panel_client, point))) {
+        return;
+    }
+    const struct ui_native_event event = {
+        .type = type,
+        .monotonic_ns = clock_monotonic_ns(),
+        .x = point.x - (int32_t)state.layout.panel_client.x,
+        .y = point.y - (int32_t)state.layout.panel_client.y,
+        .delta_x = point.x - previous.x,
+        .delta_y = point.y - previous.y,
+        .code = (uint32_t)button,
+        .value = pressed ? 1U : 0U
+    };
+
+    native_event_emit(state.active_panel, &event);
+}
+
 static enum ui_status apply_event(
     const struct ui_event *event,
     struct ui_rect *damage
@@ -6058,6 +6202,7 @@ static enum ui_status apply_event(
     if (event->type == UI_EVENT_POINTER_MOVEMENT) {
         const struct ui_rect old_cursor = cursor_damage_rect_for(state.pointer);
         const enum ui_element_id old_hover = state.hover;
+        const struct ui_point old_pointer = state.pointer;
 
         state.pointer = event->point;
         dock3d_set_pointer(&dock_model, state.pointer.x, state.pointer.y,
@@ -6099,6 +6244,8 @@ static enum ui_status apply_event(
             begin_dock_spring();
             state.renders.dock_state_changes += 1U;
         }
+        native_pointer_emit(UI_NATIVE_EVENT_POINTER_MOVE, state.pointer,
+            old_pointer, UI_POINTER_BUTTON_NONE, false);
     } else if (event->type == UI_EVENT_POINTER_BUTTON_PRESS &&
         event->button == UI_POINTER_BUTTON_LEFT) {
         enum ui_element_id dock_hit = UI_ELEMENT_NONE;
@@ -6130,6 +6277,8 @@ static enum ui_status apply_event(
             panel_drag_origin = panel_windows[state.active_panel];
         }
         state.pressed = hit;
+        native_pointer_emit(UI_NATIVE_EVENT_POINTER_BUTTON, event->point,
+            event->point, event->button, true);
         if (hit >= UI_ELEMENT_DOCK_FILES &&
                 hit <= UI_ELEMENT_DOCK_SETTINGS) {
             *damage = rect_union(*damage,
@@ -6149,6 +6298,8 @@ static enum ui_status apply_event(
         }
         hit = active_hit(event->point);
         state.pressed = UI_ELEMENT_NONE;
+        native_pointer_emit(UI_NATIVE_EVENT_POINTER_BUTTON, event->point,
+            event->point, event->button, false);
         if (pressed >= UI_ELEMENT_DOCK_FILES &&
                 pressed <= UI_ELEMENT_DOCK_SETTINGS) {
             *damage = rect_union(*damage,
@@ -6332,6 +6483,188 @@ enum ui_status ui_flush(void)
         state.renders.pixels_copied += canvas->last_present_pixels;
     }
     return UI_STATUS_OK;
+}
+
+enum ui_status ui_native_window_open(
+    uint32_t slot,
+    const char *title,
+    const uint32_t *pixels,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride_bytes,
+    ui_native_event_fn event_handler,
+    void *context
+)
+{
+    struct ui_native_window_record *native;
+    struct ui_rect damage = { 0U, 0U, 0U, 0U };
+    enum ui_panel_id panel;
+    size_t title_length = 0U;
+
+    if (title == NULL || pixels == NULL || event_handler == NULL) {
+        return UI_STATUS_NULL_ARGUMENT;
+    }
+    if (!state.active) {
+        return UI_STATUS_NOT_ACTIVE;
+    }
+    if (slot >= UI_NATIVE_WINDOW_COUNT) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    native = &native_windows[slot];
+    if (native->active) {
+        return UI_STATUS_ALREADY_INITIALIZED;
+    }
+    while (title_length < UI_NATIVE_TITLE_BYTES &&
+        title[title_length] != '\0') {
+        ++title_length;
+    }
+    if (title_length == 0U || title_length >= UI_NATIVE_TITLE_BYTES ||
+        width < 64U || height < 64U ||
+        width > UINT32_MAX / SURFACE_BYTES_PER_PIXEL ||
+        stride_bytes < width * SURFACE_BYTES_PER_PIXEL ||
+        stride_bytes % SURFACE_BYTES_PER_PIXEL != 0U ||
+        width + 20U > state.layout.surface.width ||
+        height + 48U > state.layout.surface.height - UI_MENU_HEIGHT) {
+        return UI_STATUS_UNSUPPORTED_GEOMETRY;
+    }
+    for (size_t index = 0U; index < title_length; ++index) {
+        native->title[index] = title[index];
+    }
+    native->title[title_length] = '\0';
+    native->pixels = pixels;
+    native->width = width;
+    native->height = height;
+    native->stride_bytes = stride_bytes;
+    native->event_handler = event_handler;
+    native->context = context;
+    native->active = true;
+    panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
+    panel_windows[panel] = (struct ui_rect){
+        panel_home.x + (uint32_t)panel_cascade * 14U,
+        panel_home.y + (uint32_t)panel_cascade * 11U,
+        width + 20U, height + 48U
+    };
+    if (panel_windows[panel].x + panel_windows[panel].width >
+            state.layout.surface.width) {
+        panel_windows[panel].x = state.layout.surface.width -
+            panel_windows[panel].width;
+    }
+    if (panel_windows[panel].y + panel_windows[panel].height >
+            state.layout.surface.height) {
+        panel_windows[panel].y = state.layout.surface.height -
+            panel_windows[panel].height;
+    }
+    panel_cascade = (uint8_t)((panel_cascade + 1U) %
+        (UI_PANEL_COUNT - 1U));
+    panel_open[panel] = true;
+    if (set_panel(panel, &damage) != UI_STATUS_OK) {
+        panel_open[panel] = false;
+        *native = (struct ui_native_window_record){ 0 };
+        return UI_STATUS_BAD_PANEL;
+    }
+    return render_region(damage, true);
+}
+
+enum ui_status ui_native_window_close(uint32_t slot)
+{
+    struct ui_rect damage;
+    enum ui_panel_id panel;
+
+    if (slot >= UI_NATIVE_WINDOW_COUNT) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    if (!native_windows[slot].active) {
+        return UI_STATUS_NOT_INITIALIZED;
+    }
+    panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
+    damage = drop_shadow_draw_rect(panel_windows[panel], 6U);
+    if (state.active_panel == panel) {
+        native_focus_emit(panel, false);
+    }
+    panel_open[panel] = false;
+    remove_panel_from_order(panel);
+    native_windows[slot] = (struct ui_native_window_record){ 0 };
+    if (state.active_panel == panel) {
+        state.active_panel = front_panel();
+        install_panel_geometry(state.active_panel);
+        native_focus_emit(state.active_panel, true);
+        if (state.active_panel != UI_PANEL_NONE) {
+            damage = rect_union(damage,
+                drop_shadow_draw_rect(panel_windows[state.active_panel], 6U));
+        }
+    }
+    state.renders.panel_transitions += 1U;
+    return render_region(damage, false);
+}
+
+enum ui_status ui_native_window_damage(
+    uint32_t slot,
+    const struct ui_rect *rectangles,
+    size_t rectangle_count
+)
+{
+    enum ui_panel_id panel;
+    struct ui_native_window_record *native;
+
+    if (rectangles == NULL) {
+        return UI_STATUS_NULL_ARGUMENT;
+    }
+    if (slot >= UI_NATIVE_WINDOW_COUNT || rectangle_count == 0U ||
+        rectangle_count > 8U) {
+        return UI_STATUS_RECTANGLE_OVERFLOW;
+    }
+    native = &native_windows[slot];
+    if (!native->active) {
+        return UI_STATUS_NOT_INITIALIZED;
+    }
+    for (size_t index = 0U; index < rectangle_count; ++index) {
+        const struct ui_rect rectangle = rectangles[index];
+
+        if (rectangle.width == 0U || rectangle.height == 0U ||
+            rectangle.x >= native->width || rectangle.y >= native->height ||
+            rectangle.width > native->width - rectangle.x ||
+            rectangle.height > native->height - rectangle.y) {
+            return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
+        }
+    }
+    panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
+    if (!panel_open[panel]) {
+        return UI_STATUS_OK;
+    }
+    for (size_t index = 0U; index < rectangle_count; ++index) {
+        const struct ui_rect damage = {
+            panel_windows[panel].x + 10U + rectangles[index].x,
+            panel_windows[panel].y + 38U + rectangles[index].y,
+            rectangles[index].width, rectangles[index].height
+        };
+        const enum ui_status status = render_region(damage, false);
+
+        if (status != UI_STATUS_OK) {
+            return status;
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+enum ui_status ui_native_pointer_capture(uint32_t slot, bool capture)
+{
+    if (slot >= UI_NATIVE_WINDOW_COUNT) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    if (!native_windows[slot].active) {
+        return UI_STATUS_NOT_INITIALIZED;
+    }
+    if (capture && state.active_panel !=
+            (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot)) {
+        return UI_STATUS_NOT_ACTIVE;
+    }
+    native_windows[slot].pointer_capture = capture;
+    return UI_STATUS_OK;
+}
+
+bool ui_native_window_is_open(uint32_t slot)
+{
+    return slot < UI_NATIVE_WINDOW_COUNT && native_windows[slot].active;
 }
 
 static uint64_t synthetic_render_hash(bool active)
@@ -6681,6 +7014,12 @@ const char *ui_panel_name(enum ui_panel_id panel)
         "None", "Files", "Terminal", "Notes", "SapStudio",
         "Camera", "Settings"
     };
+    uint32_t slot;
+
+    if (native_panel_slot(panel, &slot)) {
+        return native_windows[slot].active ? native_windows[slot].title :
+            "Native application";
+    }
 
     if ((size_t)panel >= sizeof(names) / sizeof(names[0])) {
         return "Unknown panel";

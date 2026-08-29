@@ -2281,6 +2281,32 @@ static bool process_mapping_request_valid(
         return virtual_address == PAGING_LINUX_ANON_ADDRESS &&
             permissions == PAGING_WRITE;
     }
+    if (kind == PAGING_PROCESS_MAPPING_NATIVE_IMAGE) {
+        return virtual_address >= PAGING_NATIVE_IMAGE_BASE &&
+            virtual_address < PAGING_NATIVE_IMAGE_END &&
+            (virtual_address & (PAGING_PAGE_SIZE - 1U)) == 0U &&
+            (permissions == PAGING_READ || permissions == PAGING_WRITE ||
+                permissions == PAGING_EXECUTE);
+    }
+    if (kind == PAGING_PROCESS_MAPPING_NATIVE_ANON ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_TLS) {
+        return virtual_address >= PAGING_NATIVE_ANON_BASE &&
+            virtual_address < PAGING_NATIVE_ANON_END &&
+            (virtual_address & (PAGING_PAGE_SIZE - 1U)) == 0U &&
+            permissions == PAGING_WRITE;
+    }
+    if (kind == PAGING_PROCESS_MAPPING_NATIVE_SURFACE) {
+        return virtual_address >= PAGING_NATIVE_SURFACE_BASE &&
+            virtual_address < PAGING_NATIVE_SURFACE_END &&
+            (virtual_address & (PAGING_PAGE_SIZE - 1U)) == 0U &&
+            permissions == PAGING_WRITE;
+    }
+    if (kind == PAGING_PROCESS_MAPPING_NATIVE_STACK) {
+        return virtual_address >= PAGING_NATIVE_STACK_BASE &&
+            virtual_address < PAGING_NATIVE_STACK_END &&
+            (virtual_address & (PAGING_PAGE_SIZE - 1U)) == 0U &&
+            permissions == PAGING_WRITE;
+    }
     return false;
 }
 
@@ -2799,7 +2825,11 @@ enum paging_status paging_process_map_user_page(
     const bool executable = (permissions & PAGING_EXECUTE) != 0U;
     const bool runtime_mapping =
         kind == PAGING_PROCESS_MAPPING_LINUX_HEAP ||
-        kind == PAGING_PROCESS_MAPPING_LINUX_ANON;
+        kind == PAGING_PROCESS_MAPPING_LINUX_ANON ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_ANON ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_TLS ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_SURFACE ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_STACK;
     enum paging_status status;
 
     if (slot == NULL) {
@@ -2853,7 +2883,11 @@ enum paging_status paging_process_unmap_user_page(
     uint64_t *entry = NULL;
     const bool runtime_mapping =
         kind == PAGING_PROCESS_MAPPING_LINUX_HEAP ||
-        kind == PAGING_PROCESS_MAPPING_LINUX_ANON;
+        kind == PAGING_PROCESS_MAPPING_LINUX_ANON ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_ANON ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_TLS ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_SURFACE ||
+        kind == PAGING_PROCESS_MAPPING_NATIVE_STACK;
     enum paging_status status;
 
     if (slot == NULL) {
@@ -3061,6 +3095,114 @@ enum paging_status paging_process_validate_linux(
             [table_index(PAGING_LINUX_IMAGE_BASE, 4U)] & PAGE_USER) == 0U ||
         (table_at(slot->hierarchy.root)
             [table_index(PAGING_LINUX_STACK_BASE, 4U)] & PAGE_USER) == 0U) {
+        return PAGING_STATUS_VALIDATION_FAILURE;
+    }
+    slot->state = PAGING_PROCESS_SPACE_INSTALLED;
+    sync_process_space(slot, space);
+    return PAGING_STATUS_OK;
+}
+
+enum paging_status paging_process_validate_native(
+    struct paging_process_space *space,
+    const struct paging_process_expected_page *pages,
+    size_t page_count
+)
+{
+    struct process_space_runtime *slot = resolve_process_space(space);
+    const struct process_alias_runtime *alias;
+    struct paging_translation translation;
+    struct paging_audit audit;
+    size_t executable_pages = 0U;
+    bool image_present = false;
+    bool anon_present = false;
+    bool surface_present = false;
+    bool stack_present = false;
+
+    if (pages == NULL) {
+        return PAGING_STATUS_NULL_ARGUMENT;
+    }
+    if (slot == NULL) {
+        return PAGING_STATUS_PROCESS_BAD_TOKEN;
+    }
+    alias = process_space_alias(slot);
+    if (slot->state != PAGING_PROCESS_SPACE_BUILDING ||
+        !alias->owned || page_count == 0U ||
+        page_count > PAGING_PROCESS_EXPECTED_MAX_PAGES ||
+        !no_user_bits_in_kernel_branch(&slot->hierarchy)) {
+        return PAGING_STATUS_PROCESS_BAD_STATE;
+    }
+    if (translate_address(&slot->hierarchy, 0U, &translation,
+            state.pat_after) != PAGING_STATUS_NOT_MAPPED) {
+        return PAGING_STATUS_VALIDATION_FAILURE;
+    }
+    for (size_t index = 0U; index < page_count; ++index) {
+        const struct paging_process_expected_page *expected = &pages[index];
+        const bool image = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_NATIVE_IMAGE, expected->virtual_address,
+            expected->permissions);
+        const bool anon = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_NATIVE_ANON, expected->virtual_address,
+            expected->permissions);
+        const bool tls = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_NATIVE_TLS, expected->virtual_address,
+            expected->permissions);
+        const bool surface = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_NATIVE_SURFACE, expected->virtual_address,
+            expected->permissions);
+        const bool stack = process_mapping_request_valid(
+            PAGING_PROCESS_MAPPING_NATIVE_STACK, expected->virtual_address,
+            expected->permissions);
+
+        if ((!image && !anon && !tls && !surface && !stack) ||
+            translate_address(&slot->hierarchy, expected->virtual_address,
+                &translation, state.pat_after) != PAGING_STATUS_OK ||
+            !translation.user ||
+            translation.permissions != expected->permissions ||
+            translation.level != 1U ||
+            translation.physical_address != expected->physical_address ||
+            translation.memory_type != PAGING_MEMORY_WRITE_BACK) {
+            return PAGING_STATUS_VALIDATION_FAILURE;
+        }
+        for (size_t prior = 0U; prior < index; ++prior) {
+            if (pages[prior].virtual_address == expected->virtual_address ||
+                pages[prior].physical_address == expected->physical_address) {
+                return PAGING_STATUS_VALIDATION_FAILURE;
+            }
+        }
+        image_present = image_present || image;
+        anon_present = anon_present || anon;
+        surface_present = surface_present || surface;
+        stack_present = stack_present || stack;
+        if ((expected->permissions & PAGING_EXECUTE) != 0U) {
+            ++executable_pages;
+            if (!image ||
+                !process_alias_contains(slot, expected->physical_address) ||
+                translate_address(&slot->hierarchy,
+                    expected->physical_address, &translation,
+                    state.pat_after) != PAGING_STATUS_OK ||
+                translation.user || translation.permissions != PAGING_READ ||
+                translation.physical_address != expected->physical_address) {
+                return PAGING_STATUS_VALIDATION_FAILURE;
+            }
+        }
+    }
+    audit_hierarchy(&slot->hierarchy, &audit);
+    if (executable_pages != alias->count || executable_pages == 0U ||
+        !image_present || !stack_present ||
+        audit.write_execute_leaves != 0U ||
+        audit.user_leaves != page_count ||
+        (table_at(slot->hierarchy.root)[0] & PAGE_USER) != 0U ||
+        (table_at(slot->hierarchy.root)
+            [table_index(PAGING_NATIVE_IMAGE_BASE, 4U)] & PAGE_USER) == 0U ||
+        (table_at(slot->hierarchy.root)
+            [table_index(PAGING_NATIVE_STACK_BASE, 4U)] & PAGE_USER) == 0U ||
+        (anon_present &&
+            (table_at(slot->hierarchy.root)
+                [table_index(PAGING_NATIVE_ANON_BASE, 4U)] & PAGE_USER) == 0U) ||
+        (surface_present &&
+            (table_at(slot->hierarchy.root)
+                [table_index(PAGING_NATIVE_SURFACE_BASE, 4U)] & PAGE_USER) ==
+                    0U)) {
         return PAGING_STATUS_VALIDATION_FAILURE;
     }
     slot->state = PAGING_PROCESS_SPACE_INSTALLED;

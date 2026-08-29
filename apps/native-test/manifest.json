@@ -1,0 +1,18 @@
+{
+  "name": "Native foundation test",
+  "identifier": "NATIVET",
+  "executable": "NATIVET.APP",
+  "data_namespace": "NATIVET",
+  "memory_limit": 33554432,
+  "max_handles": 64,
+  "max_threads": 4,
+  "capabilities": [
+    "console",
+    "data-read",
+    "data-write",
+    "time",
+    "entropy",
+    "threads"
+  ],
+  "arguments": ["alpha", "beta"]
+}

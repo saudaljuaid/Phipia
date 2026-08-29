@@ -235,6 +235,13 @@ cpu_read_cr4:
     ret
 .size cpu_read_cr4, . - cpu_read_cr4
 
+.global cpu_write_cr4
+.type cpu_write_cr4, @function
+cpu_write_cr4:
+    movq %rdi, %cr4
+    ret
+.size cpu_write_cr4, . - cpu_write_cr4
+
 /*
  * void cpu_write_cr3(uint64_t value)
  * Intel SDM volume 3A section 4.10.4.1: loading CR3 installs a new translation

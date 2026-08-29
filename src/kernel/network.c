@@ -2999,6 +2999,42 @@ enum network_status network_tcp_shutdown(
     return status;
 }
 
+enum network_status network_address(
+    uint64_t owner,
+    network_handle handle,
+    bool peer,
+    uint32_t *address,
+    uint16_t *port
+)
+{
+    enum network_status status;
+    struct udp_socket *udp;
+    struct tcp_connection *tcp;
+
+    if (address == NULL || port == NULL) {
+        return NETWORK_STATUS_NULL_ARGUMENT;
+    }
+    *address = 0U;
+    *port = 0U;
+    udp = udp_for(owner, handle, &status);
+    if (udp != NULL) {
+        if (peer) {
+            return NETWORK_STATUS_WRONG_MODE;
+        }
+        *address = runtime.public.configuration.address;
+        *port = udp->port;
+        return NETWORK_STATUS_OK;
+    }
+    tcp = tcp_for(owner, handle, &status);
+    if (tcp == NULL) {
+        return status;
+    }
+    *address = peer ? tcp->remote_address :
+        runtime.public.configuration.address;
+    *port = peer ? tcp->remote_port : tcp->local_port;
+    return NETWORK_STATUS_OK;
+}
+
 enum network_status network_ping(
     uint32_t destination,
     uint32_t count,

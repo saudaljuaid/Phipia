@@ -97,6 +97,7 @@ void cpu_write_cr0(uint64_t value);
 uint64_t cpu_read_cr3(void);
 void cpu_write_cr3(uint64_t value);
 uint64_t cpu_read_cr4(void);
+void cpu_write_cr4(uint64_t value);
 void cpu_invalidate_page(uintptr_t virtual_address);
 uint16_t cpu_read_cs(void);
 uint16_t cpu_read_task_register(void);

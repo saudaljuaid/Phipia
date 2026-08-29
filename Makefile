@@ -29,9 +29,9 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-notes network-studio network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
-	nvidia nvidia-builtin
+	nvidia nvidia-builtin native
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 101
+EXPECTED_TEST_SCENARIO_COUNT := 102
 EXPECTED_SHELL_ASSERTION_COUNT := 410
 
 CC := gcc
@@ -40,6 +40,9 @@ NM := nm
 OBJDUMP := objdump
 RUSTC := rustc
 PYTHON := python3
+SDK_CC ?= clang
+SDK_LD ?= ld.lld
+SDK_AR ?= ar
 FFMPEG ?= ffmpeg
 QEMU_ACCEL ?= tcg
 GRUB_MKRESCUE ?= grub-mkrescue
@@ -60,6 +63,7 @@ RUST_LINUX_CAT_FAT16_TEST := $(BUILD_DIR)/linux-cat-fat16-tests
 RUST_LINUX_CAT_ELF64_TEST := $(BUILD_DIR)/linux-cat-elf64-tests
 RUST_ELF64_TEST := $(BUILD_DIR)/elf64-tests
 RUST_NVBIOS_TEST := $(BUILD_DIR)/nvbios-tests
+RUST_NATIVE_IMAGE_TEST := $(BUILD_DIR)/native-image-tests
 RUST_SOURCES := $(wildcard src/rust/*.rs)
 LOGO_CANONICAL_SOURCE := assets/sapote-logo-source.png
 LOGO_SOURCE := assets/sapote-logo.png
@@ -140,6 +144,29 @@ FAT32_DATA_IMAGE := $(BUILD_DIR)/userspace/sapote-data-fat32.raw
 FAT32_RUN_DATA_IMAGE := $(BUILD_DIR)/run-data-fat32.raw
 FAT32_FULL_IMAGE := $(BUILD_DIR)/userspace/sapote-data-full-fat32.raw
 FAT32_CORRUPT_IMAGE := $(BUILD_DIR)/userspace/sapote-data-corrupt-fat32.raw
+SDK_BUILD_DIR ?= $(BUILD_DIR)/sdk
+SDK_OBJECT_DIR := $(SDK_BUILD_DIR)/obj
+SDK_LIB := $(SDK_BUILD_DIR)/lib/libsapote.a
+SDK_CRT := $(SDK_BUILD_DIR)/lib/crt0.o
+SDK_C_SOURCES := $(wildcard sdk/src/*.c)
+SDK_ASM_SOURCES := $(wildcard sdk/src/*.S)
+SDK_C_OBJECTS := $(patsubst sdk/src/%.c,$(SDK_OBJECT_DIR)/%.o,$(SDK_C_SOURCES))
+SDK_ASM_OBJECTS := $(patsubst sdk/src/%.S,$(SDK_OBJECT_DIR)/%.o,$(SDK_ASM_SOURCES))
+SDK_OBJECTS := $(SDK_C_OBJECTS) $(SDK_ASM_OBJECTS)
+SDK_CFLAGS := --target=x86_64-unknown-none-elf -Isdk/include -Iinclude \
+	-Isdk/src -std=c11 -O2 -g -ffreestanding -fno-pie \
+	-fno-stack-protector -mcmodel=large -mno-red-zone -fno-builtin \
+	-ffunction-sections -fdata-sections -ftls-model=local-exec \
+	-Wall -Wextra -Werror -Wpedantic -Wshadow -Wundef \
+	-Wstrict-prototypes -Wmissing-prototypes
+SDK_LDFLAGS := -nostdlib -static --gc-sections --build-id=none \
+	-z max-page-size=0x1000 -z noexecstack --fatal-warnings \
+	--orphan-handling=error -T sdk/linker.ld
+NATIVE_APP_DIR := $(BUILD_DIR)/native-apps
+NATIVE_TEST_APP := $(NATIVE_APP_DIR)/NATIVET.APP
+NATIVE_TEST_PACKAGE := $(NATIVE_APP_DIR)/NATIVET.SPK
+NATIVE_SYSTEM_IMAGE := $(NATIVE_APP_DIR)/system.raw
+NATIVE_DATA_IMAGE := $(NATIVE_APP_DIR)/data.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -182,9 +209,90 @@ DEPENDENCIES := $(C_OBJECTS:.o=.d)
 # makes every scenario resolve to "nothing to be done" and pass without booting.
 # They never create a file of their own name, so they rerun regardless.
 .PHONY: all capture-boot-video capture-redwood capture-redwood-proof capture-networking clean contract-counts contract-scenarios fat32-images hooks \
-	iso kernel lint qemu-tests run screenshot-proof smoke toolchain verify
+	iso kernel lint native-apps port-tests qemu-port-tests reproducible-sdk run \
+	screenshot-proof sdk sdk-once smoke toolchain verify
 
 all: kernel
+
+$(SDK_OBJECT_DIR):
+	mkdir -p $@
+
+$(SDK_BUILD_DIR)/lib $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin:
+	mkdir -p $@
+
+$(SDK_OBJECT_DIR)/%.o: sdk/src/%.c | $(SDK_OBJECT_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -MMD -MP -c $< -o $@
+
+$(SDK_OBJECT_DIR)/%.o: sdk/src/%.S | $(SDK_OBJECT_DIR)
+	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
+		-mcmodel=large -mno-red-zone -c $< -o $@
+
+$(SDK_CRT): sdk/crt/start.S | $(SDK_BUILD_DIR)/lib
+	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
+		-mcmodel=large -mno-red-zone -c $< -o $@
+
+$(SDK_LIB): $(SDK_OBJECTS) | $(SDK_BUILD_DIR)/lib
+	$(SDK_AR) rcsD $@ $(SDK_OBJECTS)
+
+$(SDK_BUILD_DIR)/.installed: $(SDK_LIB) $(SDK_CRT) sdk/linker.ld \
+		sdk/bin/sapote-cc $(wildcard sdk/include/*.h) \
+		$(wildcard sdk/include/sapote/*.h) $(wildcard include/sapote/abi/*.h) \
+		include/sapote/abi.h | $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin
+	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi
+	cp sdk/include/*.h $(SDK_BUILD_DIR)/include/
+	cp sdk/include/sapote/*.h $(SDK_BUILD_DIR)/include/sapote/
+	cp include/sapote/abi.h $(SDK_BUILD_DIR)/include/sapote/
+	cp include/sapote/abi/*.h $(SDK_BUILD_DIR)/include/sapote/abi/
+	cp sdk/linker.ld $(SDK_BUILD_DIR)/linker.ld
+	cp sdk/bin/sapote-cc $(SDK_BUILD_DIR)/bin/sapote-cc
+	touch $@
+
+sdk-once: $(SDK_BUILD_DIR)/.installed
+
+sdk: sdk-once
+
+reproducible-sdk:
+	$(MAKE) SDK_BUILD_DIR=$(BUILD_DIR)/sdk-repro-a sdk-once
+	$(MAKE) SDK_BUILD_DIR=$(BUILD_DIR)/sdk-repro-b sdk-once
+	$(PYTHON) tools/compare-trees.py $(BUILD_DIR)/sdk-repro-a \
+		$(BUILD_DIR)/sdk-repro-b
+
+$(NATIVE_APP_DIR):
+	mkdir -p $@
+
+$(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(NATIVE_APP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(NATIVE_TEST_APP): $(NATIVE_APP_DIR)/native-test.o \
+		$(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(NATIVE_APP_DIR)/NATIVET.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+
+$(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-test/manifest.json --executable $< --output $@
+
+$(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(NATIVE_TEST_PACKAGE)
+
+$(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
+native-apps: $(NATIVE_TEST_PACKAGE)
+
+port-tests: native-apps
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
+		$(RUSTC) --edition 2024 --test -D warnings \
+		tools/native-image-host-test.rs -o $(RUST_NATIVE_IMAGE_TEST)
+	$(RUST_NATIVE_IMAGE_TEST)
+	$(PYTHON) -u tools/sapote_package_host_test.py
+	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
+
+qemu-port-tests: qemu-test-native
+	@echo 'native userspace QEMU scenario passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -402,6 +510,10 @@ verify: toolchain lint
 		-o $(RUST_FAT32_TEST)
 	$(RUST_FAT32_TEST)
 	$(PYTHON) -u tools/fat32_host_test.py
+	$(RUSTC) --edition 2024 --test -D warnings \
+		tools/native-image-host-test.rs -o $(RUST_NATIVE_IMAGE_TEST)
+	$(RUST_NATIVE_IMAGE_TEST)
+	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(MAKE) $(LINUX_ABI_FIXTURE)
 	@test "$$(sha256sum $(LINUX_ABI_FIXTURE) | awk '{ print toupper($$1) }')" = \
 		'41513E5D6F4C33F898F887D4F40F37149A29B1AE13B5E8A600495C18A38C7A6F'
@@ -513,6 +625,8 @@ verify: toolchain lint
 	fi
 	@$(OBJDUMP) -d $(KERNEL) | grep -Fq 'invlpg'
 	@forbidden="$$( $(OBJDUMP) -d -j .text --no-show-raw-insn $(KERNEL) | \
+		awk '/^[[:space:]]*[0-9a-f]+ <[^>]+>:/ { allowed = \
+			($$0 ~ / <native_fx(save|rstor|init)>:/) } !allowed { print }' | \
 		grep -Ei '%(xmm|ymm|zmm|mm|k)[0-9]+|^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]+|emms|fxsave|fxrstor|ldmxcsr|stmxcsr|v[a-z0-9]+)([[:space:]]|$$)' | \
 		grep -Ev '[[:space:]](verr|verw)[[:space:]]' || true )"; \
 		test -z "$$forbidden" || { echo 'kernel contains floating-point, MMX, SSE, or AVX instructions'; echo "$$forbidden"; exit 1; }
@@ -553,6 +667,8 @@ verify: toolchain lint
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_linux_cat_elf64_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_elf64_self_test$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_native_image_validate$$'
+	@$(NM) $(KERNEL) | grep -Eq ' T sapote_native_image_self_test$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_parse$$'
 	@$(NM) $(KERNEL) | grep -Eq ' T sapote_multiprocess_elf64_self_test$$'
 	@if $(NM) $(KERNEL) | grep -Eq 'panic_bounds_check'; then \
@@ -1272,6 +1388,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		audio) expected=231 ;; \
 		nvidia) expected=233 ;; \
 		nvidia-builtin) expected=235 ;; \
+		native) expected=237 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1299,6 +1416,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			nvidia) \
 				hardware='-vga std -device cirrus-vga,romfile= -device bochs-display,romfile= -device ich9-intel-hda' ;; \
 			nvidia-builtin) hardware='' ;; \
+			native) \
+				$(MAKE) '$(NATIVE_SYSTEM_IMAGE)' '$(NATIVE_DATA_IMAGE)' || exit 1; \
+				cp '$(NATIVE_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(NATIVE_SYSTEM_IMAGE),node-name=native-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=native-system-file,node-name=native-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=native-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=native-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=native-data-file,node-name=native-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=native-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1359,7 +1480,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	rm -f "$$log"; \
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
-		fat32-*) timeout_seconds=45 ;; \
+		fat32-*|native) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence; then reboot_control=''; fi; \
 	set +e; \
@@ -1697,6 +1818,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fq '  vector=14 name=page fault' "$$log" && \
 			grep -Fq '  cr2=0x0000000800005000' "$$log" && \
 			grep -Fq '  page-fault bits: P=0 W=1 U=0 RSVD=0 I=0' "$$log" || \
+				diagnostics_ok=false ;; \
+		native) \
+			grep -Eq '^SAPOTE NATIVE PASS argc=[1-9][0-9]* app=NATIVET.APP$$' "$$log" && \
+			grep -Fxq 'Sapote: native general loader, SDK, TLS, threads and FPU passed' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

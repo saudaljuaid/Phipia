@@ -22,6 +22,7 @@
 #include <sapote/ioapic.h>
 #include <sapote/memory.h>
 #include <sapote/network.h>
+#include <sapote/native_process.h>
 #include <sapote/network_syscall.h>
 #include <sapote/audio.h>
 #include <sapote/nvidia.h>
@@ -528,6 +529,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "nvidia-builtin")) {
         return KERNEL_TEST_NVIDIA_BUILTIN;
     }
+    if (token_equals(value, length, "native")) {
+        return KERNEL_TEST_NATIVE;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -703,6 +707,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_AUDIO: return UINT8_C(0x73);
     case KERNEL_TEST_NVIDIA: return UINT8_C(0x74);
     case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
+    case KERNEL_TEST_NATIVE: return UINT8_C(0x76);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4664,6 +4669,7 @@ void kernel_test_run(
     case KERNEL_TEST_AUDIO:
     case KERNEL_TEST_NVIDIA:
     case KERNEL_TEST_NVIDIA_BUILTIN:
+    case KERNEL_TEST_NATIVE:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4687,6 +4693,44 @@ _Noreturn void kernel_test_complete_normal(void)
         kernel_test_fail("normal completion used outside the normal scenario");
     }
 
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native(void)
+{
+    static const uint8_t expected[] = "native ABI v1\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE) {
+        kernel_test_fail("native completion used outside its scenario");
+    }
+    if (native_process_launch("NATIVET.MAN", &result) !=
+            NATIVE_PROCESS_OK || !result.exited || result.faulted ||
+        result.exit_status != 0 || !result.resources_released ||
+        result.syscall_count < 20U || result.thread_switches < 4U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native application did not exit with a clean census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("native Ring 3 file result is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches) {
+        kernel_test_fail("native Ring 3 file result is wrong");
+    }
+    console_write("Sapote: native general loader, SDK, TLS, threads and FPU passed\n");
     kernel_test_pass();
 }
 
@@ -8111,6 +8155,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "nvidia";
     case KERNEL_TEST_NVIDIA_BUILTIN:
         return "nvidia-builtin";
+    case KERNEL_TEST_NATIVE:
+        return "native";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

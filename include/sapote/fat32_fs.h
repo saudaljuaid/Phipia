@@ -9,7 +9,7 @@
 #include <sapote/fat32.h>
 
 #define SAPFS_MAX_MOUNTS 2U
-#define SAPFS_MAX_HANDLES 16U
+#define SAPFS_MAX_HANDLES 64U
 #define SAPFS_CACHE_ENTRIES 4U
 #define SAPFS_MAX_PATH FAT32_PATH_BYTES
 #define SAPFS_MAX_DEPTH 16U

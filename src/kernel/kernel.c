@@ -10,6 +10,7 @@
 #include <sapote/boot_plan.h>
 #include <sapote/console.h>
 #include <sapote/fat32_fs.h>
+#include <sapote/native_process.h>
 #include <sapote/shell.h>
 #include <sapote/test.h>
 #include <sapote/ui.h>
@@ -54,6 +55,7 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
 {
     enum boot_ledger_status status;
     size_t filesystem_tests;
+    size_t native_process_tests;
 
     /* Reversible bootstrap: named planner refusals need somewhere to speak. */
     console_initialize();
@@ -98,6 +100,12 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     console_write_u64(filesystem_tests);
     console_write("/6 passed\n");
     sapfs_initialize();
+    if (!native_process_self_test(&native_process_tests)) {
+        console_panic("native userspace foundation self-test failed");
+    }
+    console_write("Sapote: native userspace controls ");
+    console_write_u64(native_process_tests);
+    console_write(" passed\n");
     if (ui_is_active() && ui_flush() != UI_STATUS_OK) {
         console_write("Sapote: Redwood ledger status redraw failed\n");
     }
@@ -183,6 +191,10 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
     if (installed_context.test_scenario == KERNEL_TEST_NVIDIA ||
         installed_context.test_scenario == KERNEL_TEST_NVIDIA_BUILTIN) {
         kernel_test_complete_nvidia();
+    }
+
+    if (installed_context.test_scenario == KERNEL_TEST_NATIVE) {
+        kernel_test_complete_native();
     }
 
     if (installed_context.test_scenario >=

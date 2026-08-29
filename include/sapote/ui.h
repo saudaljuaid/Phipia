@@ -15,6 +15,8 @@
 #define UI_CURSOR_HEIGHT 25U
 #define UI_CURSOR_HOTSPOT_X 0U
 #define UI_CURSOR_HOTSPOT_Y 0U
+#define UI_NATIVE_WINDOW_COUNT 4U
+#define UI_NATIVE_TITLE_BYTES 32U
 
 enum ui_status {
     UI_STATUS_OK = 0,
@@ -149,8 +151,38 @@ enum ui_panel_id {
     UI_PANEL_STUDIO,
     UI_PANEL_CAMERA,
     UI_PANEL_SETTINGS,
+    UI_PANEL_NATIVE_0,
+    UI_PANEL_NATIVE_1,
+    UI_PANEL_NATIVE_2,
+    UI_PANEL_NATIVE_3,
     UI_PANEL_COUNT
 };
+
+enum ui_native_event_type {
+    UI_NATIVE_EVENT_KEY = 1,
+    UI_NATIVE_EVENT_POINTER_MOVE,
+    UI_NATIVE_EVENT_POINTER_BUTTON,
+    UI_NATIVE_EVENT_FOCUS,
+    UI_NATIVE_EVENT_CLOSE
+};
+
+struct ui_native_event {
+    enum ui_native_event_type type;
+    uint64_t monotonic_ns;
+    int32_t x;
+    int32_t y;
+    int32_t delta_x;
+    int32_t delta_y;
+    uint32_t code;
+    uint32_t value;
+    uint32_t modifiers;
+};
+
+typedef void (*ui_native_event_fn)(
+    uint32_t slot,
+    const struct ui_native_event *event,
+    void *context
+);
 
 enum ui_action {
     UI_ACTION_NONE = 0,
@@ -310,6 +342,25 @@ enum ui_status ui_event_publish(const struct ui_event *event);
 enum ui_status ui_handle_keyboard(const struct keyboard_event *event);
 enum ui_status ui_process_events(void);
 enum ui_status ui_flush(void);
+
+enum ui_status ui_native_window_open(
+    uint32_t slot,
+    const char *title,
+    const uint32_t *pixels,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride_bytes,
+    ui_native_event_fn event_handler,
+    void *context
+);
+enum ui_status ui_native_window_close(uint32_t slot);
+enum ui_status ui_native_window_damage(
+    uint32_t slot,
+    const struct ui_rect *rectangles,
+    size_t rectangle_count
+);
+enum ui_status ui_native_pointer_capture(uint32_t slot, bool capture);
+bool ui_native_window_is_open(uint32_t slot);
 
 bool ui_self_test(void);
 const char *ui_self_test_failure(void);
