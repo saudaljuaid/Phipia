@@ -37,6 +37,11 @@ and six applications: Files, Terminal, Notes, SapStudio, Camera, and Settings.
 - Separate read-only system and writable data volumes using FAT32.
 - Up to four isolated user processes with private address spaces and saved CPU
   state.
+- A versioned native ABI with generation-protected typed handles, a general
+  static ELF64 loader, guarded memory, threads/TLS/FPU state, files, events,
+  Redwood surfaces, and IPv4 networking.
+- A reproducible offline C SDK, a Rust `no_std` application crate, deterministic
+  packages, and native Lua 5.4.7 and SQLite 3.46.0 ports.
 - Measured Linux syscall profiles for BusyBox `echo`, `uname`, and `cat`.
 - IPv4 networking with Ethernet, ARP, ICMP, UDP, DHCP, DNS, TCP, HTTP/1.1, and
   downloads written directly to FAT32.
@@ -97,6 +102,18 @@ device contracts; it does not perform mode setting or command submission.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [Native ABI v1](docs/NATIVE_ABI.md)
+- [Application packages](docs/APPLICATION_PACKAGES.md)
+- [Application loader](docs/APPLICATION_LOADER.md)
+- [Native handles](docs/NATIVE_HANDLES.md)
+- [Native graphics and input](docs/NATIVE_GRAPHICS.md)
+- [Native threads, TLS, and FPU state](docs/NATIVE_THREADS.md)
+- [C SDK and porting guide](docs/NATIVE_SDK.md)
+- [C runtime coverage](docs/LIBC_COVERAGE.md)
+- [Upstream source record](docs/UPSTREAM_PORTS.md)
+- [Lua port](docs/LUA_PORT.md)
+- [SQLite port](docs/SQLITE_PORT.md)
+- [Native limitations](docs/NATIVE_LIMITATIONS.md)
 - [Sapote Redwood](docs/REDWOOD.md)
 - [Persistent FAT32](docs/FAT32.md)
 - [Networking](docs/NETWORKING.md)

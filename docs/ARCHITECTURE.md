@@ -29,9 +29,12 @@ Raw source order is not boot policy. See [`BOOT_LEDGER.md`](BOOT_LEDGER.md).
 four-level page tables, guarded allocations, typed device mappings, PAT memory
 types, and installed W^X checks. Kernel mappings remain supervisor-only.
 
-`process.c` creates one private address-space shape for the proof programs. The
-ELF image is RX/R, writable state and stack are RW/NX, the stack has a guard
-page, and teardown restores the kernel CR3 before releasing user resources.
+`process.c` creates the measured BusyBox address-space shape.
+`native_process.c` admits manifest-described applications through the Rust
+`native_image` validator, creates a private address space, installs immutable
+RX/R ELF loads, RW/NX state, TLS and guarded stacks, and owns the typed mapping
+and handle census. Teardown restores the kernel CR3 and FS base before releasing
+any process resource. See [`APPLICATION_LOADER.md`](APPLICATION_LOADER.md).
 
 `paging.c` holds `PAGING_PROCESS_SPACE_SLOTS` such hierarchies at once rather
 than one. Every private operation resolves the caller's token to a slot, a
@@ -52,7 +55,8 @@ one monotonic time source. `timer.c` builds bounded deadlines on it.
 `thread.c` provides guarded kernel stacks, a small scheduler, and preemption.
 Sapote remains single-core.
 
-`multiprocess.c` adds a bounded user scheduler above them: up to four processes
+`multiprocess.c` and the native scheduler add bounded user scheduling above
+them: up to four processes
 exist at once, each with its own hierarchy, image, stack, generation and saved
 CPL3 register set, and the processor goes to each runnable one in turn. A
 process leaves through the same reviewed gate the Ring 3 proof uses, with its
@@ -119,9 +123,11 @@ backlog draws its accepted connections from the same eight-slot table an
 outbound connection is drawn from, and a segment matching no connection and no
 listener is refused with a reset. HTTP can stream through `fat32_fs.c` to the
 writable Data volume with synchronized temporary-file replacement.
-`network_syscall.c` validates complete user ranges and authenticates process
-generations for the experimental native ABI. The Terminal calls the same public
-kernel operations.
+`native_process.c` exposes the versioned native DNS, TCP and UDP calls through
+typed process-local handles, checked user copies, deadlines and process-owner
+cleanup. `network_syscall.c` retains the older experimental proof boundary;
+new applications use the native ABI v1 records. The Terminal calls the same
+underlying kernel protocol operations.
 
 One receive buffer and one transmit buffer serve the whole stack, so the pump
 runs alone: `network_service` refuses recursive entry, and a send raised while a
@@ -144,8 +150,19 @@ what is left. RF is the processor's own note about the trap rather than
 something the program chose, and a kernel that authenticates it as user state
 refuses legal returns on any processor that sets it.
 
-The native Ring 3 proof loads one exact ELF64 fixture and returns through a
-private interrupt gate. Separately, the Linux compatibility boundary programs
+The native ABI v1 loads approved path-based static ELF64 applications from the
+read-only System volume. A fixed binary manifest selects capabilities and
+limits, binds the executable SHA-256, names immutable resources and a private
+Data namespace, and is validated with the ELF by freestanding Rust before the
+kernel maps a byte. Native syscalls use a separate register convention and
+number space. Process-local generation-protected handles cover files,
+directories, windows, events, network objects, timers, and threads. The public
+C SDK and Rust `no_std` crate both target this same ABI. See
+[`NATIVE_ABI.md`](NATIVE_ABI.md),
+[`APPLICATION_PACKAGES.md`](APPLICATION_PACKAGES.md), and
+[`NATIVE_HANDLES.md`](NATIVE_HANDLES.md).
+
+Separately, the Linux compatibility boundary programs
 the x86_64 `SYSCALL` MSRs and runs three checksum-pinned static BusyBox
 profiles: `echo SAPOTE`, `uname -s`, and `cat`. Sapote Redwood's `linux` command
 selects one of the three exact root entries on the deterministic read-only
@@ -187,8 +204,10 @@ cached clipped drawing and damage tracking; `screen.c` implements text cells.
 
 Sapote Redwood is a bounded six-application workspace with a menu bar, native
 3D Dock, movable overlapping windows, Settings, Camera, Files, Notes,
-Terminal, and SapStudio. It is not a general window manager. Its design and
-capture contract are in [`REDWOOD.md`](REDWOOD.md).
+Terminal, and SapStudio. Native processes may additionally own bounded xRGB
+content surfaces while Redwood retains chrome, focus, stacking, movement,
+close controls, and composition. Its design and capture contract are in
+[`REDWOOD.md`](REDWOOD.md) and [`NATIVE_GRAPHICS.md`](NATIVE_GRAPHICS.md).
 
 ## Repository map
 
@@ -198,6 +217,11 @@ capture contract are in [`REDWOOD.md`](REDWOOD.md).
 | `src/arch/x86_64/` | Entry, interrupts, process entry, syscall entry, context switch |
 | `src/kernel/` | Kernel implementation and guest-side tests |
 | `src/rust/` | Freestanding bounded parsers and the C ABI |
+| `include/sapote/abi/` | Versioned public native syscall records |
+| `sdk/` | Freestanding C startup, headers, runtime and linker contract |
+| `rust/sapote/` | Rust `no_std` native application crate |
+| `apps/native-*` | Native ABI, graphics, networking and Rust proof applications |
+| `ports/` | Pinned upstream application inputs and Sapote adaptations |
 | `userspace/busybox/` | Pinned configurations, traces, licenses, and source inputs |
 | `tools/` | Deterministic asset, fixture, and BusyBox builders |
 | `.github/workflows/` | Required build and measured-profile evidence |
@@ -209,11 +233,11 @@ keeping development diaries in the active documentation set.
 
 ## Current limits
 
-Sapote has no SMP, IPv6, TLS, firewall, routing, Wi-Fi, IOMMU, general VFS,
-journaled crash recovery, dynamic linker, signals, general descriptor table,
-broad hardware support, browser, or generally stable native userspace ABI. User
-scheduling is cooperative rather than preemptive, and there is no fork, exec,
-process identifier space or inter-process communication. The thirteen bounded
-drivers bind and identify their devices; none of them moves data. The HD Audio
-driver identifies codecs and plays nothing. These are boundaries, not implied
-features.
+Sapote has no SMP, IPv6, transport TLS, firewall, routing, Wi-Fi, IOMMU,
+general VFS, journaled crash recovery, dynamic linker, signals, ambient Unix
+descriptor table, broad hardware support, or browser. Native ABI v1 is stable
+within its documented static-application profile, not a POSIX personality.
+There is no fork, exec, process identifier space or inter-process
+communication. The thirteen bounded drivers bind and identify their devices;
+none of them moves data. The HD Audio driver identifies codecs and plays
+nothing. See [`NATIVE_LIMITATIONS.md`](NATIVE_LIMITATIONS.md).
