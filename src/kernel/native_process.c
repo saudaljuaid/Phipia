@@ -54,6 +54,7 @@ enum native_thread_state {
     NATIVE_THREAD_JOIN_WAIT,
     NATIVE_THREAD_FUTEX_WAIT,
     NATIVE_THREAD_CONSOLE_WAIT,
+    NATIVE_THREAD_HANDLE_WAIT,
     NATIVE_THREAD_EXITED,
     NATIVE_THREAD_FAULTED
 };
@@ -77,7 +78,10 @@ struct native_thread {
     uint64_t futex_address;
     uint64_t deadline_ns;
     uint64_t console_address;
+    uint64_t wait_items_address;
     size_t console_length;
+    size_t wait_item_count;
+    struct sapote_wait_item wait_items[SAPOTE_WAIT_MAX];
     int32_t exit_status;
     enum native_thread_state state;
 };
@@ -2289,34 +2293,19 @@ static int64_t syscall_sleep_until(
     return 0;
 }
 
-static int64_t syscall_wait(
+static int64_t poll_wait_items(
     struct native_process *process,
-    uint64_t request_address
+    struct sapote_wait_item *items,
+    size_t count
 )
 {
-    struct sapote_wait_request request;
-    struct sapote_wait_item items[SAPOTE_WAIT_MAX];
     struct network_poll_request network_requests[SAPOTE_WAIT_MAX];
     struct network_poll_result network_results[SAPOTE_WAIT_MAX];
     size_t network_indices[SAPOTE_WAIT_MAX];
     size_t network_count = 0U;
     size_t ready_count = 0U;
-    uint64_t timeout = 1U;
 
-    if (!copy_from_user(process, &request, request_address,
-            sizeof(request))) {
-        return -SAPOTE_EFAULT;
-    }
-    if (request.size != sizeof(request) ||
-        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
-        request.count == 0U || request.count > SAPOTE_WAIT_MAX ||
-        !copy_from_user(process, items, request.items,
-            request.count * sizeof(items[0])) ||
-        !validate_user_range(process, request.items,
-            request.count * sizeof(items[0]), true)) {
-        return -SAPOTE_EFAULT;
-    }
-    for (size_t index = 0U; index < request.count; ++index) {
+    for (size_t index = 0U; index < count; ++index) {
         struct native_resource *resource;
         const enum native_handle_status status = native_handle_resolve(
             &process->handles, items[index].handle, 0U, &resource);
@@ -2369,13 +2358,10 @@ static int64_t syscall_wait(
     if (network_count != 0U) {
         size_t result_count = 0U;
 
-        if (request.deadline_ns > clock_monotonic_ns()) {
-            (void)deadline_timeout(request.deadline_ns, &timeout);
-        }
         cpu_interrupt_enable();
         const enum network_status status = network_poll(process->generation,
             network_requests, network_count, network_results, network_count,
-            &result_count, timeout);
+            &result_count, 1U);
         cpu_interrupt_disable();
         if (status != NETWORK_STATUS_OK && status != NETWORK_STATUS_TIMEOUT) {
             return network_error(status);
@@ -2398,31 +2384,53 @@ static int64_t syscall_wait(
                 ++ready_count;
             }
         }
-    } else if (ready_count == 0U &&
-        request.deadline_ns > clock_monotonic_ns()) {
-        cpu_interrupt_enable();
-        (void)timer_sleep_ns(request.deadline_ns - clock_monotonic_ns());
-        cpu_interrupt_disable();
-        for (size_t index = 0U; index < request.count; ++index) {
-            struct native_resource *resource;
-
-            if (native_handle_resolve(&process->handles, items[index].handle,
-                    SAPOTE_HANDLE_TIMER, &resource) == NATIVE_HANDLE_OK &&
-                resource->words[0] != 0U &&
-                clock_monotonic_ns() >= resource->words[0]) {
-                items[index].ready = items[index].interests &
-                    SAPOTE_WAIT_SIGNALED;
-                if (items[index].ready != 0U) {
-                    ++ready_count;
-                }
-            }
-        }
     }
-    if (!copy_to_user(process, request.items, items,
+    return (int64_t)ready_count;
+}
+
+static int64_t syscall_wait(
+    struct native_process *process,
+    uint64_t request_address
+)
+{
+    struct sapote_wait_request request;
+    struct sapote_wait_item items[SAPOTE_WAIT_MAX];
+    struct native_thread *thread = running_thread(process);
+    int64_t ready;
+
+    if (!copy_from_user(process, &request, request_address,
+            sizeof(request))) {
+        return -SAPOTE_EFAULT;
+    }
+    if (request.size != sizeof(request) ||
+        request.version != SAPOTE_ABI_VERSION || request.flags != 0U ||
+        request.count == 0U || request.count > SAPOTE_WAIT_MAX) {
+        return -SAPOTE_EINVAL;
+    }
+    if (thread == NULL || !validate_user_range(process, request.items,
+            request.count * sizeof(items[0]), true) ||
+        !copy_from_user(process, items, request.items,
             request.count * sizeof(items[0]))) {
         return -SAPOTE_EFAULT;
     }
-    return ready_count == 0U ? -SAPOTE_ETIMEDOUT : (int64_t)ready_count;
+    ready = poll_wait_items(process, items, request.count);
+    if (ready < 0) {
+        return ready;
+    }
+    if (ready != 0 || request.deadline_ns <= clock_monotonic_ns()) {
+        if (!copy_to_user(process, request.items, items,
+                request.count * sizeof(items[0]))) {
+            return -SAPOTE_EFAULT;
+        }
+        return ready == 0 ? -SAPOTE_ETIMEDOUT : ready;
+    }
+    copy_bytes(thread->wait_items, items,
+        request.count * sizeof(items[0]));
+    thread->wait_items_address = request.items;
+    thread->wait_item_count = request.count;
+    thread->deadline_ns = request.deadline_ns;
+    thread->state = NATIVE_THREAD_HANDLE_WAIT;
+    return 0;
 }
 
 static void native_ui_event(
@@ -3751,6 +3759,27 @@ static void update_waiting_threads(
                     break;
                 }
             }
+        } else if (thread->state == NATIVE_THREAD_HANDLE_WAIT) {
+            int64_t ready = poll_wait_items(process, thread->wait_items,
+                thread->wait_item_count);
+            const bool timed_out = thread->deadline_ns != 0U &&
+                now >= thread->deadline_ns;
+
+            if (ready != 0 || timed_out) {
+                if (ready >= 0 && !copy_to_user(process,
+                        thread->wait_items_address, thread->wait_items,
+                        thread->wait_item_count *
+                            sizeof(thread->wait_items[0]))) {
+                    ready = -SAPOTE_EFAULT;
+                } else if (ready == 0) {
+                    ready = -SAPOTE_ETIMEDOUT;
+                }
+                thread->wait_items_address = 0U;
+                thread->wait_item_count = 0U;
+                thread->deadline_ns = 0U;
+                thread->context.rax = (uint64_t)ready;
+                thread->state = NATIVE_THREAD_RUNNABLE;
+            }
         } else if (thread->state == NATIVE_THREAD_CONSOLE_WAIT &&
             process->console_input_count != 0U) {
             const size_t copied = console_input_copy(process,
@@ -3791,7 +3820,8 @@ static bool nearest_deadline(uint64_t *deadline)
                 &process->threads[thread_index];
 
             if ((thread->state == NATIVE_THREAD_SLEEP_WAIT ||
-                    thread->state == NATIVE_THREAD_FUTEX_WAIT) &&
+                    thread->state == NATIVE_THREAD_FUTEX_WAIT ||
+                    thread->state == NATIVE_THREAD_HANDLE_WAIT) &&
                 thread->deadline_ns != 0U &&
                 (!found || thread->deadline_ns < *deadline)) {
                 *deadline = thread->deadline_ns;
@@ -3910,6 +3940,26 @@ static bool any_console_waiter(void)
     return false;
 }
 
+static bool any_handle_waiter(void)
+{
+    for (size_t process_index = 0U; process_index < NATIVE_PROCESS_LIMIT;
+         ++process_index) {
+        const struct native_process *process = &processes[process_index];
+
+        if (!process->active || process->exiting) {
+            continue;
+        }
+        for (size_t thread_index = 0U;
+             thread_index < process->thread_count; ++thread_index) {
+            if (process->threads[thread_index].state ==
+                    NATIVE_THREAD_HANDLE_WAIT) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static void capture_result(
     const struct native_process *process,
     struct native_process_result *result
@@ -4018,7 +4068,11 @@ enum native_process_status native_process_run(struct native_process_result *resu
         } else {
             uint64_t deadline;
 
-            if (nearest_deadline(&deadline)) {
+            if (any_handle_waiter() || any_console_waiter()) {
+                /* Device and UI interrupts wake the scheduler for re-polling. */
+                cpu_enable_and_halt();
+                cpu_interrupt_disable();
+            } else if (nearest_deadline(&deadline)) {
                 const uint64_t current = clock_monotonic_ns();
 
                 if (deadline > current) {
@@ -4026,9 +4080,6 @@ enum native_process_status native_process_run(struct native_process_result *resu
                     (void)timer_sleep_ns(deadline - current);
                     cpu_interrupt_disable();
                 }
-            } else if (any_console_waiter()) {
-                cpu_enable_and_halt();
-                cpu_interrupt_disable();
             } else {
                 for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT;
                      ++index) {
