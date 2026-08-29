@@ -894,9 +894,11 @@ verify: toolchain lint
 	# context. Anything else entering Ring 3 from a register set it did not
 	# authenticate would be a second, unreviewed user boundary.
 	@test "$$(grep -ERh '\bprocess_enter_user_context[[:space:]]*[(]' \
-		src/kernel --include='*.c' | wc -l)" -eq 1 && \
+		src/kernel --include='*.c' | wc -l)" -eq 2 && \
 		grep -Fq 'process_enter_user_context(&process->context);' \
-			src/kernel/multiprocess.c || \
+			src/kernel/multiprocess.c && \
+		grep -Fq 'process_enter_user_context(&thread->context);' \
+			src/kernel/native_process.c || \
 		{ echo 'saved-context user entry escaped the scheduler'; exit 1; }
 	@test "$$(grep -Ec 'multiprocess_trap_interrupt[[:space:]]*[(]' \
 		src/kernel/multiprocess.c)" -eq 1 && \
