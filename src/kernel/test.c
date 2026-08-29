@@ -560,6 +560,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-abi-refusal")) {
         return KERNEL_TEST_NATIVE_ABI_REFUSAL;
     }
+    if (token_equals(value, length, "native-relaunch")) {
+        return KERNEL_TEST_NATIVE_RELAUNCH;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -746,6 +749,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_DIGEST_REFUSAL: return UINT8_C(0x7E);
     /* 0x7F is the invariant QEMU failure value. */
     case KERNEL_TEST_NATIVE_ABI_REFUSAL: return UINT8_C(0x80);
+    case KERNEL_TEST_NATIVE_RELAUNCH: return UINT8_C(0x81);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4717,6 +4721,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_ELF_REFUSAL:
     case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
     case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+    case KERNEL_TEST_NATIVE_RELAUNCH:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5070,6 +5075,27 @@ _Noreturn void kernel_test_complete_native_admission_refusal(void)
         kernel_test_fail("native admission refusal changed the resource census");
     }
     console_write(diagnostic);
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_relaunch(void)
+{
+    struct native_process_result first;
+    struct native_process_result second;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_RELAUNCH) {
+        kernel_test_fail("native relaunch completion used outside its scenario");
+    }
+    if (native_process_launch("NATIVET.MAN", &first) != NATIVE_PROCESS_OK ||
+        !first.exited || first.faulted || first.exit_status != 0 ||
+        !first.resources_released || !native_process_resources_released() ||
+        native_process_launch("NATIVET.MAN", &second) != NATIVE_PROCESS_OK ||
+        !second.exited || second.faulted || second.exit_status != 0 ||
+        !second.resources_released || second.generation <= first.generation ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native relaunch did not reset generations and resources");
+    }
+    console_write("Sapote: native relaunch advanced generation; both resource censuses clean\n");
     kernel_test_pass();
 }
 
@@ -8518,6 +8544,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-digest-refusal";
     case KERNEL_TEST_NATIVE_ABI_REFUSAL:
         return "native-abi-refusal";
+    case KERNEL_TEST_NATIVE_RELAUNCH:
+        return "native-relaunch";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

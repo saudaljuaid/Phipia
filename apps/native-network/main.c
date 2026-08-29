@@ -128,6 +128,21 @@ static int exercise_failures(uint32_t address)
     return 0;
 }
 
+static int leave_handles_for_process_teardown(void)
+{
+    const long stream = sapote_stream_open();
+    const long datagram = sapote_datagram_open();
+
+    if (stream < 0 || datagram < 0 ||
+        sapote_datagram_bind((sapote_handle_t)datagram, 50011U) < 0) {
+        if (stream >= 0) (void)close_handle((sapote_handle_t)stream);
+        if (datagram >= 0) (void)close_handle((sapote_handle_t)datagram);
+        return -1;
+    }
+    /* The kernel completion proof requires both objects to die with process. */
+    return 0;
+}
+
 int main(int argc, char **argv, char **environment)
 {
     static const char request[] =
@@ -197,7 +212,8 @@ int main(int argc, char **argv, char **environment)
         return 35;
     }
     if (exercise_udp(HTTP_ADDRESS) != 0 ||
-        exercise_failures(HTTP_ADDRESS) != 0) {
+        exercise_failures(HTTP_ADDRESS) != 0 ||
+        leave_handles_for_process_teardown() != 0) {
         return 36;
     }
     printf("SAPOTE NETAPP PASS dns=10.0.2.20 http=%u udp=echo timeout reset cancel malformed-dns\n",

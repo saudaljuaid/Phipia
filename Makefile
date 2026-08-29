@@ -31,10 +31,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
 	native-rust native-crash native-elf-refusal native-digest-refusal \
-	native-abi-refusal
+	native-abi-refusal native-relaunch
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 111
-EXPECTED_SHELL_ASSERTION_COUNT := 431
+EXPECTED_TEST_SCENARIO_COUNT := 112
+EXPECTED_SHELL_ASSERTION_COUNT := 432
 
 CC := gcc
 LD := ld
@@ -523,7 +523,8 @@ port-tests: native-apps
 qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
 	qemu-test-native-crash qemu-test-native-elf-refusal \
-	qemu-test-native-digest-refusal qemu-test-native-abi-refusal
+	qemu-test-native-digest-refusal qemu-test-native-abi-refusal \
+	qemu-test-native-relaunch
 	@echo 'native userspace, Lua, SQLite, Canvas, network and Rust QEMU scenarios passed'
 
 contract-counts:
@@ -1638,6 +1639,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-elf-refusal) expected=251 ;; \
 		native-digest-refusal) expected=253 ;; \
 		native-abi-refusal) expected=1 ;; \
+		native-relaunch) expected=3 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1665,7 +1667,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			nvidia) \
 				hardware='-vga std -device cirrus-vga,romfile= -device bochs-display,romfile= -device ich9-intel-hda' ;; \
 			nvidia-builtin) hardware='' ;; \
-			native) \
+			native|native-relaunch) \
 				$(MAKE) '$(NATIVE_SYSTEM_IMAGE)' '$(NATIVE_DATA_IMAGE)' || exit 1; \
 				cp '$(NATIVE_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(NATIVE_SYSTEM_IMAGE),node-name=native-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=native-system-file,node-name=native-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=native-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=native-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=native-data-file,node-name=native-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=native-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
@@ -1756,7 +1758,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
 		native-canvas) timeout_seconds=60 ;; \
-		native-rust|native-crash|native-*-refusal) timeout_seconds=45 ;; \
+		native-rust|native-crash|native-*-refusal|native-relaunch) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -2147,6 +2149,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: native manifest digest mismatch refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
 		native-abi-refusal) \
 			grep -Fxq 'Sapote: native unsupported ABI version refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
+		native-relaunch) \
+			grep -Fxq 'Sapote: native relaunch advanced generation; both resource censuses clean' "$$log" || diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

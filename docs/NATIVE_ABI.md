@@ -39,6 +39,9 @@ foreign-process, immutable executable, or read-only output mapping.
 | `0x0500` | DNS, TCP, UDP, address query | Open calls return owned stream/datagram handles. Deadlines are absolute monotonic nanoseconds. Shutdown changes stream direction state but does not close the handle. |
 | `0x0600` | thread create/exit/join, FS-base TLS, futex wait/wake | Create returns an owned thread handle. Join parks and reports the target exit status; the handle is still closed explicitly. Futex wait compares one aligned user `u32` before parking. |
 
+Directory enumeration reports the canonical printable form of each accepted
+ASCII 8.3 name in lower case. Path lookup remains case-insensitive.
+
 `include/sapote/abi/base.h` is the syscall-number and error-number registry.
 The service-specific headers define exact records, limits, flags, event values,
 pixel format, IPv4 endpoint encoding, and static size checks.
@@ -56,4 +59,3 @@ admission path converges on process teardown. Teardown closes every handle,
 destroys windows and queues, cancels network ownership, releases every private
 frame and surface mapping, clears saved FPU/TLS state, and restores the kernel
 address space before the result is published.
-

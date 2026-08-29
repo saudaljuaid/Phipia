@@ -175,7 +175,7 @@ static int file_and_handle_probes(void)
             break;
         }
         if (entry.name_length == 5U &&
-            memcmp(entry.name, "B.TXT", 5U) == 0) {
+            memcmp(entry.name, "b.txt", 5U) == 0) {
             found = 1;
         }
     }
