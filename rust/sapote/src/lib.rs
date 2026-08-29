@@ -607,6 +607,22 @@ impl FutexRequest {
     }
 }
 
+pub fn futex_wait(word: &AtomicU32, expected: u32,
+    deadline_ns: u64) -> Result<()> {
+    let request = FutexRequest::new(word, expected, deadline_ns, 0);
+    // SAFETY: word and the complete request remain live while the thread waits.
+    result(unsafe { syscall1(SYS_FUTEX_WAIT,
+        &request as *const _ as u64) }).map(|_| ())
+}
+
+pub fn futex_wake(word: &AtomicU32, count: u32) -> Result<usize> {
+    if count == 0 { return Err(Error(22)); }
+    let request = FutexRequest::new(word, 0, 0, count);
+    // SAFETY: word and the immutable request are valid for the complete call.
+    result(unsafe { syscall1(SYS_FUTEX_WAKE,
+        &request as *const _ as u64) }).map(|value| value as usize)
+}
+
 pub struct Thread(Handle);
 
 impl Thread {
