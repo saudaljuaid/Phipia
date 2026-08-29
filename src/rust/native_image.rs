@@ -264,13 +264,27 @@ fn copy_field<const N: usize>(input: &[u8], offset: usize) -> Result<[u8; N], St
 }
 
 fn text_valid(text: &[u8], required: bool, identifier: bool) -> bool {
-    let Some(end) = text.iter().position(|byte| *byte == 0) else { return false; };
+    let mut end = text.len();
+    for (index, byte) in text.iter().enumerate() {
+        if *byte == 0 {
+            end = index;
+            break;
+        }
+    }
+    if end == text.len() { return false; }
     if required && end == 0 { return false; }
-    if text[end..].iter().any(|byte| *byte != 0) { return false; }
-    text[..end].iter().all(|byte| {
-        byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-'
-            || (!identifier && (*byte == b'.' || *byte == b' ' || *byte == b'/'))
-    }) && (!identifier || !text[..end].contains(&b'/'))
+    for (index, byte) in text.iter().enumerate() {
+        if index >= end {
+            if *byte != 0 { return false; }
+            continue;
+        }
+        if identifier && *byte == b'/' { return false; }
+        if !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'-'
+            && (identifier || (*byte != b'.' && *byte != b' ' && *byte != b'/')) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Validate one exact binary application manifest.
@@ -459,7 +473,8 @@ pub fn parse_elf(input: &[u8]) -> Result<ValidatedImage, Status> {
         if item.address < MIN_ADDRESS || virtual_end <= item.address || page_end > MAX_ADDRESS {
             return Err(Status::ElfAddress);
         }
-        for prior in &segments[..loads] {
+        let admitted = segments.get(..loads).ok_or(Status::ElfProgramTable)?;
+        for prior in admitted {
             let prior_end = prior.virtual_address.checked_add(prior.memory_size)
                 .ok_or(Status::ElfOverlap)?;
             if item.address < prior_end && prior.virtual_address < virtual_end
@@ -482,7 +497,8 @@ pub fn parse_elf(input: &[u8]) -> Result<ValidatedImage, Status> {
     if !executable_entry { return Err(Status::ElfEntry); }
     if tls.memory_size != 0 {
         let tls_end = tls.virtual_address.checked_add(tls.memory_size).ok_or(Status::ElfTls)?;
-        let covered = segments[..loads].iter().any(|segment| {
+        let admitted = segments.get(..loads).ok_or(Status::ElfProgramTable)?;
+        let covered = admitted.iter().any(|segment| {
             segment.flags == PF_R | PF_W && tls.virtual_address >= segment.virtual_address
                 && segment.virtual_address.checked_add(segment.memory_size)
                     .is_some_and(|end| tls_end <= end)
