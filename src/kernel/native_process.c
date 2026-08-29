@@ -48,6 +48,7 @@
 #define NATIVE_CONSOLE_INPUT_CAPACITY 256U
 #define NATIVE_SURFACE_MAX_WIDTH 1280U
 #define NATIVE_SURFACE_MAX_HEIGHT 720U
+#define NATIVE_SCHEDULER_MIN_SLEEP_NS UINT64_C(100000)
 
 enum native_thread_state {
     NATIVE_THREAD_UNUSED = 0,
@@ -4276,18 +4277,28 @@ enum native_process_status native_process_run(struct native_process_result *resu
         } else {
             uint64_t deadline;
 
-            if (any_handle_waiter() || any_console_waiter()) {
-                /* Device and UI interrupts wake the scheduler for re-polling. */
-                cpu_enable_and_halt();
-                cpu_interrupt_disable();
-            } else if (nearest_deadline(&deadline)) {
+            /*
+             * A handle wait is also a device wait, but its absolute timeout
+             * still needs a programmed interrupt.  Service deadlines first so
+             * an idle system cannot halt forever after the last device event.
+             */
+            if (nearest_deadline(&deadline)) {
                 const uint64_t current = clock_monotonic_ns();
 
                 if (deadline > current) {
+                    uint64_t interval = deadline - current;
+
+                    if (interval < NATIVE_SCHEDULER_MIN_SLEEP_NS) {
+                        interval = NATIVE_SCHEDULER_MIN_SLEEP_NS;
+                    }
                     cpu_interrupt_enable();
-                    (void)timer_sleep_ns(deadline - current);
+                    (void)timer_sleep_ns(interval);
                     cpu_interrupt_disable();
                 }
+            } else if (any_handle_waiter() || any_console_waiter()) {
+                /* Device and UI interrupts wake an unbounded wait for polling. */
+                cpu_enable_and_halt();
+                cpu_interrupt_disable();
             } else {
                 report_scheduler_stall();
                 for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT;
