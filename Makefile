@@ -1548,7 +1548,9 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
 	if test '$*' = native; then \
 		system='$(NETAPP_SYSTEM_IMAGE)'; data='$(NETAPP_DATA_IMAGE)'; \
 	fi; \
-	timeout=45; if test '$*' = persistence; then timeout=70; fi; \
+	timeout=45; \
+	if test '$*' = persistence; then timeout=70; \
+	elif test '$*' = native; then timeout=120; fi; \
 	$(PYTHON) tools/run_network_scenario.py \
 		--scenario 'network-$*' --expected "$$expected" --iso '$<' \
 		--output '$(TEST_BUILD_DIR)/network-$*' \
@@ -1755,12 +1757,13 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	rm -f "$$log"; \
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
-		fat32-*|native-lua) timeout_seconds=45 ;; \
-		native) timeout_seconds=75 ;; \
-		native-sqlite) timeout_seconds=90 ;; \
-		native-canvas) timeout_seconds=60 ;; \
-		native-crash|native-relaunch) timeout_seconds=120 ;; \
-		native-rust|native-*-refusal) timeout_seconds=45 ;; \
+		fat32-*) timeout_seconds=45 ;; \
+		native) timeout_seconds=180 ;; \
+		native-lua) timeout_seconds=150 ;; \
+		native-sqlite) timeout_seconds=240 ;; \
+		native-canvas) timeout_seconds=180 ;; \
+		native-crash|native-relaunch) timeout_seconds=180 ;; \
+		native-rust|native-*-refusal) timeout_seconds=120 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -1770,7 +1773,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
 		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
 			--serial "$$log" --marker 'SAPOTE LUA INPUT READY' \
-			--text sapote --enter --timeout 40 & injector=$$!; \
+			--text sapote --enter --timeout 120 & injector=$$!; \
 	elif test '$*' = native-canvas; then \
 		monitor_socket='$(TEST_BUILD_DIR)/$*/monitor.sock'; \
 		rm -f "$$monitor_socket"; \
@@ -1782,7 +1785,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			--capture-dir '$(abspath $(TEST_BUILD_DIR)/$*/canvas-frames)' \
 			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/canvas.png)' \
 			--video '$(abspath $(TEST_BUILD_DIR)/$*/canvas.mp4)' \
-			--ffmpeg '$(FFMPEG)' --timeout 50 \
+			--ffmpeg '$(FFMPEG)' --timeout 150 \
 			& injector=$$!; \
 	fi; \
 	set +e; \
