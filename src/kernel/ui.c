@@ -6485,6 +6485,48 @@ enum ui_status ui_flush(void)
     return UI_STATUS_OK;
 }
 
+static struct ui_rect native_window_geometry(
+    uint32_t slot,
+    uint32_t width,
+    uint32_t height
+)
+{
+    const uint32_t outer_width = width + 20U;
+    const uint32_t outer_height = height + 48U;
+    const uint32_t column = slot % 2U;
+    const uint32_t row = slot / 2U;
+    const uint64_t paired_width = (uint64_t)outer_width * 2U + 24U;
+    const uint64_t paired_height = (uint64_t)outer_height * 2U + 24U;
+    const uint32_t horizontal_room = state.layout.surface.width > 16U ?
+        state.layout.surface.width - 16U : 0U;
+    const uint32_t vertical_room = state.layout.dock.y > panel_home.y ?
+        state.layout.dock.y - panel_home.y : 0U;
+    struct ui_rect result = {
+        panel_home.x, panel_home.y, outer_width, outer_height
+    };
+
+    if (paired_width <= horizontal_room) {
+        result.x = (state.layout.surface.width - (uint32_t)paired_width) / 2U +
+            column * (outer_width + 24U);
+    } else if (column != 0U) {
+        result.x += 36U;
+    }
+    if (row != 0U) {
+        if (paired_height <= vertical_room) {
+            result.y += outer_height + 24U;
+        } else {
+            result.y += row * 36U;
+        }
+    }
+    if (result.x + result.width > state.layout.surface.width) {
+        result.x = state.layout.surface.width - result.width;
+    }
+    if (result.y + result.height > state.layout.surface.height) {
+        result.y = state.layout.surface.height - result.height;
+    }
+    return result;
+}
+
 enum ui_status ui_native_window_open(
     uint32_t slot,
     const char *title,
@@ -6539,23 +6581,7 @@ enum ui_status ui_native_window_open(
     native->context = context;
     native->active = true;
     panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
-    panel_windows[panel] = (struct ui_rect){
-        panel_home.x + (uint32_t)panel_cascade * 14U,
-        panel_home.y + (uint32_t)panel_cascade * 11U,
-        width + 20U, height + 48U
-    };
-    if (panel_windows[panel].x + panel_windows[panel].width >
-            state.layout.surface.width) {
-        panel_windows[panel].x = state.layout.surface.width -
-            panel_windows[panel].width;
-    }
-    if (panel_windows[panel].y + panel_windows[panel].height >
-            state.layout.surface.height) {
-        panel_windows[panel].y = state.layout.surface.height -
-            panel_windows[panel].height;
-    }
-    panel_cascade = (uint8_t)((panel_cascade + 1U) %
-        (UI_PANEL_COUNT - 1U));
+    panel_windows[panel] = native_window_geometry(slot, width, height);
     panel_open[panel] = true;
     if (set_panel(panel, &damage) != UI_STATUS_OK) {
         panel_open[panel] = false;

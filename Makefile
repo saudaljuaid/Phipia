@@ -2149,7 +2149,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.png' && \
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.mp4' && \
 			test "$$(grep -Ec '^SAPOTE PERF canvas damage=70x14 samples=[1-9][0-9]* total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log")" -eq 2 && \
-			test "$$(grep -Ec '^SAPOTE CANVAS READY width=340 height=220$$' "$$log")" -eq 2 && \
+			test "$$(grep -Ec '^SAPOTE CANVAS READY width=420 height=250$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'Sapote: two native Canvas windows handled focus, input and partial damage' "$$log" || \
