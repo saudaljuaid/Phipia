@@ -221,6 +221,11 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_native_crash();
     }
 
+    if (installed_context.test_scenario >= KERNEL_TEST_NATIVE_ELF_REFUSAL &&
+        installed_context.test_scenario <= KERNEL_TEST_NATIVE_ABI_REFUSAL) {
+        kernel_test_complete_native_admission_refusal();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=

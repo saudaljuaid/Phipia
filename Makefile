@@ -30,10 +30,11 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-tcp-listen network-tcp-refused network-native \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
-	native-rust native-crash
+	native-rust native-crash native-elf-refusal native-digest-refusal \
+	native-abi-refusal
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 108
-EXPECTED_SHELL_ASSERTION_COUNT := 428
+EXPECTED_TEST_SCENARIO_COUNT := 111
+EXPECTED_SHELL_ASSERTION_COUNT := 431
 
 CC := gcc
 LD := ld
@@ -204,6 +205,9 @@ CRASH_APP := $(CRASH_APP_DIR)/CRASH.APP
 CRASH_PACKAGE := $(CRASH_APP_DIR)/CRASH.SPK
 CRASH_SYSTEM_IMAGE := $(CRASH_APP_DIR)/system.raw
 CRASH_DATA_IMAGE := $(CRASH_APP_DIR)/data.raw
+ADMISSION_DIR := $(BUILD_DIR)/native-admission
+ADMISSION_SYSTEM_IMAGE := $(ADMISSION_DIR)/system.raw
+ADMISSION_DATA_IMAGE := $(ADMISSION_DIR)/data.raw
 RUST_APP_FLAGS := -Dwarnings -C panic=abort -C relocation-model=static \
 	-C code-model=large -C link-arg=-nostdlib -C link-arg=-static \
 	-C link-arg=--gc-sections -C link-arg=--build-id=none \
@@ -323,6 +327,9 @@ $(RUST_APP_DIR):
 	mkdir -p $@
 
 $(CRASH_APP_DIR):
+	mkdir -p $@
+
+$(ADMISSION_DIR):
 	mkdir -p $@
 
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
@@ -475,6 +482,15 @@ $(CRASH_SYSTEM_IMAGE): $(CRASH_PACKAGE) $(NATIVE_TEST_PACKAGE) \
 $(CRASH_DATA_IMAGE): tools/fat32_image.py | $(CRASH_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(ADMISSION_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) \
+		tools/make-native-admission-fixture.py tools/sapote-package.py \
+		tools/fat32_image.py | $(ADMISSION_DIR)
+	$(PYTHON) tools/make-native-admission-fixture.py \
+		$(NATIVE_TEST_PACKAGE) $@
+
+$(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
 	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE) $(RUST_APP_PACKAGE) $(CRASH_PACKAGE)
 
@@ -506,7 +522,8 @@ port-tests: native-apps
 
 qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
 	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
-	qemu-test-native-crash
+	qemu-test-native-crash qemu-test-native-elf-refusal \
+	qemu-test-native-digest-refusal qemu-test-native-abi-refusal
 	@echo 'native userspace, Lua, SQLite, Canvas, network and Rust QEMU scenarios passed'
 
 contract-counts:
@@ -1618,6 +1635,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-canvas) expected=243 ;; \
 		native-rust) expected=247 ;; \
 		native-crash) expected=249 ;; \
+		native-elf-refusal) expected=251 ;; \
+		native-digest-refusal) expected=253 ;; \
+		native-abi-refusal) expected=1 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1669,6 +1689,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(CRASH_SYSTEM_IMAGE)' '$(CRASH_DATA_IMAGE)' || exit 1; \
 				cp '$(CRASH_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(CRASH_SYSTEM_IMAGE),node-name=crash-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=crash-system-file,node-name=crash-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=crash-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=crash-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=crash-data-file,node-name=crash-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=crash-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-elf-refusal|native-digest-refusal|native-abi-refusal) \
+				$(MAKE) '$(ADMISSION_SYSTEM_IMAGE)' '$(ADMISSION_DATA_IMAGE)' || exit 1; \
+				cp '$(ADMISSION_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(ADMISSION_SYSTEM_IMAGE),node-name=admission-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=admission-system-file,node-name=admission-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=admission-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=admission-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=admission-data-file,node-name=admission-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=admission-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1732,7 +1756,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
 		native-canvas) timeout_seconds=60 ;; \
-		native-rust|native-crash) timeout_seconds=45 ;; \
+		native-rust|native-crash|native-*-refusal) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -2117,6 +2141,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-crash) \
 			grep -Fxq 'Sapote: native crash contained; mappings handles threads windows FS x87 SSE reclaimed' "$$log" || \
 				diagnostics_ok=false ;; \
+		native-elf-refusal) \
+			grep -Fxq 'Sapote: native malformed ELF refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
+		native-digest-refusal) \
+			grep -Fxq 'Sapote: native manifest digest mismatch refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
+		native-abi-refusal) \
+			grep -Fxq 'Sapote: native unsupported ABI version refused; resource census unchanged' "$$log" || diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \
 		echo 'QEMU scenario $* omitted its required diagnostic'; \

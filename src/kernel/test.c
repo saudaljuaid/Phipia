@@ -551,6 +551,15 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-crash")) {
         return KERNEL_TEST_NATIVE_CRASH;
     }
+    if (token_equals(value, length, "native-elf-refusal")) {
+        return KERNEL_TEST_NATIVE_ELF_REFUSAL;
+    }
+    if (token_equals(value, length, "native-digest-refusal")) {
+        return KERNEL_TEST_NATIVE_DIGEST_REFUSAL;
+    }
+    if (token_equals(value, length, "native-abi-refusal")) {
+        return KERNEL_TEST_NATIVE_ABI_REFUSAL;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -733,6 +742,10 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_NETWORK: return UINT8_C(0x7A);
     case KERNEL_TEST_NATIVE_RUST: return UINT8_C(0x7B);
     case KERNEL_TEST_NATIVE_CRASH: return UINT8_C(0x7C);
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL: return UINT8_C(0x7D);
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL: return UINT8_C(0x7E);
+    /* 0x7F is the invariant QEMU failure value. */
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL: return UINT8_C(0x80);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4701,6 +4714,9 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_NETWORK:
     case KERNEL_TEST_NATIVE_RUST:
     case KERNEL_TEST_NATIVE_CRASH:
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -5022,6 +5038,38 @@ _Noreturn void kernel_test_complete_native_crash(void)
         kernel_test_fail("process after fault observed damaged or leaked state");
     }
     console_write("Sapote: native crash contained; mappings handles threads windows FS x87 SSE reclaimed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_admission_refusal(void)
+{
+    struct native_process_result result;
+    const char *manifest;
+    const char *diagnostic;
+
+    switch (active_scenario) {
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+        manifest = "BADELF.MAN";
+        diagnostic = "Sapote: native malformed ELF refused; resource census unchanged\n";
+        break;
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+        manifest = "BADDGST.MAN";
+        diagnostic = "Sapote: native manifest digest mismatch refused; resource census unchanged\n";
+        break;
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+        manifest = "BADABI.MAN";
+        diagnostic = "Sapote: native unsupported ABI version refused; resource census unchanged\n";
+        break;
+    default:
+        kernel_test_fail("native admission completion used outside its scenario");
+    }
+    if (!native_process_resources_released() ||
+        native_process_launch(manifest, &result) !=
+            NATIVE_PROCESS_IMAGE_REFUSED ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native admission refusal changed the resource census");
+    }
+    console_write(diagnostic);
     kernel_test_pass();
 }
 
@@ -8464,6 +8512,12 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-rust";
     case KERNEL_TEST_NATIVE_CRASH:
         return "native-crash";
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+        return "native-elf-refusal";
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+        return "native-digest-refusal";
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+        return "native-abi-refusal";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

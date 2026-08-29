@@ -179,15 +179,16 @@ static int file_and_handle_probes(void)
             found = 1;
         }
     }
-    if (!found || sapote_handle_close((sapote_handle_t)directory) != 0 ||
-        sapote_volume_space(SAPOTE_VOLUME_DATA, &space) != 0 ||
-        space.total_bytes == 0U || space.free_bytes >= space.total_bytes ||
-        sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0 ||
-        sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP/B.TXT") != 0 ||
-        sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP") != 0 ||
-        sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0) {
-        return 33;
+    if (!found) return 331;
+    if (sapote_handle_close((sapote_handle_t)directory) != 0) return 332;
+    if (sapote_volume_space(SAPOTE_VOLUME_DATA, &space) != 0) return 333;
+    if (space.total_bytes == 0U || space.free_bytes >= space.total_bytes) {
+        return 334;
     }
+    if (sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0) return 335;
+    if (sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP/B.TXT") != 0) return 336;
+    if (sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP") != 0) return 337;
+    if (sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0) return 338;
     return 0;
 }
 
