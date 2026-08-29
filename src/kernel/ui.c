@@ -984,6 +984,108 @@ static uint32_t blend_packed(uint32_t under, uint32_t over, uint8_t alpha)
     return framebuffer_pack(red, green, blue);
 }
 
+static bool search_stroke_sample(
+    int64_t x,
+    int64_t y,
+    int64_t size
+)
+{
+    /*
+     * Rasterize Lucide's pinned 24-unit search.svg at four samples per pixel.
+     * Coordinates use eighth-pixel units, preserving its two-unit round stroke
+     * without a PNG decoder or a large bitmap in the kernel.
+     */
+    const int64_t center = 11 * size / 3;
+    const int64_t radius = 8 * size / 3;
+    const int64_t half_stroke = size / 3;
+    const int64_t circle_x = x - center;
+    const int64_t circle_y = y - center;
+    const int64_t distance_squared = circle_x * circle_x +
+        circle_y * circle_y;
+    const int64_t inner = radius - half_stroke;
+    const int64_t outer = radius + half_stroke;
+    const int64_t line_start = 50 * size / 9;
+    const int64_t line_end = 7 * size;
+    const int64_t line_dx = line_end - line_start;
+    const int64_t line_dy = line_dx;
+    const int64_t sample_dx = x - line_start;
+    const int64_t sample_dy = y - line_start;
+    const int64_t dot = sample_dx * line_dx + sample_dy * line_dy;
+    const int64_t line_length_squared = line_dx * line_dx +
+        line_dy * line_dy;
+    bool on_handle;
+
+    if (distance_squared >= inner * inner &&
+            distance_squared <= outer * outer) {
+        return true;
+    }
+    if (dot <= 0) {
+        on_handle = sample_dx * sample_dx + sample_dy * sample_dy <=
+            half_stroke * half_stroke;
+    } else if (dot >= line_length_squared) {
+        const int64_t end_dx = x - line_end;
+        const int64_t end_dy = y - line_end;
+
+        on_handle = end_dx * end_dx + end_dy * end_dy <=
+            half_stroke * half_stroke;
+    } else {
+        const int64_t cross = sample_dx * line_dy - sample_dy * line_dx;
+
+        on_handle = cross * cross <= half_stroke * half_stroke *
+            line_length_squared;
+    }
+    return on_handle;
+}
+
+static enum ui_status draw_search_icon(
+    struct ui_rect bounds,
+    struct ui_rect damage,
+    uint32_t colour
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+    const uint32_t size = bounds.width < bounds.height ? bounds.width :
+        bounds.height;
+
+    if (size < 8U || size > 24U) {
+        return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
+    }
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - bounds.x + x;
+            const uint32_t local_y = clipped.y - bounds.y + y;
+            uint32_t covered = 0U;
+            uint32_t under;
+
+            for (uint32_t sample_y = 0U; sample_y < 4U; ++sample_y) {
+                for (uint32_t sample_x = 0U; sample_x < 4U; ++sample_x) {
+                    const int64_t sample_position_x =
+                        (int64_t)local_x * 8 + (int64_t)sample_x * 2 + 1;
+                    const int64_t sample_position_y =
+                        (int64_t)local_y * 8 + (int64_t)sample_y * 2 + 1;
+
+                    if (search_stroke_sample(sample_position_x,
+                            sample_position_y, size)) {
+                        ++covered;
+                    }
+                }
+            }
+            if (covered == 0U) {
+                continue;
+            }
+            if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                    &under) != SURFACE_STATUS_OK ||
+                surface_pixel(canvas, clipped.x + x, clipped.y + y,
+                    blend_packed(under, colour,
+                        (uint8_t)((covered * UINT8_MAX + 8U) / 16U))) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
 static enum ui_status translucent_fill(
     struct ui_rect rectangle,
     struct ui_rect damage,
@@ -1001,6 +1103,69 @@ static enum ui_status translucent_fill(
                     &under) != SURFACE_STATUS_OK ||
                 surface_pixel(canvas, clipped.x + x, clipped.y + y,
                     blend_packed(under, over, alpha)) != SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static enum ui_status translucent_capsule_fill(
+    struct ui_rect bounds,
+    struct ui_rect damage,
+    uint32_t colour,
+    uint8_t alpha
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+    const int64_t radius = (int64_t)bounds.height * 4;
+    const int64_t left_center = radius;
+    const int64_t right_center = (int64_t)bounds.width * 8 - radius;
+    const int64_t vertical_center = radius;
+
+    if (bounds.height < 8U || bounds.width < bounds.height) {
+        return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
+    }
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - bounds.x + x;
+            const uint32_t local_y = clipped.y - bounds.y + y;
+            uint32_t covered = 0U;
+            uint32_t under;
+
+            for (uint32_t sample_y = 0U; sample_y < 4U; ++sample_y) {
+                for (uint32_t sample_x = 0U; sample_x < 4U; ++sample_x) {
+                    const int64_t sample_position_x =
+                        (int64_t)local_x * 8 + (int64_t)sample_x * 2 + 1;
+                    const int64_t sample_position_y =
+                        (int64_t)local_y * 8 + (int64_t)sample_y * 2 + 1;
+                    int64_t horizontal_distance = 0;
+                    const int64_t vertical_distance = sample_position_y -
+                        vertical_center;
+
+                    if (sample_position_x < left_center) {
+                        horizontal_distance = sample_position_x -
+                            left_center;
+                    } else if (sample_position_x > right_center) {
+                        horizontal_distance = sample_position_x -
+                            right_center;
+                    }
+                    if (horizontal_distance * horizontal_distance +
+                            vertical_distance * vertical_distance <=
+                            radius * radius) {
+                        ++covered;
+                    }
+                }
+            }
+            if (covered == 0U) {
+                continue;
+            }
+            if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                    &under) != SURFACE_STATUS_OK ||
+                surface_pixel(canvas, clipped.x + x, clipped.y + y,
+                    blend_packed(under, colour, (uint8_t)(
+                        ((uint32_t)alpha * covered + 8U) / 16U))) !=
+                    SURFACE_STATUS_OK) {
                 return UI_STATUS_SURFACE_FAILURE;
             }
         }
@@ -5056,7 +5221,7 @@ static enum ui_status draw_dock_shelf(struct ui_rect damage)
 static struct ui_rect menu_search_rect(void)
 {
     return (struct ui_rect){
-        state.layout.surface.width - 230U, 2U, 218U, 20U
+        state.layout.surface.width - 31U, 2U, 24U, 20U
     };
 }
 
@@ -5086,7 +5251,7 @@ static struct ui_rect launcher_search_rect(void)
 
     return (struct ui_rect){
         panel.x + (panel.width - width) / 2U, panel.y + 42U,
-        width, 34U
+        width, 30U
     };
 }
 
@@ -5223,40 +5388,17 @@ static enum ui_status draw_launcher(struct ui_rect damage)
         status = draw_text(panel, damage, panel.x + 28U, panel.y + 27U,
             "Applications", framebuffer_pack(0xF7U, 0xF9U, 0xFCU));
     }
-    for (uint32_t row = 0U; row < search.height &&
-            status == UI_STATUS_OK; ++row) {
-        const uint32_t edge = row < 8U ? 8U - row :
-            (row + 8U >= search.height ?
-                row + 8U - search.height + 1U : 0U);
-
-        status = translucent_fill((struct ui_rect){
-            search.x + edge, search.y + row,
-            search.width - edge * 2U, 1U
-        }, damage, framebuffer_pack(0xFAU, 0xFBU, 0xFCU), 236U);
-    }
-    if (status == UI_STATUS_OK && launcher_search_focused) {
-        status = stroke_clipped(search, damage, 1U, state.theme.accent_teal);
+    if (status == UI_STATUS_OK) {
+        status = translucent_capsule_fill(search, damage,
+            framebuffer_pack(0xFAU, 0xFBU, 0xFCU), 236U);
     }
     if (status == UI_STATUS_OK) {
-        status = draw_circle(search.x + 17U, search.y + 16U, 6U, damage,
-            framebuffer_pack(0x5EU, 0x66U, 0x70U));
+        status = draw_search_icon((struct ui_rect){
+            search.x + 9U, search.y + 6U, 18U, 18U
+        }, damage, framebuffer_pack(0x5EU, 0x66U, 0x70U));
     }
     if (status == UI_STATUS_OK) {
-        status = draw_circle(search.x + 17U, search.y + 16U, 3U, damage,
-            framebuffer_pack(0xF7U, 0xF8U, 0xF9U));
-    }
-    if (status == UI_STATUS_OK) {
-        for (uint32_t step = 0U; step < 5U; ++step) {
-            status = fill_clipped((struct ui_rect){
-                search.x + 21U + step, search.y + 20U + step, 1U, 1U
-            }, damage, framebuffer_pack(0x5EU, 0x66U, 0x70U));
-            if (status != UI_STATUS_OK) {
-                break;
-            }
-        }
-    }
-    if (status == UI_STATUS_OK) {
-        status = draw_text(search, damage, search.x + 34U, search.y + 23U,
+        status = draw_text(search, damage, search.x + 35U, search.y + 21U,
             launcher_query_length == 0U ? "Search applications" :
                 launcher_query,
             launcher_query_length == 0U ? state.theme.title_inactive :
@@ -5341,39 +5483,9 @@ static enum ui_status draw_menu_brand(struct ui_rect damage)
     if (status == UI_STATUS_OK) {
         const struct ui_rect search = menu_search_rect();
 
-        for (uint32_t row = 0U; row < search.height &&
-                status == UI_STATUS_OK; ++row) {
-            const uint32_t edge = row < 4U ? 4U - row :
-                (row + 4U >= search.height ?
-                    row + 4U - search.height + 1U : 0U);
-
-            status = translucent_fill((struct ui_rect){
-                search.x + edge, search.y + row,
-                search.width - edge * 2U, 1U
-            }, damage, framebuffer_pack(0xFFU, 0xFFU, 0xFFU), 224U);
-        }
-        if (status == UI_STATUS_OK) {
-            status = draw_circle(search.x + 11U, search.y + 8U, 4U,
-                damage, framebuffer_pack(0x5DU, 0x63U, 0x68U));
-        }
-        if (status == UI_STATUS_OK) {
-            status = draw_circle(search.x + 11U, search.y + 8U, 2U,
-                damage, framebuffer_pack(0xF5U, 0xF6U, 0xF7U));
-        }
-        if (status == UI_STATUS_OK) {
-            for (uint32_t step = 0U; step < 4U; ++step) {
-                status = fill_clipped((struct ui_rect){
-                    search.x + 14U + step, search.y + 11U + step, 1U, 1U
-                }, damage, framebuffer_pack(0x5DU, 0x63U, 0x68U));
-                if (status != UI_STATUS_OK) {
-                    break;
-                }
-            }
-        }
-        if (status == UI_STATUS_OK) {
-            status = draw_text(search, damage, search.x + 24U,
-                search.y + 15U, "Search apps", state.theme.title_inactive);
-        }
+        status = draw_search_icon((struct ui_rect){
+            search.x + 3U, search.y + 1U, 18U, 18U
+        }, damage, framebuffer_pack(0x4FU, 0x55U, 0x59U));
     }
     return status;
 }

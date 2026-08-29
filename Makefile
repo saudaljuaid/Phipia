@@ -419,12 +419,14 @@ $(CANVAS_APP): $(CANVAS_APP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
 	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(CANVAS_APP_DIR)/CANVAS.map \
 		-o $@ $(SDK_CRT) $< $(SDK_LIB)
 
-$(CANVAS_PACKAGE): $(CANVAS_APP) apps/native-canvas/manifest.json
+$(CANVAS_PACKAGE): $(CANVAS_APP) apps/native-canvas/manifest.json \
+		$(UI_FONT_BLOB) assets/canvas-tools.a8
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-canvas/manifest.json --executable $< --output $@
 
 $(CANVAS_PROOF_PACKAGE): $(CANVAS_APP) \
-		apps/native-canvas/manifest-proof.json
+		apps/native-canvas/manifest-proof.json $(UI_FONT_BLOB) \
+		assets/canvas-tools.a8
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-canvas/manifest-proof.json \
 		--executable $< --output $@
@@ -2177,7 +2179,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-canvas) \
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.png' && \
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.mp4' && \
-			test "$$(grep -Ec '^SAPOTE PERF canvas damage=70x14 samples=[1-9][0-9]* total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log")" -eq 2 && \
+			test "$$(grep -Ec '^SAPOTE PERF canvas brush_damage_samples=[1-9][0-9]* max_pixels=[1-9][0-9]* total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log")" -ge 1 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS READY width=420 height=250$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ strokes=[0-9]+ colors=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* strokes=[1-9][0-9]* colors=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \

@@ -2,15 +2,27 @@
   "name": "Canvas",
   "identifier": "CANVAS",
   "executable": "CANVAS.APP",
+  "resource_directory": "CANRES",
   "data_namespace": "CANVAS",
   "memory_limit": 33554432,
   "max_handles": 16,
   "max_threads": 1,
   "capabilities": [
     "console",
+    "system-read",
     "time",
     "window",
     "input"
+  ],
+  "resources": [
+    {
+      "path": "FONT.SUF",
+      "source": "../../build/ui-font.suf"
+    },
+    {
+      "path": "TOOLS.A8",
+      "source": "../../assets/canvas-tools.a8"
+    }
   ],
   "arguments": []
 }

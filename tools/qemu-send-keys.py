@@ -23,12 +23,24 @@ def wait_for_marker(path: Path, marker: bytes, count: int, deadline: float) -> N
 
 
 def connect_monitor(path: str, deadline: float) -> socket.socket:
+    address: str | tuple[str, int]
+    family: socket.AddressFamily
+
+    if path.startswith("tcp:"):
+        host, separator, port_text = path[4:].rpartition(":")
+        if not separator or not host:
+            raise ValueError("TCP monitor must be tcp:host:port")
+        address = (host, int(port_text))
+        family = socket.AF_INET
+    else:
+        address = path
+        family = socket.AF_UNIX
     while time.monotonic() < deadline:
-        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection = socket.socket(family, socket.SOCK_STREAM)
         try:
-            connection.connect(path)
+            connection.connect(address)
             return connection
-        except (FileNotFoundError, ConnectionRefusedError):
+        except (FileNotFoundError, ConnectionRefusedError, OSError):
             connection.close()
             time.sleep(0.05)
     raise TimeoutError("QEMU monitor socket did not become ready")
