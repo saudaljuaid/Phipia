@@ -2121,15 +2121,21 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fq '  page-fault bits: P=0 W=1 U=0 RSVD=0 I=0' "$$log" || \
 				diagnostics_ok=false ;; \
 		native) \
+			grep -Eq '^SAPOTE PERF syscall iterations=1024 total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log" && \
+			grep -Eq '^SAPOTE PERF file sequential_bytes=65536 write_ns=[1-9][0-9]* read_ns=[1-9][0-9]*$$' "$$log" && \
+			grep -Eq '^SAPOTE PERF context-switch transitions=[1-9][0-9]* without_fpu_cycles=[1-9][0-9]* with_fpu_cycles=[1-9][0-9]*$$' "$$log" && \
 			grep -Eq '^SAPOTE NATIVE PASS argc=[1-9][0-9]* app=NATIVET.APP$$' "$$log" && \
 			grep -Fxq 'Sapote: native general loader, SDK, TLS, threads and FPU passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		native-lua) \
+			grep -Eq '^SAPOTE PERF lua startup_ns=[1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'SAPOTE LUA INPUT READY' "$$log" && \
 			grep -Fxq 'SAPOTE LUA PASS input=sapote sum=5050' "$$log" && \
 			grep -Fxq 'Sapote: upstream Lua used stdin, Data, math and stdout' "$$log" || \
 				diagnostics_ok=false ;; \
 		native-sqlite) \
+			grep -Eq '^SAPOTE PERF sqlite transaction_ns=[1-9][0-9]*$$' "$$log" && \
+			grep -Eq '^SAPOTE PERF sqlite reopen_query_ns=[1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'SAPOTE SQLITE PHASE1 PASS rows=3 locking=busy' "$$log" && \
 			grep -Fxq 'SAPOTE SQLITE PHASE2 PASS rows=3 sum=66 integrity=ok' "$$log" && \
 			grep -Fxq 'Sapote: upstream SQLite retained and verified three rows after reboot' "$$log" || \
@@ -2137,6 +2143,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-canvas) \
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.png' && \
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.mp4' && \
+			test "$$(grep -Ec '^SAPOTE PERF canvas damage=70x14 samples=[1-9][0-9]* total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS READY width=340 height=220$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \

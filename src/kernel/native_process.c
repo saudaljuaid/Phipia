@@ -22,6 +22,7 @@
 #include <sapote/process.h>
 #include <sapote/random.h>
 #include <sapote/timer.h>
+#include <sapote/tsc.h>
 #include <sapote/ui.h>
 
 #define IA32_FS_BASE UINT32_C(0xC0000100)
@@ -137,6 +138,9 @@ struct native_process {
     size_t peak_handles;
     uint32_t syscall_count;
     uint32_t thread_switches;
+    uint64_t context_cycles_without_fpu;
+    uint64_t context_cycles_with_fpu;
+    uint32_t context_transition_samples;
     int32_t exit_status;
     bool active;
     bool exiting;
@@ -190,6 +194,30 @@ static bool add_u64(uint64_t left, uint64_t right, uint64_t *result)
     }
     *result = left + right;
     return true;
+}
+
+static void record_context_transition(
+    struct native_process *process,
+    uint64_t without_fpu,
+    uint64_t fpu
+)
+{
+    uint64_t with_fpu;
+
+    if (process == NULL || !add_u64(without_fpu, fpu, &with_fpu)) {
+        return;
+    }
+    if (!add_u64(process->context_cycles_without_fpu, without_fpu,
+            &process->context_cycles_without_fpu)) {
+        process->context_cycles_without_fpu = UINT64_MAX;
+    }
+    if (!add_u64(process->context_cycles_with_fpu, with_fpu,
+            &process->context_cycles_with_fpu)) {
+        process->context_cycles_with_fpu = UINT64_MAX;
+    }
+    if (process->context_transition_samples != UINT32_MAX) {
+        ++process->context_transition_samples;
+    }
 }
 
 static bool canonical_user_range(uint64_t address, size_t length)
@@ -3655,6 +3683,10 @@ uintptr_t native_process_on_syscall(struct native_syscall_frame *frame)
     struct native_process *process = running_process();
     struct native_thread *thread = running_thread(process);
     uintptr_t resume_stack;
+    uint64_t without_started;
+    uint64_t without_cycles;
+    uint64_t fpu_started;
+    uint64_t fpu_cycles;
     int64_t result;
 
     if (frame == NULL || process == NULL || thread == NULL ||
@@ -3663,16 +3695,23 @@ uintptr_t native_process_on_syscall(struct native_syscall_frame *frame)
         !current_user_position_valid(process, frame->rip, frame->rsp)) {
         return 0U;
     }
+    without_started = tsc_read();
     save_syscall_context(thread, frame);
+    without_cycles = tsc_read() - without_started;
+    fpu_started = tsc_read();
     if (!native_fpu_save(&thread->fpu)) {
         return 0U;
     }
+    fpu_cycles = tsc_read() - fpu_started;
+    without_started = tsc_read();
     thread->fs_base = cpu_read_msr(IA32_FS_BASE);
     cpu_write_msr(IA32_FS_BASE, 0U);
     if (paging_process_restore_kernel(&process->address_space) !=
             PAGING_STATUS_OK) {
         return 0U;
     }
+    without_cycles += tsc_read() - without_started;
+    record_context_transition(process, without_cycles, fpu_cycles);
     result = dispatch_syscall(process, thread, frame);
     thread->context.rax = (uint64_t)result;
     ++process->syscall_count;
@@ -3693,17 +3732,30 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
     struct native_process *process = running_process();
     struct native_thread *thread = running_thread(process);
     uintptr_t resume_stack = process_user_resume_stack();
+    uint64_t without_started;
+    uint64_t without_cycles;
+    uint64_t fpu_started;
+    uint64_t fpu_cycles;
     bool valid = frame != NULL && process != NULL && thread != NULL &&
         context == &native_gate && interrupt_frame_has_stack_tail(frame);
 
     if (valid) {
+        without_started = tsc_read();
         save_interrupt_context(thread, frame);
+        without_cycles = tsc_read() - without_started;
+        fpu_started = tsc_read();
         valid = native_fpu_save(&thread->fpu);
+        fpu_cycles = tsc_read() - fpu_started;
+        without_started = tsc_read();
         thread->fs_base = cpu_read_msr(IA32_FS_BASE);
         cpu_write_msr(IA32_FS_BASE, 0U);
         if (paging_process_restore_kernel(&process->address_space) !=
                 PAGING_STATUS_OK) {
             valid = false;
+        }
+        without_cycles += tsc_read() - without_started;
+        if (valid) {
+            record_context_transition(process, without_cycles, fpu_cycles);
         }
         if (frame->vector < INTERRUPT_EXCEPTION_COUNT) {
             thread->state = NATIVE_THREAD_FAULTED;
@@ -3978,6 +4030,45 @@ static bool any_handle_waiter(void)
     return false;
 }
 
+static void report_scheduler_stall(void)
+{
+    console_write("Sapote: native scheduler stalled\n");
+    for (size_t process_index = 0U; process_index < NATIVE_PROCESS_LIMIT;
+         ++process_index) {
+        const struct native_process *process = &processes[process_index];
+
+        if (!process->active || process->exiting) {
+            continue;
+        }
+        console_write("Sapote: stalled process ");
+        console_write_u64(process_index);
+        console_write(" generation ");
+        console_write_u64(process->generation);
+        console_write(" threads ");
+        console_write_u64(process->thread_count);
+        console_write("\n");
+        for (size_t thread_index = 0U;
+             thread_index < process->thread_count; ++thread_index) {
+            const struct native_thread *thread =
+                &process->threads[thread_index];
+
+            console_write("Sapote: stalled thread ");
+            console_write_u64(thread_index);
+            console_write(" generation ");
+            console_write_u64(thread->generation);
+            console_write(" state ");
+            console_write_u64((uint64_t)thread->state);
+            console_write(" wait-generation ");
+            console_write_u64(thread->wait_generation);
+            console_write(" futex ");
+            console_write_hex(thread->futex_address);
+            console_write(" deadline ");
+            console_write_u64(thread->deadline_ns);
+            console_write("\n");
+        }
+    }
+}
+
 static void capture_result(
     const struct native_process *process,
     struct native_process_result *result
@@ -3989,6 +4080,11 @@ static void capture_result(
     result->thread_switches = process->thread_switches;
     result->peak_pages = (uint32_t)process->peak_pages;
     result->peak_handles = (uint32_t)process->peak_handles;
+    result->context_cycles_without_fpu =
+        process->context_cycles_without_fpu;
+    result->context_cycles_with_fpu = process->context_cycles_with_fpu;
+    result->context_transition_samples =
+        process->context_transition_samples;
     result->exited = process->exiting;
     result->faulted = process->faulted;
     result->resources_released = false;
@@ -4063,6 +4159,11 @@ enum native_process_status native_process_run(struct native_process_result *resu
         if (select_runnable_thread()) {
             struct native_process *process = &processes[current_process];
             struct native_thread *thread = running_thread(process);
+            uint64_t without_started;
+            uint64_t without_cycles;
+            uint64_t fpu_started;
+            uint64_t fpu_cycles;
+            enum paging_status activation;
 
             if (interrupt_process_gate_validate(&native_gate) !=
                     INTERRUPT_STATUS_OK) {
@@ -4073,15 +4174,25 @@ enum native_process_status native_process_run(struct native_process_result *resu
                     INTERRUPT_STATUS_OK) {
                 cleanup_ok = false;
                 terminate_process(process, -SAPOTE_EIO);
-            } else if (paging_process_activate(&process->address_space) !=
-                    PAGING_STATUS_OK ||
-                !native_fpu_restore(&thread->fpu)) {
-                cleanup_ok = false;
-                terminate_process(process, -SAPOTE_EIO);
             } else {
-                cpu_write_msr(IA32_FS_BASE, thread->fs_base);
-                ++process->thread_switches;
-                process_enter_user_context(&thread->context);
+                without_started = tsc_read();
+                activation = paging_process_activate(&process->address_space);
+                without_cycles = tsc_read() - without_started;
+                fpu_started = tsc_read();
+                if (activation != PAGING_STATUS_OK ||
+                    !native_fpu_restore(&thread->fpu)) {
+                    cleanup_ok = false;
+                    terminate_process(process, -SAPOTE_EIO);
+                } else {
+                    fpu_cycles = tsc_read() - fpu_started;
+                    without_started = tsc_read();
+                    cpu_write_msr(IA32_FS_BASE, thread->fs_base);
+                    without_cycles += tsc_read() - without_started;
+                    record_context_transition(process, without_cycles,
+                        fpu_cycles);
+                    ++process->thread_switches;
+                    process_enter_user_context(&thread->context);
+                }
             }
         } else {
             uint64_t deadline;
@@ -4099,6 +4210,7 @@ enum native_process_status native_process_run(struct native_process_result *resu
                     cpu_interrupt_disable();
                 }
             } else {
+                report_scheduler_stall();
                 for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT;
                      ++index) {
                     if (processes[index].active &&

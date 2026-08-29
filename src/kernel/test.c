@@ -4772,6 +4772,8 @@ _Noreturn void kernel_test_complete_native(void)
     if (!result.exited || result.faulted ||
         result.exit_status != 0 || !result.resources_released ||
         result.syscall_count < 20U || result.thread_switches < 4U ||
+        result.context_transition_samples == 0U ||
+        result.context_cycles_with_fpu < result.context_cycles_without_fpu ||
         !native_process_resources_released()) {
         console_write("Sapote: native result exit ");
         if (result.exit_status < 0) {
@@ -4797,6 +4799,15 @@ _Noreturn void kernel_test_complete_native(void)
         console_putc('\n');
         kernel_test_fail("native application did not exit with a clean census");
     }
+    console_write("SAPOTE PERF context-switch transitions=");
+    console_write_u64(result.context_transition_samples);
+    console_write(" without_fpu_cycles=");
+    console_write_u64(result.context_cycles_without_fpu /
+        result.context_transition_samples);
+    console_write(" with_fpu_cycles=");
+    console_write_u64(result.context_cycles_with_fpu /
+        result.context_transition_samples);
+    console_putc('\n');
     if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=
             SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
         sapfs_open(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", SAPFS_ACCESS_READ,

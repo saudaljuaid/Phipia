@@ -162,6 +162,8 @@ int main(int argc, char **argv, char **environment)
     uint32_t focus_events = 0U;
     uint32_t key_events = 0U;
     uint32_t pointer_events = 0U;
+    uint32_t present_samples = 0U;
+    uint64_t present_elapsed = 0U;
     int running = 1;
 
     (void)argc;
@@ -191,12 +193,17 @@ int main(int argc, char **argv, char **environment)
         if (now >= next_pulse) {
             const uint32_t color = (pulse & 1U) == 0U ?
                 0x0039D0B0U : 0x005765FFU;
+            uint64_t present_started;
+
             fill_rect(&canvas, 238U, 96U, 70U, 14U, 0x00273143U);
             fill_rect(&canvas, 238U, 96U, 10U + (pulse % 7U) * 10U, 14U,
                 color);
+            present_started = sapote_monotonic_ns();
             if (present(response.window, 238U, 96U, 70U, 14U) != 0) {
                 return 22;
             }
+            present_elapsed += sapote_monotonic_ns() - present_started;
+            ++present_samples;
             ++partial_presents;
             ++pulse;
             next_pulse = now + UINT64_C(250000000);
@@ -248,6 +255,10 @@ int main(int argc, char **argv, char **environment)
     }
     printf("SAPOTE CANVAS PASS focus=%u key=%u pointer=%u partial=%u\n",
         focus_events, key_events, pointer_events, partial_presents);
+    printf("SAPOTE PERF canvas damage=70x14 samples=%u total_ns=%llu average_ns=%llu\n",
+        present_samples, (unsigned long long)present_elapsed,
+        (unsigned long long)(present_samples == 0U ? 0U :
+            present_elapsed / present_samples));
     if (sapote_handle_close(response.events) < 0 ||
         sapote_handle_close(response.window) < 0 || partial_presents < 10U ||
         focus_events == 0U) {

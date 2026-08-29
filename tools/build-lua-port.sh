@@ -49,10 +49,13 @@ for source in "$work/source/lua-5.4.7/src"/l*.c; do
     "$cc" "${cflags[@]}" -c "$source" -o "$object"
     objects+=("$object")
 done
+performance="$work/obj/sapote-performance.o"
+"$cc" "${cflags[@]}" -c "$root/ports/lua/performance.c" -o "$performance"
+objects+=("$performance")
 
 "$ld" -nostdlib -static --gc-sections --build-id=none \
     -z max-page-size=0x1000 -z noexecstack --fatal-warnings \
-    --orphan-handling=error -T "$sdk/linker.ld" \
+    --orphan-handling=error --wrap=luaL_openlibs -T "$sdk/linker.ld" \
     -Map="$output/LUA.map" -o "$output/LUA.APP" \
     "$sdk/lib/crt0.o" "${objects[@]}" "$sdk/lib/libsapote.a"
 

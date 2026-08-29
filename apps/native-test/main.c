@@ -43,6 +43,72 @@ static void *thread_probe(void *argument)
     return NULL;
 }
 
+static int syscall_performance_probe(void)
+{
+    const unsigned int iterations = 1024U;
+    const uint64_t started = sapote_monotonic_ns();
+
+    for (unsigned int iteration = 0U; iteration < iterations; ++iteration) {
+        if (sapote_syscall0(SAPOTE_SYS_ABI_VERSION) != SAPOTE_ABI_VERSION) {
+            return 14;
+        }
+    }
+    const uint64_t elapsed = sapote_monotonic_ns() - started;
+
+    printf("SAPOTE PERF syscall iterations=%u total_ns=%llu average_ns=%llu\n",
+        iterations, (unsigned long long)elapsed,
+        (unsigned long long)(elapsed / iterations));
+    return 0;
+}
+
+static int file_performance_probe(void)
+{
+    enum { BUFFER_BYTES = 4096, FILE_BYTES = 65536 };
+    uint8_t buffer[BUFFER_BYTES];
+    uint64_t write_started;
+    uint64_t write_elapsed;
+    uint64_t read_started;
+    uint64_t read_elapsed;
+    long file;
+
+    for (size_t index = 0U; index < sizeof(buffer); ++index) {
+        buffer[index] = (uint8_t)(index * 37U + 11U);
+    }
+    file = sapote_file_open(SAPOTE_VOLUME_DATA, "TMP/PERF.BIN",
+        SAPOTE_OPEN_WRITE | SAPOTE_OPEN_CREATE | SAPOTE_OPEN_TRUNCATE);
+    if (file < 0) return 341;
+    write_started = sapote_monotonic_ns();
+    for (size_t offset = 0U; offset < FILE_BYTES; offset += sizeof(buffer)) {
+        if (sapote_file_write((sapote_handle_t)file, buffer,
+                sizeof(buffer)) != (long)sizeof(buffer)) {
+            return 342;
+        }
+    }
+    write_elapsed = sapote_monotonic_ns() - write_started;
+    if (sapote_handle_close((sapote_handle_t)file) != 0) return 343;
+    file = sapote_file_open(SAPOTE_VOLUME_DATA, "TMP/PERF.BIN",
+        SAPOTE_OPEN_READ);
+    if (file < 0) return 344;
+    read_started = sapote_monotonic_ns();
+    for (size_t offset = 0U; offset < FILE_BYTES; offset += sizeof(buffer)) {
+        if (sapote_file_read((sapote_handle_t)file, buffer,
+                sizeof(buffer)) != (long)sizeof(buffer) ||
+            buffer[0] != UINT8_C(11) || buffer[sizeof(buffer) - 1U] !=
+                (uint8_t)((sizeof(buffer) - 1U) * 37U + 11U)) {
+            return 345;
+        }
+    }
+    read_elapsed = sapote_monotonic_ns() - read_started;
+    if (sapote_handle_close((sapote_handle_t)file) != 0 ||
+        sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP/PERF.BIN") != 0) {
+        return 346;
+    }
+    printf("SAPOTE PERF file sequential_bytes=%u write_ns=%llu read_ns=%llu\n",
+        FILE_BYTES, (unsigned long long)write_elapsed,
+        (unsigned long long)read_elapsed);
+    return 0;
+}
+
 static int memory_and_pointer_probes(void)
 {
     struct sapote_memory_map_response split = {0U, 0U, 0U, 0U};
@@ -123,6 +189,11 @@ static int file_and_handle_probes(void)
     }
     if (sapote_path_mkdir(SAPOTE_VOLUME_DATA, "TMP") != 0) {
         return 25;
+    }
+    {
+        const int performance = file_performance_probe();
+
+        if (performance != 0) return performance;
     }
     file = sapote_file_open(SAPOTE_VOLUME_DATA, "TMP/A.TXT",
         SAPOTE_OPEN_READ | SAPOTE_OPEN_WRITE | SAPOTE_OPEN_CREATE |
@@ -240,6 +311,8 @@ int main(int argc, char **argv, char **environment)
     if (!initial_state_is_clean()) {
         return 11;
     }
+    probe = syscall_performance_probe();
+    if (probe != 0) return probe;
     memory = malloc(8192U);
     if (memory == NULL) return 12;
     (void)memset(memory, 0x5A, 8192U);

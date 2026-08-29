@@ -15,7 +15,10 @@ image. Phase two reopens the database, runs an integrity check, queries the
 three retained rows and sum, and writes its guest result marker. The kernel
 checks that marker and the workflow retains the rebooted Data image.
 
+The guest reports monotonic timings for the committed insert transaction and
+for the post-reboot open, query, integrity check, and close path. These are
+regression diagnostics from the public SDK/VFS path, not host-side timings.
+
 No SQLite-specific code exists in the loader, FAT layer, or syscall dispatch.
 Build with `make build/ports/sqlite/SQLITE.SPK`; run the two-boot proof with
 `make qemu-test-native-sqlite`.
-

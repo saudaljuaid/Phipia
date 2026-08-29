@@ -41,6 +41,9 @@ struct native_process_result {
     uint32_t thread_switches;
     uint32_t peak_pages;
     uint32_t peak_handles;
+    uint64_t context_cycles_without_fpu;
+    uint64_t context_cycles_with_fpu;
+    uint32_t context_transition_samples;
     bool exited;
     bool faulted;
     bool resources_released;

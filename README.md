@@ -108,6 +108,7 @@ device contracts; it does not perform mode setting or command submission.
 - [Native handles](docs/NATIVE_HANDLES.md)
 - [Native graphics and input](docs/NATIVE_GRAPHICS.md)
 - [Native threads, TLS, and FPU state](docs/NATIVE_THREADS.md)
+- [Native performance diagnostics](docs/NATIVE_PERFORMANCE.md)
 - [C SDK and porting guide](docs/NATIVE_SDK.md)
 - [C runtime coverage](docs/LIBC_COVERAGE.md)
 - [Upstream source record](docs/UPSTREAM_PORTS.md)
