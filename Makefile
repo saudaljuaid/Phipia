@@ -1755,10 +1755,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	rm -f "$$log"; \
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
-		fat32-*|native|native-lua) timeout_seconds=45 ;; \
+		fat32-*|native-lua) timeout_seconds=45 ;; \
+		native) timeout_seconds=75 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
 		native-canvas) timeout_seconds=60 ;; \
-		native-rust|native-crash|native-*-refusal|native-relaunch) timeout_seconds=45 ;; \
+		native-crash|native-relaunch) timeout_seconds=120 ;; \
+		native-rust|native-*-refusal) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \

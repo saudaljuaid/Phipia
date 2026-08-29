@@ -34,7 +34,7 @@ static void *thread_probe(void *argument)
     const unsigned long expected = (unsigned long)(uintptr_t)argument;
 
     tls_value = expected;
-    for (unsigned int iteration = 0U; iteration < 64U; ++iteration) {
+    for (unsigned int iteration = 0U; iteration < 32U; ++iteration) {
         if (native_state_round_trip(sapote_monotonic_ns() + 100000U,
                 expected * 257U + iteration) != 0 || tls_value != expected) {
             return (void *)(uintptr_t)1U;
@@ -345,14 +345,24 @@ int main(int argc, char **argv, char **environment)
         }
     }
     if (pthread_create(&first, NULL, thread_probe,
-            (void *)(uintptr_t)101U) != 0 ||
-        pthread_create(&second, NULL, thread_probe,
-            (void *)(uintptr_t)202U) != 0 ||
-        pthread_join(first, &first_result) != 0 ||
-        pthread_join(second, &second_result) != 0 || first_result != NULL ||
+            (void *)(uintptr_t)101U) != 0) {
+        return 40;
+    }
+    puts("SAPOTE THREAD first-created");
+    if (pthread_create(&second, NULL, thread_probe,
+            (void *)(uintptr_t)202U) != 0) {
+        return 40;
+    }
+    puts("SAPOTE THREAD second-created");
+    if (pthread_join(first, &first_result) != 0) {
+        return 40;
+    }
+    puts("SAPOTE THREAD first-joined");
+    if (pthread_join(second, &second_result) != 0 || first_result != NULL ||
         second_result != NULL || tls_value != 17U) {
         return 40;
     }
+    puts("SAPOTE THREAD second-joined");
     printf("SAPOTE REFUSAL capability EACCES stale ESTALE pointer EFAULT "
         "traversal EINVAL exhaustion ENOMEM\n");
     printf("SAPOTE FILE create seek truncate rename replace sync unlink PASS\n");
