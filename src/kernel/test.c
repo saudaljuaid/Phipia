@@ -5587,7 +5587,7 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
 
     /* Exercise the public launcher as a person would: open it from the menu,
      * select its second bounded page, then filter and launch Canvas. */
-    redwood_proof_click_point(ui->layout.surface.width - 121U, 12U,
+    redwood_proof_click_point(ui->layout.surface.width - 19U, 12U,
         "Sapote Redwood application search did not open");
     {
         uint32_t launcher_width = ui->layout.surface.width > 700U ? 620U :
@@ -5623,7 +5623,7 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
         if (ui_get_state()->active_panel != UI_PANEL_SETTINGS) {
             kernel_test_fail("Sapote Redwood launcher page chose wrong app");
         }
-        redwood_proof_click_point(ui->layout.surface.width - 121U, 12U,
+        redwood_proof_click_point(ui->layout.surface.width - 19U, 12U,
             "Sapote Redwood application search did not reopen");
         static const char query[] = "canvas";
         for (size_t index = 0U; index < sizeof(query) - 1U; ++index) {
