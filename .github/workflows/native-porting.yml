@@ -59,3 +59,5 @@ jobs:
                       build/tests/native-canvas/canvas.mp4
                       build/tests/network-native/serial.log
                       build/tests/network-native/data.raw
+                      build/ports/lua/LUA.APP
+                      build/ports/lua/LUA.map
