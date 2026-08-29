@@ -287,6 +287,25 @@ fn text_valid(text: &[u8], required: bool, identifier: bool) -> bool {
     true
 }
 
+fn argument_valid(argument: &[u8], required: bool) -> bool {
+    let mut end = argument.len();
+    for (index, byte) in argument.iter().enumerate() {
+        if *byte == 0 {
+            end = index;
+            break;
+        }
+    }
+    if end == argument.len() || (required && end == 0) { return false; }
+    for (index, byte) in argument.iter().enumerate() {
+        if index >= end {
+            if *byte != 0 { return false; }
+        } else if !(0x20..=0x7e).contains(byte) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Validate one exact binary application manifest.
 pub fn parse_manifest(input: &[u8]) -> Result<Manifest, Status> {
     if input.len() != MANIFEST_BYTES { return Err(Status::ManifestLength); }
@@ -333,7 +352,7 @@ pub fn parse_manifest(input: &[u8]) -> Result<Manifest, Status> {
     for (index, argument) in arguments.iter_mut().enumerate() {
         *argument = copy_field::<32>(input, 208 + index * 32)?;
         let populated = index < argument_count as usize;
-        if !text_valid(argument, populated, false)
+        if !argument_valid(argument, populated)
             || (!populated && argument.iter().any(|byte| *byte != 0)) {
             return Err(Status::ManifestArgument);
         }
@@ -562,6 +581,21 @@ mod tests {
     #[test]
     fn manifest_accepts_exact_shape() {
         assert_eq!(parse_manifest(&manifest()).unwrap().argument_count, 1);
+    }
+
+    #[test]
+    fn manifest_accepts_printable_url_argument() {
+        let mut bytes = manifest();
+        let url = b"http://sapote.test/welcome.txt\0";
+        bytes[208..208 + url.len()].copy_from_slice(url);
+        assert!(parse_manifest(&bytes).is_ok());
+    }
+
+    #[test]
+    fn manifest_rejects_control_character_argument() {
+        let mut bytes = manifest();
+        bytes[209] = b'\n';
+        assert!(matches!(parse_manifest(&bytes), Err(Status::ManifestArgument)));
     }
 
     #[test]

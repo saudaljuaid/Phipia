@@ -22,7 +22,7 @@ admission boundary.
 | `resource_directory` | Optional immutable System 8.3 directory identifier. |
 | `data_namespace` | Required 1–8 character directory on Data; relative application paths are rooted here. |
 | `icon` | Optional System 8.3 path. |
-| `arguments` | At most eight nonempty ASCII strings of at most 31 bytes each. |
+| `arguments` | At most eight nonempty printable-ASCII strings of at most 31 bytes each. They are opaque program arguments, so URL and option punctuation are permitted. |
 | `resources` | Optional list of `{ "path": "NAME.EXT", "source": "host/path" }` records. Sources are resolved relative to the JSON file. |
 
 The binary manifest starts with `SAPOTEA1`, format version and size, ABI

@@ -69,6 +69,14 @@ def text_field(value: Any, width: int, field: str, *, required: bool) -> bytes:
     return encoded + bytes(width - len(encoded))
 
 
+def argument_field(value: Any, field: str) -> bytes:
+    encoded = text_field(value, 32, field, required=True)
+    end = encoded.index(0)
+    if any(byte < 0x20 or byte > 0x7e for byte in encoded[:end]):
+        raise PackageError(f"{field} must contain printable ASCII")
+    return encoded
+
+
 def identifier(value: Any, field: str) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= 8:
         raise PackageError(f"{field} must contain 1-8 characters")
@@ -136,8 +144,8 @@ def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
     manifest[176:192] = text_field(data_namespace, 16, "data_namespace", required=True)
     manifest[192:208] = text_field(icon, 16, "icon", required=False)
     for index, argument in enumerate(arguments):
-        manifest[208 + index * 32:240 + index * 32] = text_field(
-            argument, 32, f"arguments[{index}]", required=True)
+        manifest[208 + index * 32:240 + index * 32] = argument_field(
+            argument, f"arguments[{index}]")
     return bytes(manifest)
 
 
@@ -154,6 +162,14 @@ def decode_text(data: bytes, field: str) -> str:
         raise PackageError(f"{field} is not ASCII") from error
 
 
+def decode_argument(data: bytes, field: str) -> str:
+    value = decode_text(data, field)
+    if any(ord(character) < 0x20 or ord(character) > 0x7e
+           for character in value):
+        raise PackageError(f"{field} contains non-printable ASCII")
+    return value
+
+
 def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
     if len(manifest) != MANIFEST_BYTES or manifest[:8] != MANIFEST_MAGIC:
         raise PackageError("manifest length or magic is invalid")
@@ -168,8 +184,9 @@ def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
     digest = hashlib.sha256(executable).digest()
     if manifest[128:160] != digest:
         raise PackageError("manifest executable SHA-256 mismatch")
-    args = [decode_text(manifest[208 + index * 32:240 + index * 32],
-                        f"arguments[{index}]") for index in range(argument_count)]
+    args = [decode_argument(manifest[208 + index * 32:240 + index * 32],
+                            f"arguments[{index}]")
+            for index in range(argument_count)]
     if any(any(manifest[208 + index * 32:240 + index * 32])
            for index in range(argument_count, 8)):
         raise PackageError("unused argument records are nonzero")

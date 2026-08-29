@@ -38,7 +38,7 @@ def main() -> int:
         "max_handles": 32,
         "max_threads": 2,
         "capabilities": ["console", "data-read"],
-        "arguments": ["PKGTEST.APP", "one"],
+        "arguments": ["PKGTEST.APP", "http://sapote.test/welcome.txt"],
     }
     first = PACKAGE.build_package(spec, executable)
     second = PACKAGE.build_package(copy.deepcopy(spec), executable)
@@ -47,7 +47,17 @@ def main() -> int:
     assert parsed_executable == executable
     assert resources == ()
     assert report["identifier"] == "PKGTEST"
-    assert report["arguments"] == ["PKGTEST.APP", "one"]
+    assert report["arguments"] == [
+        "PKGTEST.APP", "http://sapote.test/welcome.txt"
+    ]
+    control_spec = copy.deepcopy(spec)
+    control_spec["arguments"] = ["line\nbreak"]
+    try:
+        PACKAGE.build_package(control_spec, executable)
+    except PACKAGE.PackageError:
+        pass
+    else:
+        raise AssertionError("control character in argument was accepted")
     changed = bytearray(first)
     changed[-1] ^= 1
     expect_refusal(bytes(changed))
