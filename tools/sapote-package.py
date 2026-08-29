@@ -16,6 +16,8 @@ import fat32_image
 
 MANIFEST_BYTES = 1024
 PACKAGE_HEADER_BYTES = 64
+RESOURCE_HEADER_BYTES = 32
+MAX_PACKAGE_RESOURCES = 13
 PACKAGE_MAGIC = b"SAPOSPK1"
 MANIFEST_MAGIC = b"SAPOTEA1"
 CAPABILITIES = {
@@ -86,6 +88,9 @@ def short_path(value: Any, field: str, *, required: bool) -> str:
 
 
 def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
+    abi_version = spec.get("abi_version", 1)
+    if abi_version != 1:
+        raise PackageError("abi_version must be 1")
     name = text_field(spec.get("name"), 32, "name", required=True)
     app_id = identifier(spec.get("identifier"), "identifier")
     executable_path = short_path(spec.get("executable"), "executable", required=True)
@@ -119,7 +124,8 @@ def encode_manifest(spec: dict[str, Any], executable: bytes) -> bytes:
 
     manifest = bytearray(MANIFEST_BYTES)
     manifest[:8] = MANIFEST_MAGIC
-    struct.pack_into("<HHIIHHHHQQ", manifest, 8, 1, MANIFEST_BYTES, 1, 0,
+    struct.pack_into("<HHIIHHHHQQ", manifest, 8, 1, MANIFEST_BYTES,
+                     abi_version, 0,
                      len(arguments), max_handles, max_threads, 0,
                      capability_bits, memory_limit)
     manifest[64:96] = name
@@ -187,46 +193,124 @@ def inspect_manifest(manifest: bytes, executable: bytes) -> dict[str, Any]:
     }
 
 
-def build_package(spec: dict[str, Any], executable: bytes) -> bytes:
+def encode_resources(resources: tuple[tuple[str, bytes], ...]) -> bytes:
+    if len(resources) > MAX_PACKAGE_RESOURCES:
+        raise PackageError("resource count exceeds the one-cluster directory bound")
+    encoded = bytearray()
+    occupied: set[str] = set()
+    for path, payload in sorted(resources, key=lambda item: item[0].upper()):
+        normalized = short_path(path, "resource path", required=True)
+        if "/" in normalized or normalized in occupied:
+            raise PackageError("resource paths must be unique 8.3 filenames")
+        if not payload or len(payload) > 16 * 1024 * 1024:
+            raise PackageError("resource is empty or exceeds the FAT32 file bound")
+        occupied.add(normalized)
+        header = bytearray(RESOURCE_HEADER_BYTES)
+        header[:16] = text_field(normalized, 16, "resource path", required=True)
+        struct.pack_into("<Q", header, 16, len(payload))
+        encoded.extend(header)
+        encoded.extend(payload)
+    return bytes(encoded)
+
+
+def build_package(spec: dict[str, Any], executable: bytes,
+                  resources: tuple[tuple[str, bytes], ...] = ()) -> bytes:
     if not executable or len(executable) > 16 * 1024 * 1024:
         raise PackageError("executable is empty or exceeds the FAT32 file bound")
     manifest = encode_manifest(spec, executable)
-    body = manifest + executable
+    resource_body = encode_resources(resources)
+    body = manifest + executable + resource_body
     header = bytearray(PACKAGE_HEADER_BYTES)
     header[:8] = PACKAGE_MAGIC
-    struct.pack_into("<HHIQ", header, 8, 1, PACKAGE_HEADER_BYTES,
+    version = 2 if resources else 1
+    struct.pack_into("<HHIQ", header, 8, version, PACKAGE_HEADER_BYTES,
                      MANIFEST_BYTES, len(executable))
+    if resources:
+        struct.pack_into("<HHI", header, 24, len(resources), 0,
+                         len(resource_body))
     header[32:64] = hashlib.sha256(body).digest()
     return bytes(header) + body
 
 
-def parse_package(package: bytes) -> tuple[bytes, bytes, dict[str, Any]]:
+def parse_package(package: bytes) -> tuple[
+        bytes, bytes, tuple[tuple[str, bytes], ...], dict[str, Any]]:
     if len(package) < PACKAGE_HEADER_BYTES + MANIFEST_BYTES or package[:8] != PACKAGE_MAGIC:
         raise PackageError("package is truncated or has invalid magic")
     version, header_bytes, manifest_bytes, executable_bytes = struct.unpack_from(
         "<HHIQ", package, 8)
-    if (version, header_bytes, manifest_bytes) != (1, PACKAGE_HEADER_BYTES, MANIFEST_BYTES) \
-            or any(package[24:32]):
+    if version not in (1, 2) or header_bytes != PACKAGE_HEADER_BYTES \
+            or manifest_bytes != MANIFEST_BYTES:
         raise PackageError("package header version, size, or reserved bytes are invalid")
-    expected = PACKAGE_HEADER_BYTES + manifest_bytes + executable_bytes
+    resource_count, resource_reserved, resource_bytes = struct.unpack_from(
+        "<HHI", package, 24)
+    if version == 1 and (resource_count or resource_reserved or resource_bytes):
+        raise PackageError("version 1 package resource fields are nonzero")
+    if version == 2 and (resource_count == 0 or resource_reserved != 0):
+        raise PackageError("version 2 resource count or reserved field is invalid")
+    if resource_count > MAX_PACKAGE_RESOURCES:
+        raise PackageError("package resource count exceeds the directory bound")
+    expected = (PACKAGE_HEADER_BYTES + manifest_bytes + executable_bytes +
+                resource_bytes)
     if expected != len(package):
         raise PackageError("package length does not match its header")
     body = package[PACKAGE_HEADER_BYTES:]
     if hashlib.sha256(body).digest() != package[32:64]:
         raise PackageError("package body SHA-256 mismatch")
     manifest = body[:manifest_bytes]
-    executable = body[manifest_bytes:]
-    return manifest, executable, inspect_manifest(manifest, executable)
+    executable_end = manifest_bytes + executable_bytes
+    executable = body[manifest_bytes:executable_end]
+    cursor = executable_end
+    resources: list[tuple[str, bytes]] = []
+    occupied: set[str] = set()
+    for index in range(resource_count):
+        if cursor + RESOURCE_HEADER_BYTES > len(body):
+            raise PackageError(f"resource {index} header is truncated")
+        header = body[cursor:cursor + RESOURCE_HEADER_BYTES]
+        cursor += RESOURCE_HEADER_BYTES
+        path = decode_text(header[:16], f"resources[{index}].path")
+        short_path(path, f"resources[{index}].path", required=True)
+        length = struct.unpack_from("<Q", header, 16)[0]
+        if any(header[24:]) or length == 0 or length > 16 * 1024 * 1024 \
+                or path in occupied or cursor + length > len(body):
+            raise PackageError(f"resource {index} record is invalid")
+        occupied.add(path)
+        resources.append((path, body[cursor:cursor + length]))
+        cursor += length
+    if cursor != len(body):
+        raise PackageError("resource records do not consume the package body")
+    report = inspect_manifest(manifest, executable)
+    if resources and not report["resource_directory"]:
+        raise PackageError("packaged resources require resource_directory")
+    report["package_format"] = version
+    report["resources"] = [
+        {"path": path, "bytes": len(payload),
+         "sha256": hashlib.sha256(payload).hexdigest().upper()}
+        for path, payload in resources
+    ]
+    return manifest, executable, tuple(resources), report
 
 
 def command_build(args: argparse.Namespace) -> None:
-    spec_value = json.loads(read_regular(Path(args.spec)).decode("utf-8"))
+    spec_path = Path(args.spec)
+    spec_value = json.loads(read_regular(spec_path).decode("utf-8"))
     if not isinstance(spec_value, dict):
         raise PackageError("package specification must be one JSON object")
     executable = read_regular(Path(args.executable))
-    package = build_package(spec_value, executable)
+    resource_specs = spec_value.get("resources", [])
+    if not isinstance(resource_specs, list):
+        raise PackageError("resources must be a list")
+    resources: list[tuple[str, bytes]] = []
+    for index, resource in enumerate(resource_specs):
+        if not isinstance(resource, dict) or set(resource) != {"path", "source"}:
+            raise PackageError(f"resources[{index}] must contain path and source")
+        source = resource["source"]
+        if not isinstance(source, str) or not source:
+            raise PackageError(f"resources[{index}].source must be a path")
+        resources.append((resource["path"],
+                          read_regular(spec_path.parent / source)))
+    package = build_package(spec_value, executable, tuple(resources))
     atomic_write(Path(args.output), package)
-    _, _, report = parse_package(package)
+    _, _, _, report = parse_package(package)
     print(json.dumps({"output": str(Path(args.output)),
                       "package_sha256": hashlib.sha256(package).hexdigest().upper(),
                       **report}, sort_keys=True))
@@ -234,7 +318,7 @@ def command_build(args: argparse.Namespace) -> None:
 
 def command_inspect(args: argparse.Namespace) -> None:
     package = read_regular(Path(args.package))
-    _, _, report = parse_package(package)
+    _, _, _, report = parse_package(package)
     print(json.dumps({"package": str(Path(args.package)),
                       "package_sha256": hashlib.sha256(package).hexdigest().upper(),
                       **report}, indent=2, sort_keys=True))
@@ -248,13 +332,17 @@ def command_install(args: argparse.Namespace) -> None:
     extras: list[tuple[str, bytes]] = []
     identifiers: set[str] = set()
     for path in args.packages:
-        manifest, executable, report = parse_package(read_regular(Path(path)))
+        manifest, executable, resources, report = parse_package(
+            read_regular(Path(path)))
         app_id = str(report["identifier"])
         if app_id in identifiers:
             raise PackageError(f"duplicate package identifier: {app_id}")
         identifiers.add(app_id)
         extras.append((app_id + ".MAN", manifest))
         extras.append((str(report["executable"]), executable))
+        resource_directory = str(report["resource_directory"])
+        for resource_path, payload in resources:
+            extras.append((resource_directory + "/" + resource_path, payload))
     image = fat32_image.build_image("system", busyboxes, tuple(extras))
     fat32_image.verify_system(image, busyboxes, tuple(extras))
     atomic_write(Path(args.output), image)

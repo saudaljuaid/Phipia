@@ -326,7 +326,8 @@ $(NATIVE_TEST_APP): $(NATIVE_APP_DIR)/native-test.o \
 	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(NATIVE_APP_DIR)/NATIVET.map \
 		-o $@ $(SDK_CRT) $< $(SDK_LIB)
 
-$(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json
+$(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json \
+		apps/native-test/RESOURCE.TXT
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-test/manifest.json --executable $< --output $@
 

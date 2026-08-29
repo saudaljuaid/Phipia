@@ -662,10 +662,28 @@ static bool path_from_user(
     relative[path->length] = '\0';
     zero_bytes(output, SAPFS_MAX_PATH);
     if (path->volume == SAPOTE_VOLUME_SYSTEM) {
+        size_t resource_length;
+
         if ((process->manifest.capabilities & SAPOTE_CAP_SYSTEM_READ) == 0U) {
             return false;
         }
-        copy_bytes(output, relative, path->length + 1U);
+        resource_length = bounded_length(process->manifest.resource_directory,
+            sizeof(process->manifest.resource_directory));
+        if (resource_length == 0U) {
+            copy_bytes(output, relative, path->length + 1U);
+        } else if (path->length == 1U && relative[0] == '.') {
+            copy_bytes(output, process->manifest.resource_directory,
+                resource_length + 1U);
+        } else {
+            if (resource_length + 1U + path->length >= SAPFS_MAX_PATH) {
+                return false;
+            }
+            copy_bytes(output, process->manifest.resource_directory,
+                resource_length);
+            output[resource_length] = '/';
+            copy_bytes(output + resource_length + 1U, relative,
+                path->length + 1U);
+        }
         *volume = SAPFS_VOLUME_SYSTEM;
         return true;
     }

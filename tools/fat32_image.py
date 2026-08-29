@@ -255,17 +255,38 @@ def build_image(
     if volume == "data" and extras:
         raise Fat32Error("data volume formatter does not accept extra files")
     prepared_extras: list[tuple[bytes, bytes]] = []
+    prepared_directories: dict[bytes, list[tuple[bytes, bytes]]] = {}
+    directory_names: set[bytes] = set()
+    directory_files: set[tuple[bytes, bytes]] = set()
     occupied = ({record[1] for record in SYSTEM_FILES}
                 if volume == "system" and payloads else set())
     for name, payload in extras:
-        short_name = short_name_bytes(name)
-        if short_name in occupied:
-            raise Fat32Error("extra system filenames must be unique")
         if not payload or len(payload) > 16 * 1024 * 1024:
             raise Fat32Error("extra system file violates the file-size bound")
-        occupied.add(short_name)
-        prepared_extras.append((short_name, payload))
-    if 1 + len(payloads) + len(prepared_extras) >= SECTOR_BYTES // ENTRY_BYTES:
+        if name.count("/") == 0:
+            short_name = short_name_bytes(name)
+            if short_name in occupied or short_name in directory_names:
+                raise Fat32Error("extra system filenames must be unique")
+            occupied.add(short_name)
+            prepared_extras.append((short_name, payload))
+        elif name.count("/") == 1:
+            directory_text, filename_text = name.split("/", 1)
+            directory = short_name_bytes(directory_text)
+            filename = short_name_bytes(filename_text)
+            key = (directory, filename)
+            if directory in occupied or key in directory_files:
+                raise Fat32Error("extra system paths must be unique")
+            directory_names.add(directory)
+            directory_files.add(key)
+            prepared_directories.setdefault(directory, []).append(
+                (filename, payload))
+        else:
+            raise Fat32Error("system packages support one resource directory level")
+    if any(len(files) > SECTOR_BYTES // ENTRY_BYTES - 3
+           for files in prepared_directories.values()):
+        raise Fat32Error("system resource directory exceeds one cluster")
+    if 1 + len(payloads) + len(prepared_extras) + len(prepared_directories) \
+            >= SECTOR_BYTES // ENTRY_BYTES:
         raise Fat32Error("system root entries exceed the one-cluster package bound")
 
     image = bytearray(IMAGE_BYTES)
@@ -316,6 +337,43 @@ def build_image(
             image[root + slot * ENTRY_BYTES:root + (slot + 1) * ENTRY_BYTES] = entry
             slot += 1
             next_cluster += cluster_count
+        directory_clusters: dict[bytes, int] = {}
+        for directory in sorted(prepared_directories):
+            directory_clusters[directory] = next_cluster
+            _set_fat(image, next_cluster, FAT32_EOC)
+            entry = _directory_entry(directory, 0x10, next_cluster, 0)
+            image[root + slot * ENTRY_BYTES:root + (slot + 1) * ENTRY_BYTES] = entry
+            slot += 1
+            next_cluster += 1
+        for directory in sorted(prepared_directories):
+            directory_cluster = directory_clusters[directory]
+            directory_offset = _cluster_offset(directory_cluster)
+            image[directory_offset:directory_offset + ENTRY_BYTES] = (
+                _directory_entry(b".          ", 0x10, directory_cluster, 0)
+            )
+            image[directory_offset + ENTRY_BYTES:
+                  directory_offset + 2 * ENTRY_BYTES] = (
+                _directory_entry(b"..         ", 0x10, ROOT_CLUSTER, 0)
+            )
+            for resource_slot, (name, payload) in enumerate(
+                    sorted(prepared_directories[directory],
+                           key=lambda item: item[0]), start=2):
+                cluster_count = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
+                first_cluster = next_cluster
+                if first_cluster + cluster_count - 1 > CLUSTER_COUNT + 1:
+                    raise Fat32Error("system resources exceed the volume capacity")
+                for ordinal in range(cluster_count):
+                    cluster = first_cluster + ordinal
+                    following = cluster + 1 if ordinal + 1 < cluster_count else FAT32_EOC
+                    _set_fat(image, cluster, following)
+                    offset = _cluster_offset(cluster)
+                    start = ordinal * SECTOR_BYTES
+                    block = payload[start:start + SECTOR_BYTES]
+                    image[offset:offset + len(block)] = block
+                entry = _directory_entry(name, 0x21, first_cluster, len(payload))
+                location = directory_offset + resource_slot * ENTRY_BYTES
+                image[location:location + ENTRY_BYTES] = entry
+                next_cluster += cluster_count
 
     used_clusters = next_cluster - 2
     free_clusters = CLUSTER_COUNT - used_clusters
