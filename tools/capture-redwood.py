@@ -28,6 +28,31 @@ PROOF_LINE = b"Sapote: Boot Ledger installed proof passed"
 PROMPT = b"sap> "
 WIDTH = 1024
 HEIGHT = 768
+DOCK_FIXED_ONE = 65536
+DOCK_ICON_SIZE = 58
+DOCK_GAP_FACTOR = 10486
+DOCK_ITEM_COUNT = 7
+DOCK_POINTER_Y = 700
+DOCK_FILES = 0
+DOCK_TERMINAL = 1
+DOCK_NOTES = 2
+DOCK_STUDIO = 3
+DOCK_CAMERA = 4
+DOCK_CANVAS = 5
+DOCK_SETTINGS = 6
+
+
+def dock_item_center(index):
+    """Return the center of a stable Dock hit lane at 1024x768."""
+    if index < 0 or index >= DOCK_ITEM_COUNT:
+        raise ValueError("Dock item index is outside the installed layout")
+    icon = DOCK_ICON_SIZE * DOCK_FIXED_ONE
+    gap = icon * DOCK_GAP_FACTOR // DOCK_FIXED_ONE
+    cell = icon + gap
+    resting_width = cell * DOCK_ITEM_COUNT
+    resting_x = WIDTH * DOCK_FIXED_ONE // 2 - resting_width // 2
+    center = resting_x + index * cell + cell // 2
+    return (center + DOCK_FIXED_ONE // 2) // DOCK_FIXED_ONE
 
 
 def png_chunk(kind, body):
@@ -321,7 +346,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         pointer.prime_terminal()
         capture_png(qmp, work, output, "sapote-redwood-dock")
         wait_until(started, 1.00)
-        pointer.move_to(702, 700)
+        pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
         pointer.click()
         time.sleep(0.08)
         capture_png(qmp, work, output, "sapote-window-opening-spring")
@@ -359,7 +384,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         # Keep Camera out of the public demo: QEMU has no webcam source and
         # the application intentionally refuses to fabricate a live frame.
         wait_until(started, 5.10)
-        pointer.move_to(322, 700)
+        pointer.move_to(dock_item_center(DOCK_FILES), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.90)
         wait_until(started, 7.65)
@@ -375,7 +400,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
 
         wait_until(started, 10.60)
         pointer.rehome()
-        pointer.move_to(550, 700)
+        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.30)
         wait_until(started, 11.50)
@@ -386,7 +411,7 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         capture_png(qmp, work, output, "sapote-redwood-studio")
 
         wait_until(started, 15.20)
-        pointer.move_to(702, 700)
+        pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.30)
         wait_until(started, 16.00)
@@ -399,15 +424,15 @@ def record_live_window(args, qmp, pointer, work, output, durable_data, video,
         pointer.drag_to(510, 56, 570, 116)
         pointer.settle_guest(0.20)
         capture_png(qmp, work, output, "sapote-window-dragged")
-        for x in (317, 395, 473, 551, 629, 707, 629):
-            pointer.move_to(x, 700)
+        for index in (*range(DOCK_ITEM_COUNT), DOCK_CANVAS):
+            pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
             time.sleep(0.12)
         capture_png(qmp, work, output, "sapote-ui-redesign-final-dock")
         wait_until(started, args.seconds)
         finish_recording(recording)
 
         pointer.rehome()
-        pointer.move_to(550, 700)
+        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.50)
         pointer.move_to(476, 141)
@@ -443,14 +468,15 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         # Establish an absolute guest origin once.  All later motion stays on
         # this coordinate system, avoiding SDL-relative drift.
         pointer.rehome()
-        pointer.move_to(344, 700)
-        for x in (344, 411, 481, 548, 613, 681, 613, 548):
-            pointer.move_to(x, 700)
+        pointer.move_to(dock_item_center(DOCK_FILES), DOCK_POINTER_Y)
+        for index in (*range(DOCK_ITEM_COUNT), DOCK_CANVAS, DOCK_CAMERA,
+                      DOCK_STUDIO):
+            pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
             time.sleep(0.05)
         capture_png(qmp, work, output, "sapote-fast-dock-hover")
 
         wait_until(started, 3.20)
-        pointer.move_to(681, 700)
+        pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.70)
         capture_png(qmp, work, output, "sapote-fast-settings")
@@ -474,13 +500,13 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         pointer.click()
 
         wait_until(started, 10.00)
-        pointer.move_to(344, 700)
+        pointer.move_to(dock_item_center(DOCK_FILES), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.70)
         capture_png(qmp, work, output, "sapote-fast-files")
 
         wait_until(started, 12.80)
-        pointer.move_to(481, 700)
+        pointer.move_to(dock_item_center(DOCK_NOTES), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.70)
         send_text(qmp, "Fluid Sapote.", delay=0.012)
@@ -488,7 +514,7 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         capture_png(qmp, work, output, "sapote-fast-notes")
 
         wait_until(started, 16.00)
-        pointer.move_to(548, 700)
+        pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.70)
         for x, y in ((190, 141), (262, 141), (336, 141), (600, 560)):
@@ -497,15 +523,15 @@ def record_fast_demo(args, qmp, pointer, work, output, video, crop):
         capture_png(qmp, work, output, "sapote-fast-studio")
 
         wait_until(started, 20.20)
-        pointer.move_to(681, 700)
+        pointer.move_to(dock_item_center(DOCK_SETTINGS), DOCK_POINTER_Y)
         pointer.click()
         pointer.settle_guest(0.30)
         pointer.drag_to(510, 56, 570, 116)
         capture_png(qmp, work, output, "sapote-fast-multitasking")
 
         wait_until(started, 22.20)
-        for x in (344, 411, 481, 548, 613, 681, 548):
-            pointer.move_to(x, 700)
+        for index in (*range(DOCK_ITEM_COUNT), DOCK_STUDIO):
+            pointer.move_to(dock_item_center(index), DOCK_POINTER_Y)
             time.sleep(0.04)
         wait_until(started, args.seconds)
         finish_recording(recording)
@@ -551,7 +577,7 @@ class Pointer:
         self.x = 512
         self.y = 696
         time.sleep(0.45)
-        self.move_to(398, 696)
+        self.move_to(dock_item_center(DOCK_TERMINAL), DOCK_POINTER_Y)
 
     def rehome(self):
         """Clamp guest and script coordinates back to the same origin."""
@@ -744,12 +770,15 @@ def main():
                         pointer.prime_terminal()
                         capture_png(qmp, work, output,
                                     "sapote-redwood-dock")
-                        for x in (317, 395, 473, 551, 629, 707, 629):
-                            pointer.move_to(x, 700)
+                        for dock_index in (*range(DOCK_ITEM_COUNT),
+                                           DOCK_CANVAS):
+                            pointer.move_to(dock_item_center(dock_index),
+                                            DOCK_POINTER_Y)
                             time.sleep(0.08)
                         events.add("dock_hover")
                     elif elapsed >= 0.30 and "settings_open" not in events:
-                        pointer.move_to(702, 700)
+                        pointer.move_to(dock_item_center(DOCK_SETTINGS),
+                                        DOCK_POINTER_Y)
                         pointer.click()
                         time.sleep(0.08)
                         capture_png(qmp, work, output,
@@ -794,7 +823,8 @@ def main():
                                     "sapote-settings-appearance-dark")
                         events.add("appearance_dark")
                     elif elapsed >= 1.50 and "files_open" not in events:
-                        pointer.move_to(322, 700)
+                        pointer.move_to(dock_item_center(DOCK_FILES),
+                                        DOCK_POINTER_Y)
                         pointer.click()
                         pointer.settle_guest(0.90)
                         capture_png(qmp, work, output,
@@ -818,7 +848,8 @@ def main():
                         events.add("note_saved")
                     elif elapsed >= 3.30 and "studio_open" not in events:
                         pointer.rehome()
-                        pointer.move_to(550, 700)
+                        pointer.move_to(dock_item_center(DOCK_STUDIO),
+                                        DOCK_POINTER_Y)
                         pointer.click()
                         pointer.settle_guest()
                         events.add("studio_open")
@@ -847,7 +878,8 @@ def main():
                                     "sapote-redwood-studio")
                         events.add("studio_save")
                     elif elapsed >= 5.40 and "settings_reopen" not in events:
-                        pointer.move_to(702, 700)
+                        pointer.move_to(dock_item_center(DOCK_SETTINGS),
+                                        DOCK_POINTER_Y)
                         pointer.click()
                         pointer.settle_guest()
                         pointer.move_to(213, 188)
@@ -868,8 +900,10 @@ def main():
                                     "sapote-window-dragged")
                         events.add("window_drag")
                     elif elapsed >= 5.10 and "fluid_hover" not in events:
-                        for x in (317, 395, 473, 551, 629, 707, 629):
-                            pointer.move_to(x, 700)
+                        for dock_index in (*range(DOCK_ITEM_COUNT),
+                                           DOCK_CANVAS):
+                            pointer.move_to(dock_item_center(dock_index),
+                                            DOCK_POINTER_Y)
                             time.sleep(0.12)
                         capture_png(qmp, work, output,
                                     "sapote-ui-redesign-final-dock")
@@ -900,7 +934,7 @@ def main():
                 # Complete the slower synchronized SapStudio export after the
                 # exact 25-second UI recording while QEMU remains active.
                 pointer.rehome()
-                pointer.move_to(550, 700)
+                pointer.move_to(dock_item_center(DOCK_STUDIO), DOCK_POINTER_Y)
                 pointer.click()
                 time.sleep(0.75)
                 pointer.move_to(476, 141)
