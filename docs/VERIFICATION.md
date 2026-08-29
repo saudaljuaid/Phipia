@@ -29,6 +29,10 @@ processes are alive. The same run injects hardware keyboard and pointer input;
 the serial proof requires both applications to report focus and partial-damage
 activity before their resource census is checked.
 
+[`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
+application proof to its Ring 3 action, exact QEMU scenario, and retained
+evidence.
+
 ## Coverage
 
 The QEMU suite covers:
