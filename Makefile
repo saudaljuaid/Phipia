@@ -91,6 +91,10 @@ CAMERA_ICON_SOURCE := assets/camera-icon-dock.png
 CAMERA_ICON_ORIGINAL := assets/camera-icon.png
 CAMERA_ICON_BLOB := $(BUILD_DIR)/camera-icon.srl
 CAMERA_ICON_MAX_DIMENSION := 80
+CANVAS_ICON_SOURCE := assets/canvas-icon-dock.png
+CANVAS_ICON_ORIGINAL := assets/canvas-icon.png
+CANVAS_ICON_BLOB := $(BUILD_DIR)/canvas-icon.srl
+CANVAS_ICON_MAX_DIMENSION := 80
 SETTINGS_CATEGORY_ICONS_SOURCE := assets/settings-category-icons.png
 SETTINGS_CATEGORY_ICONS_BLOB := $(BUILD_DIR)/settings-category-icons.srl
 SETTINGS_CATEGORY_ICONS_MAX_DIMENSION := 256
@@ -143,6 +147,7 @@ REDWOOD_PROOF_USERLAND_IMAGE := $(BUILD_DIR)/userspace/sapote-userland-fat16.raw
 REDWOOD_PROOF_USERLAND_NO_CAT_IMAGE := \
 	$(BUILD_DIR)/userspace/sapote-userland-no-cat-fat16.raw
 FAT32_SYSTEM_IMAGE := $(BUILD_DIR)/userspace/sapote-system-fat32.raw
+DESKTOP_SYSTEM_IMAGE := $(BUILD_DIR)/userspace/sapote-desktop-system-fat32.raw
 FAT32_DATA_IMAGE := $(BUILD_DIR)/userspace/sapote-data-fat32.raw
 FAT32_RUN_DATA_IMAGE := $(BUILD_DIR)/run-data-fat32.raw
 FAT32_FULL_IMAGE := $(BUILD_DIR)/userspace/sapote-data-full-fat32.raw
@@ -186,6 +191,7 @@ SQLITE_DATA_IMAGE := $(SQLITE_PORT_DIR)/data.raw
 CANVAS_APP_DIR := $(BUILD_DIR)/native-canvas
 CANVAS_APP := $(CANVAS_APP_DIR)/CANVAS.APP
 CANVAS_PACKAGE := $(CANVAS_APP_DIR)/CANVAS.SPK
+CANVAS_PROOF_PACKAGE := $(CANVAS_APP_DIR)/CANVAS-PROOF.SPK
 CANVAS_SYSTEM_IMAGE := $(CANVAS_APP_DIR)/system.raw
 CANVAS_DATA_IMAGE := $(CANVAS_APP_DIR)/data.raw
 NETAPP_DIR := $(BUILD_DIR)/native-network
@@ -417,10 +423,16 @@ $(CANVAS_PACKAGE): $(CANVAS_APP) apps/native-canvas/manifest.json
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-canvas/manifest.json --executable $< --output $@
 
-$(CANVAS_SYSTEM_IMAGE): $(CANVAS_PACKAGE) tools/sapote-package.py \
+$(CANVAS_PROOF_PACKAGE): $(CANVAS_APP) \
+		apps/native-canvas/manifest-proof.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-canvas/manifest-proof.json \
+		--executable $< --output $@
+
+$(CANVAS_SYSTEM_IMAGE): $(CANVAS_PROOF_PACKAGE) tools/sapote-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/sapote-package.py install-system \
-		--output $@ $(CANVAS_PACKAGE)
+		--output $@ $(CANVAS_PROOF_PACKAGE)
 
 $(CANVAS_DATA_IMAGE): tools/fat32_image.py | $(CANVAS_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
@@ -492,7 +504,8 @@ $(ADMISSION_DATA_IMAGE): tools/fat32_image.py | $(ADMISSION_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
-	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE) $(RUST_APP_PACKAGE) $(CRASH_PACKAGE)
+	$(CANVAS_PACKAGE) $(CANVAS_PROOF_PACKAGE) $(NETAPP_PACKAGE) \
+	$(RUST_APP_PACKAGE) $(CRASH_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -516,6 +529,7 @@ port-tests: native-apps
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SQLITE_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PROOF_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CRASH_PACKAGE)
@@ -571,6 +585,10 @@ $(CAMERA_ICON_BLOB): $(CAMERA_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DI
 	$(PYTHON) tools/make-logo-asset.py $(CAMERA_ICON_SOURCE) \
 		$(CAMERA_ICON_MAX_DIMENSION) $@
 
+$(CANVAS_ICON_BLOB): $(CANVAS_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(CANVAS_ICON_SOURCE) \
+		$(CANVAS_ICON_MAX_DIMENSION) $@
+
 $(SETTINGS_CATEGORY_ICONS_BLOB): $(SETTINGS_CATEGORY_ICONS_SOURCE) \
 		tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(SETTINGS_CATEGORY_ICONS_SOURCE) \
@@ -593,7 +611,7 @@ $(UI_FONT_BLOB): $(UI_FONT_SOURCE) $(UI_FONT_METRICS) \
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 		$(SETTINGS_ICON_BLOB) $(FILES_ICON_BLOB) $(TERMINAL_ICON_BLOB) \
-		$(CAMERA_ICON_BLOB) \
+		$(CAMERA_ICON_BLOB) $(CANVAS_ICON_BLOB) \
 		$(SETTINGS_CATEGORY_ICONS_BLOB) \
 		$(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
@@ -602,6 +620,7 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 	SAPOTE_FILES_ICON_BLOB='$(CURDIR)/$(FILES_ICON_BLOB)' \
 	SAPOTE_TERMINAL_ICON_BLOB='$(CURDIR)/$(TERMINAL_ICON_BLOB)' \
 	SAPOTE_CAMERA_ICON_BLOB='$(CURDIR)/$(CAMERA_ICON_BLOB)' \
+	SAPOTE_CANVAS_ICON_BLOB='$(CURDIR)/$(CANVAS_ICON_BLOB)' \
 	SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB='$(CURDIR)/$(SETTINGS_CATEGORY_ICONS_BLOB)' \
 	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
@@ -661,6 +680,14 @@ $(FAT32_SYSTEM_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
 	$(PYTHON) tools/fat32_image.py format system $@ \
 		--echo $(BUSYBOX_BINARY) --uname $(BUSYBOX_UNAME_BINARY) \
 		--cat $(BUSYBOX_CAT_BINARY)
+
+$(DESKTOP_SYSTEM_IMAGE): $(BUSYBOX_BINARY) $(BUSYBOX_UNAME_BINARY) \
+		$(BUSYBOX_CAT_BINARY) $(CANVAS_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	mkdir -p $(dir $@)
+	$(PYTHON) tools/sapote-package.py install-system \
+		--echo $(BUSYBOX_BINARY) --uname $(BUSYBOX_UNAME_BINARY) \
+		--cat $(BUSYBOX_CAT_BINARY) --output $@ $(CANVAS_PACKAGE)
 
 $(FAT32_DATA_IMAGE): tools/fat32_image.py
 	mkdir -p $(dir $@)
@@ -726,6 +753,7 @@ verify: toolchain lint
 	@test '$(FILES_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(TERMINAL_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(CAMERA_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(CANVAS_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(SETTINGS_CATEGORY_ICONS_MAX_DIMENSION)' -eq 256
 	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
 	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
@@ -1780,8 +1808,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
 		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
 			--serial "$$log" --marker 'SAPOTE CANVAS READY' \
-			--marker-count 2 --text k --hmp 'mouse_move 80 60' \
-			--hmp 'mouse_button 1' --hmp 'mouse_button 0' \
+			--marker-count 2 --text k --hmp 'mouse_move 20 -20' \
+			--hmp 'mouse_button 1' --hmp 'mouse_move 42 -18' \
+			--hmp 'mouse_move 38 24' --hmp 'mouse_button 0' \
 			--capture-dir '$(abspath $(TEST_BUILD_DIR)/$*/canvas-frames)' \
 			--screenshot '$(abspath $(TEST_BUILD_DIR)/$*/canvas.png)' \
 			--video '$(abspath $(TEST_BUILD_DIR)/$*/canvas.mp4)' \
@@ -2150,8 +2179,8 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			test -s '$(TEST_BUILD_DIR)/$*/canvas.mp4' && \
 			test "$$(grep -Ec '^SAPOTE PERF canvas damage=70x14 samples=[1-9][0-9]* total_ns=[1-9][0-9]* average_ns=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			test "$$(grep -Ec '^SAPOTE CANVAS READY width=420 height=250$$' "$$log")" -eq 2 && \
-			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
-			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \
+			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ strokes=[0-9]+ colors=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
+			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* strokes=[1-9][0-9]* colors=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'Sapote: two native Canvas windows handled focus, input and partial damage' "$$log" || \
 				diagnostics_ok=false ;; \
 		native-rust) \
@@ -2183,10 +2212,10 @@ qemu-tests: $(TEST_TARGETS)
 smoke: qemu-test-normal
 	@echo "strict boot smoke test passed"
 
-run: iso $(FAT32_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
+run: iso $(DESKTOP_SYSTEM_IMAGE) $(FAT32_DATA_IMAGE)
 	cp $(FAT32_DATA_IMAGE) $(FAT32_RUN_DATA_IMAGE)
 	qemu-system-x86_64 -m 128M -smp 1 -boot order=d -cdrom $(ISO) \
-		-blockdev driver=file,filename=$(FAT32_SYSTEM_IMAGE),node-name=system-file,read-only=on,auto-read-only=off \
+		-blockdev driver=file,filename=$(DESKTOP_SYSTEM_IMAGE),node-name=system-file,read-only=on,auto-read-only=off \
 		-blockdev driver=raw,file=system-file,node-name=system-raw,read-only=on \
 		-device nvme,serial=sapote-system-fat32,drive=system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 \
 		-blockdev driver=file,filename=$(FAT32_RUN_DATA_IMAGE),node-name=data-file,read-only=off,auto-read-only=off \

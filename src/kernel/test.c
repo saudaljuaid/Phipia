@@ -5418,21 +5418,34 @@ static void redwood_proof_click_dock_item(
     }
 }
 
+static void redwood_proof_click_point(
+    uint32_t target_x,
+    uint32_t target_y,
+    const char *failure
+)
+{
+    redwood_proof_move_pointer(target_x, target_y, failure);
+    redwood_proof_inject_pointer(UINT8_C(0x01), 0, 0, failure);
+    redwood_proof_inject_pointer(0U, 0, 0, failure);
+}
+
 _Noreturn void kernel_test_complete_redwood_proof(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
         UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
-        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_SETTINGS
+        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
+        UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
         UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
-        UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_SETTINGS
+        UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
+        UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_SETTINGS
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
@@ -5545,9 +5558,77 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
         kernel_test_fail("Sapote Redwood cursor trail probe is not visible");
     }
 
+    /* Exercise the public launcher as a person would: open it from the menu,
+     * select its second bounded page, then filter and launch Canvas. */
+    redwood_proof_click_point(ui->layout.surface.width - 121U, 12U,
+        "Sapote Redwood application search did not open");
+    redwood_proof_click_point(518U, 460U,
+        "Sapote Redwood application page did not activate");
+    {
+        struct keyboard_event launcher_key = {
+            .scancode = 0x1CU, .pressed = true, .shift = false,
+            .control = false, .character = '\0'
+        };
+
+        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+            kernel_test_fail("Sapote Redwood paged launcher activation failed");
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood paged launcher activation draw failed");
+        if (ui_get_state()->active_panel != UI_PANEL_SETTINGS) {
+            kernel_test_fail("Sapote Redwood launcher page chose wrong app");
+        }
+        redwood_proof_click_point(ui->layout.surface.width - 121U, 12U,
+            "Sapote Redwood application search did not reopen");
+        static const char query[] = "canvas";
+        for (size_t index = 0U; index < sizeof(query) - 1U; ++index) {
+            launcher_key.scancode = 0U;
+            launcher_key.character = query[index];
+            if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+                kernel_test_fail("Sapote Redwood application filter failed");
+            }
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood application filter draw failed");
+        launcher_key.scancode = 0x1CU;
+        launcher_key.character = '\0';
+        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+            kernel_test_fail("Sapote Redwood filtered launch failed");
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood filtered launch draw failed");
+        char manifest[13U];
+        if (!ui_application_launch_dequeue(manifest, sizeof(manifest)) ||
+                manifest[0] != 'C' || manifest[1] != 'A' ||
+                manifest[2] != 'N' || manifest[3] != 'V' ||
+                manifest[4] != 'A' || manifest[5] != 'S' ||
+                manifest[6] != '.' || manifest[7] != 'M' ||
+                manifest[8] != 'A' || manifest[9] != 'N' ||
+                manifest[10] != '\0') {
+            kernel_test_fail("Sapote Redwood filtered Canvas launch is wrong");
+        }
+    }
+
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
+        const enum ui_panel_id expected_panel =
+            actions[index] == UI_ACTION_OPEN_CANVAS ?
+                ui->active_panel : panels[index];
+
         redwood_proof_click_dock_item(&ui->layout.dock_items[index],
-            panels[index]);
+            expected_panel);
+        if (actions[index] == UI_ACTION_OPEN_CANVAS) {
+            char manifest[13U];
+
+            if (!ui_application_launch_dequeue(manifest,
+                    sizeof(manifest)) || manifest[0] != 'C' ||
+                manifest[1] != 'A' || manifest[2] != 'N' ||
+                manifest[3] != 'V' || manifest[4] != 'A' ||
+                manifest[5] != 'S' || manifest[6] != '.' ||
+                manifest[7] != 'M' || manifest[8] != 'A' ||
+                manifest[9] != 'N' || manifest[10] != '\0') {
+                kernel_test_fail("Sapote Redwood Canvas launch request is wrong");
+            }
+        }
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||

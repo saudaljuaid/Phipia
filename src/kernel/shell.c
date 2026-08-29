@@ -1691,6 +1691,17 @@ _Noreturn void shell_run(void)
                 console_putc('\n');
             }
         }
+        if (ui_operational) {
+            char manifest[SAPFS_MAX_PATH + 1U];
+
+            if (ui_application_launch_dequeue(manifest,
+                    sizeof(manifest))) {
+                struct native_process_result result;
+
+                report_native_result(native_process_launch(manifest,
+                    &result), &result);
+            }
+        }
 
         /*
          * Halt rather than spin. keyboard_read does not block - there is no way

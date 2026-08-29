@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define DOCK3D_ITEM_COUNT 6U
+#define DOCK3D_ITEM_COUNT 7U
 #define DOCK3D_ONE 65536
 
 /* Native fixed-point port of saudaljuaid/3d-dock.  The upstream project uses

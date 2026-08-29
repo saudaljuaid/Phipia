@@ -12,5 +12,5 @@
     "window",
     "input"
   ],
-  "arguments": []
+  "arguments": ["multi-window-proof"]
 }

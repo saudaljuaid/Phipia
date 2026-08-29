@@ -2,33 +2,47 @@
 #include <sapote/runtime.h>
 #include <sapote/window.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #define CANVAS_WIDTH UINT32_C(420)
 #define CANVAS_HEIGHT UINT32_C(250)
 #define FRAME_NS UINT64_C(75000000)
-#define RUN_NS UINT64_C(5000000000)
-#define PULSE_X UINT32_C(338)
-#define PULSE_Y UINT32_C(232)
+#define RUN_NS UINT64_C(6000000000)
+#define PULSE_X UINT32_C(346)
+#define PULSE_Y UINT32_C(236)
 #define PULSE_WIDTH UINT32_C(70)
 #define PULSE_HEIGHT UINT32_C(14)
+#define ARTBOARD_X UINT32_C(52)
+#define ARTBOARD_Y UINT32_C(42)
+#define ARTBOARD_WIDTH UINT32_C(296)
+#define ARTBOARD_HEIGHT UINT32_C(190)
+#define PALETTE_X INT32_C(384)
+#define PALETTE_RADIUS INT32_C(9)
+#define BRUSH_RADIUS INT32_C(3)
 
-#define COLOR_BACKGROUND UINT32_C(0x101620)
-#define COLOR_HEADER UINT32_C(0x151C27)
-#define COLOR_TOOLBAR UINT32_C(0x121923)
-#define COLOR_WORKSPACE UINT32_C(0x202833)
-#define COLOR_PAPER UINT32_C(0xEEE9DF)
-#define COLOR_INK UINT32_C(0x17202A)
-#define COLOR_MUTED UINT32_C(0x7D8B9C)
-#define COLOR_TEAL UINT32_C(0x27C7A5)
-#define COLOR_CORAL UINT32_C(0xF06A5D)
-#define COLOR_VIOLET UINT32_C(0x7367F0)
-#define COLOR_GOLD UINT32_C(0xE9B44C)
+#define COLOR_BACKGROUND UINT32_C(0xC6CBD0)
+#define COLOR_HEADER UINT32_C(0xEBEDEF)
+#define COLOR_TOOLBAR UINT32_C(0xF4F5F6)
+#define COLOR_WORKSPACE UINT32_C(0xD6D9DC)
+#define COLOR_PAPER UINT32_C(0xFFFFFF)
+#define COLOR_INK UINT32_C(0x202326)
+#define COLOR_MUTED UINT32_C(0x687078)
+#define COLOR_TEAL UINT32_C(0x26BFA4)
+#define COLOR_CORAL UINT32_C(0xE95A55)
+#define COLOR_VIOLET UINT32_C(0x7659D7)
+#define COLOR_GOLD UINT32_C(0xF2B84B)
+#define COLOR_BLUE UINT32_C(0x3D7DE0)
 
 struct canvas {
     uint32_t *pixels;
     uint32_t stride;
+};
+
+static const uint32_t palette_colors[] = {
+    COLOR_INK, COLOR_BLUE, COLOR_TEAL, COLOR_CORAL, COLOR_VIOLET, COLOR_GOLD
 };
 
 static const uint8_t glyphs[43][7] = {
@@ -212,74 +226,134 @@ static void draw_text(struct canvas *canvas, uint32_t x, uint32_t y,
     }
 }
 
-static void draw_artboard(struct canvas *canvas, uint32_t accent)
+static void draw_palette(struct canvas *canvas, size_t selected)
 {
-    static const int32_t path[][2] = {
-        {96, 164}, {128, 126}, {159, 151}, {192, 112},
-        {224, 138}, {253, 116}, {318, 168}
-    };
+    fill_rect(canvas, 356U, 32U, 64U, 204U, COLOR_TOOLBAR);
+    fill_rect(canvas, 356U, 32U, 1U, 204U, UINT32_C(0xA8ADB2));
+    draw_text(canvas, 369U, 42U, "COLOR", COLOR_MUTED, 1U);
+    for (size_t index = 0U;
+         index < sizeof(palette_colors) / sizeof(palette_colors[0]);
+         ++index) {
+        const int32_t y = 68 + (int32_t)index * 27;
 
-    fill_rect(canvas, 79U, 61U, 274U, 158U, UINT32_C(0x0B1017));
-    fill_rect(canvas, 74U, 56U, 274U, 158U, COLOR_PAPER);
-    fill_circle(canvas, 284, 101, 43, COLOR_CORAL);
-    fill_circle(canvas, 303, 118, 20, COLOR_PAPER);
-    fill_circle(canvas, 112, 173, 19, COLOR_GOLD);
-    for (size_t index = 1U; index < sizeof(path) / sizeof(path[0]); ++index) {
-        draw_line(canvas, path[index - 1U][0], path[index - 1U][1],
-            path[index][0], path[index][1], 5, COLOR_INK);
-        draw_line(canvas, path[index - 1U][0], path[index - 1U][1],
-            path[index][0], path[index][1], 2, accent);
+        if (index == selected) {
+            draw_ring(canvas, PALETTE_X, y, PALETTE_RADIUS + 4, 2,
+                COLOR_INK);
+        }
+        fill_circle(canvas, PALETTE_X, y, PALETTE_RADIUS,
+            palette_colors[index]);
+        fill_circle(canvas, PALETTE_X - 3, y - 3, 2, UINT32_C(0xFFFFFF));
     }
-    fill_circle(canvas, 96, 164, 5, accent);
-    fill_circle(canvas, 318, 168, 5, accent);
-    draw_text(canvas, 96U, 75U, "SAPOTE", COLOR_INK, 2U);
-    draw_text(canvas, 98U, 100U, "NATIVE CANVAS", UINT32_C(0x556273), 1U);
-    draw_text(canvas, 291U, 188U, "01", COLOR_INK, 2U);
 }
 
-static void draw_workspace(struct canvas *canvas, uint32_t accent,
+static void draw_workspace(struct canvas *canvas, size_t selected,
     int focused)
 {
+    const uint32_t accent = palette_colors[selected];
+
     fill_rect(canvas, 0U, 0U, CANVAS_WIDTH, CANVAS_HEIGHT,
         COLOR_BACKGROUND);
-    fill_rect(canvas, 0U, 0U, CANVAS_WIDTH, 44U, COLOR_HEADER);
-    fill_rect(canvas, 0U, 44U, 48U, 184U, COLOR_TOOLBAR);
-    fill_rect(canvas, 48U, 44U, CANVAS_WIDTH - 48U, 184U,
-        COLOR_WORKSPACE);
-    fill_rect(canvas, 0U, 228U, CANVAS_WIDTH, 22U, COLOR_BACKGROUND);
-    fill_rect(canvas, 18U, 14U, 16U, 16U, accent);
-    draw_line(canvas, 22, 26, 30, 18, 2, COLOR_PAPER);
-    draw_text(canvas, 46U, 14U, "CANVAS", COLOR_PAPER, 2U);
-    draw_text(canvas, 330U, 18U, "NATIVE ABI 1", COLOR_MUTED, 1U);
+    fill_rect(canvas, 0U, 0U, CANVAS_WIDTH, 32U, COLOR_HEADER);
+    fill_rect(canvas, 0U, 31U, CANVAS_WIDTH, 1U, UINT32_C(0x969DA3));
+    draw_text(canvas, 14U, 12U, "CANVAS", COLOR_INK, 2U);
+    draw_text(canvas, 182U, 13U, "UNTITLED", COLOR_MUTED, 1U);
+    draw_text(canvas, 350U, 13U, "100 PCT", COLOR_MUTED, 1U);
 
-    fill_rect(canvas, 8U, 57U, 32U, 32U, UINT32_C(0x273241));
-    fill_rect(canvas, 8U, 57U, 2U, 32U, accent);
-    draw_line(canvas, 17, 79, 32, 64, 2, COLOR_PAPER);
-    draw_ring(canvas, 24, 112, 8, 2, COLOR_MUTED);
-    stroke_rect(canvas, 17U, 137U, 15U, 13U, 2U, COLOR_MUTED);
-    draw_line(canvas, 16, 179, 23, 168, 2, COLOR_MUTED);
-    draw_line(canvas, 23, 168, 32, 181, 2, COLOR_MUTED);
-    fill_circle(canvas, 16, 179, 2, COLOR_MUTED);
-    fill_circle(canvas, 23, 168, 2, COLOR_MUTED);
-    fill_circle(canvas, 32, 181, 2, COLOR_MUTED);
+    fill_rect(canvas, 0U, 32U, 44U, 204U, COLOR_TOOLBAR);
+    fill_rect(canvas, 43U, 32U, 1U, 204U, UINT32_C(0xA8ADB2));
+    fill_rect(canvas, 44U, 32U, 312U, 204U, COLOR_WORKSPACE);
+    fill_rect(canvas, ARTBOARD_X + 3U, ARTBOARD_Y + 4U,
+        ARTBOARD_WIDTH, ARTBOARD_HEIGHT, UINT32_C(0x9CA2A8));
+    fill_rect(canvas, ARTBOARD_X, ARTBOARD_Y, ARTBOARD_WIDTH,
+        ARTBOARD_HEIGHT, COLOR_PAPER);
 
-    draw_artboard(canvas, accent);
-    fill_rect(canvas, 360U, 56U, 1U, 158U, UINT32_C(0x35404D));
-    fill_circle(canvas, 386, 75, 9, COLOR_TEAL);
-    fill_circle(canvas, 386, 105, 9, COLOR_CORAL);
-    fill_circle(canvas, 386, 135, 9, COLOR_VIOLET);
-    fill_circle(canvas, 386, 165, 9, COLOR_GOLD);
-    draw_ring(canvas, 386, accent == COLOR_VIOLET ? 135 : 75, 13, 1,
-        COLOR_PAPER);
-    draw_text(canvas, 376U, 195U, "01", COLOR_MUTED, 2U);
+    fill_rect(canvas, 6U, 42U, 32U, 32U, UINT32_C(0xDDE1E4));
+    fill_rect(canvas, 6U, 42U, 3U, 32U, accent);
+    draw_line(canvas, 14, 65, 31, 48, 3, COLOR_INK);
+    fill_circle(canvas, 31, 48, 3, accent);
+    draw_ring(canvas, 22, 94, 8, 2, COLOR_MUTED);
+    stroke_rect(canvas, 14U, 116U, 17U, 14U, 2U, COLOR_MUTED);
+    draw_line(canvas, 13, 158, 22, 143, 2, COLOR_MUTED);
+    draw_line(canvas, 22, 143, 32, 160, 2, COLOR_MUTED);
+    fill_circle(canvas, 13, 158, 2, COLOR_MUTED);
+    fill_circle(canvas, 22, 143, 2, COLOR_MUTED);
+    fill_circle(canvas, 32, 160, 2, COLOR_MUTED);
+    draw_line(canvas, 15, 188, 30, 188, 2, COLOR_MUTED);
+    draw_line(canvas, 22, 181, 22, 196, 2, COLOR_MUTED);
 
-    draw_text(canvas, 14U, 236U, "RECT 70 X 14", COLOR_MUTED, 1U);
-    fill_rect(canvas, PULSE_X, PULSE_Y, PULSE_WIDTH, PULSE_HEIGHT,
-        COLOR_BACKGROUND);
-    fill_circle(canvas, 365, 239, 3, accent);
-    draw_text(canvas, 375U, 236U, "LIVE", COLOR_PAPER, 1U);
-    stroke_rect(canvas, 70U, 52U, 282U, 166U, 1U,
-        focused != 0 ? accent : UINT32_C(0x4B5664));
+    draw_palette(canvas, selected);
+    fill_rect(canvas, 0U, 236U, CANVAS_WIDTH, 14U, COLOR_HEADER);
+    draw_text(canvas, 12U, 238U, "BRUSH 7", COLOR_MUTED, 1U);
+    draw_text(canvas, 160U, 238U, "DRAG TO DRAW", COLOR_MUTED, 1U);
+    fill_circle(canvas, 365, 242, 3, accent);
+    draw_text(canvas, 375U, 239U, "LIVE", COLOR_INK, 1U);
+    stroke_rect(canvas, ARTBOARD_X - 1U, ARTBOARD_Y - 1U,
+        ARTBOARD_WIDTH + 2U, ARTBOARD_HEIGHT + 2U, 1U,
+        focused != 0 ? accent : UINT32_C(0x8C9298));
+}
+
+static bool point_in_artboard(int32_t x, int32_t y)
+{
+    return x >= (int32_t)ARTBOARD_X && y >= (int32_t)ARTBOARD_Y &&
+        x < (int32_t)(ARTBOARD_X + ARTBOARD_WIDTH) &&
+        y < (int32_t)(ARTBOARD_Y + ARTBOARD_HEIGHT);
+}
+
+static size_t palette_at(int32_t x, int32_t y)
+{
+    for (size_t index = 0U;
+         index < sizeof(palette_colors) / sizeof(palette_colors[0]);
+         ++index) {
+        const int32_t center_y = 68 + (int32_t)index * 27;
+        const int32_t delta_x = x - PALETTE_X;
+        const int32_t delta_y = y - center_y;
+        const int32_t radius = PALETTE_RADIUS + 5;
+
+        if (delta_x * delta_x + delta_y * delta_y <= radius * radius) {
+            return index;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static int32_t clamp_artboard_x(int32_t x)
+{
+    if (x < (int32_t)ARTBOARD_X) {
+        return (int32_t)ARTBOARD_X;
+    }
+    if (x >= (int32_t)(ARTBOARD_X + ARTBOARD_WIDTH)) {
+        return (int32_t)(ARTBOARD_X + ARTBOARD_WIDTH - 1U);
+    }
+    return x;
+}
+
+static int32_t clamp_artboard_y(int32_t y)
+{
+    if (y < (int32_t)ARTBOARD_Y) {
+        return (int32_t)ARTBOARD_Y;
+    }
+    if (y >= (int32_t)(ARTBOARD_Y + ARTBOARD_HEIGHT)) {
+        return (int32_t)(ARTBOARD_Y + ARTBOARD_HEIGHT - 1U);
+    }
+    return y;
+}
+
+static struct sapote_rect brush_damage(int32_t from_x, int32_t from_y,
+    int32_t to_x, int32_t to_y)
+{
+    int32_t left = from_x < to_x ? from_x : to_x;
+    int32_t top = from_y < to_y ? from_y : to_y;
+    int32_t right = from_x > to_x ? from_x : to_x;
+    int32_t bottom = from_y > to_y ? from_y : to_y;
+
+    left = clamp_artboard_x(left - BRUSH_RADIUS);
+    top = clamp_artboard_y(top - BRUSH_RADIUS);
+    right = clamp_artboard_x(right + BRUSH_RADIUS);
+    bottom = clamp_artboard_y(bottom + BRUSH_RADIUS);
+    return (struct sapote_rect){
+        (uint32_t)left, (uint32_t)top,
+        (uint32_t)(right - left + 1), (uint32_t)(bottom - top + 1)
+    };
 }
 
 static int present(sapote_handle_t window, uint32_t x, uint32_t y,
@@ -301,13 +375,17 @@ int main(int argc, char **argv, char **environment)
     uint32_t key_events = 0U;
     uint32_t pointer_events = 0U;
     uint32_t present_samples = 0U;
-    uint32_t accent = COLOR_TEAL;
+    uint32_t stroke_segments = 0U;
+    uint32_t color_changes = 0U;
+    size_t selected = 2U;
     uint64_t present_elapsed = 0U;
+    int32_t previous_x = 0;
+    int32_t previous_y = 0;
     int focused = 0;
+    int drawing = 0;
+    int proof_mode = argc > 1 && strcmp(argv[1], "multi-window-proof") == 0;
     int running = 1;
 
-    (void)argc;
-    (void)argv;
     (void)environment;
     if (sapote_window_create("Canvas", CANVAS_WIDTH,
             CANVAS_HEIGHT, &response) != 0 ||
@@ -317,7 +395,7 @@ int main(int argc, char **argv, char **environment)
     }
     canvas.pixels = (uint32_t *)(uintptr_t)response.surface_address;
     canvas.stride = response.stride_bytes / sizeof(uint32_t);
-    draw_workspace(&canvas, accent, focused);
+    draw_workspace(&canvas, selected, focused);
     if (present(response.window, 0U, 0U, CANVAS_WIDTH, CANVAS_HEIGHT) != 0) {
         return 21;
     }
@@ -325,20 +403,21 @@ int main(int argc, char **argv, char **environment)
         response.height);
     started = sapote_monotonic_ns();
     next_pulse = started;
-    while (running != 0 && sapote_monotonic_ns() - started < RUN_NS) {
+    while (running != 0 && (proof_mode == 0 ||
+            sapote_monotonic_ns() - started < RUN_NS)) {
         const uint64_t now = sapote_monotonic_ns();
         struct sapote_event event;
         long wait_result;
 
         if (now >= next_pulse) {
             const uint32_t color = (pulse & 1U) == 0U ?
-                accent : COLOR_GOLD;
+                palette_colors[selected] : COLOR_GOLD;
             uint64_t present_started;
 
             fill_rect(&canvas, PULSE_X, PULSE_Y, PULSE_WIDTH, PULSE_HEIGHT,
-                COLOR_BACKGROUND);
-            fill_circle(&canvas, 365, 239, 3, color);
-            draw_text(&canvas, 375U, 236U, "LIVE", COLOR_PAPER, 1U);
+                COLOR_HEADER);
+            fill_circle(&canvas, 365, 242, 3, color);
+            draw_text(&canvas, 375U, 239U, "LIVE", COLOR_INK, 1U);
             present_started = sapote_monotonic_ns();
             if (present(response.window, PULSE_X, PULSE_Y, PULSE_WIDTH,
                     PULSE_HEIGHT) != 0) {
@@ -358,54 +437,97 @@ int main(int argc, char **argv, char **environment)
             if (event.type == SAPOTE_EVENT_FOCUS) {
                 ++focus_events;
                 focused = event.value != 0U;
-                stroke_rect(&canvas, 70U, 52U, 282U, 166U, 1U,
-                    focused != 0 ? accent : UINT32_C(0x4B5664));
-                if (present(response.window, 70U, 52U, 282U, 166U) != 0) {
+                stroke_rect(&canvas, ARTBOARD_X - 1U, ARTBOARD_Y - 1U,
+                    ARTBOARD_WIDTH + 2U, ARTBOARD_HEIGHT + 2U, 1U,
+                    focused != 0 ? palette_colors[selected] :
+                        UINT32_C(0x8C9298));
+                if (present(response.window, ARTBOARD_X - 1U,
+                        ARTBOARD_Y - 1U, ARTBOARD_WIDTH + 2U,
+                        ARTBOARD_HEIGHT + 2U) != 0) {
                     return 24;
                 }
                 ++partial_presents;
             } else if (event.type == SAPOTE_EVENT_KEY &&
                 event.value != SAPOTE_KEY_RELEASED) {
                 ++key_events;
-                accent = (key_events & 1U) == 0U ? COLOR_TEAL : COLOR_VIOLET;
-                draw_workspace(&canvas, accent, focused);
-                (void)sapote_pointer_capture(response.window, 1);
-                if (present(response.window, 0U, 0U, CANVAS_WIDTH,
-                        CANVAS_HEIGHT) != 0) {
+                selected = (selected + 1U) %
+                    (sizeof(palette_colors) / sizeof(palette_colors[0]));
+                ++color_changes;
+                draw_palette(&canvas, selected);
+                if (present(response.window, 356U, 32U, 64U, 204U) != 0) {
                     return 25;
                 }
                 ++partial_presents;
-            } else if (event.type == SAPOTE_EVENT_POINTER_MOVE ||
-                event.type == SAPOTE_EVENT_POINTER_BUTTON) {
+            } else if (event.type == SAPOTE_EVENT_POINTER_MOVE) {
                 ++pointer_events;
-                fill_rect(&canvas, PULSE_X, PULSE_Y, PULSE_WIDTH,
-                    PULSE_HEIGHT, COLOR_BACKGROUND);
-                fill_circle(&canvas, 365, 239, 3,
-                    (pointer_events & 1U) == 0U ? accent : COLOR_CORAL);
-                draw_text(&canvas, 375U, 236U, "LIVE", COLOR_PAPER, 1U);
-                if (event.type == SAPOTE_EVENT_POINTER_BUTTON) {
-                    (void)sapote_pointer_capture(response.window,
-                        event.value != 0U);
+                if (drawing != 0) {
+                    const int32_t x = clamp_artboard_x(event.x);
+                    const int32_t y = clamp_artboard_y(event.y);
+                    const struct sapote_rect damage = brush_damage(previous_x,
+                        previous_y, x, y);
+
+                    draw_line(&canvas, previous_x, previous_y, x, y,
+                        BRUSH_RADIUS * 2 + 1, palette_colors[selected]);
+                    previous_x = x;
+                    previous_y = y;
+                    ++stroke_segments;
+                    if (present(response.window, damage.x, damage.y,
+                            damage.width, damage.height) != 0) {
+                        return 26;
+                    }
+                    ++partial_presents;
                 }
-                if (present(response.window, PULSE_X, PULSE_Y, PULSE_WIDTH,
-                        PULSE_HEIGHT) != 0) {
-                    return 26;
+            } else if (event.type == SAPOTE_EVENT_POINTER_BUTTON) {
+                ++pointer_events;
+                if (event.value != 0U) {
+                    const size_t palette = palette_at(event.x, event.y);
+
+                    if (palette != SIZE_MAX) {
+                        selected = palette;
+                        ++color_changes;
+                        draw_palette(&canvas, selected);
+                        if (present(response.window, 356U, 32U, 64U,
+                                204U) != 0) {
+                            return 26;
+                        }
+                        ++partial_presents;
+                    } else if (point_in_artboard(event.x, event.y)) {
+                        const struct sapote_rect damage = brush_damage(event.x,
+                            event.y, event.x, event.y);
+
+                        drawing = 1;
+                        previous_x = event.x;
+                        previous_y = event.y;
+                        fill_circle(&canvas, event.x, event.y, BRUSH_RADIUS,
+                            palette_colors[selected]);
+                        (void)sapote_pointer_capture(response.window, 1);
+                        ++stroke_segments;
+                        if (present(response.window, damage.x, damage.y,
+                                damage.width, damage.height) != 0) {
+                            return 26;
+                        }
+                        ++partial_presents;
+                    }
+                } else if (drawing != 0) {
+                    drawing = 0;
+                    (void)sapote_pointer_capture(response.window, 0);
                 }
-                ++partial_presents;
             } else if (event.type == SAPOTE_EVENT_CLOSE) {
                 running = 0;
             }
         }
     }
-    printf("SAPOTE CANVAS PASS focus=%u key=%u pointer=%u partial=%u\n",
-        focus_events, key_events, pointer_events, partial_presents);
+    printf("SAPOTE CANVAS PASS focus=%u key=%u pointer=%u strokes=%u colors=%u partial=%u\n",
+        focus_events, key_events, pointer_events, stroke_segments,
+        color_changes, partial_presents);
     printf("SAPOTE PERF canvas damage=70x14 samples=%u total_ns=%llu average_ns=%llu\n",
         present_samples, (unsigned long long)present_elapsed,
         (unsigned long long)(present_samples == 0U ? 0U :
             present_elapsed / present_samples));
     if (sapote_handle_close(response.events) < 0 ||
         sapote_handle_close(response.window) < 0 || partial_presents < 10U ||
-        focus_events == 0U) {
+        focus_events == 0U || (proof_mode != 0 && key_events != 0U &&
+            color_changes == 0U)) {
         return 27;
     }
     return 0;

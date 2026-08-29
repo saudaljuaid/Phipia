@@ -25,6 +25,9 @@ PINNED = {
     "assets/camera-icon-dock.png": "318c029c4a2c57058a1c4a8a33614420a938a1b59ba7b0c77fc30628b76e00a2",
     "build/camera-icon.srl": "8eb00e5a86e92fb47211123d019df6b03fbc2126065451402abc77308f27c125",
     "assets/camera-icon.png": "378b38b0a96760d71af37069d89c5aaaa045f85e30be9311f64640a17742daea",
+    "assets/canvas-icon.png": "b750399f8472ad8e1a2fa04c93732bd773efb63cff6c26c660e9872caf077972",
+    "assets/canvas-icon-dock.png": "7456bf5390acb86f2f702e2922a01f2206be3e67ad86805566e2128d0d2020a2",
+    "build/canvas-icon.srl": "1fa12b05141928d772e544a5455a83915d9588b7f5646d14760cf9babc428f93",
     "assets/settings-category-icons.png": "48aa43fa5ce7051d3f138d293feeff326d3544e4b56fba2bd63454cfada8d441",
     "build/settings-category-icons.srl": "1a47dca6e6a1ea81ce9f838391f6877bbec7107ee2027a1fffde3e427837f08b",
     "assets/icons/lucide/LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
@@ -66,7 +69,8 @@ def main() -> None:
         raise SystemExit(
             f"wallpaper source manifest digest mismatch: {actual_manifest}"
         )
-    print("UI asset integrity: 26 pins and 14 wallpaper sources verified")
+    print(f"UI asset integrity: {len(PINNED)} pins and "
+          f"{len(WALLPAPERS)} wallpaper sources verified")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@
 #include <sapote/keyboard.h>
 #include <sapote/surface.h>
 
-#define UI_DOCK_ITEM_COUNT 6U
+#define UI_DOCK_ITEM_COUNT 7U
 #define UI_EVENT_QUEUE_CAPACITY 64U
 #define UI_CURSOR_WIDTH 18U
 #define UI_CURSOR_HEIGHT 25U
@@ -69,7 +69,22 @@ enum ui_element_id {
     UI_ELEMENT_DOCK_NOTES,
     UI_ELEMENT_DOCK_STUDIO,
     UI_ELEMENT_DOCK_CAMERA,
+    UI_ELEMENT_DOCK_CANVAS,
     UI_ELEMENT_DOCK_SETTINGS,
+    UI_ELEMENT_MENU_SEARCH,
+    UI_ELEMENT_LAUNCHER_SEARCH,
+    UI_ELEMENT_LAUNCHER_DISMISS,
+    UI_ELEMENT_LAUNCHER_APP_0,
+    UI_ELEMENT_LAUNCHER_APP_1,
+    UI_ELEMENT_LAUNCHER_APP_2,
+    UI_ELEMENT_LAUNCHER_APP_3,
+    UI_ELEMENT_LAUNCHER_APP_4,
+    UI_ELEMENT_LAUNCHER_APP_5,
+    UI_ELEMENT_LAUNCHER_APP_6,
+    UI_ELEMENT_LAUNCHER_PAGE_0,
+    UI_ELEMENT_LAUNCHER_PAGE_1,
+    UI_ELEMENT_LAUNCHER_PAGE_2,
+    UI_ELEMENT_LAUNCHER_PAGE_3,
     UI_ELEMENT_WINDOW_CLOSE,
     UI_ELEMENT_FILES_UP,
     UI_ELEMENT_FILES_NEW_FILE,
@@ -191,6 +206,7 @@ enum ui_action {
     UI_ACTION_OPEN_NOTES,
     UI_ACTION_OPEN_STUDIO,
     UI_ACTION_OPEN_CAMERA,
+    UI_ACTION_OPEN_CANVAS,
     UI_ACTION_OPEN_SETTINGS,
     UI_ACTION_COUNT
 };
@@ -361,6 +377,7 @@ enum ui_status ui_native_window_damage(
 );
 enum ui_status ui_native_pointer_capture(uint32_t slot, bool capture);
 bool ui_native_window_is_open(uint32_t slot);
+bool ui_application_launch_dequeue(char *manifest_path, size_t capacity);
 
 bool ui_self_test(void);
 const char *ui_self_test_failure(void);
