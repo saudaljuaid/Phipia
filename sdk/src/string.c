@@ -142,6 +142,31 @@ int strncmp(const char *left, const char *right, size_t length)
     return 0;
 }
 
+int strcoll(const char *left, const char *right)
+{
+    return strcmp(left, right);
+}
+
+size_t strspn(const char *text, const char *accept)
+{
+    size_t length = 0U;
+
+    while (text[length] != '\0' && strchr(accept, text[length]) != NULL) {
+        ++length;
+    }
+    return length;
+}
+
+size_t strcspn(const char *text, const char *reject)
+{
+    size_t length = 0U;
+
+    while (text[length] != '\0' && strchr(reject, text[length]) == NULL) {
+        ++length;
+    }
+    return length;
+}
+
 char *strchr(const char *text, int character)
 {
     do {
@@ -162,6 +187,17 @@ char *strrchr(const char *text, int character)
         }
     } while (*text++ != '\0');
     return (char *)(uintptr_t)result;
+}
+
+char *strpbrk(const char *text, const char *accept)
+{
+    while (*text != '\0') {
+        if (strchr(accept, *text) != NULL) {
+            return (char *)(uintptr_t)text;
+        }
+        ++text;
+    }
+    return NULL;
 }
 
 char *strstr(const char *text, const char *needle)

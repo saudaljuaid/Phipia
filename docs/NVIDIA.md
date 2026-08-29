@@ -370,7 +370,7 @@ model would confirm it. Only silicon settles that. The model's authority is
 limited to what it does *not* decide — the boot value, the ROM bytes, the
 configuration mirror and the clock all come from outside it.
 
-The model is also not part of `make verify` or the 102 scenarios: it needs a
+The model is also not part of `make verify` or the 103 scenarios: it needs a
 QEMU built from source, so it is reproducible evidence rather than a gate.
 
 ### A bug found on the way, and fixed

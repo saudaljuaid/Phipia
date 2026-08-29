@@ -438,6 +438,90 @@ def populate_data_image(source: bytes, name: str, payload: bytes) -> bytes:
     return populate_data_files(source, [(name, payload)])
 
 
+def populate_data_tree(
+    source: bytes, files: list[tuple[str, bytes]]
+) -> bytes:
+    """Place files in deterministic one-level application namespaces."""
+    verify_data(source)
+    if not files:
+        raise Fat32Error("staged application tree must not be empty")
+    grouped: dict[bytes, list[tuple[bytes, bytes, int]]] = {}
+    occupied: set[tuple[bytes, bytes]] = set()
+    total_file_clusters = 0
+    for path, payload in files:
+        if path.count("/") != 1:
+            raise Fat32Error("staged application paths must be DIRECTORY/NAME")
+        directory_text, filename_text = path.split("/", 1)
+        directory = short_name_bytes(directory_text)
+        filename = short_name_bytes(filename_text)
+        if not payload or len(payload) > 16 * 1024 * 1024:
+            raise Fat32Error("staged application file violates the file-size bound")
+        key = (directory, filename)
+        if key in occupied:
+            raise Fat32Error("staged application paths must be unique")
+        occupied.add(key)
+        clusters = (len(payload) + SECTOR_BYTES - 1) // SECTOR_BYTES
+        total_file_clusters += clusters
+        grouped.setdefault(directory, []).append((filename, payload, clusters))
+    if len(grouped) > SECTOR_BYTES // ENTRY_BYTES - 1:
+        raise Fat32Error("application namespace count exceeds the root bound")
+    if any(len(entries) > SECTOR_BYTES // ENTRY_BYTES - 3
+           for entries in grouped.values()):
+        raise Fat32Error("application namespace exceeds one directory cluster")
+    total_clusters = len(grouped) + total_file_clusters
+    if ROOT_CLUSTER + total_clusters > CLUSTER_COUNT + 1:
+        raise Fat32Error("staged application tree does not fit the data volume")
+
+    image = bytearray(source)
+    root = _cluster_offset(ROOT_CLUSTER)
+    next_cluster = ROOT_CLUSTER + 1
+    directory_clusters: dict[bytes, int] = {}
+    for directory in sorted(grouped):
+        directory_clusters[directory] = next_cluster
+        _set_fat(image, next_cluster, FAT32_EOC)
+        next_cluster += 1
+
+    for root_slot, directory in enumerate(sorted(grouped), start=1):
+        directory_cluster = directory_clusters[directory]
+        root_entry = root + root_slot * ENTRY_BYTES
+        image[root_entry:root_entry + ENTRY_BYTES] = _directory_entry(
+            directory, 0x10, directory_cluster, 0
+        )
+        directory_offset = _cluster_offset(directory_cluster)
+        image[directory_offset:directory_offset + ENTRY_BYTES] = (
+            _directory_entry(b".          ", 0x10, directory_cluster, 0)
+        )
+        image[directory_offset + ENTRY_BYTES:directory_offset + 2 * ENTRY_BYTES] = (
+            _directory_entry(b"..         ", 0x10, ROOT_CLUSTER, 0)
+        )
+        for slot, (filename, payload, clusters) in enumerate(
+                sorted(grouped[directory], key=lambda item: item[0]), start=2):
+            first_cluster = next_cluster
+            for ordinal in range(clusters):
+                cluster = first_cluster + ordinal
+                following = cluster + 1 if ordinal + 1 < clusters else FAT32_EOC
+                _set_fat(image, cluster, following)
+                offset = _cluster_offset(cluster)
+                start = ordinal * SECTOR_BYTES
+                block = payload[start:start + SECTOR_BYTES]
+                image[offset:offset + len(block)] = block
+            entry = directory_offset + slot * ENTRY_BYTES
+            image[entry:entry + ENTRY_BYTES] = _directory_entry(
+                filename, 0x20, first_cluster, len(payload)
+            )
+            next_cluster += clusters
+
+    free_clusters = CLUSTER_COUNT - 1 - total_clusters
+    next_free = next_cluster if next_cluster <= CLUSTER_COUNT + 1 else 0xFFFFFFFF
+    info = _fsinfo(free_clusters, next_free)
+    for sector in (FSINFO_SECTOR, BACKUP_BOOT_SECTOR + FSINFO_SECTOR):
+        offset = sector * SECTOR_BYTES
+        image[offset:offset + SECTOR_BYTES] = info
+    populated = bytes(image)
+    inspect_image(populated)
+    return populated
+
+
 def parse_geometry(image: bytes | bytearray | memoryview) -> Geometry:
     if len(image) < SECTOR_BYTES:
         raise Fat32Error("truncated boot sector")
@@ -835,6 +919,17 @@ def parse_extra_file(value: str) -> tuple[str, bytes]:
     return name.upper(), read_regular(Path(path))
 
 
+def parse_tree_file(value: str) -> tuple[str, bytes]:
+    """Read one deterministic DIRECTORY/NAME=PATH data-volume input."""
+    name, separator, path = value.partition("=")
+    if not separator or not name or not path or name.count("/") != 1:
+        raise Fat32Error("--file requires one DIRECTORY/NAME=PATH value")
+    directory, filename = name.split("/", 1)
+    short_name_bytes(directory)
+    short_name_bytes(filename)
+    return name.upper(), read_regular(Path(path))
+
+
 def command_format(args: argparse.Namespace) -> None:
     payloads: tuple[bytes, ...] = ()
     if args.role == "system":
@@ -895,6 +990,18 @@ def command_populate(args: argparse.Namespace) -> None:
                       **report}, sort_keys=True))
 
 
+def command_populate_tree(args: argparse.Namespace) -> None:
+    source = read_regular(Path(args.source))
+    files = [parse_tree_file(value) for value in args.file]
+    populated = populate_data_tree(source, files)
+    atomic_write(Path(args.output), populated)
+    report = inspect_image(populated)
+    print(json.dumps({"output": str(Path(args.output)),
+                      "inputs": sorted(name for name, _ in files),
+                      "sha256": hashlib.sha256(populated).hexdigest().upper(),
+                      **report}, sort_keys=True))
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
@@ -935,6 +1042,11 @@ def parser() -> argparse.ArgumentParser:
     populate.add_argument("--input", required=True)
     populate.add_argument("--name", required=True)
     populate.set_defaults(function=command_populate)
+    tree = commands.add_parser("populate-tree")
+    tree.add_argument("source")
+    tree.add_argument("output")
+    tree.add_argument("--file", action="append", required=True)
+    tree.set_defaults(function=command_populate_tree)
     return result
 
 

@@ -37,6 +37,7 @@ void sapote_runtime_initialize(int argc, char **argv, char **environment);
 const struct sapote_startup *sapote_startup_information(void);
 int sapote_result(long result);
 long sapote_handle_close(sapote_handle_t handle);
+long sapote_console_read(void *buffer, size_t length);
 long sapote_memory_allocate(size_t length, uint32_t flags,
     struct sapote_memory_map_response *response);
 long sapote_memory_release(uint64_t address, uint64_t length);

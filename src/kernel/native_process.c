@@ -43,6 +43,7 @@
 #define ELF_PF_W UINT32_C(2)
 #define NATIVE_RFLAGS UINT64_C(0x202)
 #define NATIVE_EVENT_QUEUE_CAPACITY 64U
+#define NATIVE_CONSOLE_INPUT_CAPACITY 256U
 #define NATIVE_SURFACE_MAX_WIDTH 1280U
 #define NATIVE_SURFACE_MAX_HEIGHT 720U
 
@@ -52,6 +53,7 @@ enum native_thread_state {
     NATIVE_THREAD_SLEEP_WAIT,
     NATIVE_THREAD_JOIN_WAIT,
     NATIVE_THREAD_FUTEX_WAIT,
+    NATIVE_THREAD_CONSOLE_WAIT,
     NATIVE_THREAD_EXITED,
     NATIVE_THREAD_FAULTED
 };
@@ -74,6 +76,8 @@ struct native_thread {
     uint64_t wait_generation;
     uint64_t futex_address;
     uint64_t deadline_ns;
+    uint64_t console_address;
+    size_t console_length;
     int32_t exit_status;
     enum native_thread_state state;
 };
@@ -115,6 +119,7 @@ struct native_process {
     struct native_page pages[NATIVE_PROCESS_PAGE_LIMIT];
     struct native_directory_resource directories[NATIVE_HANDLE_LIMIT];
     struct native_window_state window;
+    uint8_t console_input[NATIVE_CONSOLE_INPUT_CAPACITY];
     uint64_t executable_frames[PAGING_PROCESS_ALIAS_MAX_PAGES];
     uint8_t transfer[NATIVE_COPY_CHUNK];
     uint64_t generation;
@@ -122,6 +127,8 @@ struct native_process {
     size_t executable_count;
     size_t thread_count;
     size_t current_thread;
+    size_t console_input_head;
+    size_t console_input_count;
     size_t peak_pages;
     size_t peak_handles;
     uint32_t syscall_count;
@@ -1303,6 +1310,73 @@ static int64_t syscall_console_write(
         completed += chunk;
     }
     return (int64_t)completed;
+}
+
+static size_t console_input_copy(
+    const struct native_process *process,
+    uint8_t *destination,
+    size_t capacity
+)
+{
+    size_t length = process->console_input_count;
+
+    if (length > capacity) {
+        length = capacity;
+    }
+    for (size_t index = 0U; index < length; ++index) {
+        destination[index] = process->console_input[
+            (process->console_input_head + index) %
+                NATIVE_CONSOLE_INPUT_CAPACITY];
+    }
+    return length;
+}
+
+static void console_input_consume(
+    struct native_process *process,
+    size_t length
+)
+{
+    process->console_input_head = (process->console_input_head + length) %
+        NATIVE_CONSOLE_INPUT_CAPACITY;
+    process->console_input_count -= length;
+}
+
+static int64_t syscall_console_read(
+    struct native_process *process,
+    uint64_t address,
+    size_t length
+)
+{
+    struct native_thread *thread = running_thread(process);
+    size_t copied;
+
+    if ((process->manifest.capabilities & SAPOTE_CAP_CONSOLE) == 0U) {
+        return -SAPOTE_EACCES;
+    }
+    if (thread == NULL) {
+        return -SAPOTE_EIO;
+    }
+    if (length == 0U) {
+        return 0;
+    }
+    if (length > sizeof(process->transfer)) {
+        return -SAPOTE_EINVAL;
+    }
+    if (!validate_user_range(process, address, length, true)) {
+        return -SAPOTE_EFAULT;
+    }
+    if (process->console_input_count == 0U) {
+        thread->console_address = address;
+        thread->console_length = length;
+        thread->state = NATIVE_THREAD_CONSOLE_WAIT;
+        return 0;
+    }
+    copied = console_input_copy(process, process->transfer, length);
+    if (!copy_to_user(process, address, process->transfer, copied)) {
+        return -SAPOTE_EFAULT;
+    }
+    console_input_consume(process, copied);
+    return (int64_t)copied;
 }
 
 static bool anonymous_span_free(
@@ -3401,6 +3475,8 @@ static int64_t dispatch_syscall(
         return 0;
     case SAPOTE_SYS_CONSOLE_WRITE:
         return syscall_console_write(process, frame->rdi, (size_t)frame->rsi);
+    case SAPOTE_SYS_CONSOLE_READ:
+        return syscall_console_read(process, frame->rdi, (size_t)frame->rsi);
     case SAPOTE_SYS_HANDLE_CLOSE:
         return syscall_handle_close(process, frame->rdi);
     case SAPOTE_SYS_HANDLE_DUPLICATE:
@@ -3651,6 +3727,21 @@ static void update_waiting_threads(
                     break;
                 }
             }
+        } else if (thread->state == NATIVE_THREAD_CONSOLE_WAIT &&
+            process->console_input_count != 0U) {
+            const size_t copied = console_input_copy(process,
+                process->transfer, thread->console_length);
+
+            if (copy_to_user(process, thread->console_address,
+                    process->transfer, copied)) {
+                console_input_consume(process, copied);
+                thread->context.rax = (uint64_t)copied;
+            } else {
+                thread->context.rax = (uint64_t)-(int64_t)SAPOTE_EFAULT;
+            }
+            thread->console_address = 0U;
+            thread->console_length = 0U;
+            thread->state = NATIVE_THREAD_RUNNABLE;
         }
     }
     if (!process->exiting && !process_has_live_thread(process)) {
@@ -3742,6 +3833,59 @@ static size_t newest_active_process(void)
     return selected;
 }
 
+static struct native_process *console_input_target(void)
+{
+    struct native_process *selected = NULL;
+
+    for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT; ++index) {
+        struct native_process *process = &processes[index];
+
+        if (process->active && !process->exiting &&
+            !process->window.allocated &&
+            (process->manifest.capabilities & SAPOTE_CAP_CONSOLE) != 0U &&
+            (selected == NULL ||
+                process->generation > selected->generation)) {
+            selected = process;
+        }
+    }
+    return selected;
+}
+
+static bool console_input_push(struct native_process *process, uint8_t value)
+{
+    size_t tail;
+
+    if (process == NULL ||
+        process->console_input_count == NATIVE_CONSOLE_INPUT_CAPACITY) {
+        return false;
+    }
+    tail = (process->console_input_head + process->console_input_count) %
+        NATIVE_CONSOLE_INPUT_CAPACITY;
+    process->console_input[tail] = value;
+    ++process->console_input_count;
+    return true;
+}
+
+static bool any_console_waiter(void)
+{
+    for (size_t process_index = 0U; process_index < NATIVE_PROCESS_LIMIT;
+         ++process_index) {
+        const struct native_process *process = &processes[process_index];
+
+        if (!process->active || process->exiting) {
+            continue;
+        }
+        for (size_t thread_index = 0U;
+             thread_index < process->thread_count; ++thread_index) {
+            if (process->threads[thread_index].state ==
+                    NATIVE_THREAD_CONSOLE_WAIT) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static void capture_result(
     const struct native_process *process,
     struct native_process_result *result
@@ -3765,7 +3909,15 @@ static bool service_native_devices(void)
 
     cpu_interrupt_enable();
     while (keyboard_read(&event) == KEYBOARD_STATUS_OK) {
-        if (ui_handle_keyboard(&event) != UI_STATUS_OK) {
+        struct native_process *target = console_input_target();
+        const bool console_event = target != NULL && event.pressed &&
+            event.character != '\0';
+
+        if (console_event) {
+            /* The bounded byte stream retains older input and drops newest. */
+            (void)console_input_push(target, (uint8_t)event.character);
+        }
+        if (!console_event && ui_handle_keyboard(&event) != UI_STATUS_OK) {
             success = false;
         }
     }
@@ -3850,6 +4002,9 @@ enum native_process_status native_process_run(struct native_process_result *resu
                     (void)timer_sleep_ns(deadline - current);
                     cpu_interrupt_disable();
                 }
+            } else if (any_console_waiter()) {
+                cpu_enable_and_halt();
+                cpu_interrupt_disable();
             } else {
                 for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT;
                      ++index) {

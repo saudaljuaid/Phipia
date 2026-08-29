@@ -30,5 +30,6 @@ void *bsearch(const void *key, const void *base, size_t count, size_t size,
     int (*compare)(const void *, const void *));
 int rand(void);
 void srand(unsigned int seed);
+int system(const char *command);
 
 #endif

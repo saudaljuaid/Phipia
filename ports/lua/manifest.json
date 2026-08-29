@@ -1,0 +1,17 @@
+{
+  "name": "Lua 5.4.7",
+  "identifier": "LUA",
+  "executable": "LUA.APP",
+  "data_namespace": "LUA",
+  "memory_limit": 67108864,
+  "max_handles": 64,
+  "max_threads": 1,
+  "capabilities": [
+    "console",
+    "data-read",
+    "data-write",
+    "time",
+    "entropy"
+  ],
+  "arguments": ["SCRIPT.LUA"]
+}

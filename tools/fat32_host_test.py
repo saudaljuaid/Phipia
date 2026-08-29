@@ -79,6 +79,27 @@ class Fat32HostTests(unittest.TestCase):
                 ("SAME.TXT", b"one"), ("same.txt", b"two")
             ])
 
+    def test_host_staging_populates_application_namespaces(self) -> None:
+        files = [
+            ("LUA/SCRIPT.LUA", b"print('Sapote')\n"),
+            ("SQLITE/SEED.TXT", b"seed"),
+            ("LUA/INPUT.TXT", b"sapote\n"),
+        ]
+        populated = fat32.populate_data_tree(self.image, files)
+        report = fat32.inspect_image(populated)
+        ordinary = [item for item in report["files"]
+                    if not item["directory"] and not item["path"].endswith("/.")
+                    and not item["path"].endswith("/..")]
+        self.assertEqual(
+            [(item["path"], item["size"]) for item in ordinary],
+            [("LUA/INPUT.TXT", 7), ("LUA/SCRIPT.LUA", 16),
+             ("SQLITE/SEED.TXT", 4)],
+        )
+        self.assertEqual(populated, fat32.populate_data_tree(
+            self.image, list(reversed(files))))
+        with self.assertRaisesRegex(fat32.Fat32Error, "DIRECTORY/NAME"):
+            fat32.populate_data_tree(self.image, [("ROOT.TXT", b"bad")])
+
     def test_all_supported_malformed_images_are_detected(self) -> None:
         kinds = (
             "boot-signature", "bpb-sector-size", "bpb-cluster-size",

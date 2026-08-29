@@ -29,10 +29,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-notes network-studio network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
-	nvidia nvidia-builtin native
+	nvidia nvidia-builtin native native-lua
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 102
-EXPECTED_SHELL_ASSERTION_COUNT := 415
+EXPECTED_TEST_SCENARIO_COUNT := 103
+EXPECTED_SHELL_ASSERTION_COUNT := 418
 
 CC := gcc
 LD := ld
@@ -167,6 +167,13 @@ NATIVE_TEST_APP := $(NATIVE_APP_DIR)/NATIVET.APP
 NATIVE_TEST_PACKAGE := $(NATIVE_APP_DIR)/NATIVET.SPK
 NATIVE_SYSTEM_IMAGE := $(NATIVE_APP_DIR)/system.raw
 NATIVE_DATA_IMAGE := $(NATIVE_APP_DIR)/data.raw
+LUA_PORT_DIR := $(BUILD_DIR)/ports/lua
+LUA_PORT_WORK_DIR := $(BUILD_DIR)/ports/lua-work
+LUA_APP := $(LUA_PORT_DIR)/LUA.APP
+LUA_PACKAGE := $(LUA_PORT_DIR)/LUA.SPK
+LUA_SYSTEM_IMAGE := $(LUA_PORT_DIR)/system.raw
+LUA_EMPTY_DATA_IMAGE := $(LUA_PORT_DIR)/empty-data.raw
+LUA_DATA_IMAGE := $(LUA_PORT_DIR)/data.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -260,6 +267,9 @@ reproducible-sdk:
 $(NATIVE_APP_DIR):
 	mkdir -p $@
 
+$(LUA_PORT_DIR):
+	mkdir -p $@
+
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(NATIVE_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
@@ -273,6 +283,28 @@ $(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-test/manifest.json --executable $< --output $@
 
+$(LUA_APP): tools/build-lua-port.sh ports/lua/source/SHA256SUMS \
+		ports/lua/source/lua-5.4.7.tar.gz $(SDK_BUILD_DIR)/.installed
+	SAPOTE_SDK_CC='$(SDK_CC)' SAPOTE_SDK_LD='$(SDK_LD)' \
+		bash tools/build-lua-port.sh $(LUA_PORT_DIR) $(LUA_PORT_WORK_DIR)
+
+$(LUA_PACKAGE): $(LUA_APP) ports/lua/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec ports/lua/manifest.json --executable $< --output $@
+
+$(LUA_SYSTEM_IMAGE): $(LUA_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(LUA_PACKAGE)
+
+$(LUA_EMPTY_DATA_IMAGE): tools/fat32_image.py | $(LUA_PORT_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
+$(LUA_DATA_IMAGE): $(LUA_EMPTY_DATA_IMAGE) ports/lua/SCRIPT.LUA \
+		tools/fat32_image.py
+	$(PYTHON) tools/fat32_image.py populate-tree $< $@ \
+		--file LUA/SCRIPT.LUA=ports/lua/SCRIPT.LUA
+
 $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/sapote-package.py install-system \
@@ -281,18 +313,21 @@ $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 $(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
-native-apps: $(NATIVE_TEST_PACKAGE)
+native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
 		$(RUSTC) --edition 2024 --test -D warnings \
 		tools/native-image-host-test.rs -o $(RUST_NATIVE_IMAGE_TEST)
 	$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(LUA_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
 
-qemu-port-tests: qemu-test-native
-	@echo 'native userspace QEMU scenario passed'
+qemu-port-tests: qemu-test-native qemu-test-native-lua
+	@echo 'native userspace and Lua QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -1391,6 +1426,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		nvidia) expected=233 ;; \
 		nvidia-builtin) expected=235 ;; \
 		native) expected=237 ;; \
+		native-lua) expected=239 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1422,6 +1458,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(NATIVE_SYSTEM_IMAGE)' '$(NATIVE_DATA_IMAGE)' || exit 1; \
 				cp '$(NATIVE_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(NATIVE_SYSTEM_IMAGE),node-name=native-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=native-system-file,node-name=native-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=native-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=native-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=native-data-file,node-name=native-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=native-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-lua) \
+				$(MAKE) '$(LUA_SYSTEM_IMAGE)' '$(LUA_DATA_IMAGE)' || exit 1; \
+				cp '$(LUA_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(LUA_SYSTEM_IMAGE),node-name=lua-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=lua-system-file,node-name=lua-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=lua-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=lua-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=lua-data-file,node-name=lua-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=lua-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1482,21 +1522,31 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	rm -f "$$log"; \
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
-		fat32-*|native) timeout_seconds=45 ;; \
+		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence; then reboot_control=''; fi; \
+	monitor_argument='-monitor none'; injector=''; injection_result=0; \
+	if test '$*' = native-lua; then \
+		monitor_socket='$(TEST_BUILD_DIR)/$*/monitor.sock'; \
+		rm -f "$$monitor_socket"; \
+		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
+		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
+			--serial "$$log" --marker 'SAPOTE LUA INPUT READY' \
+			--text sapote --enter --timeout 40 & injector=$$!; \
+	fi; \
 	set +e; \
 	timeout "$${timeout_seconds}s" qemu-system-x86_64 \
 		-machine accel=$(QEMU_ACCEL) -m 128M -smp 1 $$hardware \
-		-cdrom '$<' -display none -monitor none -serial stdio \
+		-cdrom '$<' -display none $$monitor_argument -serial stdio \
 		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 		$$reboot_control >"$$log" 2>&1; result=$$?; \
+	if test -n "$$injector"; then wait "$$injector" || injection_result=$$?; fi; \
 	set -e; \
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	expected_begin=1; \
 	if test '$*' = fat32-persistence; then expected_begin=2; fi; \
-	if test $$result -ne $$expected -o "$$begin_count" -ne "$$expected_begin" -o "$$pass_count" -ne 1 || \
+	if test $$result -ne $$expected -o $$injection_result -ne 0 -o "$$begin_count" -ne "$$expected_begin" -o "$$pass_count" -ne 1 || \
 		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Sapote PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
 		cat "$$log"; \
@@ -1824,6 +1874,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native) \
 			grep -Eq '^SAPOTE NATIVE PASS argc=[1-9][0-9]* app=NATIVET.APP$$' "$$log" && \
 			grep -Fxq 'Sapote: native general loader, SDK, TLS, threads and FPU passed' "$$log" || \
+				diagnostics_ok=false ;; \
+		native-lua) \
+			grep -Fxq 'SAPOTE LUA INPUT READY' "$$log" && \
+			grep -Fxq 'SAPOTE LUA PASS input=sapote sum=5050' "$$log" && \
+			grep -Fxq 'Sapote: upstream Lua used stdin, Data, math and stdout' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

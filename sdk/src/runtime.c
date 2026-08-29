@@ -64,6 +64,12 @@ long sapote_handle_close(sapote_handle_t handle)
     return sapote_syscall1(SAPOTE_SYS_HANDLE_CLOSE, handle);
 }
 
+long sapote_console_read(void *buffer, size_t length)
+{
+    return sapote_syscall2(SAPOTE_SYS_CONSOLE_READ,
+        (uint64_t)(uintptr_t)buffer, length);
+}
+
 long sapote_memory_allocate(
     size_t length,
     uint32_t flags,

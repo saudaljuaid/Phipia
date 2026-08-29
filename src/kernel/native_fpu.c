@@ -89,7 +89,8 @@ bool native_fpu_is_ready(void)
 
 bool native_fpu_self_test(size_t *completed_tests)
 {
-    struct native_fpu_state state;
+    /* FXSAVE needs 512 aligned bytes; the boot stack need not carry it. */
+    static struct native_fpu_state state;
 
     if (completed_tests == NULL) {
         return false;

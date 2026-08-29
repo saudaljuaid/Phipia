@@ -532,6 +532,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native")) {
         return KERNEL_TEST_NATIVE;
     }
+    if (token_equals(value, length, "native-lua")) {
+        return KERNEL_TEST_NATIVE_LUA;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -708,6 +711,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NVIDIA: return UINT8_C(0x74);
     case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
     case KERNEL_TEST_NATIVE: return UINT8_C(0x76);
+    case KERNEL_TEST_NATIVE_LUA: return UINT8_C(0x77);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4670,6 +4674,7 @@ void kernel_test_run(
     case KERNEL_TEST_NVIDIA:
     case KERNEL_TEST_NVIDIA_BUILTIN:
     case KERNEL_TEST_NATIVE:
+    case KERNEL_TEST_NATIVE_LUA:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4731,6 +4736,45 @@ _Noreturn void kernel_test_complete_native(void)
         kernel_test_fail("native Ring 3 file result is wrong");
     }
     console_write("Sapote: native general loader, SDK, TLS, threads and FPU passed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_lua(void)
+{
+    static const uint8_t expected[] =
+        "input=sapote\nsum=5050\nmath=ok\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_LUA) {
+        kernel_test_fail("Lua completion used outside its scenario");
+    }
+    if (native_process_launch("LUA.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 10U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("Lua did not exit with a clean resource census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("Lua result file is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
+        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+        kernel_test_fail("Lua result file is wrong or could not be synchronized");
+    }
+    console_write("Sapote: upstream Lua used stdin, Data, math and stdout\n");
     kernel_test_pass();
 }
 
@@ -8157,6 +8201,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "nvidia-builtin";
     case KERNEL_TEST_NATIVE:
         return "native";
+    case KERNEL_TEST_NATIVE_LUA:
+        return "native-lua";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

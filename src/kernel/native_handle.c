@@ -297,7 +297,8 @@ static bool test_close(
 
 bool native_handle_self_test(size_t *completed_tests)
 {
-    struct native_handle_table table;
+    /* Keep the 6 KiB table off the finite boot/interrupt stack. */
+    static struct native_handle_table table;
     const struct native_resource initial = {
         { UINT64_C(0x5341504F5445), 0U, 0U, 0U }
     };

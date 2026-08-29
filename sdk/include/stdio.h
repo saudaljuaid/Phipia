@@ -9,6 +9,7 @@
 #define EOF (-1)
 #define BUFSIZ 1024
 #define FILENAME_MAX 128
+#define L_tmpnam 32
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2

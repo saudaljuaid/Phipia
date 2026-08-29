@@ -17,8 +17,12 @@ char *strcat(char *destination, const char *source);
 char *strncat(char *destination, const char *source, size_t length);
 int strcmp(const char *left, const char *right);
 int strncmp(const char *left, const char *right, size_t length);
+int strcoll(const char *left, const char *right);
+size_t strspn(const char *text, const char *accept);
+size_t strcspn(const char *text, const char *reject);
 char *strchr(const char *text, int character);
 char *strrchr(const char *text, int character);
+char *strpbrk(const char *text, const char *accept);
 char *strstr(const char *text, const char *needle);
 char *strerror(int error);
 

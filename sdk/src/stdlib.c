@@ -70,6 +70,9 @@ long long strtoll(const char *text, char **end, int base)
     const unsigned long long maximum = negative ?
         (unsigned long long)LLONG_MAX + 1U : (unsigned long long)LLONG_MAX;
     if (value > maximum) { errno = ERANGE; return negative ? LLONG_MIN : LLONG_MAX; }
+    if (negative && value == (unsigned long long)LLONG_MAX + 1U) {
+        return LLONG_MIN;
+    }
     return negative ? -(long long)value : (long long)value;
 }
 unsigned long strtoul(const char *text, char **end, int base)
@@ -168,4 +171,11 @@ int rand(void)
 {
     random_state = random_state * 1103515245U + 12345U;
     return (int)((random_state >> 1U) & RAND_MAX);
+}
+
+int system(const char *command)
+{
+    if (command == NULL) return 0;
+    errno = ENOTSUP;
+    return -1;
 }

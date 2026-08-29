@@ -186,15 +186,25 @@ static size_t read_locked(void *pointer, size_t bytes, FILE *stream)
     unsigned char *output = pointer;
     size_t completed = 0U;
 
-    if ((stream->flags & FILE_READ) == 0U ||
-        (stream->flags & FILE_CONSOLE) != 0U) {
+    if ((stream->flags & FILE_READ) == 0U) {
         stream->error = 1U;
-        errno = (stream->flags & FILE_CONSOLE) != 0U ? EAGAIN : EBADF;
+        errno = EBADF;
         return 0U;
     }
     if (stream->pushed >= 0 && bytes != 0U) {
         output[completed++] = (unsigned char)stream->pushed;
         stream->pushed = -1;
+    }
+    if ((stream->flags & FILE_CONSOLE) != 0U && completed < bytes) {
+        const long result = sapote_console_read(output + completed,
+            bytes - completed);
+
+        if (result < 0) {
+            stream->error = 1U;
+            errno = (int)-result;
+            return completed;
+        }
+        return completed + (size_t)result;
     }
     while (completed < bytes) {
         if (stream->position < stream->length) {
