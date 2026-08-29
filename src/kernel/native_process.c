@@ -1217,6 +1217,7 @@ static enum native_process_status load_process(
     size_t namespace_length;
     uint64_t main_thread_pointer = 0U;
     enum native_process_status result = NATIVE_PROCESS_OK;
+    enum native_image_status admission_status;
 
     if (!read_system_file(manifest_path, manifest_bytes,
             sizeof(manifest_bytes), &manifest_read) ||
@@ -1250,9 +1251,13 @@ static enum native_process_status load_process(
         result = NATIVE_PROCESS_EXECUTABLE_READ;
         goto finish;
     }
-    if (sapote_native_image_validate(manifest_bytes, sizeof(manifest_bytes),
-            elf, elf_read, &process->manifest, &process->image) !=
-            NATIVE_IMAGE_OK) {
+    admission_status = sapote_native_image_validate(manifest_bytes,
+        sizeof(manifest_bytes), elf, elf_read, &process->manifest,
+        &process->image);
+    if (admission_status != NATIVE_IMAGE_OK) {
+        console_write("Sapote: native admission status ");
+        console_write_u64((uint64_t)admission_status);
+        console_putc('\n');
         result = NATIVE_PROCESS_IMAGE_REFUSED;
         goto finish;
     }
