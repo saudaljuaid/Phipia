@@ -5056,7 +5056,7 @@ static enum ui_status draw_dock_shelf(struct ui_rect damage)
 static struct ui_rect menu_search_rect(void)
 {
     return (struct ui_rect){
-        state.layout.surface.width - 230U, 3U, 218U, 18U
+        state.layout.surface.width - 230U, 2U, 218U, 20U
     };
 }
 
@@ -5372,7 +5372,7 @@ static enum ui_status draw_menu_brand(struct ui_rect damage)
         }
         if (status == UI_STATUS_OK) {
             status = draw_text(search, damage, search.x + 24U,
-                search.y + 14U, "Search apps", state.theme.title_inactive);
+                search.y + 15U, "Search apps", state.theme.title_inactive);
         }
     }
     return status;
