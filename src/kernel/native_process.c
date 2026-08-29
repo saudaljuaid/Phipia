@@ -158,6 +158,7 @@ static uint64_t next_window_generation = UINT64_C(1);
 static struct interrupt_process_gate native_gate;
 static bool scheduler_active;
 static size_t scheduler_process_cursor;
+static uint32_t thread_syscall_trace_count;
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -3739,6 +3740,14 @@ uintptr_t native_process_on_syscall(struct native_syscall_frame *frame)
     }
     without_cycles += tsc_read() - without_started;
     record_context_transition(process, without_cycles, fpu_cycles);
+    if (process->thread_count > 1U && thread_syscall_trace_count < 32U) {
+        console_write("Sapote: native thread ");
+        console_write_u64(process->current_thread);
+        console_write(" syscall ");
+        console_write_hex(frame->rax);
+        console_write("\n");
+        ++thread_syscall_trace_count;
+    }
     result = dispatch_syscall(process, thread, frame);
     thread->context.rax = (uint64_t)result;
     ++process->syscall_count;
