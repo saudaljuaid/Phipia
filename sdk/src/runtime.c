@@ -64,6 +64,11 @@ long sapote_handle_close(sapote_handle_t handle)
     return sapote_syscall1(SAPOTE_SYS_HANDLE_CLOSE, handle);
 }
 
+long sapote_handle_duplicate(sapote_handle_t handle)
+{
+    return sapote_syscall1(SAPOTE_SYS_HANDLE_DUPLICATE, handle);
+}
+
 long sapote_console_read(void *buffer, size_t length)
 {
     return sapote_syscall2(SAPOTE_SYS_CONSOLE_READ,
@@ -160,13 +165,30 @@ static struct sapote_path make_path(uint16_t volume, const char *path)
     return result;
 }
 
+static long single_path(uint64_t number, uint16_t volume, const char *path,
+    uint64_t value)
+{
+    struct sapote_path input;
+
+    if (path == NULL) {
+        return -SAPOTE_EFAULT;
+    }
+    input = make_path(volume, path);
+    return sapote_syscall2(number, (uint64_t)(uintptr_t)&input, value);
+}
+
 long sapote_path_stat(
     uint16_t volume,
     const char *path,
     struct sapote_path_stat *result
 )
 {
-    const struct sapote_path input = make_path(volume, path);
+    struct sapote_path input;
+
+    if (path == NULL || result == NULL) {
+        return -SAPOTE_EFAULT;
+    }
+    input = make_path(volume, path);
 
     return sapote_syscall2(SAPOTE_SYS_PATH_STAT,
         (uint64_t)(uintptr_t)&input, (uint64_t)(uintptr_t)result);
@@ -174,7 +196,12 @@ long sapote_path_stat(
 
 long sapote_directory_open(uint16_t volume, const char *path)
 {
-    const struct sapote_path input = make_path(volume, path);
+    struct sapote_path input;
+
+    if (path == NULL) {
+        return -SAPOTE_EFAULT;
+    }
+    input = make_path(volume, path);
 
     return sapote_syscall1(SAPOTE_SYS_DIRECTORY_OPEN,
         (uint64_t)(uintptr_t)&input);
@@ -187,6 +214,64 @@ long sapote_directory_read(
 {
     return sapote_syscall2(SAPOTE_SYS_DIRECTORY_READ, handle,
         (uint64_t)(uintptr_t)entry);
+}
+
+long sapote_path_mkdir(uint16_t volume, const char *path)
+{
+    return single_path(SAPOTE_SYS_PATH_MKDIR, volume, path, 0U);
+}
+
+static long rename_path(uint64_t number, uint16_t volume, const char *source,
+    const char *destination)
+{
+    struct sapote_rename_request request;
+
+    if (source == NULL || destination == NULL) {
+        return -SAPOTE_EFAULT;
+    }
+    request.size = sizeof(request);
+    request.version = SAPOTE_ABI_VERSION;
+    request.source = make_path(volume, source);
+    request.destination = make_path(volume, destination);
+    request.flags = 0U;
+    request.reserved = 0U;
+    return sapote_syscall1(number, (uint64_t)(uintptr_t)&request);
+}
+
+long sapote_path_rename(uint16_t volume, const char *source,
+    const char *destination)
+{
+    return rename_path(SAPOTE_SYS_PATH_RENAME, volume, source, destination);
+}
+
+long sapote_path_replace(uint16_t volume, const char *source,
+    const char *destination)
+{
+    return rename_path(SAPOTE_SYS_PATH_REPLACE, volume, source, destination);
+}
+
+long sapote_path_unlink(uint16_t volume, const char *path)
+{
+    return single_path(SAPOTE_SYS_PATH_UNLINK, volume, path, 0U);
+}
+
+long sapote_path_truncate(uint16_t volume, const char *path, uint64_t length)
+{
+    return single_path(SAPOTE_SYS_PATH_TRUNCATE, volume, path, length);
+}
+
+long sapote_volume_sync(uint16_t volume)
+{
+    return sapote_syscall1(SAPOTE_SYS_VOLUME_SYNC, volume);
+}
+
+long sapote_volume_space(uint16_t volume, struct sapote_volume_space *space)
+{
+    if (space == NULL) {
+        return -SAPOTE_EFAULT;
+    }
+    return sapote_syscall2(SAPOTE_SYS_VOLUME_SPACE, volume,
+        (uint64_t)(uintptr_t)space);
 }
 
 uint64_t sapote_monotonic_ns(void)

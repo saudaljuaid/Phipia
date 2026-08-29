@@ -321,10 +321,15 @@ $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(NATIVE_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
 
+$(NATIVE_APP_DIR)/native-state.o: apps/native-test/state.S | $(NATIVE_APP_DIR)
+	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
+		-mcmodel=large -mno-red-zone -c $< -o $@
+
 $(NATIVE_TEST_APP): $(NATIVE_APP_DIR)/native-test.o \
-		$(SDK_BUILD_DIR)/.installed
+		$(NATIVE_APP_DIR)/native-state.o $(SDK_BUILD_DIR)/.installed
 	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(NATIVE_APP_DIR)/NATIVET.map \
-		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+		-o $@ $(SDK_CRT) $(NATIVE_APP_DIR)/native-test.o \
+			$(NATIVE_APP_DIR)/native-state.o $(SDK_LIB)
 
 $(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json \
 		apps/native-test/RESOURCE.TXT

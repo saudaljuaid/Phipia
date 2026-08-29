@@ -22,12 +22,12 @@ address. The SDK builds mutex and once primitives on this path rather than a
 userspace spin wait.
 
 Sapote enables the CPU x87/SSE contract before native launch. Each native
-thread owns a 16-byte-aligned 512-byte FXSAVE image initialized from `FNINIT`
-and `LDMXCSR 0x1f80`. The kernel saves it on native syscalls and interrupts and
-restores it before every native thread/process resume. FS base is saved and
-cleared on the same boundaries. Kernel C remains compiled with MMX/SSE/SSE2
-disabled and soft float, so it does not borrow userspace vector state.
+thread owns a 16-byte-aligned 512-byte FXSAVE image initialized with an empty
+x87 stack, control word `0x037f`, MXCSR `0x1f80`, and all sixteen XMM registers
+zero. The kernel saves it on native syscalls and interrupts and restores it
+before every native thread/process resume. FS base is saved and cleared on the
+same boundaries. Kernel C remains compiled with MMX/SSE/SSE2 disabled and soft
+float, so it does not borrow userspace vector state.
 
 Faulted thread state is never restored into a different thread. Process cleanup
 zeros thread records and returns to the kernel address space with FS base zero.
-

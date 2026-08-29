@@ -1,10 +1,44 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#include <sapote/event.h>
 #include <sapote/network.h>
 #include <sapote/runtime.h>
 #include <sapote/window.h>
 
 #include <errno.h>
 #include <string.h>
+
+long sapote_wait(struct sapote_wait_item *items, size_t count,
+    uint64_t deadline_ns)
+{
+    const struct sapote_wait_request request = {sizeof(request),
+        SAPOTE_ABI_VERSION, (uint64_t)(uintptr_t)items, deadline_ns,
+        (uint32_t)count, 0U};
+
+    if (items == NULL || count == 0U || count > SAPOTE_WAIT_MAX) {
+        return -SAPOTE_EINVAL;
+    }
+    return sapote_syscall1(SAPOTE_SYS_WAIT,
+        (uint64_t)(uintptr_t)&request);
+}
+
+long sapote_timer_create(void)
+{
+    return sapote_syscall0(SAPOTE_SYS_TIMER_CREATE);
+}
+
+long sapote_timer_set(sapote_handle_t timer, uint64_t deadline_ns)
+{
+    const struct sapote_timer_set_request request = {sizeof(request),
+        SAPOTE_ABI_VERSION, timer, deadline_ns, 0U, 0U};
+
+    return sapote_syscall1(SAPOTE_SYS_TIMER_SET,
+        (uint64_t)(uintptr_t)&request);
+}
+
+long sapote_cancel(sapote_handle_t handle)
+{
+    return sapote_syscall1(SAPOTE_SYS_CANCEL, handle);
+}
 
 int sapote_window_create(const char *title, uint32_t width, uint32_t height,
     struct sapote_window_create_response *response)

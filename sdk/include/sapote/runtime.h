@@ -37,6 +37,7 @@ void sapote_runtime_initialize(int argc, char **argv, char **environment);
 const struct sapote_startup *sapote_startup_information(void);
 int sapote_result(long result);
 long sapote_handle_close(sapote_handle_t handle);
+long sapote_handle_duplicate(sapote_handle_t handle);
 long sapote_console_read(void *buffer, size_t length);
 long sapote_memory_allocate(size_t length, uint32_t flags,
     struct sapote_memory_map_response *response);
@@ -52,6 +53,15 @@ long sapote_path_stat(uint16_t volume, const char *path,
 long sapote_directory_open(uint16_t volume, const char *path);
 long sapote_directory_read(sapote_handle_t handle,
     struct sapote_directory_entry *entry);
+long sapote_path_mkdir(uint16_t volume, const char *path);
+long sapote_path_rename(uint16_t volume, const char *source,
+    const char *destination);
+long sapote_path_replace(uint16_t volume, const char *source,
+    const char *destination);
+long sapote_path_unlink(uint16_t volume, const char *path);
+long sapote_path_truncate(uint16_t volume, const char *path, uint64_t length);
+long sapote_volume_sync(uint16_t volume);
+long sapote_volume_space(uint16_t volume, struct sapote_volume_space *space);
 uint64_t sapote_monotonic_ns(void);
 long sapote_sleep_until(uint64_t deadline_ns);
 long sapote_random(void *buffer, size_t length);

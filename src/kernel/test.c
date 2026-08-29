@@ -4730,15 +4730,44 @@ _Noreturn void kernel_test_complete_native(void)
     uint8_t bytes[sizeof(expected) - 1U];
     size_t read_bytes = 0U;
     bool content_matches = true;
+    enum native_process_status launch_status;
 
     if (active_scenario != KERNEL_TEST_NATIVE) {
         kernel_test_fail("native completion used outside its scenario");
     }
-    if (native_process_launch("NATIVET.MAN", &result) !=
-            NATIVE_PROCESS_OK || !result.exited || result.faulted ||
+    launch_status = native_process_launch("NATIVET.MAN", &result);
+    if (launch_status != NATIVE_PROCESS_OK) {
+        console_write("Sapote: native launch refusal: ");
+        console_write(native_process_status_string(launch_status));
+        console_putc('\n');
+        kernel_test_fail("native application admission failed");
+    }
+    if (!result.exited || result.faulted ||
         result.exit_status != 0 || !result.resources_released ||
         result.syscall_count < 20U || result.thread_switches < 4U ||
         !native_process_resources_released()) {
+        console_write("Sapote: native result exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" switches ");
+        console_write_u64(result.thread_switches);
+        console_write(" peak pages ");
+        console_write_u64(result.peak_pages);
+        console_write(" peak handles ");
+        console_write_u64(result.peak_handles);
+        console_write(" exited ");
+        console_write(result.exited ? "yes" : "no");
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_putc('\n');
         kernel_test_fail("native application did not exit with a clean census");
     }
     if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=

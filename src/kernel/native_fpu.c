@@ -8,6 +8,7 @@
 #define CPUID_FPU (UINT32_C(1) << 0U)
 #define CPUID_FXSR (UINT32_C(1) << 24U)
 #define CPUID_SSE (UINT32_C(1) << 25U)
+#define CPUID_SSE2 (UINT32_C(1) << 26U)
 #define CR0_MP (UINT64_C(1) << 1U)
 #define CR0_EM (UINT64_C(1) << 2U)
 #define CR0_TS (UINT64_C(1) << 3U)
@@ -38,8 +39,8 @@ bool native_fpu_initialize(void)
         return true;
     }
     cpu_cpuid(1U, 0U, &features);
-    if ((features.edx & (CPUID_FPU | CPUID_FXSR | CPUID_SSE)) !=
-            (CPUID_FPU | CPUID_FXSR | CPUID_SSE)) {
+    if ((features.edx & (CPUID_FPU | CPUID_FXSR | CPUID_SSE | CPUID_SSE2)) !=
+            (CPUID_FPU | CPUID_FXSR | CPUID_SSE | CPUID_SSE2)) {
         return false;
     }
     cr0 = cpu_read_cr0();
@@ -100,6 +101,8 @@ bool native_fpu_capability_self_test(size_t *completed_tests)
     ++*completed_tests;
     if ((features.edx & CPUID_SSE) == 0U) return false;
     ++*completed_tests;
+    if ((features.edx & CPUID_SSE2) == 0U) return false;
+    ++*completed_tests;
     return true;
 }
 
@@ -119,9 +122,15 @@ bool native_fpu_self_test(size_t *completed_tests)
     if (!native_fpu_state_initialize(&state) ||
         state.bytes[0] != UINT8_C(0x7F) ||
         state.bytes[1] != UINT8_C(0x03) ||
+        state.bytes[4] != 0U ||
         state.bytes[24] != UINT8_C(0x80) ||
         state.bytes[25] != UINT8_C(0x1F)) {
         return false;
+    }
+    for (size_t index = 160U; index < 416U; ++index) {
+        if (state.bytes[index] != 0U) {
+            return false;
+        }
     }
     ++*completed_tests;
     if (!native_fpu_restore(&state) || !native_fpu_save(&state)) {
