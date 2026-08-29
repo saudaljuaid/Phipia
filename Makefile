@@ -30,10 +30,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-tcp-listen network-tcp-refused network-native \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
 	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
-	native-rust
+	native-rust native-crash
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 107
-EXPECTED_SHELL_ASSERTION_COUNT := 427
+EXPECTED_TEST_SCENARIO_COUNT := 108
+EXPECTED_SHELL_ASSERTION_COUNT := 428
 
 CC := gcc
 LD := ld
@@ -199,6 +199,11 @@ RUST_APP := $(RUST_APP_DIR)/RUST.APP
 RUST_APP_PACKAGE := $(RUST_APP_DIR)/RUSTAPP.SPK
 RUST_APP_SYSTEM_IMAGE := $(RUST_APP_DIR)/system.raw
 RUST_APP_DATA_IMAGE := $(RUST_APP_DIR)/data.raw
+CRASH_APP_DIR := $(BUILD_DIR)/native-crash
+CRASH_APP := $(CRASH_APP_DIR)/CRASH.APP
+CRASH_PACKAGE := $(CRASH_APP_DIR)/CRASH.SPK
+CRASH_SYSTEM_IMAGE := $(CRASH_APP_DIR)/system.raw
+CRASH_DATA_IMAGE := $(CRASH_APP_DIR)/data.raw
 RUST_APP_FLAGS := -Dwarnings -C panic=abort -C relocation-model=static \
 	-C code-model=large -C link-arg=-nostdlib -C link-arg=-static \
 	-C link-arg=--gc-sections -C link-arg=--build-id=none \
@@ -317,6 +322,9 @@ $(NETAPP_DIR):
 $(RUST_APP_DIR):
 	mkdir -p $@
 
+$(CRASH_APP_DIR):
+	mkdir -p $@
+
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(NATIVE_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
@@ -335,6 +343,18 @@ $(NATIVE_TEST_PACKAGE): $(NATIVE_TEST_APP) apps/native-test/manifest.json \
 		apps/native-test/RESOURCE.TXT
 	$(PYTHON) tools/sapote-package.py build \
 		--spec apps/native-test/manifest.json --executable $< --output $@
+
+$(CRASH_APP_DIR)/main.o: apps/native-crash/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(CRASH_APP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(CRASH_APP): $(CRASH_APP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(CRASH_APP_DIR)/CRASH.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+
+$(CRASH_PACKAGE): $(CRASH_APP) apps/native-crash/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-crash/manifest.json --executable $< --output $@
 
 $(LUA_APP): tools/build-lua-port.sh ports/lua/source/SHA256SUMS \
 		ports/lua/source/lua-5.4.7.tar.gz $(SDK_BUILD_DIR)/.installed
@@ -447,8 +467,16 @@ $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 $(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(CRASH_SYSTEM_IMAGE): $(CRASH_PACKAGE) $(NATIVE_TEST_PACKAGE) \
+		tools/sapote-package.py tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(CRASH_PACKAGE) $(NATIVE_TEST_PACKAGE)
+
+$(CRASH_DATA_IMAGE): tools/fat32_image.py | $(CRASH_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
-	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE) $(RUST_APP_PACKAGE)
+	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE) $(RUST_APP_PACKAGE) $(CRASH_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -465,6 +493,8 @@ port-tests: native-apps
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(RUST_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CRASH_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
@@ -472,9 +502,11 @@ port-tests: native-apps
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(CRASH_PACKAGE)
 
 qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
-	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust
+	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust \
+	qemu-test-native-crash
 	@echo 'native userspace, Lua, SQLite, Canvas, network and Rust QEMU scenarios passed'
 
 contract-counts:
@@ -1585,6 +1617,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-sqlite) expected=241 ;; \
 		native-canvas) expected=243 ;; \
 		native-rust) expected=247 ;; \
+		native-crash) expected=249 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1632,6 +1665,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(RUST_APP_SYSTEM_IMAGE)' '$(RUST_APP_DATA_IMAGE)' || exit 1; \
 				cp '$(RUST_APP_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(RUST_APP_SYSTEM_IMAGE),node-name=rust-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=rust-system-file,node-name=rust-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=rust-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=rust-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=rust-data-file,node-name=rust-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=rust-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-crash) \
+				$(MAKE) '$(CRASH_SYSTEM_IMAGE)' '$(CRASH_DATA_IMAGE)' || exit 1; \
+				cp '$(CRASH_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(CRASH_SYSTEM_IMAGE),node-name=crash-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=crash-system-file,node-name=crash-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=crash-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=crash-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=crash-data-file,node-name=crash-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=crash-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1695,7 +1732,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
 		native-canvas) timeout_seconds=60 ;; \
-		native-rust) timeout_seconds=45 ;; \
+		native-rust|native-crash) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -2076,6 +2113,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-rust) \
 			grep -Fxq 'SAPOTE RUST PASS alloc file time entropy thread' "$$log" && \
 			grep -Fxq 'Sapote: no_std Rust application used native ABI v1 services' "$$log" || \
+				diagnostics_ok=false ;; \
+		native-crash) \
+			grep -Fxq 'Sapote: native crash contained; mappings handles threads windows FS x87 SSE reclaimed' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

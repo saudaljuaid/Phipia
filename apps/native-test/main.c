@@ -9,14 +9,13 @@
 static _Thread_local unsigned long tls_value = 17U;
 
 int native_state_round_trip(uint64_t deadline_ns, uint64_t seed);
+extern const uint8_t native_initial_fpu_state[512];
 
 static int initial_state_is_clean(void)
 {
-    uint8_t state[512] __attribute__((aligned(16)));
+    const uint8_t *const state = native_initial_fpu_state;
     uint32_t mxcsr;
 
-    (void)memset(state, 0xA5, sizeof(state));
-    __asm__ volatile("fxsave64 %0" : "=m" (state) : : "memory");
     (void)memcpy(&mxcsr, state + 24U, sizeof(mxcsr));
     if (state[0] != 0x7FU || state[1] != 0x03U || state[4] != 0U ||
         mxcsr != UINT32_C(0x1F80)) {

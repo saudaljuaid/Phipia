@@ -51,7 +51,7 @@ and six applications: Files, Terminal, Notes, SapStudio, Camera, and Settings.
   framebuffer repainting.
 - Functional Files, Notes, Settings, Terminal, Camera plumbing, and a native
   SapStudio workspace.
-- 107 QEMU scenarios covering boot, devices, storage, userspace, networking,
+- 108 QEMU scenarios covering boot, devices, storage, userspace, networking,
   and the Redwood interface.
 
 Camera reports real device availability and never substitutes a wallpaper or

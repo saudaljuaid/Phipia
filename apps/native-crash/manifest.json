@@ -1,0 +1,20 @@
+{
+  "name": "Native crash containment proof",
+  "identifier": "CRASH",
+  "executable": "CRASH.APP",
+  "abi_version": 1,
+  "data_namespace": "CRASH",
+  "memory_limit": 33554432,
+  "max_handles": 32,
+  "max_threads": 3,
+  "capabilities": [
+    "console",
+    "data-read",
+    "data-write",
+    "time",
+    "entropy",
+    "window",
+    "threads"
+  ],
+  "arguments": []
+}

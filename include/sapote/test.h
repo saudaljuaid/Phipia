@@ -119,6 +119,7 @@ enum kernel_test_scenario {
     KERNEL_TEST_NATIVE_CANVAS,
     KERNEL_TEST_NATIVE_NETWORK,
     KERNEL_TEST_NATIVE_RUST,
+    KERNEL_TEST_NATIVE_CRASH,
     KERNEL_TEST_INVALID
 };
 
@@ -182,6 +183,7 @@ _Noreturn void kernel_test_complete_native_sqlite(void);
 _Noreturn void kernel_test_complete_native_canvas(void);
 _Noreturn void kernel_test_complete_native_network(void);
 _Noreturn void kernel_test_complete_native_rust(void);
+_Noreturn void kernel_test_complete_native_crash(void);
 bool kernel_test_audio_exit_self_test(void);
 bool kernel_test_nvidia_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);

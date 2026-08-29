@@ -4,6 +4,13 @@
 .section .text, "ax", @progbits
 .code64
 
+.global sapote_application_entry_probe
+.type sapote_application_entry_probe, @function
+sapote_application_entry_probe:
+    fxsave64 native_initial_fpu_state(%rip)
+    ret
+.size sapote_application_entry_probe, . - sapote_application_entry_probe
+
 .global native_state_round_trip
 .type native_state_round_trip, @function
 native_state_round_trip:
@@ -74,5 +81,13 @@ native_state_round_trip:
     popq %rbx
     ret
 .size native_state_round_trip, . - native_state_round_trip
+
+.section .bss, "aw", @nobits
+.balign 16
+.global native_initial_fpu_state
+.type native_initial_fpu_state, @object
+native_initial_fpu_state:
+    .skip 512
+.size native_initial_fpu_state, . - native_initial_fpu_state
 
 .section .note.GNU-stack, "", @progbits
