@@ -77,7 +77,9 @@ static bool test_uses_fat32_volumes(enum kernel_test_scenario scenario)
     return (scenario >= KERNEL_TEST_FAT32_SYSTEM &&
             scenario <= KERNEL_TEST_FAT32_HANDLES) ||
         (scenario >= KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
-            scenario <= KERNEL_TEST_NETWORK_SOCKET_ISOLATION);
+            scenario <= KERNEL_TEST_NETWORK_SOCKET_ISOLATION) ||
+        (scenario >= KERNEL_TEST_NATIVE &&
+            scenario <= KERNEL_TEST_NATIVE_RUST);
 }
 
 static void stage_failed(
