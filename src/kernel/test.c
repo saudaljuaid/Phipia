@@ -4971,6 +4971,22 @@ _Noreturn void kernel_test_complete_native_network(void)
         !result.exited || result.faulted || result.exit_status != 0 ||
         !result.resources_released || result.syscall_count < 25U ||
         !native_process_resources_released()) {
+        console_write("Sapote: native network result exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" peak handles ");
+        console_write_u64(result.peak_handles);
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_putc('\n');
         kernel_test_fail("native network app did not exit with a clean census");
     }
     network = network_get_state();

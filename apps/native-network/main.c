@@ -168,6 +168,7 @@ int main(int argc, char **argv, char **environment)
     if (resolved != (long)HTTP_ADDRESS) {
         return 30;
     }
+    puts("SAPOTE NETAPP PHASE dns PASS");
     endpoint = (struct sapote_ipv4_endpoint){(uint32_t)resolved, 80U, 0U};
     opened = sapote_stream_open();
     if (opened < 0) {
@@ -184,6 +185,7 @@ int main(int argc, char **argv, char **environment)
         (void)close_handle(stream);
         return 32;
     }
+    puts("SAPOTE NETAPP PHASE tcp-connect-write PASS");
     while (received < sizeof(response) - 1U) {
         const long count = sapote_stream_read(stream, response + received,
             sizeof(response) - 1U - received, deadline());
@@ -205,17 +207,20 @@ int main(int argc, char **argv, char **environment)
         close_handle(stream) != 0) {
         return 34;
     }
+    puts("SAPOTE NETAPP PHASE http-framing-shutdown PASS");
     output = fopen("HTTP.TXT", "w");
     if (output == NULL || fwrite(body, 1U, body_length, output) != body_length ||
         fflush(output) != 0 || fclose(output) != 0 ||
         sapote_syscall1(SAPOTE_SYS_VOLUME_SYNC, SAPOTE_VOLUME_DATA) < 0) {
         return 35;
     }
+    puts("SAPOTE NETAPP PHASE data-sync PASS");
     if (exercise_udp(HTTP_ADDRESS) != 0 ||
         exercise_failures(HTTP_ADDRESS) != 0 ||
         leave_handles_for_process_teardown() != 0) {
         return 36;
     }
+    puts("SAPOTE NETAPP PHASE udp-failures-teardown PASS");
     printf("SAPOTE NETAPP PASS dns=10.0.2.20 http=%u udp=echo timeout reset cancel malformed-dns\n",
         (unsigned int)body_length);
     return 0;
