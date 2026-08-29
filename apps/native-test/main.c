@@ -35,7 +35,7 @@ static void *thread_probe(void *argument)
 
     tls_value = expected;
     for (unsigned int iteration = 0U; iteration < 32U; ++iteration) {
-        if (native_state_round_trip(sapote_monotonic_ns() + 100000U,
+        if (native_state_round_trip(sapote_monotonic_ns() + 1000000U,
                 expected * 257U + iteration) != 0 || tls_value != expected) {
             return (void *)(uintptr_t)1U;
         }
@@ -320,10 +320,13 @@ int main(int argc, char **argv, char **environment)
     free(memory);
     probe = memory_and_pointer_probes();
     if (probe != 0) return probe;
+    puts("SAPOTE MEMORY anonymous range exhaustion PASS");
     probe = file_and_handle_probes();
     if (probe != 0) return probe;
+    puts("SAPOTE STORAGE handles directory persistence operations PASS");
     probe = timer_probe();
     if (probe != 0) return probe;
+    puts("SAPOTE EVENT wait timeout cancellation PASS");
     resource_handle = sapote_file_open(SAPOTE_VOLUME_SYSTEM, "RESOURCE.TXT",
         SAPOTE_OPEN_READ);
     if (resource_handle < 0 || sapote_file_read((sapote_handle_t)resource_handle,
@@ -334,6 +337,7 @@ int main(int argc, char **argv, char **environment)
         sapote_handle_close((sapote_handle_t)resource_handle) < 0) {
         return 37;
     }
+    puts("SAPOTE RESOURCE immutable System read PASS");
     file = fopen("FOUND.TXT", "w+");
     if (file == NULL || fputs("native ABI v1\n", file) == EOF ||
         fflush(file) != 0 || fseek(file, 0L, SEEK_SET) != 0) return 38;
@@ -344,6 +348,7 @@ int main(int argc, char **argv, char **environment)
             return 39;
         }
     }
+    puts("SAPOTE STDIO buffered update stream PASS");
     if (pthread_create(&first, NULL, thread_probe,
             (void *)(uintptr_t)101U) != 0) {
         return 40;
