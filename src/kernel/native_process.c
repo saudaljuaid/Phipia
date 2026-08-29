@@ -158,6 +158,7 @@ static uint64_t next_window_generation = UINT64_C(1);
 static struct interrupt_process_gate native_gate;
 static bool scheduler_active;
 static size_t scheduler_process_cursor;
+static uint32_t futex_trace_count;
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -3412,6 +3413,16 @@ static int64_t syscall_futex_wait(
     if (observed != request.expected) {
         return -SAPOTE_EAGAIN;
     }
+    if (futex_trace_count < 24U) {
+        console_write("Sapote: futex wait thread ");
+        console_write_u64(process->current_thread);
+        console_write(" address ");
+        console_write_hex(request.address);
+        console_write(" observed ");
+        console_write_u64(observed);
+        console_write("\n");
+        ++futex_trace_count;
+    }
     thread->futex_address = request.address;
     thread->deadline_ns = request.deadline_ns;
     thread->state = NATIVE_THREAD_FUTEX_WAIT;
@@ -3450,6 +3461,22 @@ static int64_t syscall_futex_wake(
             thread->context.rax = 0U;
             ++woken;
         }
+    }
+    if (futex_trace_count < 24U) {
+        uint32_t observed = UINT32_MAX;
+
+        (void)copy_from_user(process, &observed, request.address,
+            sizeof(observed));
+        console_write("Sapote: futex wake thread ");
+        console_write_u64(process->current_thread);
+        console_write(" address ");
+        console_write_hex(request.address);
+        console_write(" observed ");
+        console_write_u64(observed);
+        console_write(" woken ");
+        console_write_u64(woken);
+        console_write("\n");
+        ++futex_trace_count;
     }
     return (int64_t)woken;
 }
