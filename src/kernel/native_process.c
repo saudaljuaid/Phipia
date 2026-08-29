@@ -4106,7 +4106,8 @@ bool native_process_self_test(size_t *completed_tests)
         return false;
     }
     *completed_tests += handle_tests;
-    if (!native_fpu_self_test(&fpu_tests)) {
+    /* Ordinary boots inspect capabilities without changing CR0/CR4 or FPU state. */
+    if (!native_fpu_capability_self_test(&fpu_tests)) {
         return false;
     }
     *completed_tests += fpu_tests;

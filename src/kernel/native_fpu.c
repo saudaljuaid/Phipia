@@ -87,6 +87,22 @@ bool native_fpu_is_ready(void)
     return ready;
 }
 
+bool native_fpu_capability_self_test(size_t *completed_tests)
+{
+    struct cpuid_result features;
+
+    if (completed_tests == NULL) return false;
+    *completed_tests = 0U;
+    cpu_cpuid(1U, 0U, &features);
+    if ((features.edx & CPUID_FPU) == 0U) return false;
+    ++*completed_tests;
+    if ((features.edx & CPUID_FXSR) == 0U) return false;
+    ++*completed_tests;
+    if ((features.edx & CPUID_SSE) == 0U) return false;
+    ++*completed_tests;
+    return true;
+}
+
 bool native_fpu_self_test(size_t *completed_tests)
 {
     /* FXSAVE needs 512 aligned bytes; the boot stack need not carry it. */

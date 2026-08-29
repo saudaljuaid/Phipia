@@ -29,10 +29,10 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-notes network-studio network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
-	nvidia nvidia-builtin native native-lua
+	nvidia nvidia-builtin native native-lua native-sqlite
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 103
-EXPECTED_SHELL_ASSERTION_COUNT := 418
+EXPECTED_TEST_SCENARIO_COUNT := 104
+EXPECTED_SHELL_ASSERTION_COUNT := 421
 
 CC := gcc
 LD := ld
@@ -174,6 +174,12 @@ LUA_PACKAGE := $(LUA_PORT_DIR)/LUA.SPK
 LUA_SYSTEM_IMAGE := $(LUA_PORT_DIR)/system.raw
 LUA_EMPTY_DATA_IMAGE := $(LUA_PORT_DIR)/empty-data.raw
 LUA_DATA_IMAGE := $(LUA_PORT_DIR)/data.raw
+SQLITE_PORT_DIR := $(BUILD_DIR)/ports/sqlite
+SQLITE_PORT_WORK_DIR := $(BUILD_DIR)/ports/sqlite-work
+SQLITE_APP := $(SQLITE_PORT_DIR)/SQLITE.APP
+SQLITE_PACKAGE := $(SQLITE_PORT_DIR)/SQLITE.SPK
+SQLITE_SYSTEM_IMAGE := $(SQLITE_PORT_DIR)/system.raw
+SQLITE_DATA_IMAGE := $(SQLITE_PORT_DIR)/data.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -241,13 +247,15 @@ $(SDK_CRT): sdk/crt/start.S | $(SDK_BUILD_DIR)/lib
 $(SDK_LIB): $(SDK_OBJECTS) | $(SDK_BUILD_DIR)/lib
 	$(SDK_AR) rcsD $@ $(SDK_OBJECTS)
 
-$(SDK_BUILD_DIR)/.installed: $(SDK_LIB) $(SDK_CRT) sdk/linker.ld \
+$(SDK_BUILD_DIR)/.installed: Makefile $(SDK_LIB) $(SDK_CRT) sdk/linker.ld \
 		sdk/bin/sapote-cc $(wildcard sdk/include/*.h) \
-		$(wildcard sdk/include/sapote/*.h) $(wildcard include/sapote/abi/*.h) \
+		$(wildcard sdk/include/sapote/*.h) $(wildcard sdk/include/sys/*.h) \
+		$(wildcard include/sapote/abi/*.h) \
 		include/sapote/abi.h | $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin
-	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi
+	mkdir -p $(SDK_BUILD_DIR)/include/sapote/abi $(SDK_BUILD_DIR)/include/sys
 	cp sdk/include/*.h $(SDK_BUILD_DIR)/include/
 	cp sdk/include/sapote/*.h $(SDK_BUILD_DIR)/include/sapote/
+	cp sdk/include/sys/*.h $(SDK_BUILD_DIR)/include/sys/
 	cp include/sapote/abi.h $(SDK_BUILD_DIR)/include/sapote/
 	cp include/sapote/abi/*.h $(SDK_BUILD_DIR)/include/sapote/abi/
 	cp sdk/linker.ld $(SDK_BUILD_DIR)/linker.ld
@@ -268,6 +276,9 @@ $(NATIVE_APP_DIR):
 	mkdir -p $@
 
 $(LUA_PORT_DIR):
+	mkdir -p $@
+
+$(SQLITE_PORT_DIR):
 	mkdir -p $@
 
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
@@ -305,6 +316,26 @@ $(LUA_DATA_IMAGE): $(LUA_EMPTY_DATA_IMAGE) ports/lua/SCRIPT.LUA \
 	$(PYTHON) tools/fat32_image.py populate-tree $< $@ \
 		--file LUA/SCRIPT.LUA=ports/lua/SCRIPT.LUA
 
+$(SQLITE_APP): tools/build-sqlite-port.sh ports/sqlite/main.c \
+		ports/sqlite/sapote_vfs.c ports/sqlite/source/SHA256SUMS \
+		ports/sqlite/source/sqlite-amalgamation-3460000.zip \
+		$(SDK_BUILD_DIR)/.installed
+	SAPOTE_SDK_CC='$(SDK_CC)' SAPOTE_SDK_LD='$(SDK_LD)' \
+		PYTHON='$(PYTHON)' bash tools/build-sqlite-port.sh \
+		$(SQLITE_PORT_DIR) $(SQLITE_PORT_WORK_DIR)
+
+$(SQLITE_PACKAGE): $(SQLITE_APP) ports/sqlite/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec ports/sqlite/manifest.json --executable $< --output $@
+
+$(SQLITE_SYSTEM_IMAGE): $(SQLITE_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(SQLITE_PACKAGE)
+
+$(SQLITE_DATA_IMAGE): tools/fat32_image.py | $(SQLITE_PORT_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/sapote-package.py install-system \
@@ -313,7 +344,7 @@ $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 $(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
-native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE)
+native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -322,12 +353,15 @@ port-tests: native-apps
 	$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(LUA_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(SQLITE_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(SQLITE_PACKAGE)
 
-qemu-port-tests: qemu-test-native qemu-test-native-lua
-	@echo 'native userspace and Lua QEMU scenarios passed'
+qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite
+	@echo 'native userspace, Lua and SQLite QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -1427,6 +1461,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		nvidia-builtin) expected=235 ;; \
 		native) expected=237 ;; \
 		native-lua) expected=239 ;; \
+		native-sqlite) expected=241 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1462,6 +1497,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(LUA_SYSTEM_IMAGE)' '$(LUA_DATA_IMAGE)' || exit 1; \
 				cp '$(LUA_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(LUA_SYSTEM_IMAGE),node-name=lua-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=lua-system-file,node-name=lua-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=lua-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=lua-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=lua-data-file,node-name=lua-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=lua-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-sqlite) \
+				$(MAKE) '$(SQLITE_SYSTEM_IMAGE)' '$(SQLITE_DATA_IMAGE)' || exit 1; \
+				cp '$(SQLITE_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(SQLITE_SYSTEM_IMAGE),node-name=sqlite-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sqlite-system-file,node-name=sqlite-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sqlite-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sqlite-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sqlite-data-file,node-name=sqlite-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sqlite-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1523,8 +1562,9 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	timeout_seconds=15; reboot_control='-no-reboot'; \
 	case '$*' in \
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
+		native-sqlite) timeout_seconds=90 ;; \
 	esac; \
-	if test '$*' = fat32-persistence; then reboot_control=''; fi; \
+	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
 	if test '$*' = native-lua; then \
 		monitor_socket='$(TEST_BUILD_DIR)/$*/monitor.sock'; \
@@ -1545,7 +1585,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	begin_count=$$(grep -Fxc 'ST BEGIN $*' "$$log" || true); \
 	pass_count=$$(grep -Fxc 'ST PASS $*' "$$log" || true); \
 	expected_begin=1; \
-	if test '$*' = fat32-persistence; then expected_begin=2; fi; \
+	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then expected_begin=2; fi; \
 	if test $$result -ne $$expected -o $$injection_result -ne 0 -o "$$begin_count" -ne "$$expected_begin" -o "$$pass_count" -ne 1 || \
 		grep -Fq 'ST FAIL' "$$log" || grep -Fq 'Sapote PANIC' "$$log"; then \
 		echo 'QEMU scenario $* failed: status='$$result' expected='$$expected; \
@@ -1879,6 +1919,11 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'SAPOTE LUA INPUT READY' "$$log" && \
 			grep -Fxq 'SAPOTE LUA PASS input=sapote sum=5050' "$$log" && \
 			grep -Fxq 'Sapote: upstream Lua used stdin, Data, math and stdout' "$$log" || \
+				diagnostics_ok=false ;; \
+		native-sqlite) \
+			grep -Fxq 'SAPOTE SQLITE PHASE1 PASS rows=3 locking=busy' "$$log" && \
+			grep -Fxq 'SAPOTE SQLITE PHASE2 PASS rows=3 sum=66 integrity=ok' "$$log" && \
+			grep -Fxq 'Sapote: upstream SQLite retained and verified three rows after reboot' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

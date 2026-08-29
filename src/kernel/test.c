@@ -535,6 +535,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-lua")) {
         return KERNEL_TEST_NATIVE_LUA;
     }
+    if (token_equals(value, length, "native-sqlite")) {
+        return KERNEL_TEST_NATIVE_SQLITE;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -712,6 +715,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
     case KERNEL_TEST_NATIVE: return UINT8_C(0x76);
     case KERNEL_TEST_NATIVE_LUA: return UINT8_C(0x77);
+    case KERNEL_TEST_NATIVE_SQLITE: return UINT8_C(0x78);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4675,6 +4679,7 @@ void kernel_test_run(
     case KERNEL_TEST_NVIDIA_BUILTIN:
     case KERNEL_TEST_NATIVE:
     case KERNEL_TEST_NATIVE_LUA:
+    case KERNEL_TEST_NATIVE_SQLITE:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4775,6 +4780,66 @@ _Noreturn void kernel_test_complete_native_lua(void)
         kernel_test_fail("Lua result file is wrong or could not be synchronized");
     }
     console_write("Sapote: upstream Lua used stdin, Data, math and stdout\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_sqlite(void)
+{
+    static const uint8_t expected[] =
+        "rows=3\nsum=66\nintegrity=ok\n";
+    struct native_process_result result;
+    struct sapfs_stat database;
+    struct sapfs_stat journal;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+    const enum sapfs_status before = sapfs_stat_path(SAPFS_VOLUME_DATA,
+        "SQLITE/PORT.DB", &database);
+
+    if (active_scenario != KERNEL_TEST_NATIVE_SQLITE) {
+        kernel_test_fail("SQLite completion used outside its scenario");
+    }
+    if (before != SAPFS_STATUS_OK && before != SAPFS_STATUS_NOT_FOUND) {
+        kernel_test_fail("SQLite database census failed before launch");
+    }
+    if (native_process_launch("SQLITE.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 20U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("SQLite did not exit with a clean resource census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.JRN", &journal) !=
+            SAPFS_STATUS_NOT_FOUND) {
+        kernel_test_fail("SQLite left a rollback journal after clean close");
+    }
+    if (before == SAPFS_STATUS_NOT_FOUND) {
+        if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.DB", &database) !=
+                SAPFS_STATUS_OK || database.directory || database.size == 0U ||
+            sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+            kernel_test_fail("SQLite first phase did not synchronize its database");
+        }
+        console_write("Sapote: upstream SQLite synchronized reboot phase\n");
+        cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+        kernel_test_fail("platform reset did not restart SQLite scenario");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("SQLite reboot result is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
+        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+        kernel_test_fail("SQLite reboot result is wrong or could not be synchronized");
+    }
+    console_write("Sapote: upstream SQLite retained and verified three rows after reboot\n");
     kernel_test_pass();
 }
 
@@ -8203,6 +8268,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native";
     case KERNEL_TEST_NATIVE_LUA:
         return "native-lua";
+    case KERNEL_TEST_NATIVE_SQLITE:
+        return "native-sqlite";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

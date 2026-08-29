@@ -3,7 +3,11 @@
 #define SAPOTE_ASSERT_H
 
 void __sapote_assert(const char *expression, const char *file, int line);
+#ifdef NDEBUG
+#define assert(expression) ((void)0)
+#else
 #define assert(expression) ((expression) ? (void)0 : \
     __sapote_assert(#expression, __FILE__, __LINE__))
+#endif
 
 #endif

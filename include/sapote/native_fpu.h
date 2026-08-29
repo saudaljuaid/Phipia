@@ -18,6 +18,7 @@ bool native_fpu_state_initialize(struct native_fpu_state *state);
 bool native_fpu_save(struct native_fpu_state *state);
 bool native_fpu_restore(const struct native_fpu_state *state);
 bool native_fpu_is_ready(void);
+bool native_fpu_capability_self_test(size_t *completed_tests);
 bool native_fpu_self_test(size_t *completed_tests);
 
 void native_fxsave(void *state);
