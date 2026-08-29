@@ -56,10 +56,12 @@ static int prepare_tls(struct thread_record *record)
         return 0;
     }
     if (startup->tls_alignment == 0U || startup->tls_size > UINT64_MAX -
-            startup->tls_alignment) {
+            startup->tls_alignment ||
+        startup->tls_size + startup->tls_alignment > UINT64_MAX -
+            sizeof(pointer)) {
         return EINVAL;
     }
-    size = startup->tls_size + startup->tls_alignment;
+    size = startup->tls_size + startup->tls_alignment + sizeof(pointer);
     const long result = sapote_memory_allocate((size_t)size,
         SAPOTE_MEMORY_READ | SAPOTE_MEMORY_WRITE |
             SAPOTE_MEMORY_GUARD_BEFORE | SAPOTE_MEMORY_GUARD_AFTER,
@@ -72,6 +74,7 @@ static int prepare_tls(struct thread_record *record)
     (void)memcpy((void *)(uintptr_t)(pointer - startup->tls_size),
         (const void *)(uintptr_t)startup->tls_image,
         (size_t)startup->tls_size);
+    (void)memcpy((void *)(uintptr_t)pointer, &pointer, sizeof(pointer));
     record->tls_address = response.address;
     record->tls_length = response.length;
     record->thread_pointer = pointer;

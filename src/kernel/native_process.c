@@ -40,6 +40,7 @@
 #define NATIVE_AUX_TLS_ALIGN UINT64_C(0x53500004)
 #define NATIVE_MAIN_TLS_GUARD PAGING_NATIVE_ANON_BASE
 #define NATIVE_MAIN_TLS_BASE (NATIVE_MAIN_TLS_GUARD + PAGING_PAGE_SIZE)
+#define NATIVE_TLS_TCB_BYTES sizeof(uint64_t)
 #define ELF_PF_X UINT32_C(1)
 #define ELF_PF_W UINT32_C(2)
 #define NATIVE_RFLAGS UINT64_C(0x202)
@@ -876,6 +877,37 @@ static bool prepare_main_stack(struct native_process *process)
     return true;
 }
 
+static bool prepared_tls_write(
+    struct native_process *process,
+    uint64_t address,
+    const void *source,
+    size_t length
+)
+{
+    const uint8_t *input = source;
+    uint64_t cursor = address;
+
+    while (length != 0U) {
+        struct native_page *page = page_at(process, cursor);
+        size_t chunk = (size_t)(PAGING_PAGE_SIZE -
+            (cursor & (PAGING_PAGE_SIZE - 1U)));
+
+        if (page == NULL ||
+            page->kind != PAGING_PROCESS_MAPPING_NATIVE_TLS) {
+            return false;
+        }
+        if (chunk > length) {
+            chunk = length;
+        }
+        copy_bytes((uint8_t *)(void *)page->physical_address +
+                (size_t)(cursor - page->virtual_address), input, chunk);
+        cursor += chunk;
+        input += chunk;
+        length -= chunk;
+    }
+    return true;
+}
+
 /*
  * x86-64 uses ELF TLS variant II: FS names the byte immediately after the
  * initial-exec block and local-exec offsets are negative.  A kernel-owned
@@ -891,6 +923,7 @@ static bool prepare_main_tls(
 {
     const struct native_elf_tls *tls = &process->image.tls;
     uint64_t aligned_size;
+    uint64_t allocation_size;
     size_t page_count;
 
     if (thread_pointer == NULL) {
@@ -907,7 +940,11 @@ static bool prepare_main_tls(
     }
     aligned_size = (tls->memory_size + tls->alignment - 1U) &
         ~(tls->alignment - 1U);
-    page_count = (size_t)((aligned_size + PAGING_PAGE_SIZE - 1U) /
+    if (!add_u64(aligned_size, NATIVE_TLS_TCB_BYTES, &allocation_size) ||
+        allocation_size > UINT64_MAX - (PAGING_PAGE_SIZE - 1U)) {
+        return false;
+    }
+    page_count = (size_t)((allocation_size + PAGING_PAGE_SIZE - 1U) /
         PAGING_PAGE_SIZE);
     if (page_count == 0U || page_count > NATIVE_PROCESS_PAGE_LIMIT ||
         page_count >= (PAGING_NATIVE_ANON_END - NATIVE_MAIN_TLS_BASE) /
@@ -925,32 +962,11 @@ static bool prepare_main_tls(
         }
     }
     *thread_pointer = NATIVE_MAIN_TLS_BASE + aligned_size;
-    if (tls->file_size != 0U) {
-        uint64_t destination = *thread_pointer - tls->memory_size;
-        size_t remaining = (size_t)tls->file_size;
-        size_t source = (size_t)tls->file_offset;
-
-        while (remaining != 0U) {
-            struct native_page *page = page_at(process, destination);
-            size_t chunk = (size_t)(PAGING_PAGE_SIZE -
-                (destination & (PAGING_PAGE_SIZE - 1U)));
-
-            if (page == NULL ||
-                page->kind != PAGING_PROCESS_MAPPING_NATIVE_TLS) {
-                return false;
-            }
-            if (chunk > remaining) {
-                chunk = remaining;
-            }
-            copy_bytes((uint8_t *)(void *)page->physical_address +
-                    (size_t)(destination - page->virtual_address),
-                elf + source, chunk);
-            destination += chunk;
-            source += chunk;
-            remaining -= chunk;
-        }
-    }
-    return true;
+    return (tls->file_size == 0U || prepared_tls_write(process,
+            *thread_pointer - tls->memory_size,
+            elf + (size_t)tls->file_offset, (size_t)tls->file_size)) &&
+        prepared_tls_write(process, *thread_pointer, thread_pointer,
+            sizeof(*thread_pointer));
 }
 
 static bool map_prepared_pages(struct native_process *process)
@@ -3297,7 +3313,8 @@ static int64_t syscall_thread_create(
     thread->stack_end = stack_base + stack_pages * PAGING_PAGE_SIZE;
     thread->state = NATIVE_THREAD_RUNNABLE;
     thread->context.rip = request.entry;
-    thread->context.rsp = thread->stack_end;
+    /* A raw C entry observes the SysV post-CALL stack alignment. */
+    thread->context.rsp = thread->stack_end - sizeof(uint64_t);
     thread->context.rflags = NATIVE_RFLAGS;
     thread->context.rdi = request.argument;
     resource.words[0] = index;
