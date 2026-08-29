@@ -4161,8 +4161,10 @@ static bool service_native_devices(void)
 enum native_process_status native_process_run(struct native_process_result *result)
 {
     struct native_process_result selected_result;
+    uint64_t diagnostic_deadline;
     bool have_result = false;
     bool cleanup_ok = true;
+    bool diagnostic_fired = false;
 
     if (result == NULL) {
         return NATIVE_PROCESS_NULL_ARGUMENT;
@@ -4184,6 +4186,7 @@ enum native_process_status native_process_run(struct native_process_result *resu
         return NATIVE_PROCESS_SYSCALL;
     }
     scheduler_active = true;
+    diagnostic_deadline = clock_monotonic_ns() + UINT64_C(5000000000);
     while (any_active_process()) {
         const uint64_t now = clock_monotonic_ns();
 
@@ -4195,6 +4198,17 @@ enum native_process_status native_process_run(struct native_process_result *resu
             if (processes[index].active && !processes[index].exiting) {
                 update_waiting_threads(&processes[index], now);
             }
+        }
+        if (!diagnostic_fired && now >= diagnostic_deadline) {
+            console_write("Sapote: native diagnostic watchdog expired\n");
+            report_scheduler_stall();
+            for (size_t index = 0U; index < NATIVE_PROCESS_LIMIT; ++index) {
+                if (processes[index].active && !processes[index].exiting) {
+                    processes[index].faulted = true;
+                    terminate_process(&processes[index], -SAPOTE_EBUSY);
+                }
+            }
+            diagnostic_fired = true;
         }
         if (select_runnable_thread()) {
             struct native_process *process = &processes[current_process];
