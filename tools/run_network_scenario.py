@@ -37,6 +37,7 @@ STORAGE = {
     "network-notes",
     "network-studio",
     "network-persistence",
+    "network-native",
 }
 
 FIXTURE_MODE = {
@@ -279,6 +280,17 @@ def run(args: argparse.Namespace) -> int:
                passed == 1 and "ST FAIL" not in transcript and
                "Sapote PANIC" not in transcript and
                "ST NETWORK production path bounded and recoverable" in transcript)
+    if args.scenario == "network-native" and healthy:
+        healthy = (
+            transcript.count(
+                "SAPOTE NETAPP PASS dns=10.0.2.20 http=30 udp=echo "
+                "timeout reset cancel malformed-dns\n"
+            ) == 1
+            and transcript.count(
+                "Sapote: native DNS, TCP, UDP, timeout, reset and "
+                "cancellation passed\n"
+            ) == 1
+        )
     if args.scenario == "network-http-length" and healthy:
         audited = subprocess.run([
             args.python, str(args.audit.resolve()), str(capture),

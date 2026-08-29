@@ -1,0 +1,16 @@
+{
+  "name": "Sapote Native Canvas",
+  "identifier": "CANVAS",
+  "executable": "CANVAS.APP",
+  "data_namespace": "CANVAS",
+  "memory_limit": 33554432,
+  "max_handles": 16,
+  "max_threads": 1,
+  "capabilities": [
+    "console",
+    "time",
+    "window",
+    "input"
+  ],
+  "arguments": ["multi-window-proof"]
+}

@@ -205,6 +205,14 @@ _Noreturn void kernel_main(uint32_t magic, uintptr_t boot_information)
         kernel_test_complete_native_sqlite();
     }
 
+    if (installed_context.test_scenario == KERNEL_TEST_NATIVE_CANVAS) {
+        kernel_test_complete_native_canvas();
+    }
+
+    if (installed_context.test_scenario == KERNEL_TEST_NATIVE_NETWORK) {
+        kernel_test_complete_native_network();
+    }
+
     if (installed_context.test_scenario >=
             KERNEL_TEST_NETWORK_NIC_DISCOVERY &&
         installed_context.test_scenario <=

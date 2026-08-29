@@ -2170,6 +2170,27 @@ static bool deadline_timeout(uint64_t deadline, uint64_t *timeout)
     return true;
 }
 
+static enum network_status prepare_native_network(
+    uint64_t deadline,
+    uint64_t *timeout
+)
+{
+    enum network_status status;
+
+    if (!deadline_timeout(deadline, timeout)) {
+        return NETWORK_STATUS_TIMEOUT;
+    }
+    if (network_get_state().configuration.configured) {
+        return NETWORK_STATUS_OK;
+    }
+    status = network_start_dhcp(*timeout);
+    if (status != NETWORK_STATUS_OK) {
+        return status;
+    }
+    return deadline_timeout(deadline, timeout) ? NETWORK_STATUS_OK :
+        NETWORK_STATUS_TIMEOUT;
+}
+
 static int64_t syscall_random(
     struct native_process *process,
     uint64_t address,
@@ -2819,11 +2840,11 @@ static int64_t syscall_dns_resolve(
         }
     }
     hostname[hostname_length] = '\0';
-    if (!deadline_timeout(deadline, &timeout)) {
-        return -SAPOTE_ETIMEDOUT;
-    }
     cpu_interrupt_enable();
-    status = network_resolve(hostname, &address, timeout);
+    status = prepare_native_network(deadline, &timeout);
+    if (status == NETWORK_STATUS_OK) {
+        status = network_resolve(hostname, &address, timeout);
+    }
     cpu_interrupt_disable();
     return status == NETWORK_STATUS_OK ? (int64_t)address :
         network_error(status);
@@ -2884,7 +2905,7 @@ static int64_t syscall_stream_connect(
         return -SAPOTE_EFAULT;
     }
     if (endpoint.reserved != 0U || endpoint.address == 0U ||
-        endpoint.port == 0U || !deadline_timeout(deadline, &timeout)) {
+        endpoint.port == 0U) {
         return -SAPOTE_EINVAL;
     }
     handle_status = native_handle_resolve(&process->handles, handle,
@@ -2893,8 +2914,11 @@ static int64_t syscall_stream_connect(
         return handle_error(handle_status);
     }
     cpu_interrupt_enable();
-    status = network_tcp_connect(process->generation, resource->words[0],
-        endpoint.address, endpoint.port, timeout);
+    status = prepare_native_network(deadline, &timeout);
+    if (status == NETWORK_STATUS_OK) {
+        status = network_tcp_connect(process->generation, resource->words[0],
+            endpoint.address, endpoint.port, timeout);
+    }
     cpu_interrupt_disable();
     return network_error(status);
 }
@@ -2924,7 +2948,6 @@ static int64_t syscall_network_io(
         request.endpoint.reserved != 0U || request.length == 0U ||
         request.length > (datagram ? NETWORK_MAX_UDP_DATAGRAM :
             sizeof(process->transfer)) ||
-        !deadline_timeout(request.deadline_ns, &timeout) ||
         !validate_user_range(process, request.buffer, request.length, !write) ||
         (!write && datagram && !validate_user_range(process, request_address,
             sizeof(request), true))) {
@@ -2940,19 +2963,20 @@ static int64_t syscall_network_io(
         return -SAPOTE_EFAULT;
     }
     cpu_interrupt_enable();
-    if (datagram && write) {
+    status = prepare_native_network(request.deadline_ns, &timeout);
+    if (status == NETWORK_STATUS_OK && datagram && write) {
         status = network_udp_send(process->generation, resource->words[0],
             request.endpoint.address, request.endpoint.port, process->transfer,
             request.length, timeout);
         transferred = status == NETWORK_STATUS_OK ? request.length : 0U;
-    } else if (datagram) {
+    } else if (status == NETWORK_STATUS_OK && datagram) {
         status = network_udp_receive(process->generation, resource->words[0],
             &source, &port, process->transfer, request.length, &transferred,
             timeout);
-    } else if (write) {
+    } else if (status == NETWORK_STATUS_OK && write) {
         status = network_tcp_write(process->generation, resource->words[0],
             process->transfer, request.length, &transferred, timeout);
-    } else {
+    } else if (status == NETWORK_STATUS_OK) {
         status = network_tcp_read(process->generation, resource->words[0],
             process->transfer, request.length, &transferred, timeout);
     }

@@ -538,6 +538,12 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "native-sqlite")) {
         return KERNEL_TEST_NATIVE_SQLITE;
     }
+    if (token_equals(value, length, "native-canvas")) {
+        return KERNEL_TEST_NATIVE_CANVAS;
+    }
+    if (token_equals(value, length, "network-native")) {
+        return KERNEL_TEST_NATIVE_NETWORK;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -716,6 +722,8 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE: return UINT8_C(0x76);
     case KERNEL_TEST_NATIVE_LUA: return UINT8_C(0x77);
     case KERNEL_TEST_NATIVE_SQLITE: return UINT8_C(0x78);
+    case KERNEL_TEST_NATIVE_CANVAS: return UINT8_C(0x79);
+    case KERNEL_TEST_NATIVE_NETWORK: return UINT8_C(0x7A);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4680,6 +4688,8 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE:
     case KERNEL_TEST_NATIVE_LUA:
     case KERNEL_TEST_NATIVE_SQLITE:
+    case KERNEL_TEST_NATIVE_CANVAS:
+    case KERNEL_TEST_NATIVE_NETWORK:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4840,6 +4850,78 @@ _Noreturn void kernel_test_complete_native_sqlite(void)
         kernel_test_fail("SQLite reboot result is wrong or could not be synchronized");
     }
     console_write("Sapote: upstream SQLite retained and verified three rows after reboot\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_canvas(void)
+{
+    struct native_process_result result;
+    uint64_t first_generation;
+    uint64_t second_generation;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_CANVAS) {
+        kernel_test_fail("Canvas completion used outside its scenario");
+    }
+    if (native_process_spawn("CANVAS.MAN", &first_generation) !=
+            NATIVE_PROCESS_OK ||
+        native_process_spawn("CANVAS.MAN", &second_generation) !=
+            NATIVE_PROCESS_OK ||
+        first_generation == 0U || second_generation <= first_generation) {
+        kernel_test_fail("Canvas applications were not admitted together");
+    }
+    if (native_process_run(&result) != NATIVE_PROCESS_OK || !result.exited ||
+        result.faulted || result.exit_status != 0 ||
+        result.generation != second_generation || !result.resources_released ||
+        result.syscall_count < 20U || result.thread_switches < 10U ||
+        !native_process_resources_released() ||
+        ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
+        kernel_test_fail("Canvas windows did not exit with a clean census");
+    }
+    console_write("Sapote: two native Canvas windows handled focus, input and partial damage\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_network(void)
+{
+    static const uint8_t expected[] = "hello from the Sapote network\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    struct network_state network;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_NETWORK) {
+        kernel_test_fail("native network completion used outside its scenario");
+    }
+    if (native_process_launch("NETAPP.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 25U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native network app did not exit with a clean census");
+    }
+    network = network_get_state();
+    if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
+        network.timers != 0U) {
+        kernel_test_fail("native network handles survived process teardown");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("native HTTP body is missing from Data");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+        kernel_test_fail("native HTTP body framing or contents are wrong");
+    }
+    console_write("Sapote: native DNS, TCP, UDP, timeout, reset and cancellation passed\n");
+    console_write("ST NETWORK production path bounded and recoverable\n");
     kernel_test_pass();
 }
 
@@ -6110,7 +6192,11 @@ static bool fat32_file_equals(
     size_t expected_bytes
 )
 {
-    uint8_t buffer[4096];
+    /* HTTP already uses a bounded 7 KiB parser frame.  Keep this serial,
+     * test-only comparison buffer off the 16 KiB bootstrap stack so compiler
+     * inlining decisions cannot turn a test assertion into a double fault.
+     */
+    static uint8_t buffer[4096];
     size_t file_bytes = 0U;
 
     if (expected == NULL || expected_bytes > sizeof(buffer) ||
@@ -8270,6 +8356,10 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-lua";
     case KERNEL_TEST_NATIVE_SQLITE:
         return "native-sqlite";
+    case KERNEL_TEST_NATIVE_CANVAS:
+        return "native-canvas";
+    case KERNEL_TEST_NATIVE_NETWORK:
+        return "network-native";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

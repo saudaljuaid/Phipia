@@ -27,12 +27,12 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-nic-reset network-system-immutable network-missing-linux-echo \
 	network-missing-linux-uname network-missing-linux-cat network-files \
 	network-notes network-studio network-persistence network-socket-isolation \
-	network-tcp-listen network-tcp-refused \
+	network-tcp-listen network-tcp-refused network-native \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
-	nvidia nvidia-builtin native native-lua native-sqlite
+	nvidia nvidia-builtin native native-lua native-sqlite native-canvas
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 104
-EXPECTED_SHELL_ASSERTION_COUNT := 421
+EXPECTED_TEST_SCENARIO_COUNT := 106
+EXPECTED_SHELL_ASSERTION_COUNT := 425
 
 CC := gcc
 LD := ld
@@ -180,6 +180,16 @@ SQLITE_APP := $(SQLITE_PORT_DIR)/SQLITE.APP
 SQLITE_PACKAGE := $(SQLITE_PORT_DIR)/SQLITE.SPK
 SQLITE_SYSTEM_IMAGE := $(SQLITE_PORT_DIR)/system.raw
 SQLITE_DATA_IMAGE := $(SQLITE_PORT_DIR)/data.raw
+CANVAS_APP_DIR := $(BUILD_DIR)/native-canvas
+CANVAS_APP := $(CANVAS_APP_DIR)/CANVAS.APP
+CANVAS_PACKAGE := $(CANVAS_APP_DIR)/CANVAS.SPK
+CANVAS_SYSTEM_IMAGE := $(CANVAS_APP_DIR)/system.raw
+CANVAS_DATA_IMAGE := $(CANVAS_APP_DIR)/data.raw
+NETAPP_DIR := $(BUILD_DIR)/native-network
+NETAPP_APP := $(NETAPP_DIR)/NETAPP.APP
+NETAPP_PACKAGE := $(NETAPP_DIR)/NETAPP.SPK
+NETAPP_SYSTEM_IMAGE := $(NETAPP_DIR)/system.raw
+NETAPP_DATA_IMAGE := $(NETAPP_DIR)/data.raw
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -234,7 +244,7 @@ $(SDK_BUILD_DIR)/lib $(SDK_BUILD_DIR)/include $(SDK_BUILD_DIR)/bin:
 	mkdir -p $@
 
 $(SDK_OBJECT_DIR)/%.o: sdk/src/%.c | $(SDK_OBJECT_DIR)
-	$(SDK_CC) $(SDK_CFLAGS) -MMD -MP -c $< -o $@
+	$(SDK_CC) $(SDK_CFLAGS) -MMD -MP -MT obj/$*.o -c $< -o $@
 
 $(SDK_OBJECT_DIR)/%.o: sdk/src/%.S | $(SDK_OBJECT_DIR)
 	$(SDK_CC) --target=x86_64-unknown-none-elf -ffreestanding -fno-pie \
@@ -267,6 +277,7 @@ sdk-once: $(SDK_BUILD_DIR)/.installed
 sdk: sdk-once
 
 reproducible-sdk:
+	rm -rf $(BUILD_DIR)/sdk-repro-a $(BUILD_DIR)/sdk-repro-b
 	$(MAKE) SDK_BUILD_DIR=$(BUILD_DIR)/sdk-repro-a sdk-once
 	$(MAKE) SDK_BUILD_DIR=$(BUILD_DIR)/sdk-repro-b sdk-once
 	$(PYTHON) tools/compare-trees.py $(BUILD_DIR)/sdk-repro-a \
@@ -279,6 +290,12 @@ $(LUA_PORT_DIR):
 	mkdir -p $@
 
 $(SQLITE_PORT_DIR):
+	mkdir -p $@
+
+$(CANVAS_APP_DIR):
+	mkdir -p $@
+
+$(NETAPP_DIR):
 	mkdir -p $@
 
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
@@ -336,6 +353,46 @@ $(SQLITE_SYSTEM_IMAGE): $(SQLITE_PACKAGE) tools/sapote-package.py \
 $(SQLITE_DATA_IMAGE): tools/fat32_image.py | $(SQLITE_PORT_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(CANVAS_APP_DIR)/main.o: apps/native-canvas/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(CANVAS_APP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(CANVAS_APP): $(CANVAS_APP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(CANVAS_APP_DIR)/CANVAS.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+
+$(CANVAS_PACKAGE): $(CANVAS_APP) apps/native-canvas/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-canvas/manifest.json --executable $< --output $@
+
+$(CANVAS_SYSTEM_IMAGE): $(CANVAS_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(CANVAS_PACKAGE)
+
+$(CANVAS_DATA_IMAGE): tools/fat32_image.py | $(CANVAS_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
+$(NETAPP_DIR)/main.o: apps/native-network/main.c \
+		$(SDK_BUILD_DIR)/.installed | $(NETAPP_DIR)
+	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
+
+$(NETAPP_APP): $(NETAPP_DIR)/main.o $(SDK_BUILD_DIR)/.installed
+	$(SDK_LD) $(SDK_LDFLAGS) -Map=$(NETAPP_DIR)/NETAPP.map \
+		-o $@ $(SDK_CRT) $< $(SDK_LIB)
+
+$(NETAPP_PACKAGE): $(NETAPP_APP) apps/native-network/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-network/manifest.json --executable $< --output $@
+
+$(NETAPP_SYSTEM_IMAGE): $(NETAPP_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(NETAPP_PACKAGE)
+
+$(NETAPP_DATA_IMAGE): tools/fat32_image.py | $(NETAPP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/sapote-package.py install-system \
@@ -344,7 +401,8 @@ $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 $(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
-native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE)
+native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
+	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -355,13 +413,20 @@ port-tests: native-apps
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(SQLITE_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(CANVAS_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NETAPP_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SQLITE_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
 
-qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite
-	@echo 'native userspace, Lua and SQLite QEMU scenarios passed'
+qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
+	qemu-test-native-canvas qemu-test-network-native
+	@echo 'native userspace, Lua, SQLite, Canvas and network QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -1367,23 +1432,30 @@ qemu-test-network-%: $(TEST_BUILD_DIR)/network-%/sapote.iso
 		socket-isolation) expected=217 ;; \
 		tcp-listen) expected=219 ;; \
 		tcp-refused) expected=221 ;; \
+		native) expected=245 ;; \
 		*) echo 'unknown network scenario: network-$*'; exit 1 ;; \
 	esac; \
 	case '$*' in \
 		http-disk-full) \
 			$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_FULL_IMAGE)' || exit 1 ;; \
+		native) \
+			$(MAKE) '$(NETAPP_SYSTEM_IMAGE)' '$(NETAPP_DATA_IMAGE)' || exit 1 ;; \
 		http-length|http-chunked|http-redirect|http-malformed|http-nested|\
 		http-replace|system-immutable|missing-linux-echo|missing-linux-uname|\
 		missing-linux-cat|files|notes|studio|persistence) \
 			$(MAKE) '$(FAT32_SYSTEM_IMAGE)' '$(FAT32_DATA_IMAGE)' || exit 1 ;; \
 	esac; \
+	system='$(FAT32_SYSTEM_IMAGE)'; data='$(FAT32_DATA_IMAGE)'; \
+	if test '$*' = native; then \
+		system='$(NETAPP_SYSTEM_IMAGE)'; data='$(NETAPP_DATA_IMAGE)'; \
+	fi; \
 	timeout=45; if test '$*' = persistence; then timeout=70; fi; \
 	$(PYTHON) tools/run_network_scenario.py \
 		--scenario 'network-$*' --expected "$$expected" --iso '$<' \
 		--output '$(TEST_BUILD_DIR)/network-$*' \
 		--fixture tools/network_fixture.py \
 		--audit tools/network_packet_audit.py \
-		--system '$(FAT32_SYSTEM_IMAGE)' --data '$(FAT32_DATA_IMAGE)' \
+		--system "$$system" --data "$$data" \
 		--full '$(FAT32_FULL_IMAGE)' --qemu qemu-system-x86_64 \
 		--python '$(PYTHON)' --accel '$(QEMU_ACCEL)' --timeout "$$timeout"
 
@@ -1462,6 +1534,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native) expected=237 ;; \
 		native-lua) expected=239 ;; \
 		native-sqlite) expected=241 ;; \
+		native-canvas) expected=243 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1501,6 +1574,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(SQLITE_SYSTEM_IMAGE)' '$(SQLITE_DATA_IMAGE)' || exit 1; \
 				cp '$(SQLITE_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(SQLITE_SYSTEM_IMAGE),node-name=sqlite-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=sqlite-system-file,node-name=sqlite-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=sqlite-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=sqlite-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=sqlite-data-file,node-name=sqlite-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=sqlite-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-canvas) \
+				$(MAKE) '$(CANVAS_SYSTEM_IMAGE)' '$(CANVAS_DATA_IMAGE)' || exit 1; \
+				cp '$(CANVAS_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(CANVAS_SYSTEM_IMAGE),node-name=canvas-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=canvas-system-file,node-name=canvas-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=canvas-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=canvas-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=canvas-data-file,node-name=canvas-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=canvas-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1563,6 +1640,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 	case '$*' in \
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
+		native-canvas) timeout_seconds=60 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -1573,6 +1651,15 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
 			--serial "$$log" --marker 'SAPOTE LUA INPUT READY' \
 			--text sapote --enter --timeout 40 & injector=$$!; \
+	elif test '$*' = native-canvas; then \
+		monitor_socket='$(TEST_BUILD_DIR)/$*/monitor.sock'; \
+		rm -f "$$monitor_socket"; \
+		monitor_argument="-monitor unix:$$monitor_socket,server=on,wait=off"; \
+		$(PYTHON) tools/qemu-send-keys.py --monitor "$$monitor_socket" \
+			--serial "$$log" --marker 'SAPOTE CANVAS READY' \
+			--marker-count 2 --text k --hmp 'mouse_move 80 60' \
+			--hmp 'mouse_button 1' --hmp 'mouse_button 0' --timeout 50 \
+			& injector=$$!; \
 	fi; \
 	set +e; \
 	timeout "$${timeout_seconds}s" qemu-system-x86_64 \
@@ -1924,6 +2011,12 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'SAPOTE SQLITE PHASE1 PASS rows=3 locking=busy' "$$log" && \
 			grep -Fxq 'SAPOTE SQLITE PHASE2 PASS rows=3 sum=66 integrity=ok' "$$log" && \
 			grep -Fxq 'Sapote: upstream SQLite retained and verified three rows after reboot' "$$log" || \
+				diagnostics_ok=false ;; \
+		native-canvas) \
+			test "$$(grep -Ec '^SAPOTE CANVAS READY width=340 height=220$$' "$$log")" -eq 2 && \
+			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
+			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \
+			grep -Fxq 'Sapote: two native Canvas windows handled focus, input and partial damage' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

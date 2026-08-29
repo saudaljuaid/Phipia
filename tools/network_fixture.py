@@ -286,6 +286,11 @@ class Fixture:
         flags = 0x8180
         answers = 1
         suffix = b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04" + HTTP_IP
+        if name == b"malformed.test":
+            answer = identifier + b"\x81\x80\x00"
+            datagram = udp(DNS_IP, source_ip, 53, source_port, answer)
+            self.send_ipv4(GUEST_MAC, DNS_IP, source_ip, 17, datagram)
+            return
         if self.mode == "dns-nxdomain" or name != b"sapote.test":
             flags, answers, suffix = 0x8183, 0, b""
         elif self.mode == "dns-truncated":
@@ -330,8 +335,9 @@ class Fixture:
         return (b"HTTP/1.1 200 OK\r\nContent-Length: " +
                 str(len(WELCOME)).encode() + b"\r\nConnection: close\r\n\r\n" + WELCOME)
 
-    def send_tcp(self, peer: TcpPeer, flags: int, payload: bytes = b"") -> None:
-        segment = tcp(HTTP_IP, GUEST_IP, 80, peer.client_port,
+    def send_tcp(self, peer: TcpPeer, flags: int, payload: bytes = b"",
+                 source_port: int = 80) -> None:
+        segment = tcp(HTTP_IP, GUEST_IP, source_port, peer.client_port,
                       peer.server_next, peer.client_next, flags, payload)
         self.send_ipv4(GUEST_MAC, HTTP_IP, GUEST_IP, 6, segment)
         peer.server_next = (peer.server_next + len(payload) +
@@ -421,6 +427,11 @@ class Fixture:
         if session is not None and destination_port == session.local_port and \
                 source_port == session.remote_port:
             self.handle_client(segment)
+            return
+        if destination_port == 81 and flags & 0x02 and not flags & 0x10:
+            peer = TcpPeer(source_port, (sequence + 1) & 0xFFFFFFFF,
+                           0x62000000 + source_port)
+            self.send_tcp(peer, 0x14, source_port=destination_port)
             return
         if destination_port != 80:
             return
