@@ -158,8 +158,6 @@ static uint64_t next_window_generation = UINT64_C(1);
 static struct interrupt_process_gate native_gate;
 static bool scheduler_active;
 static size_t scheduler_process_cursor;
-static uint32_t futex_trace_count;
-static bool futex_trace_waiting;
 
 static void zero_bytes(void *pointer, size_t length)
 {
@@ -377,6 +375,18 @@ static bool validate_user_range(
         remaining -= chunk;
     }
     return true;
+}
+
+static bool validate_futex_word(
+    struct native_process *process,
+    uint64_t address
+)
+{
+    const struct native_page *page = page_at(process, address);
+
+    return (address & (sizeof(uint32_t) - 1U)) == 0U &&
+        page != NULL && page->permissions == PAGING_WRITE &&
+        validate_user_range(process, address, sizeof(uint32_t), false);
 }
 
 static bool copy_from_user(
@@ -3406,7 +3416,7 @@ static int64_t syscall_futex_wait(
     }
     if (request.size != sizeof(request) ||
         request.version != SAPOTE_ABI_VERSION || request.count != 0U ||
-        (request.address & (sizeof(uint32_t) - 1U)) != 0U ||
+        !validate_futex_word(process, request.address) ||
         !copy_from_user(process, &observed, request.address,
             sizeof(observed))) {
         return -SAPOTE_EINVAL;
@@ -3414,17 +3424,6 @@ static int64_t syscall_futex_wait(
     if (observed != request.expected) {
         return -SAPOTE_EAGAIN;
     }
-    if (futex_trace_count < 24U) {
-        console_write("Sapote: futex wait thread ");
-        console_write_u64(process->current_thread);
-        console_write(" address ");
-        console_write_hex(request.address);
-        console_write(" observed ");
-        console_write_u64(observed);
-        console_write("\n");
-        ++futex_trace_count;
-    }
-    futex_trace_waiting = true;
     thread->futex_address = request.address;
     thread->deadline_ns = request.deadline_ns;
     thread->state = NATIVE_THREAD_FUTEX_WAIT;
@@ -3437,41 +3436,16 @@ static int64_t syscall_futex_wake(
 )
 {
     struct sapote_futex_request request;
-    uint32_t observed = UINT32_MAX;
     size_t woken = 0U;
 
     if (!copy_from_user(process, &request, request_address,
             sizeof(request))) {
-        if (futex_trace_waiting) {
-            console_write("Sapote: futex wake request copy failed\n");
-            futex_trace_waiting = false;
-        }
         return -SAPOTE_EFAULT;
-    }
-    if (futex_trace_waiting) {
-        console_write("Sapote: futex wake request size ");
-        console_write_u64(request.size);
-        console_write(" version ");
-        console_write_u64(request.version);
-        console_write(" address ");
-        console_write_hex(request.address);
-        console_write(" deadline ");
-        console_write_u64(request.deadline_ns);
-        console_write(" expected ");
-        console_write_u64(request.expected);
-        console_write(" count ");
-        console_write_u64(request.count);
-        console_write(" writable ");
-        console_write(validate_user_range(process, request.address,
-            sizeof(uint32_t), true) ? "yes\n" : "no\n");
-        futex_trace_waiting = false;
     }
     if (request.size != sizeof(request) ||
         request.version != SAPOTE_ABI_VERSION || request.expected != 0U ||
         request.deadline_ns != 0U || request.count == 0U ||
-        (request.address & (sizeof(uint32_t) - 1U)) != 0U ||
-        !validate_user_range(process, request.address, sizeof(uint32_t),
-            true)) {
+        !validate_futex_word(process, request.address)) {
         return -SAPOTE_EINVAL;
     }
     for (size_t index = 0U; index < process->thread_count &&
@@ -3486,20 +3460,6 @@ static int64_t syscall_futex_wake(
             thread->context.rax = 0U;
             ++woken;
         }
-    }
-    (void)copy_from_user(process, &observed, request.address,
-        sizeof(observed));
-    if (futex_trace_count < 64U && (observed != 0U || woken != 0U)) {
-        console_write("Sapote: futex wake thread ");
-        console_write_u64(process->current_thread);
-        console_write(" address ");
-        console_write_hex(request.address);
-        console_write(" observed ");
-        console_write_u64(observed);
-        console_write(" woken ");
-        console_write_u64(woken);
-        console_write("\n");
-        ++futex_trace_count;
     }
     return (int64_t)woken;
 }
