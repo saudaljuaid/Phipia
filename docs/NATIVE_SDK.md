@@ -38,4 +38,3 @@ Sapote ABI rather than a Linux personality.
 client, and the Rust proof entirely from checked-in inputs. The Lua and SQLite
 scripts extract their pinned archives into disposable build directories and do
 not modify the upstream source archives.
-

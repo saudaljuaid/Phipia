@@ -14,4 +14,3 @@ to the port.
 `ports/*/source/SHA256SUMS` is consumed by the build, not merely documentary.
 Sapote-specific VFS, test application, manifests, and build scripts are
 GPL-3.0-only. Upstream notices remain unmodified.
-

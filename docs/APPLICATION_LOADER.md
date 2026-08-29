@@ -33,4 +33,3 @@ and address-space state. A userspace exception marks only its thread/process as
 faulted; the scheduler restores the kernel CR3 and FS base before cleanup. A
 failed image or crashed application must leave the native resource census equal
 to the pre-launch census.
-

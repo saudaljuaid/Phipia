@@ -26,4 +26,3 @@ Applications use `WAIT_READABLE` on the queue. Waiting parks the native thread,
 so another application continues rendering while input is absent. Closing the
 window or queue invalidates that handle immediately; the surface and Redwood
 slot disappear when both object references are gone or during process cleanup.
-

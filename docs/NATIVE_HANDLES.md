@@ -24,4 +24,3 @@ queue references disappear, closes/cancels network state by process owner,
 and releases thread and timer bookkeeping. The result records peak handles and
 is not considered clean until the table, address space, syscall gate, interrupt
 gate, windows, and network ownership are gone.
-

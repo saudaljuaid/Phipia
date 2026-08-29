@@ -25,4 +25,3 @@ profile:
 
 These are explicit refusals or absent interfaces. They are not represented by
 success-returning stubs.
-
