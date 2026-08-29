@@ -5589,8 +5589,26 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
      * select its second bounded page, then filter and launch Canvas. */
     redwood_proof_click_point(ui->layout.surface.width - 121U, 12U,
         "Sapote Redwood application search did not open");
-    redwood_proof_click_point(518U, 460U,
-        "Sapote Redwood application page did not activate");
+    {
+        uint32_t launcher_width = ui->layout.surface.width > 700U ? 620U :
+            ui->layout.surface.width - 80U;
+        uint32_t launcher_height = ui->layout.surface.height > 630U ? 440U :
+            ui->layout.surface.height - 160U;
+        const uint32_t maximum_height = ui->layout.dock.y - 44U;
+        uint32_t launcher_x;
+
+        if (launcher_width > ui->layout.surface.width - 40U) {
+            launcher_width = ui->layout.surface.width - 40U;
+        }
+        if (launcher_height > maximum_height) {
+            launcher_height = maximum_height;
+        }
+        launcher_x = (ui->layout.surface.width - launcher_width) / 2U;
+        redwood_proof_click_point(
+            launcher_x + (launcher_width - 36U) / 2U + 24U,
+            42U + launcher_height - 22U,
+            "Sapote Redwood application page did not activate");
+    }
     {
         struct keyboard_event launcher_key = {
             .scancode = 0x1CU, .pressed = true, .shift = false,
