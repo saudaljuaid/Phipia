@@ -6,22 +6,25 @@
 .extern sapote_runtime_initialize
 .weak sapote_application_entry_probe
 _start:
+    /* Preserve the loader contract across an optional instrumented probe. */
+    xorq %rbp, %rbp
+    andq $-16, %rsp
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    subq $8, %rsp
     movabsq $sapote_application_entry_probe, %rax
     testq %rax, %rax
     jz .Lruntime_start
     call *%rax
 .Lruntime_start:
-    xorq %rbp, %rbp
-    andq $-16, %rsp
-    subq $8, %rsp
-    pushq %rdi
-    pushq %rsi
-    pushq %rdx
+    movq 24(%rsp), %rdi
+    movq 16(%rsp), %rsi
+    movq 8(%rsp), %rdx
     call sapote_runtime_initialize
-    popq %rdx
-    popq %rsi
-    popq %rdi
-    addq $8, %rsp
+    movq 24(%rsp), %rdi
+    movq 16(%rsp), %rsi
+    movq 8(%rsp), %rdx
     call main
     movslq %eax, %rdi
     movq $1, %rax

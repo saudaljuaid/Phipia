@@ -210,11 +210,13 @@ static int file_and_handle_probes(void)
         sapote_handle_close((sapote_handle_t)duplicate) != 0) {
         return 27;
     }
+    puts("SAPOTE STORAGE typed duplicate stale-handle PASS");
     if (sapote_path_truncate(SAPOTE_VOLUME_DATA, "TMP/A.TXT", 3U) != 0 ||
         sapote_path_rename(SAPOTE_VOLUME_DATA, "TMP/A.TXT", "TMP/B.TXT") !=
             0) {
         return 28;
     }
+    puts("SAPOTE STORAGE truncate rename PASS");
     file = sapote_file_open(SAPOTE_VOLUME_DATA, "TMP/C.TXT",
         SAPOTE_OPEN_WRITE | SAPOTE_OPEN_CREATE | SAPOTE_OPEN_TRUNCATE);
     if (file < 0 || sapote_file_write((sapote_handle_t)file, replacement,
@@ -224,6 +226,7 @@ static int file_and_handle_probes(void)
             0) {
         return 29;
     }
+    puts("SAPOTE STORAGE replacement PASS");
     file = sapote_file_open(SAPOTE_VOLUME_DATA, "TMP/B.TXT", SAPOTE_OPEN_READ);
     if (file < 0 || sapote_file_read((sapote_handle_t)file, bytes,
             sizeof(bytes)) != (long)(sizeof(replacement) - 1U) ||
@@ -252,6 +255,7 @@ static int file_and_handle_probes(void)
     }
     if (!found) return 331;
     if (sapote_handle_close((sapote_handle_t)directory) != 0) return 332;
+    puts("SAPOTE STORAGE directory enumeration PASS");
     if (sapote_volume_space(SAPOTE_VOLUME_DATA, &space) != 0) return 333;
     if (space.total_bytes == 0U || space.free_bytes >= space.total_bytes) {
         return 334;
@@ -260,6 +264,7 @@ static int file_and_handle_probes(void)
     if (sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP/B.TXT") != 0) return 336;
     if (sapote_path_unlink(SAPOTE_VOLUME_DATA, "TMP") != 0) return 337;
     if (sapote_volume_sync(SAPOTE_VOLUME_DATA) != 0) return 338;
+    puts("SAPOTE STORAGE sync cleanup PASS");
     return 0;
 }
 
@@ -305,9 +310,16 @@ int main(int argc, char **argv, char **environment)
     int probe;
 
     if (sapote_syscall0(SAPOTE_SYS_ABI_VERSION) != SAPOTE_ABI_VERSION ||
-        argc < 1 || argv == NULL || environment == NULL) {
+        argc != 3 || argv == NULL || environment == NULL ||
+        strcmp(argv[0], "NATIVET.APP") != 0 ||
+        strcmp(argv[1], "alpha") != 0 || strcmp(argv[2], "beta") != 0 ||
+        argv[3] != NULL || strcmp(environment[0], "SAPOTE_ABI=1") != 0 ||
+        strcmp(environment[1], "SAPOTE_APP_ID=NATIVET") != 0 ||
+        strcmp(environment[2], "SAPOTE_DATA=NATIVET") != 0 ||
+        environment[3] != NULL) {
         return 10;
     }
+    puts("SAPOTE STARTUP argc argv environment auxiliary PASS");
     if (!initial_state_is_clean()) {
         return 11;
     }

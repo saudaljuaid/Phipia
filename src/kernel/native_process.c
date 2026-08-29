@@ -3754,6 +3754,32 @@ bool native_process_interrupt_active(void)
         process->address_space.state == PAGING_PROCESS_SPACE_ACTIVE;
 }
 
+static void report_user_backtrace(
+    struct native_process *process,
+    uint64_t frame_pointer
+)
+{
+    for (size_t depth = 0U; depth < 8U; ++depth) {
+        uint64_t words[2];
+
+        if ((frame_pointer & (sizeof(uint64_t) - 1U)) != 0U ||
+            !copy_from_user(process, words, frame_pointer, sizeof(words))) {
+            break;
+        }
+        console_write("Sapote: native backtrace ");
+        console_write_u64(depth);
+        console_write(" frame ");
+        console_write_hex(frame_pointer);
+        console_write(" return ");
+        console_write_hex(words[1]);
+        console_write("\n");
+        if (words[0] <= frame_pointer) {
+            break;
+        }
+        frame_pointer = words[0];
+    }
+}
+
 void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
 {
     struct native_process *process = running_process();
@@ -3806,6 +3832,7 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
             console_write(" rsi ");
             console_write_hex(frame->rsi);
             console_write("\n");
+            report_user_backtrace(process, frame->rbp);
             thread->state = NATIVE_THREAD_FAULTED;
             thread->exit_status = -SAPOTE_EFAULT;
             process->faulted = true;
