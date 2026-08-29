@@ -13,6 +13,7 @@
 #define FILE_APPEND 4U
 #define FILE_CONSOLE 8U
 #define FILE_STATIC 16U
+#define FILE_BUFFER_DIRTY 32U
 
 struct sapote_FILE {
     sapote_handle_t handle;
@@ -43,7 +44,9 @@ static int flush_locked(FILE *stream)
 {
     size_t offset = 0U;
 
-    if (stream->length == 0U || (stream->flags & FILE_WRITE) == 0U) {
+    if (stream->length == 0U ||
+        (stream->flags & (FILE_WRITE | FILE_BUFFER_DIRTY)) !=
+            (FILE_WRITE | FILE_BUFFER_DIRTY)) {
         return 0;
     }
     while (offset < stream->length) {
@@ -68,6 +71,7 @@ static int flush_locked(FILE *stream)
     }
     stream->length = 0U;
     stream->position = 0U;
+    stream->flags &= ~FILE_BUFFER_DIRTY;
     return 0;
 }
 
@@ -191,6 +195,10 @@ static size_t read_locked(void *pointer, size_t bytes, FILE *stream)
         errno = EBADF;
         return 0U;
     }
+    if ((stream->flags & FILE_BUFFER_DIRTY) != 0U &&
+        flush_locked(stream) == EOF) {
+        return 0U;
+    }
     if (stream->pushed >= 0 && bytes != 0U) {
         output[completed++] = (unsigned char)stream->pushed;
         stream->pushed = -1;
@@ -264,6 +272,24 @@ static size_t write_locked(const void *pointer, size_t bytes, FILE *stream)
         errno = EBADF;
         return 0U;
     }
+    if ((stream->flags & FILE_BUFFER_DIRTY) == 0U &&
+        stream->length != 0U) {
+        const size_t unread = stream->length - stream->position;
+        long seek_result = 0;
+
+        if ((stream->flags & FILE_CONSOLE) == 0U && unread != 0U) {
+            seek_result = sapote_file_seek(stream->handle, -(int64_t)unread,
+                SAPOTE_SEEK_CURRENT);
+        }
+        if (seek_result < 0) {
+            stream->error = 1U;
+            errno = (int)-seek_result;
+            return 0U;
+        }
+        stream->position = 0U;
+        stream->length = 0U;
+    }
+    stream->flags |= FILE_BUFFER_DIRTY;
     while (completed < bytes) {
         size_t chunk = sizeof(stream->buffer) - stream->length;
 
@@ -342,7 +368,9 @@ long ftell(FILE *stream)
     }
     sapote_runtime_lock(&stream->lock);
     result = sapote_file_seek(stream->handle, 0, SAPOTE_SEEK_CURRENT);
-    if (result >= 0 && (stream->flags & FILE_READ) != 0U) {
+    if (result >= 0 && (stream->flags & FILE_BUFFER_DIRTY) != 0U) {
+        result += (long)stream->length;
+    } else if (result >= 0 && (stream->flags & FILE_READ) != 0U) {
         result -= (long)(stream->length - stream->position);
     }
     sapote_runtime_unlock(&stream->lock);
