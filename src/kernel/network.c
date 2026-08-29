@@ -9,6 +9,7 @@
 #include <sapote/fat32_fs.h>
 #include <sapote/network.h>
 #include <sapote/random.h>
+#include <sapote/timer.h>
 #include <sapote/virtio_net.h>
 
 #define ETHERNET_HEADER_BYTES 14U
@@ -91,6 +92,8 @@
 #define NETWORK_OWNER_SHELL UINT64_C(1)
 #define BROADCAST_IPV4 UINT32_C(0xFFFFFFFF)
 #define DHCP_BUFFER_BYTES 576U
+#define NETWORK_WAIT_SLICE_NS UINT64_C(10000000)
+#define NETWORK_WAIT_MINIMUM_NS UINT64_C(100000)
 
 enum arp_entry_state {
     ARP_ENTRY_EMPTY = 0,
@@ -400,13 +403,56 @@ static bool deadline_valid(uint64_t timeout_ns)
  * Synchronous protocol operations are permitted to block their caller, but
  * must not burn Sapote's single core while waiting for a packet or deadline.
  * Every caller invokes this only after pumping the device and rechecking its
- * completion state.  sti;hlt also closes the check-to-sleep interrupt race.
+ * completion state. A device interrupt returns immediately. A short deadline
+ * timer closes the already-delivered-interrupt race and guarantees another
+ * pump even when a device completes just before the CPU halts.
  */
-static void network_wait_for_interrupt(void)
+static void network_wait_deadline(uint64_t deadline_ns, void *context)
 {
-    if (cpu_interrupts_enabled()) {
-        cpu_enable_and_halt();
+    bool *expired = context;
+
+    (void)deadline_ns;
+    if (expired != NULL) {
+        *expired = true;
     }
+}
+
+static bool network_wait_for_interrupt(uint64_t deadline_ns)
+{
+    uint64_t identifier = 0U;
+    uint64_t now;
+    uint64_t interval;
+    uint64_t wake_deadline;
+    bool expired = false;
+
+    if (!cpu_interrupts_enabled()) {
+        return false;
+    }
+    now = clock_monotonic_ns();
+    if (deadline_ns <= now) {
+        return true;
+    }
+    interval = deadline_ns - now;
+    if (interval > NETWORK_WAIT_SLICE_NS) {
+        interval = NETWORK_WAIT_SLICE_NS;
+    }
+    if (interval < NETWORK_WAIT_MINIMUM_NS || now > UINT64_MAX - interval) {
+        return true;
+    }
+    wake_deadline = now + interval;
+    cpu_interrupt_disable();
+    if (timer_arm(wake_deadline, network_wait_deadline, &expired,
+            &identifier) != TIMER_STATUS_OK) {
+        cpu_interrupt_enable();
+        return false;
+    }
+    cpu_enable_and_halt();
+    cpu_interrupt_disable();
+    if (!expired && timer_cancel(identifier) != TIMER_STATUS_OK) {
+        console_panic("network wait could not cancel its deadline");
+    }
+    cpu_interrupt_enable();
+    return true;
 }
 
 static bool timer_acquire(void)
@@ -714,7 +760,12 @@ static enum network_status arp_resolve(
             }
             if (clock_monotonic_ns() < deadline &&
                 clock_monotonic_ns() < attempt_end) {
-                network_wait_for_interrupt();
+                if (!network_wait_for_interrupt(attempt_end < deadline ?
+                        attempt_end : deadline)) {
+                    entry->state = ARP_ENTRY_EMPTY;
+                    timer_release();
+                    return NETWORK_STATUS_NO_RESOURCES;
+                }
             }
         }
     }
@@ -1414,7 +1465,9 @@ static enum network_status wait_dhcp(uint64_t deadline, uint8_t expected)
     while (clock_monotonic_ns() < deadline) {
         (void)network_service();
         if (!runtime.dhcp.received) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
             continue;
         }
         if (runtime.dhcp.message == DHCP_NAK) {
@@ -1424,7 +1477,9 @@ static enum network_status wait_dhcp(uint64_t deadline, uint8_t expected)
             return NETWORK_STATUS_OK;
         }
         runtime.dhcp.received = false;
-        network_wait_for_interrupt();
+        if (!network_wait_for_interrupt(deadline)) {
+            return NETWORK_STATUS_NO_RESOURCES;
+        }
     }
     return NETWORK_STATUS_TIMEOUT;
 }
@@ -1468,7 +1523,8 @@ enum network_status network_start_dhcp(uint64_t timeout_ns)
             continue;
         }
         status = wait_dhcp(deadline, DHCP_OFFER);
-        if (status == NETWORK_STATUS_OK || status == NETWORK_STATUS_DHCP_NAK) {
+        if (status == NETWORK_STATUS_OK || status == NETWORK_STATUS_DHCP_NAK ||
+                status == NETWORK_STATUS_NO_RESOURCES) {
             break;
         }
     }
@@ -1790,9 +1846,14 @@ static enum network_status dns_parse_response(
     size_t cname_follows = 0U;
 
     if (!runtime.dns_query.waiting ||
-        source != runtime.public.configuration.dns_server ||
-        length < DNS_HEADER_BYTES || length > NETWORK_MAX_DNS_MESSAGE ||
+        source != runtime.public.configuration.dns_server || length < 2U ||
         read_be16(bytes + 0U) != runtime.dns_query.identifier) {
+        return NETWORK_STATUS_DNS_FAILURE;
+    }
+    if (length < DNS_HEADER_BYTES || length > NETWORK_MAX_DNS_MESSAGE) {
+        ++runtime.public.statistics.malformed_packets;
+        runtime.dns_query.status = NETWORK_STATUS_DNS_FAILURE;
+        runtime.dns_query.received = true;
         return NETWORK_STATUS_DNS_FAILURE;
     }
     flags = read_be16(bytes + 2U);
@@ -1969,7 +2030,12 @@ enum network_status network_resolve(
             }
             if (clock_monotonic_ns() < deadline &&
                 clock_monotonic_ns() < attempt_end) {
-                network_wait_for_interrupt();
+                if (!network_wait_for_interrupt(attempt_end < deadline ?
+                        attempt_end : deadline)) {
+                    runtime.dns_query.waiting = false;
+                    timer_release();
+                    return NETWORK_STATUS_NO_RESOURCES;
+                }
             }
         }
         if (runtime.dns_query.received) {
@@ -2447,7 +2513,9 @@ static enum network_status tcp_wait_ack(
         }
         if (connection->send_unacknowledged != connection->send_next &&
             clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
         }
     }
     return NETWORK_STATUS_TIMEOUT;
@@ -2573,7 +2641,10 @@ enum network_status network_udp_receive(
             return socket->error;
         }
         if (socket->queue_count == 0U && clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                timer_release();
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
         }
     }
     if (socket->queue_count == 0U) {
@@ -2691,7 +2762,10 @@ enum network_status network_tcp_connect(
         }
         if (connection->state == TCP_CONNECTION_SYN_SENT &&
             clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                status = NETWORK_STATUS_NO_RESOURCES;
+                break;
+            }
         }
     }
     if (connection->state == TCP_CONNECTION_ESTABLISHED) {
@@ -2850,7 +2924,10 @@ enum network_status network_tcp_accept(
             return NETWORK_STATUS_OK;
         }
         if (clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                timer_release();
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
         }
     } while (clock_monotonic_ns() < deadline);
     timer_release();
@@ -2952,7 +3029,10 @@ enum network_status network_tcp_read(
         if (connection->receive_bytes == 0U && !connection->peer_closed &&
             connection->error == NETWORK_STATUS_OK &&
             clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                timer_release();
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
         }
     }
     if (connection->error != NETWORK_STATUS_OK) {
@@ -3033,7 +3113,10 @@ enum network_status network_tcp_shutdown(
         }
         if (connection->state != TCP_CONNECTION_CLOSED &&
             clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                status = NETWORK_STATUS_NO_RESOURCES;
+                break;
+            }
         }
     }
     if (connection->state == TCP_CONNECTION_CLOSED) {
@@ -3132,7 +3215,11 @@ enum network_status network_ping(
             (void)network_service();
             if (!runtime.ping.received &&
                 clock_monotonic_ns() < deadline) {
-                network_wait_for_interrupt();
+                if (!network_wait_for_interrupt(deadline)) {
+                    runtime.ping.waiting = false;
+                    timer_release();
+                    return NETWORK_STATUS_NO_RESOURCES;
+                }
             }
         }
         result->result[index] = runtime.ping.received ?
@@ -3307,7 +3394,10 @@ enum network_status network_poll(
             return NETWORK_STATUS_OK;
         }
         if (clock_monotonic_ns() < deadline) {
-            network_wait_for_interrupt();
+            if (!network_wait_for_interrupt(deadline)) {
+                timer_release();
+                return NETWORK_STATUS_NO_RESOURCES;
+            }
         }
     } while (clock_monotonic_ns() < deadline);
     for (size_t index = 0U; index < request_count; ++index) {

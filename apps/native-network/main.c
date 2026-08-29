@@ -63,7 +63,7 @@ static int exercise_udp(uint32_t address)
     long count;
 
     if (opened < 0) {
-        return -1;
+        return -10;
     }
     const sapote_handle_t datagram = (sapote_handle_t)opened;
     if (sapote_datagram_bind(datagram, 50010U) < 0 ||
@@ -72,7 +72,7 @@ static int exercise_udp(uint32_t address)
         sapote_datagram_send(datagram, &destination, message,
             sizeof(message) - 1U, deadline()) != (long)(sizeof(message) - 1U)) {
         (void)close_handle(datagram);
-        return -1;
+        return -11;
     }
     count = sapote_datagram_receive(datagram, &source, response,
         sizeof(response), deadline());
@@ -80,7 +80,7 @@ static int exercise_udp(uint32_t address)
         source.address != address || source.port != 4242U ||
         memcmp(response, message, sizeof(message) - 1U) != 0 ||
         close_handle(datagram) != 0) {
-        return -1;
+        return -12;
     }
     return 0;
 }
@@ -92,38 +92,41 @@ static int exercise_failures(uint32_t address)
     sapote_handle_t stream;
 
     if (opened < 0) {
-        return -1;
+        return -20;
     }
     stream = (sapote_handle_t)opened;
     if (sapote_stream_connect(stream, &endpoint, deadline()) != -SAPOTE_EIO ||
         close_handle(stream) != 0) {
-        return -1;
+        return -21;
     }
 
     opened = sapote_stream_open();
     if (opened < 0) {
-        return -1;
+        return -22;
     }
     stream = (sapote_handle_t)opened;
     endpoint.port = 82U;
     if (sapote_stream_connect(stream, &endpoint,
             sapote_monotonic_ns() + UINT64_C(150000000)) !=
             -SAPOTE_ETIMEDOUT || close_handle(stream) != 0) {
-        return -1;
+        return -23;
     }
 
     opened = sapote_stream_open();
     if (opened < 0) {
-        return -1;
+        return -24;
     }
     stream = (sapote_handle_t)opened;
     if (sapote_network_cancel(stream) < 0 ||
         sapote_stream_connect(stream, &endpoint, deadline()) !=
             -SAPOTE_ECANCELED || close_handle(stream) != 0) {
-        return -1;
+        return -25;
     }
-    if (sapote_dns_resolve("malformed.test", deadline()) != -SAPOTE_EIO) {
-        return -1;
+    const long malformed = sapote_dns_resolve("malformed.test", deadline());
+    if (malformed != -SAPOTE_EIO) {
+        printf("SAPOTE NETAPP MALFORMED DNS result=%ld expected=%d\n",
+            malformed, -SAPOTE_EIO);
+        return -26;
     }
     return 0;
 }
@@ -164,6 +167,8 @@ int main(int argc, char **argv, char **environment)
     (void)argc;
     (void)argv;
     (void)environment;
+    (void)setvbuf(stdout, NULL, _IONBF, 0);
+    puts("SAPOTE NETAPP PHASE start");
     resolved = sapote_dns_resolve("sapote.test", deadline());
     if (resolved != (long)HTTP_ADDRESS) {
         return 30;
@@ -215,10 +220,17 @@ int main(int argc, char **argv, char **environment)
         return 35;
     }
     puts("SAPOTE NETAPP PHASE data-sync PASS");
-    if (exercise_udp(HTTP_ADDRESS) != 0 ||
-        exercise_failures(HTTP_ADDRESS) != 0 ||
-        leave_handles_for_process_teardown() != 0) {
-        return 36;
+    {
+        const int udp = exercise_udp(HTTP_ADDRESS);
+        const int failures = udp == 0 ? exercise_failures(HTTP_ADDRESS) : 0;
+        const int teardown = udp == 0 && failures == 0 ?
+            leave_handles_for_process_teardown() : 0;
+
+        if (udp != 0 || failures != 0 || teardown != 0) {
+            printf("SAPOTE NETAPP FAILURE udp=%d failures=%d teardown=%d\n",
+                udp, failures, teardown);
+            return 36;
+        }
     }
     puts("SAPOTE NETAPP PHASE udp-failures-teardown PASS");
     printf("SAPOTE NETAPP PASS dns=10.0.2.20 http=%u udp=echo timeout reset cancel malformed-dns\n",

@@ -3847,6 +3847,7 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
             thread->state = NATIVE_THREAD_FAULTED;
             thread->exit_status = -SAPOTE_EFAULT;
             process->faulted = true;
+            terminate_process(process, -SAPOTE_EFAULT);
         }
     }
     if (!valid && process != NULL) {
