@@ -3758,6 +3758,15 @@ void native_process_on_interrupt(struct interrupt_frame *frame, void *context)
             record_context_transition(process, without_cycles, fpu_cycles);
         }
         if (frame->vector < INTERRUPT_EXCEPTION_COUNT) {
+            console_write("Sapote: native thread fault vector ");
+            console_write_u64(frame->vector);
+            console_write(" error ");
+            console_write_hex(frame->error_code);
+            console_write(" rip ");
+            console_write_hex(frame->rip);
+            console_write(" address ");
+            console_write_hex(frame->cr2);
+            console_write("\n");
             thread->state = NATIVE_THREAD_FAULTED;
             thread->exit_status = -SAPOTE_EFAULT;
             process->faulted = true;
@@ -4058,6 +4067,10 @@ static void report_scheduler_stall(void)
             console_write_u64(thread->generation);
             console_write(" state ");
             console_write_u64((uint64_t)thread->state);
+            console_write(" rip ");
+            console_write_hex(thread->context.rip);
+            console_write(" rsp ");
+            console_write_hex(thread->context.rsp);
             console_write(" wait-generation ");
             console_write_u64(thread->wait_generation);
             console_write(" futex ");
