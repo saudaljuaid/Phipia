@@ -32,7 +32,7 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	nvidia nvidia-builtin native
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
 EXPECTED_TEST_SCENARIO_COUNT := 102
-EXPECTED_SHELL_ASSERTION_COUNT := 410
+EXPECTED_SHELL_ASSERTION_COUNT := 415
 
 CC := gcc
 LD := ld
