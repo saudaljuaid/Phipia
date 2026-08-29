@@ -4930,6 +4930,7 @@ _Noreturn void kernel_test_complete_native_canvas(void)
     struct native_process_result result;
     uint64_t first_generation;
     uint64_t second_generation;
+    enum native_process_status run_status;
 
     if (active_scenario != KERNEL_TEST_NATIVE_CANVAS) {
         kernel_test_fail("Canvas completion used outside its scenario");
@@ -4941,12 +4942,38 @@ _Noreturn void kernel_test_complete_native_canvas(void)
         first_generation == 0U || second_generation <= first_generation) {
         kernel_test_fail("Canvas applications were not admitted together");
     }
-    if (native_process_run(&result) != NATIVE_PROCESS_OK || !result.exited ||
+    run_status = native_process_run(&result);
+    if (run_status != NATIVE_PROCESS_OK || !result.exited ||
         result.faulted || result.exit_status != 0 ||
         result.generation != second_generation || !result.resources_released ||
         result.syscall_count < 20U || result.thread_switches < 10U ||
         !native_process_resources_released() ||
         ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
+        console_write("Sapote: native Canvas run ");
+        console_write(native_process_status_string(run_status));
+        console_write(" generation ");
+        console_write_u64(result.generation);
+        console_write(" expected ");
+        console_write_u64(second_generation);
+        console_write(" exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" switches ");
+        console_write_u64(result.thread_switches);
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_write(" windows ");
+        console_write(ui_native_window_is_open(0U) ? "1" : "0");
+        console_write(ui_native_window_is_open(1U) ? "1" : "0");
+        console_putc('\n');
         kernel_test_fail("Canvas windows did not exit with a clean census");
     }
     console_write("Sapote: two native Canvas windows handled focus, input and partial damage\n");
