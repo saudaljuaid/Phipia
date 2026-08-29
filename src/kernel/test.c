@@ -544,6 +544,9 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "network-native")) {
         return KERNEL_TEST_NATIVE_NETWORK;
     }
+    if (token_equals(value, length, "native-rust")) {
+        return KERNEL_TEST_NATIVE_RUST;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -724,6 +727,7 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_NATIVE_SQLITE: return UINT8_C(0x78);
     case KERNEL_TEST_NATIVE_CANVAS: return UINT8_C(0x79);
     case KERNEL_TEST_NATIVE_NETWORK: return UINT8_C(0x7A);
+    case KERNEL_TEST_NATIVE_RUST: return UINT8_C(0x7B);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4690,6 +4694,7 @@ void kernel_test_run(
     case KERNEL_TEST_NATIVE_SQLITE:
     case KERNEL_TEST_NATIVE_CANVAS:
     case KERNEL_TEST_NATIVE_NETWORK:
+    case KERNEL_TEST_NATIVE_RUST:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4922,6 +4927,43 @@ _Noreturn void kernel_test_complete_native_network(void)
     }
     console_write("Sapote: native DNS, TCP, UDP, timeout, reset and cancellation passed\n");
     console_write("ST NETWORK production path bounded and recoverable\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_rust(void)
+{
+    static const uint8_t expected[] = "native Rust no_std ABI v1\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_RUST) {
+        kernel_test_fail("Rust completion used outside its scenario");
+    }
+    if (native_process_launch("RUSTAPP.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 12U ||
+        result.thread_switches == 0U || !native_process_resources_released()) {
+        kernel_test_fail("Rust application did not exit with a clean census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("Rust application output is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+        kernel_test_fail("Rust application output is wrong");
+    }
+    console_write("Sapote: no_std Rust application used native ABI v1 services\n");
     kernel_test_pass();
 }
 
@@ -8360,6 +8402,8 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "native-canvas";
     case KERNEL_TEST_NATIVE_NETWORK:
         return "network-native";
+    case KERNEL_TEST_NATIVE_RUST:
+        return "native-rust";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

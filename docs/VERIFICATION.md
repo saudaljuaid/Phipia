@@ -20,7 +20,7 @@ rejects warnings, unresolved symbols, unexpected sections, W+X mappings,
 floating-point or SIMD instructions in the kernel, modified pinned assets, and
 non-reproducible filesystem images.
 
-`make qemu-tests` runs the complete 106-scenario guest suite. The Makefile is
+`make qemu-tests` runs the complete 107-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
 
 ## Coverage

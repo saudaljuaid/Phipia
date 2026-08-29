@@ -29,16 +29,18 @@ TEST_SCENARIOS := normal breakpoint invalid-opcode page-fault ist pit unexpected
 	network-notes network-studio network-persistence network-socket-isolation \
 	network-tcp-listen network-tcp-refused network-native \
 	multiprocess multiprocess-slots driver-matrix driver-matrix-builtin audio \
-	nvidia nvidia-builtin native native-lua native-sqlite native-canvas
+	nvidia nvidia-builtin native native-lua native-sqlite native-canvas \
+	native-rust
 TEST_TARGETS := $(addprefix qemu-test-,$(TEST_SCENARIOS))
-EXPECTED_TEST_SCENARIO_COUNT := 106
-EXPECTED_SHELL_ASSERTION_COUNT := 425
+EXPECTED_TEST_SCENARIO_COUNT := 107
+EXPECTED_SHELL_ASSERTION_COUNT := 427
 
 CC := gcc
 LD := ld
 NM := nm
 OBJDUMP := objdump
 RUSTC := rustc
+CARGO := cargo
 PYTHON := python3
 SDK_CC ?= clang
 SDK_LD ?= ld.lld
@@ -190,6 +192,20 @@ NETAPP_APP := $(NETAPP_DIR)/NETAPP.APP
 NETAPP_PACKAGE := $(NETAPP_DIR)/NETAPP.SPK
 NETAPP_SYSTEM_IMAGE := $(NETAPP_DIR)/system.raw
 NETAPP_DATA_IMAGE := $(NETAPP_DIR)/data.raw
+RUST_APP_DIR := $(BUILD_DIR)/native-rust
+RUST_APP_CARGO_TARGET := $(RUST_APP_DIR)/cargo
+RUST_APP_SOURCE := $(RUST_APP_CARGO_TARGET)/x86_64-unknown-none/release/sapote-native-rust-proof
+RUST_APP := $(RUST_APP_DIR)/RUST.APP
+RUST_APP_PACKAGE := $(RUST_APP_DIR)/RUSTAPP.SPK
+RUST_APP_SYSTEM_IMAGE := $(RUST_APP_DIR)/system.raw
+RUST_APP_DATA_IMAGE := $(RUST_APP_DIR)/data.raw
+RUST_APP_FLAGS := -Dwarnings -C panic=abort -C relocation-model=static \
+	-C code-model=large -C link-arg=-nostdlib -C link-arg=-static \
+	-C link-arg=--gc-sections -C link-arg=--build-id=none \
+	-C link-arg=-z -C link-arg=max-page-size=0x1000 \
+	-C link-arg=-z -C link-arg=noexecstack -C link-arg=--fatal-warnings \
+	-C link-arg=--orphan-handling=error \
+	-C link-arg=-T../../sdk/linker.ld
 
 CPPFLAGS := -Iinclude
 COMMON_FLAGS := -m64 -g -ffreestanding -fno-pie -fno-stack-protector
@@ -298,6 +314,9 @@ $(CANVAS_APP_DIR):
 $(NETAPP_DIR):
 	mkdir -p $@
 
+$(RUST_APP_DIR):
+	mkdir -p $@
+
 $(NATIVE_APP_DIR)/native-test.o: apps/native-test/main.c \
 		$(SDK_BUILD_DIR)/.installed | $(NATIVE_APP_DIR)
 	$(SDK_CC) $(SDK_CFLAGS) -c $< -o $@
@@ -393,6 +412,27 @@ $(NETAPP_SYSTEM_IMAGE): $(NETAPP_PACKAGE) tools/sapote-package.py \
 $(NETAPP_DATA_IMAGE): tools/fat32_image.py | $(NETAPP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
+$(RUST_APP): apps/native-rust/Cargo.toml apps/native-rust/Cargo.lock \
+		apps/native-rust/manifest.json apps/native-rust/src/main.rs \
+		rust/sapote/Cargo.toml rust/sapote/src/lib.rs sdk/linker.ld | $(RUST_APP_DIR)
+	CARGO_TARGET_DIR='$(CURDIR)/$(RUST_APP_CARGO_TARGET)' \
+		RUSTFLAGS='$(RUST_APP_FLAGS)' $(CARGO) build \
+		--manifest-path apps/native-rust/Cargo.toml --release \
+		--target x86_64-unknown-none --locked --offline
+	cp '$(RUST_APP_SOURCE)' $@
+
+$(RUST_APP_PACKAGE): $(RUST_APP) apps/native-rust/manifest.json
+	$(PYTHON) tools/sapote-package.py build \
+		--spec apps/native-rust/manifest.json --executable $< --output $@
+
+$(RUST_APP_SYSTEM_IMAGE): $(RUST_APP_PACKAGE) tools/sapote-package.py \
+		tools/fat32_image.py
+	$(PYTHON) tools/sapote-package.py install-system \
+		--output $@ $(RUST_APP_PACKAGE)
+
+$(RUST_APP_DATA_IMAGE): tools/fat32_image.py | $(RUST_APP_DIR)
+	$(PYTHON) tools/fat32_image.py format data $@
+
 $(NATIVE_SYSTEM_IMAGE): $(NATIVE_TEST_PACKAGE) tools/sapote-package.py \
 		tools/fat32_image.py
 	$(PYTHON) tools/sapote-package.py install-system \
@@ -402,7 +442,7 @@ $(NATIVE_DATA_IMAGE): tools/fat32_image.py | $(NATIVE_APP_DIR)
 	$(PYTHON) tools/fat32_image.py format data $@
 
 native-apps: $(NATIVE_TEST_PACKAGE) $(LUA_PACKAGE) $(SQLITE_PACKAGE) \
-	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE)
+	$(CANVAS_PACKAGE) $(NETAPP_PACKAGE) $(RUST_APP_PACKAGE)
 
 port-tests: native-apps
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NATIVE_TEST_APP)' \
@@ -417,16 +457,19 @@ port-tests: native-apps
 		$(RUST_NATIVE_IMAGE_TEST)
 	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(NETAPP_APP)' \
 		$(RUST_NATIVE_IMAGE_TEST)
+	SAPOTE_NATIVE_TEST_ELF='$(CURDIR)/$(RUST_APP)' \
+		$(RUST_NATIVE_IMAGE_TEST)
 	$(PYTHON) -u tools/sapote_package_host_test.py
 	$(PYTHON) tools/sapote-package.py inspect $(NATIVE_TEST_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(LUA_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(SQLITE_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(CANVAS_PACKAGE)
 	$(PYTHON) tools/sapote-package.py inspect $(NETAPP_PACKAGE)
+	$(PYTHON) tools/sapote-package.py inspect $(RUST_APP_PACKAGE)
 
 qemu-port-tests: qemu-test-native qemu-test-native-lua qemu-test-native-sqlite \
-	qemu-test-native-canvas qemu-test-network-native
-	@echo 'native userspace, Lua, SQLite, Canvas and network QEMU scenarios passed'
+	qemu-test-native-canvas qemu-test-network-native qemu-test-native-rust
+	@echo 'native userspace, Lua, SQLite, Canvas, network and Rust QEMU scenarios passed'
 
 contract-counts:
 	@printf '%s %s\n' '$(EXPECTED_TEST_SCENARIO_COUNT)' \
@@ -1535,6 +1578,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		native-lua) expected=239 ;; \
 		native-sqlite) expected=241 ;; \
 		native-canvas) expected=243 ;; \
+		native-rust) expected=247 ;; \
 		*) echo 'unknown QEMU scenario: $*'; exit 1 ;; \
 	esac; \
 		# The ECAM and device-window scenarios depart from the default machine. \
@@ -1578,6 +1622,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 				$(MAKE) '$(CANVAS_SYSTEM_IMAGE)' '$(CANVAS_DATA_IMAGE)' || exit 1; \
 				cp '$(CANVAS_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
 				hardware='-boot order=d -blockdev driver=file,filename=$(CANVAS_SYSTEM_IMAGE),node-name=canvas-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=canvas-system-file,node-name=canvas-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=canvas-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=canvas-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=canvas-data-file,node-name=canvas-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=canvas-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
+			native-rust) \
+				$(MAKE) '$(RUST_APP_SYSTEM_IMAGE)' '$(RUST_APP_DATA_IMAGE)' || exit 1; \
+				cp '$(RUST_APP_DATA_IMAGE)' '$(TEST_BUILD_DIR)/$*/data.raw' || exit 1; \
+				hardware='-boot order=d -blockdev driver=file,filename=$(RUST_APP_SYSTEM_IMAGE),node-name=rust-system-file,read-only=on,auto-read-only=off -blockdev driver=raw,file=rust-system-file,node-name=rust-system-raw,read-only=on -device nvme,serial=sapote-system-fat32,drive=rust-system-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1 -blockdev driver=file,filename=$(TEST_BUILD_DIR)/$*/data.raw,node-name=rust-data-file,read-only=off,auto-read-only=off -blockdev driver=raw,file=rust-data-file,node-name=rust-data-raw,read-only=off -device nvme,serial=sapote-data-fat32,drive=rust-data-raw,logical_block_size=512,physical_block_size=512,max_ioqpairs=1,msix_qsize=1' ;; \
 			device-substrate) \
 				hardware='-object rng-builtin,id=rng0 -device virtio-rng-pci,disable-legacy=on,rng=rng0' ;; \
 			xhci) \
@@ -1641,6 +1689,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 		fat32-*|native|native-lua) timeout_seconds=45 ;; \
 		native-sqlite) timeout_seconds=90 ;; \
 		native-canvas) timeout_seconds=60 ;; \
+		native-rust) timeout_seconds=45 ;; \
 	esac; \
 	if test '$*' = fat32-persistence -o '$*' = native-sqlite; then reboot_control=''; fi; \
 	monitor_argument='-monitor none'; injector=''; injection_result=0; \
@@ -2017,6 +2066,10 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			test "$$(grep -Ec '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[0-9]+ pointer=[0-9]+ partial=[1-9][0-9]*$$' "$$log")" -eq 2 && \
 			grep -Eq '^SAPOTE CANVAS PASS focus=[1-9][0-9]* key=[1-9][0-9]* pointer=[1-9][0-9]* partial=[1-9][0-9]*$$' "$$log" && \
 			grep -Fxq 'Sapote: two native Canvas windows handled focus, input and partial damage' "$$log" || \
+				diagnostics_ok=false ;; \
+		native-rust) \
+			grep -Fxq 'SAPOTE RUST PASS alloc file time entropy thread' "$$log" && \
+			grep -Fxq 'Sapote: no_std Rust application used native ABI v1 services' "$$log" || \
 				diagnostics_ok=false ;; \
 	esac; \
 	if test "$$diagnostics_ok" != true; then \

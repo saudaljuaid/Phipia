@@ -183,8 +183,15 @@ boot_info:  .skip 4
 pml4_table: .skip 4096
 pdpt_table: .skip 4096
 pd_tables:  .skip (4 * 4096)
-.balign 16
-stack_bottom: .skip 16384
+.balign 4096
+/*
+ * The boot stack remains the kernel's control stack for non-userspace test
+ * and shell paths.  Native storage plus the bounded HTTP parser has a measured
+ * nested frame high-water mark above 16 KiB under GCC, so retain a finite
+ * 64 KiB stack instead of allowing a valid network operation to reach the
+ * adjacent boot tables and double-fault.
+ */
+stack_bottom: .skip 65536
 stack_top:
 
 .section .note.GNU-stack, "", @progbits

@@ -1,0 +1,14 @@
+{
+  "name": "Sapote Rust no_std proof",
+  "identifier": "RUSTAPP",
+  "executable": "RUST.APP",
+  "abi_version": 1,
+  "memory_limit": 33554432,
+  "max_handles": 16,
+  "max_threads": 2,
+  "capabilities": ["console", "data-write", "time", "entropy", "threads"],
+  "resource_directory": "",
+  "data_namespace": "RUSTAPP",
+  "icon": "",
+  "arguments": ["no-std"]
+}

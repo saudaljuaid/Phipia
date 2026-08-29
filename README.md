@@ -46,7 +46,7 @@ and six applications: Files, Terminal, Notes, SapStudio, Camera, and Settings.
   framebuffer repainting.
 - Functional Files, Notes, Settings, Terminal, Camera plumbing, and a native
   SapStudio workspace.
-- 106 QEMU scenarios covering boot, devices, storage, userspace, networking,
+- 107 QEMU scenarios covering boot, devices, storage, userspace, networking,
   and the Redwood interface.
 
 Camera reports real device availability and never substitutes a wallpaper or
@@ -73,8 +73,10 @@ and the system and data images.
 ## Design
 
 C and x86_64 assembly handle machine-facing work. Freestanding Rust validates
-complex or untrusted byte formats before the C kernel consumes them. The Boot
-Ledger orders startup dependencies and records which services were installed.
+complex or untrusted byte formats before the C kernel consumes them and also
+supports `no_std` native applications through a separate public crate. The
+Boot Ledger orders startup dependencies and records which services were
+installed.
 
 The build rejects warnings, unresolved symbols, unexpected linker sections,
 W+X mappings, floating-point or SIMD instructions in the kernel, and unsafe
@@ -83,7 +85,8 @@ shortcuts around required boot stages.
 ## Current limits
 
 Sapote remains single-core and targets a controlled QEMU hardware profile.
-Redwood has six fixed applications rather than a general application ABI.
+Redwood's built-in applications remain kernel-owned; native ABI applications
+use application-owned content surfaces inside kernel-composed windows.
 FAT32 currently uses a 64 MiB geometry, ASCII 8.3 names, 16 MiB files, and no
 journal. Networking is IPv4-only and has no TLS, firewall, routing, Wi-Fi, or
 physical-NIC support. User processes do not yet have `fork`, `exec`, signals,

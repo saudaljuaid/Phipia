@@ -18,12 +18,20 @@ SECTIONS
         *(.text .text.* .ltext .ltext.*)
     } :text
     . = ALIGN(0x1000);
-    .rodata : { *(.rodata .rodata.* .lrodata .lrodata.*) } :rodata
+    .rodata : {
+        *(.rodata .rodata.* .lrodata .lrodata.*)
+        *(.data.rel.ro .data.rel.ro.*)
+    } :rodata
     . = ALIGN(0x1000);
-    .data : { *(.data .data.* .ldata .ldata.*) } :data
+    .data : {
+        *(.data .data.* .ldata .ldata.*)
+        *(.got .got.*)
+    } :data
     .tdata : ALIGN(16) {
         __tls_start = .;
         *(.tdata .tdata.* .ltdata .ltdata.*)
+        /* Keep PT_TLS well-formed for languages with no static TLS symbols. */
+        BYTE(0)
         __tls_file_end = .;
     } :data :tls
     .tbss (NOLOAD) : {
