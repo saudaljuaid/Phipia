@@ -12,17 +12,24 @@ converted into a compact album during the build and validated before display.
 Wallpaper restoration uses cached row copies so pointer and window movement do
 not repaint the complete screen.
 
-The 3D Dock contains Files, Terminal, Notes, SapStudio, Camera, and Settings.
+The 3D Dock contains Files, Terminal, Notes, SapStudio, Camera, Canvas, Store,
+and Settings.
 It uses fixed-point arithmetic for icon magnification, neighbor movement,
 reflections, tooltips, press feedback, and launch bounce. Dark appearance
 changes the shelf colour without changing its geometry or behavior.
 
 ## Windows
 
-All six applications can remain open. Clicking a window raises it; dragging
-the title bar moves it within the screen; the red close button closes it.
-Windows open from their Dock icon with a twelve-frame spring animation. The
-desktop repaints changed rectangles instead of the whole framebuffer.
+All eight Dock applications can remain open. Clicking a window raises it;
+dragging the title bar moves it within the screen. The red control closes, the
+violet control toggles maximized geometry, and the white/grey control minimizes
+the window to its live Dock item.
+Windows open from their Dock icon with a 16.16 fixed-point genie warp and
+return along the same path when closed or minimized. The finished window is
+captured once; each animation row is bounded, resampled, and driven by
+monotonic time rather than frame count. Other open windows remain composed
+behind it. The desktop repaints changed rectangles instead of the whole
+framebuffer.
 
 Interface text uses a build-time Inter atlas. The kernel reads a small
 proportional bitmap format and does not include a TrueType engine.
@@ -56,6 +63,19 @@ provider publishes complete 320×180 frames; capture writes the next available
 
 The standard QEMU configuration has no webcam and xHCI does not yet provide a
 UVC streaming transport. Camera therefore reports `No camera connected`.
+
+### Canvas
+
+Canvas is a native ABI v1 process with an application-owned drawing surface,
+Lucide tools, palette and brush sizing. It remains outside the kernel UI and
+presents bounded damage rectangles through the public graphics contract.
+
+### Store
+
+Store is a white, Inter-based catalog shell with searchable navigation and
+pinned Lucide icons. No packages are published in the built-in catalog yet;
+the Home, Installed, Updates, category, Settings, and About surfaces report
+that state directly without synthetic application listings.
 
 ### Terminal
 

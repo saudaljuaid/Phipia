@@ -201,12 +201,16 @@ back to C. See [`RUST.md`](RUST.md).
 `framebuffer.c` validates and maps the linear framebuffer. `surface.c` provides
 cached clipped drawing and damage tracking; `screen.c` implements text cells.
 `keyboard.c`, `pointer.c`, `shell.c`, and `ui.c` form the interactive boundary.
+`ui_anim.c` implements the bounded fixed-point window genie used by the
+interactive compositor; it snapshots pixels already owned by Redwood and does
+not introduce floating-point work into the kernel.
 
-Sapote Redwood is a bounded six-application workspace with a menu bar, native
-3D Dock, movable overlapping windows, Settings, Camera, Files, Notes,
-Terminal, and SapStudio. Native processes may additionally own bounded xRGB
-content surfaces while Redwood retains chrome, focus, stacking, movement,
-close controls, and composition. Its design and capture contract are in
+Sapote Redwood is a bounded eight-application workspace with a menu bar,
+native 3D Dock, movable overlapping windows, Settings, Store, Camera, Canvas,
+Files, Notes, Terminal, and SapStudio. Native processes may additionally own
+bounded xRGB content surfaces while Redwood retains chrome, focus, stacking,
+movement, close, maximize, minimize controls, and composition. Its design and
+capture contract are in
 [`REDWOOD.md`](REDWOOD.md) and [`NATIVE_GRAPHICS.md`](NATIVE_GRAPHICS.md).
 
 ## Repository map

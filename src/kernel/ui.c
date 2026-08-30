@@ -22,6 +22,7 @@
 #include <sapote/thread.h>
 #include <sapote/timer.h>
 #include <sapote/ui.h>
+#include <sapote/ui_anim.h>
 #include <sapote/ui_font.h>
 #include <sapote/wallpaper.h>
 
@@ -42,7 +43,7 @@
 #define UI_HERO_MAX_WIDTH 640U
 #define UI_HERO_HEIGHT 388U
 #define UI_HERO_TITLE_HEIGHT 24U
-#define UI_DOCK_WIDTH 574U
+#define UI_DOCK_WIDTH 652U
 #define UI_DOCK_ITEM_WIDTH 70U
 #define UI_DOCK_ITEM_HEIGHT 98U
 #define UI_DOCK_GAP 8U
@@ -66,7 +67,6 @@
 #define UI_WALLPAPER_COUNT 14U
 #define UI_CAMERA_SCENE_WIDTH 704U
 #define UI_CAMERA_SCENE_HEIGHT 424U
-#define UI_SPRING_TARGET 65536
 #define UI_SPRING_FRAME_NS UINT64_C(16000000)
 #define UI_REDRAW_DIAGNOSTIC_TILE 16U
 #define UI_REDRAW_DIAGNOSTIC_COLUMNS \
@@ -79,6 +79,12 @@
 #define UI_LAUNCHER_APPS_PER_PAGE 6U
 #define UI_LAUNCHER_MAX_PAGES 4U
 #define UI_APPLICATION_MANIFEST_BYTES 13U
+#define UI_STORE_QUERY_BYTES 32U
+#define UI_STORE_NAV_COUNT 13U
+#define UI_STORE_ICON_COLUMNS 8U
+#define UI_STORE_ICON_SIZE 32U
+#define UI_STORE_ICON_SHEET_WIDTH 256U
+#define UI_STORE_ICON_SHEET_HEIGHT 64U
 
 static const char label_files[] = "Files";
 static const char label_terminal[] = "Terminal";
@@ -86,13 +92,19 @@ static const char label_notes[] = "Notes";
 static const char label_studio[] = "SapStudio";
 static const char label_camera[] = "Camera";
 static const char label_canvas[] = "Canvas";
+static const char label_store[] = "Store";
 static const char label_settings[] = "Settings";
 
 static struct ui_state state;
 static struct surface *canvas;
 static struct ui_rect panel_home;
 static struct ui_rect panel_windows[UI_PANEL_COUNT];
+static struct ui_rect panel_restore[UI_PANEL_COUNT];
+static struct ui_rect panel_origins[UI_PANEL_COUNT];
+static bool panel_origin_valid[UI_PANEL_COUNT];
 static bool panel_open[UI_PANEL_COUNT];
+static bool panel_minimized[UI_PANEL_COUNT];
+static bool panel_maximized[UI_PANEL_COUNT];
 static enum ui_panel_id panel_order[UI_PANEL_COUNT - 1U];
 static size_t panel_order_count;
 static uint8_t panel_cascade;
@@ -127,6 +139,18 @@ static uint32_t canvas_icon_pixels[80U * 80U];
 static uint8_t canvas_icon_alpha[80U * 80U];
 static uint32_t canvas_icon_width;
 static uint32_t canvas_icon_height;
+static uint32_t store_icon_pixels[80U * 80U];
+static uint8_t store_icon_alpha[80U * 80U];
+static uint32_t store_icon_width;
+static uint32_t store_icon_height;
+static uint32_t store_ui_icon_pixels[
+    UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT
+];
+static uint8_t store_ui_icon_alpha[
+    UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT
+];
+static uint32_t store_ui_icon_width;
+static uint32_t store_ui_icon_height;
 static uint32_t settings_category_icon_pixels[256U * 192U];
 static uint8_t settings_category_icon_alpha[256U * 192U];
 static uint32_t settings_category_icon_width;
@@ -171,12 +195,16 @@ static char launcher_query[UI_LAUNCHER_QUERY_BYTES];
 static size_t launcher_query_length;
 static size_t launcher_page;
 static char application_launch_path[UI_APPLICATION_MANIFEST_BYTES];
+static uint8_t store_section;
+static bool store_search_focused;
+static char store_query[UI_STORE_QUERY_BYTES];
+static size_t store_query_length;
 static bool window_high_contrast;
 static bool keyboard_focus_wrap = true;
 static bool keyboard_focus_indicator = true;
 static bool cursor_large;
 static bool cursor_dark = true;
-static bool spring_motion = true;
+static bool window_motion = true;
 static bool window_shadows = true;
 static bool window_bevels = true;
 static bool window_title_gradient = true;
@@ -192,13 +220,21 @@ static uint32_t dock_backdrop_pixels[UI_MAX_WIDTH * 48U];
 static uint64_t redraw_tile_hashes[
     UI_REDRAW_DIAGNOSTIC_COLUMNS * UI_REDRAW_DIAGNOSTIC_ROWS
 ];
-static volatile bool panel_spring_active;
-static volatile bool panel_spring_force_settle;
-static volatile uint64_t panel_spring_timer_id;
-static int32_t panel_spring_position;
-static int32_t panel_spring_velocity;
-static uint64_t panel_spring_last_ns;
-static struct ui_rect panel_spring_origin;
+enum ui_anim_pending {
+    UI_ANIM_PENDING_NONE = 0,
+    UI_ANIM_PENDING_OPEN,
+    UI_ANIM_PENDING_CLOSE
+};
+
+static struct ui_anim panel_anim;
+static enum ui_panel_id panel_anim_panel;
+static struct ui_rect panel_anim_origin;
+static struct ui_rect panel_anim_frame;
+static enum ui_anim_pending panel_anim_pending;
+static bool panel_anim_driver;
+static struct ui_rect pending_native_origin;
+static bool pending_native_origin_valid;
+static volatile uint64_t motion_timer_id;
 static volatile bool dock_spring_active;
 static uint64_t dock_spring_last_ns;
 static struct dock3d_state dock_model;
@@ -279,32 +315,31 @@ static void native_focus_emit(enum ui_panel_id panel, bool focused)
     native_event_emit(panel, &event);
 }
 
-static void panel_spring_timer_wake(uint64_t deadline_ns, void *context);
+static void motion_timer_wake(uint64_t deadline_ns, void *context);
 
-static bool panel_spring_schedule_wake(uint64_t now)
+static bool motion_schedule_wake(uint64_t now)
 {
     uint64_t identifier = 0U;
-    const uint64_t deadline = now + UI_SPRING_FRAME_NS;
+    const uint64_t deadline = now + UI_ANIM_FRAME_NS;
 
-    if (deadline < now || timer_arm(deadline, panel_spring_timer_wake,
+    if (deadline < now || timer_arm(deadline, motion_timer_wake,
             NULL, &identifier) != TIMER_STATUS_OK) {
         return false;
     }
-    panel_spring_timer_id = identifier;
+    motion_timer_id = identifier;
     return true;
 }
 
-static void panel_spring_timer_wake(uint64_t deadline_ns, void *context)
+static void motion_timer_wake(uint64_t deadline_ns, void *context)
 {
     (void)deadline_ns;
     (void)context;
-    panel_spring_timer_id = 0U;
-    if (panel_spring_active || dock_spring_active) {
-        /* The shell continuously calls ui_flush(), so a wake-up failure is
-         * not a reason to jump either spring to its final pose.  Leaving the
-         * springs active preserves their rendered intermediate frames while
-         * ui_flush() advances them from the monotonic clock. */
-        (void)panel_spring_schedule_wake(clock_monotonic_ns());
+    motion_timer_id = 0U;
+    if (ui_anim_running(&panel_anim) || dock_spring_active) {
+        /* The monotonic clock owns progress.  This timer only wakes the idle
+         * shell so the next due frame is presented; missing one never changes
+         * the final pose or leaves a resource behind. */
+        (void)motion_schedule_wake(clock_monotonic_ns());
     }
 }
 
@@ -609,6 +644,51 @@ static enum ui_panel_id panel_for_element(enum ui_element_id element)
     return state.layout.dock_items[(size_t)element - 1U].panel;
 }
 
+static bool dock_index_for_panel(enum ui_panel_id panel, size_t *index)
+{
+    if (index == NULL || panel <= UI_PANEL_NONE || panel >= UI_PANEL_COUNT) {
+        return false;
+    }
+    for (size_t candidate = 0U; candidate < UI_DOCK_ITEM_COUNT;
+         ++candidate) {
+        if (state.layout.dock_items[candidate].panel == panel) {
+            *index = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+static struct ui_rect default_panel_origin(void)
+{
+    const uint32_t width = 58U;
+    const uint32_t height = 58U;
+    const uint32_t x = state.layout.dock.x +
+        (state.layout.dock.width > width ?
+            (state.layout.dock.width - width) / 2U : 0U);
+    const uint32_t y = state.layout.dock.y + 18U;
+
+    return (struct ui_rect){ x, y, width, height };
+}
+
+static struct ui_rect origin_for_panel(enum ui_panel_id panel, bool opening)
+{
+    size_t dock_index;
+
+    if (dock_index_for_panel(panel, &dock_index)) {
+        return state.layout.dock_items[dock_index].icon_bounds;
+    }
+    if (opening && pending_native_origin_valid) {
+        pending_native_origin_valid = false;
+        return pending_native_origin;
+    }
+    if (panel > UI_PANEL_NONE && panel < UI_PANEL_COUNT &&
+            panel_origin_valid[panel]) {
+        return panel_origins[panel];
+    }
+    return default_panel_origin();
+}
+
 static void install_panel_geometry(enum ui_panel_id panel)
 {
     const struct ui_rect window = panel > UI_PANEL_NONE &&
@@ -711,20 +791,22 @@ enum ui_status ui_layout_build(
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
         UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
         UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
+        UI_ELEMENT_DOCK_STORE,
         UI_ELEMENT_DOCK_SETTINGS
     };
     static const char *const labels[UI_DOCK_ITEM_COUNT] = {
         label_files, label_terminal, label_notes, label_studio,
-        label_camera, label_canvas, label_settings
+        label_camera, label_canvas, label_store, label_settings
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL, UI_ACTION_OPEN_NOTES,
         UI_ACTION_OPEN_STUDIO, UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
+        UI_ACTION_OPEN_STORE,
         UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_STORE, UI_PANEL_SETTINGS
     };
 
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
@@ -1505,17 +1587,23 @@ static enum ui_status draw_icon(
             studio_icon_width, studio_icon_height);
     } else if (id == UI_ELEMENT_DOCK_CAMERA ||
             id == UI_ELEMENT_DOCK_CANVAS ||
+            id == UI_ELEMENT_DOCK_STORE ||
             id == UI_ELEMENT_DOCK_SETTINGS) {
         const bool camera = id == UI_ELEMENT_DOCK_CAMERA;
         const bool drawing = id == UI_ELEMENT_DOCK_CANVAS;
+        const bool store = id == UI_ELEMENT_DOCK_STORE;
         const uint32_t *icon_pixels = camera ? camera_icon_pixels :
-            (drawing ? canvas_icon_pixels : settings_icon_pixels);
+            (drawing ? canvas_icon_pixels :
+                (store ? store_icon_pixels : settings_icon_pixels));
         const uint8_t *icon_alpha = camera ? camera_icon_alpha :
-            (drawing ? canvas_icon_alpha : settings_icon_alpha);
+            (drawing ? canvas_icon_alpha :
+                (store ? store_icon_alpha : settings_icon_alpha));
         const uint32_t source_width = camera ? camera_icon_width :
-            (drawing ? canvas_icon_width : settings_icon_width);
+            (drawing ? canvas_icon_width :
+                (store ? store_icon_width : settings_icon_width));
         const uint32_t source_height = camera ? camera_icon_height :
-            (drawing ? canvas_icon_height : settings_icon_height);
+            (drawing ? canvas_icon_height :
+                (store ? store_icon_height : settings_icon_height));
         uint32_t mark_width = bounds.width;
         uint32_t mark_height = mark_width * source_height / source_width;
 
@@ -1543,6 +1631,224 @@ static uint32_t centered_text_x(struct ui_rect bounds, const char *text)
         return bounds.x;
     }
     return bounds.x + (bounds.width - width) / 2U;
+}
+
+enum window_control_icon {
+    WINDOW_CONTROL_CLOSE = 0,
+    WINDOW_CONTROL_MAXIMIZE,
+    WINDOW_CONTROL_MINIMIZE
+};
+
+static bool sample_near_segment(
+    int64_t x,
+    int64_t y,
+    int64_t start_x,
+    int64_t start_y,
+    int64_t end_x,
+    int64_t end_y,
+    int64_t half_stroke
+)
+{
+    const int64_t line_x = end_x - start_x;
+    const int64_t line_y = end_y - start_y;
+    const int64_t sample_x = x - start_x;
+    const int64_t sample_y = y - start_y;
+    const int64_t dot = sample_x * line_x + sample_y * line_y;
+    const int64_t length_squared = line_x * line_x + line_y * line_y;
+
+    if (dot <= 0) {
+        return sample_x * sample_x + sample_y * sample_y <=
+            half_stroke * half_stroke;
+    }
+    if (dot >= length_squared) {
+        const int64_t distance_x = x - end_x;
+        const int64_t distance_y = y - end_y;
+
+        return distance_x * distance_x + distance_y * distance_y <=
+            half_stroke * half_stroke;
+    }
+    {
+        const int64_t cross = sample_x * line_y - sample_y * line_x;
+
+        return cross * cross <= half_stroke * half_stroke *
+            length_squared;
+    }
+}
+
+static bool sample_in_rounded_rectangle(
+    int64_t x,
+    int64_t y,
+    int64_t left,
+    int64_t top,
+    int64_t right,
+    int64_t bottom,
+    int64_t radius
+)
+{
+    int64_t distance_x = 0;
+    int64_t distance_y = 0;
+
+    if (x < left || x > right || y < top || y > bottom) {
+        return false;
+    }
+    if (x < left + radius) {
+        distance_x = left + radius - x;
+    } else if (x > right - radius) {
+        distance_x = x - (right - radius);
+    }
+    if (y < top + radius) {
+        distance_y = top + radius - y;
+    } else if (y > bottom - radius) {
+        distance_y = y - (bottom - radius);
+    }
+    return distance_x * distance_x + distance_y * distance_y <=
+        radius * radius;
+}
+
+static bool window_control_icon_sample(
+    enum window_control_icon icon,
+    int64_t x,
+    int64_t y
+)
+{
+    const int64_t half_stroke = 5;
+
+    if (icon == WINDOW_CONTROL_CLOSE) {
+        return sample_near_segment(x, y, 48, 48, 96, 96,
+                half_stroke) ||
+            sample_near_segment(x, y, 96, 48, 48, 96, half_stroke);
+    }
+    if (icon == WINDOW_CONTROL_MINIMIZE) {
+        return sample_near_segment(x, y, 44, 72, 100, 72, half_stroke);
+    }
+    {
+        const int64_t left = 36;
+        const int64_t top = 36;
+        const int64_t right = 108;
+        const int64_t bottom = 108;
+        const int64_t radius = 12;
+        const bool in_outer = sample_in_rounded_rectangle(x, y,
+            left - half_stroke, top - half_stroke,
+            right + half_stroke, bottom + half_stroke,
+            radius + half_stroke);
+        const bool in_inner = sample_in_rounded_rectangle(x, y,
+            left + half_stroke, top + half_stroke,
+            right - half_stroke, bottom - half_stroke,
+            radius > half_stroke ? radius - half_stroke : 0);
+
+        return in_outer && !in_inner;
+    }
+}
+
+static enum ui_status draw_window_control_disc(
+    struct ui_rect bounds,
+    struct ui_rect damage,
+    uint32_t border,
+    uint32_t fill
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+    const int64_t center_x = (int64_t)bounds.width * 4;
+    const int64_t center_y = (int64_t)bounds.height * 4;
+    const uint32_t diameter = bounds.width < bounds.height ? bounds.width :
+        bounds.height;
+    const int64_t outer_radius = (int64_t)diameter * 4 - 6;
+    const int64_t inner_radius = outer_radius - 8;
+
+    if (diameter < 12U || diameter > 24U) {
+        return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
+    }
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - bounds.x + x;
+            const uint32_t local_y = clipped.y - bounds.y + y;
+            uint32_t outer_covered = 0U;
+            uint32_t inner_covered = 0U;
+            uint32_t under;
+
+            for (uint32_t sample_y = 0U; sample_y < 4U; ++sample_y) {
+                for (uint32_t sample_x = 0U; sample_x < 4U; ++sample_x) {
+                    const int64_t sample_position_x =
+                        (int64_t)local_x * 8 + (int64_t)sample_x * 2 + 1;
+                    const int64_t sample_position_y =
+                        (int64_t)local_y * 8 + (int64_t)sample_y * 2 + 1;
+                    const int64_t distance_x = sample_position_x - center_x;
+                    const int64_t distance_y = sample_position_y - center_y;
+                    const int64_t distance_squared =
+                        distance_x * distance_x + distance_y * distance_y;
+
+                    if (distance_squared <= outer_radius * outer_radius) {
+                        ++outer_covered;
+                    }
+                    if (distance_squared <= inner_radius * inner_radius) {
+                        ++inner_covered;
+                    }
+                }
+            }
+            if (outer_covered == 0U) {
+                continue;
+            }
+            if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                    &under) != SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+            under = blend_packed(under, border,
+                (uint8_t)((outer_covered * UINT8_MAX + 8U) / 16U));
+            under = blend_packed(under, fill,
+                (uint8_t)((inner_covered * UINT8_MAX + 8U) / 16U));
+            if (surface_pixel(canvas, clipped.x + x, clipped.y + y, under) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
+}
+
+static enum ui_status draw_window_control_icon(
+    struct ui_rect bounds,
+    struct ui_rect damage,
+    enum window_control_icon icon,
+    uint32_t colour
+)
+{
+    const struct ui_rect clipped = rect_intersection(bounds, damage);
+
+    if (bounds.width != 18U || bounds.height != 18U) {
+        return UI_STATUS_RECTANGLE_OUT_OF_BOUNDS;
+    }
+    for (uint32_t y = 0U; y < clipped.height; ++y) {
+        for (uint32_t x = 0U; x < clipped.width; ++x) {
+            const uint32_t local_x = clipped.x - bounds.x + x;
+            const uint32_t local_y = clipped.y - bounds.y + y;
+            uint32_t covered = 0U;
+            uint32_t under;
+
+            for (uint32_t sample_y = 0U; sample_y < 4U; ++sample_y) {
+                for (uint32_t sample_x = 0U; sample_x < 4U; ++sample_x) {
+                    if (window_control_icon_sample(icon,
+                            (int64_t)local_x * 8 +
+                                (int64_t)sample_x * 2 + 1,
+                            (int64_t)local_y * 8 +
+                                (int64_t)sample_y * 2 + 1)) {
+                        ++covered;
+                    }
+                }
+            }
+            if (covered == 0U) {
+                continue;
+            }
+            if (surface_read_pixel(canvas, clipped.x + x, clipped.y + y,
+                    &under) != SURFACE_STATUS_OK ||
+                surface_pixel(canvas, clipped.x + x, clipped.y + y,
+                    blend_packed(under, colour,
+                        (uint8_t)((covered * UINT8_MAX + 8U) / 16U))) !=
+                    SURFACE_STATUS_OK) {
+                return UI_STATUS_SURFACE_FAILURE;
+            }
+        }
+    }
+    return UI_STATUS_OK;
 }
 
 static enum ui_status draw_window_title(
@@ -1577,33 +1883,51 @@ static enum ui_status draw_window_title(
         const struct ui_rect close = {
             title.x + 6U, title.y + 4U, 18U, 18U
         };
+        const struct ui_rect maximize = {
+            title.x + 28U, title.y + 4U, 18U, 18U
+        };
+        const struct ui_rect minimize = {
+            title.x + 50U, title.y + 4U, 18U, 18U
+        };
+        const uint32_t close_mark = active ? state.theme.white :
+            framebuffer_pack(0x78U, 0x2CU, 0x2AU);
+        const uint32_t maximize_mark = active ? state.theme.white :
+            framebuffer_pack(0x4EU, 0x35U, 0x62U);
+        const uint32_t minimize_mark = framebuffer_pack(
+            active ? 0x5CU : 0x78U, active ? 0x63U : 0x7EU,
+            active ? 0x68U : 0x82U);
 
-        /* Keep the close control recognisably red on background windows too.
-         * A compact traffic-light treatment reads much more cleanly than the
-         * old square button and never collapses into a grey X. */
-        status = draw_circle(close.x + 9U, close.y + 9U, 8U, damage,
-            framebuffer_pack(active ? 0x9EU : 0xA8U,
-                active ? 0x22U : 0x48U, active ? 0x1EU : 0x44U));
+        const uint32_t close_fill = framebuffer_pack(
+            active ? 0xF2U : 0xD9U, active ? 0x5FU : 0x6CU,
+            active ? 0x57U : 0x67U);
+        const uint32_t maximize_fill = framebuffer_pack(
+            active ? 0xA6U : 0x9BU, active ? 0x7DU : 0x86U,
+            active ? 0xC8U : 0xA9U);
+        const uint32_t minimize_fill = framebuffer_pack(
+            active ? 0xE8U : 0xD9U, active ? 0xEBU : 0xDDU,
+            active ? 0xEDU : 0xDFU);
+
+        status = draw_window_control_disc(close, damage,
+            close_fill, close_fill);
         if (status == UI_STATUS_OK) {
-            status = draw_circle(close.x + 9U, close.y + 9U, 7U, damage,
-                framebuffer_pack(active ? 0xF4U : 0xD9U,
-                    active ? 0x5BU : 0x6CU, active ? 0x52U : 0x67U));
+            status = draw_window_control_icon(close, damage,
+                WINDOW_CONTROL_CLOSE, close_mark);
         }
         if (status == UI_STATUS_OK) {
-            status = draw_circle(close.x + 6U, close.y + 5U, 2U, damage,
-                framebuffer_pack(0xFFU, 0xC5U, 0xBEU));
+            status = draw_window_control_disc(maximize, damage,
+                maximize_fill, maximize_fill);
         }
-        for (uint32_t step = 0U; step < 6U && status == UI_STATUS_OK;
-             ++step) {
-            const uint32_t mark = active ? state.theme.white :
-                framebuffer_pack(0x7FU, 0x27U, 0x24U);
-
-            status = fill_clipped((struct ui_rect){ close.x + 6U + step,
-                close.y + 6U + step, 1U, 1U }, damage, mark);
-            if (status == UI_STATUS_OK) {
-                status = fill_clipped((struct ui_rect){ close.x + 11U - step,
-                    close.y + 6U + step, 1U, 1U }, damage, mark);
-            }
+        if (status == UI_STATUS_OK) {
+            status = draw_window_control_icon(maximize, damage,
+                WINDOW_CONTROL_MAXIMIZE, maximize_mark);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_window_control_disc(minimize, damage,
+                minimize_fill, minimize_fill);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_window_control_icon(minimize, damage,
+                WINDOW_CONTROL_MINIMIZE, minimize_mark);
         }
     }
     if (status == UI_STATUS_OK) {
@@ -1706,6 +2030,10 @@ static uint8_t dock_icon_alpha_at(
         alpha = canvas_icon_alpha;
         source_width = canvas_icon_width;
         source_height = canvas_icon_height;
+    } else if (id == UI_ELEMENT_DOCK_STORE) {
+        alpha = store_icon_alpha;
+        source_width = store_icon_width;
+        source_height = store_icon_height;
     } else if (id == UI_ELEMENT_DOCK_SETTINGS) {
         alpha = settings_icon_alpha;
         source_width = settings_icon_width;
@@ -3317,7 +3645,7 @@ static enum ui_status draw_settings_control_page(
     }
     if (page == 6U) {
         status = draw_settings_row(0U, damage, "Fluid window motion",
-            spring_motion ? "Full" : "Reduced", true, spring_motion);
+            window_motion ? "Full" : "Reduced", true, window_motion);
         return status;
     }
     if (page == 7U) {
@@ -4717,57 +5045,315 @@ static enum ui_status draw_studio_app(struct ui_rect damage)
     return status;
 }
 
-static uint32_t spring_interpolate(
-    uint32_t origin,
-    uint32_t target,
-    int32_t position
-)
+static const char *store_nav_label(size_t index)
 {
-    int32_t bounded = position;
-    if (bounded < 0) {
-        bounded = 0;
-    } else if (bounded > 72000) {
-        bounded = 72000;
-    }
-    int64_t result = (int64_t)origin +
-        ((int64_t)target - (int64_t)origin) * bounded / UI_SPRING_TARGET;
-    if (result < 0) {
-        result = 0;
-    } else if (result > UINT32_MAX) {
-        result = UINT32_MAX;
-    }
-    return (uint32_t)result;
+    static const char *const labels[UI_STORE_NAV_COUNT] = {
+        "Home", "Installed", "Updates", "All Applications",
+        "Accessibility", "Creative", "Development", "Games",
+        "Internet", "System", "Utilities", "Settings", "About"
+    };
+
+    return index < UI_STORE_NAV_COUNT ? labels[index] : "Store";
 }
 
-static bool spring_advance_to(
-    int32_t *position,
-    int32_t *velocity,
-    int32_t target
-)
+static uint8_t store_nav_icon(size_t index)
 {
-    if (position == NULL || velocity == NULL) {
-        return false;
-    }
-    /* A 72/88 spring reaches the target in roughly 190 ms at 60 Hz: quick
-     * enough to feel light, with one small, bounded overshoot for character. */
-    const int64_t force = ((int64_t)target - *position) * 72 -
-        (int64_t)*velocity * 88;
-    *velocity += (int32_t)(force / 128);
-    *position += *velocity;
-    const int64_t distance = (int64_t)target - *position;
-    const int64_t speed = *velocity;
-    if ((distance < 0 ? -distance : distance) < 96 &&
-        (speed < 0 ? -speed : speed) < 96) {
-        *position = target;
-        *velocity = 0;
-        return true;
-    }
-    return false;
+    static const uint8_t icons[UI_STORE_NAV_COUNT] = {
+        0U, 1U, 2U, 5U, 6U, 9U, 7U, 8U,
+        10U, 13U, 14U, 3U, 4U
+    };
+
+    return index < UI_STORE_NAV_COUNT ? icons[index] : 15U;
 }
 
-static bool spring_advance(int32_t *position, int32_t *velocity)
+static uint32_t store_sidebar_width(void)
 {
-    return spring_advance_to(position, velocity, UI_SPRING_TARGET);
+    return state.layout.panel_client.width >= 700U ? 202U : 176U;
+}
+
+static struct ui_rect store_search_rect(void)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t width = store_sidebar_width();
+
+    return (struct ui_rect){ client.x + 12U, client.y + 11U,
+        width - 24U, 30U };
+}
+
+static struct ui_rect store_nav_rect(size_t index)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t width = store_sidebar_width();
+    uint32_t y;
+
+    if (index < 3U) {
+        y = client.y + 50U + (uint32_t)index * 24U;
+    } else if (index < 11U) {
+        y = client.y + 137U + (uint32_t)(index - 3U) * 23U;
+    } else {
+        y = client.y + client.height - 54U +
+            (uint32_t)(index - 11U) * 25U;
+    }
+    return (struct ui_rect){ client.x + 9U, y, width - 18U, 22U };
+}
+
+static enum ui_status draw_store_ui_icon(
+    uint8_t index,
+    struct ui_rect bounds,
+    struct ui_rect damage
+)
+{
+    if (index >= 16U) {
+        return UI_STATUS_BAD_ELEMENT;
+    }
+    return draw_alpha_subimage(bounds, damage, store_ui_icon_pixels,
+        store_ui_icon_alpha, store_ui_icon_width, store_ui_icon_height,
+        (struct ui_rect){
+            (uint32_t)(index % UI_STORE_ICON_COLUMNS) * UI_STORE_ICON_SIZE,
+            (uint32_t)(index / UI_STORE_ICON_COLUMNS) * UI_STORE_ICON_SIZE,
+            UI_STORE_ICON_SIZE, UI_STORE_ICON_SIZE
+        });
+}
+
+static enum ui_status draw_store_info_row(
+    struct ui_rect content,
+    struct ui_rect damage,
+    uint32_t row,
+    const char *label,
+    const char *value
+)
+{
+    const struct ui_rect bounds = {
+        content.x + 28U, content.y + 74U + row * 58U,
+        content.width - 56U, 48U
+    };
+    enum ui_status status = fill_clipped(bounds, damage,
+        framebuffer_pack(0xF6U, 0xF7U, 0xF8U));
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(bounds, damage, 1U,
+            framebuffer_pack(0xD6U, 0xDAU, 0xDEU));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(bounds, damage, bounds.x + 14U,
+            bounds.y + 20U, label, state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        uint32_t value_width = 0U;
+        if (ui_font_text_width(value, &value_width) != UI_FONT_STATUS_OK) {
+            return UI_STATUS_FONT_FAILURE;
+        }
+        status = draw_text(bounds, damage,
+            value_width + 14U < bounds.width ?
+                bounds.x + bounds.width - value_width - 14U :
+                bounds.x + 14U,
+            bounds.y + 20U, value,
+            framebuffer_pack(0x64U, 0x6AU, 0x70U));
+    }
+    return status;
+}
+
+static enum ui_status draw_store_empty(
+    struct ui_rect content,
+    struct ui_rect damage,
+    const char *title,
+    const char *detail
+)
+{
+    const uint32_t top = content.y + 198U;
+    const uint32_t height = content.height > 230U ?
+        content.height - 218U : 96U;
+    const struct ui_rect card = {
+        content.x + 28U, top, content.width - 56U, height
+    };
+    enum ui_status status = fill_clipped(card, damage,
+        framebuffer_pack(0xFAU, 0xFAU, 0xFBU));
+
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(card, damage, 1U,
+            framebuffer_pack(0xD9U, 0xDDU, 0xE1U));
+    }
+    if (status == UI_STATUS_OK && card.height >= 88U) {
+        status = draw_store_ui_icon(15U, (struct ui_rect){
+            card.x + (card.width - 42U) / 2U, card.y + 13U, 42U, 42U
+        }, damage);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(card, damage, centered_text_x(card, title),
+            card.y + (card.height >= 88U ? 72U : 32U), title,
+            state.theme.ink);
+    }
+    if (status == UI_STATUS_OK && card.height >= 112U) {
+        status = draw_text(card, damage, centered_text_x(card, detail),
+            card.y + 96U, detail,
+            framebuffer_pack(0x6CU, 0x73U, 0x79U));
+    }
+    return status;
+}
+
+static enum ui_status draw_store_app(struct ui_rect damage)
+{
+    const struct ui_rect client = state.layout.panel_client;
+    const uint32_t sidebar_width = store_sidebar_width();
+    const struct ui_rect sidebar = {
+        client.x, client.y, sidebar_width, client.height
+    };
+    const struct ui_rect content = {
+        client.x + sidebar_width + 1U, client.y,
+        client.width - sidebar_width - 1U, client.height
+    };
+    const struct ui_rect search = store_search_rect();
+    const char *const section = store_nav_label(store_section);
+    enum ui_status status = fill_clipped(client, damage,
+        framebuffer_pack(0xFFU, 0xFFU, 0xFFU));
+
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped(sidebar, damage,
+            framebuffer_pack(0xF1U, 0xF3U, 0xF5U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped((struct ui_rect){
+            sidebar.x + sidebar.width - 1U, sidebar.y, 1U, sidebar.height
+        }, damage, framebuffer_pack(0xD0U, 0xD4U, 0xD8U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = translucent_capsule_fill(search, damage,
+            store_search_focused ? state.theme.accent_violet :
+                framebuffer_pack(0xC6U, 0xCBU, 0xCFU), 255U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = translucent_capsule_fill((struct ui_rect){
+            search.x + 1U, search.y + 1U,
+            search.width - 2U, search.height - 2U
+        }, damage, framebuffer_pack(0xFFU, 0xFFU, 0xFFU), 255U);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_search_icon((struct ui_rect){
+            search.x + 8U, search.y + 6U, 18U, 18U
+        }, damage, framebuffer_pack(0x64U, 0x6AU, 0x70U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(search, damage, search.x + 32U, search.y + 21U,
+            store_query_length == 0U ? "Search" : store_query,
+            store_query_length == 0U ?
+                framebuffer_pack(0x8AU, 0x91U, 0x98U) : state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = fill_clipped((struct ui_rect){
+            sidebar.x + 14U, sidebar.y + 128U,
+            sidebar.width - 28U, 1U
+        }, damage, framebuffer_pack(0xD6U, 0xDAU, 0xDEU));
+    }
+    for (size_t index = 0U; index < UI_STORE_NAV_COUNT &&
+            status == UI_STATUS_OK; ++index) {
+        const struct ui_rect row = store_nav_rect(index);
+
+        if (index == store_section) {
+            status = translucent_capsule_fill(row, damage,
+                framebuffer_pack(0xE8U, 0xE0U, 0xF1U), 255U);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_store_ui_icon(store_nav_icon(index),
+                (struct ui_rect){ row.x + 5U, row.y + 2U, 18U, 18U },
+                damage);
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_text(row, damage, row.x + 29U, row.y + 17U,
+                store_nav_label(index), state.theme.ink);
+        }
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(content, damage, content.x + 28U,
+            content.y + 34U,
+            store_query_length == 0U ? section : "Search",
+            state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(content, damage, content.x + 28U,
+            content.y + 57U, "Applications for Sapote Redwood",
+            framebuffer_pack(0x6DU, 0x73U, 0x79U));
+    }
+
+    if (status != UI_STATUS_OK) {
+        return status;
+    }
+    if (store_query_length != 0U) {
+        return draw_store_empty(content, damage,
+            "No applications found",
+            "No packages have been published to the catalog yet.");
+    }
+    if (store_section == 11U) {
+        status = draw_store_info_row(content, damage, 0U,
+            "Catalog source", "System volume");
+        if (status == UI_STATUS_OK) {
+            status = draw_store_info_row(content, damage, 1U,
+                "Application data", "Data/Applications");
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_store_info_row(content, damage, 2U,
+                "Package checks", "Manifest + SHA-256");
+        }
+        return status;
+    }
+    if (store_section == 12U) {
+        status = draw_store_info_row(content, damage, 0U,
+            "Application", "Sapote Store");
+        if (status == UI_STATUS_OK) {
+            status = draw_store_info_row(content, damage, 1U,
+                "Platform", "Sapote native ABI v1");
+        }
+        if (status == UI_STATUS_OK) {
+            status = draw_store_info_row(content, damage, 2U,
+                "Catalog status", "No packages published");
+        }
+        return status;
+    }
+
+    const struct ui_rect hero = {
+        content.x + 28U, content.y + 72U, content.width - 56U, 108U
+    };
+    status = gradient_rect(hero, damage, 0xF3U, 0xEDU, 0xFAU,
+        0xE2U, 0xD4U, 0xEFU);
+    if (status == UI_STATUS_OK) {
+        status = stroke_clipped(hero, damage, 1U,
+            framebuffer_pack(0xB5U, 0x9CU, 0xC9U));
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_alpha_image((struct ui_rect){
+            hero.x + 18U, hero.y + 14U, 80U, 80U
+        }, damage, store_icon_pixels, store_icon_alpha,
+            store_icon_width, store_icon_height);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(hero, damage, hero.x + 116U, hero.y + 39U,
+            "Sapote Store", state.theme.ink);
+    }
+    if (status == UI_STATUS_OK) {
+        status = draw_text(hero, damage, hero.x + 116U, hero.y + 65U,
+            "Native software. One trusted catalog.",
+            framebuffer_pack(0x5FU, 0x57U, 0x68U));
+    }
+    if (status != UI_STATUS_OK) {
+        return status;
+    }
+    if (store_section == 1U) {
+        return draw_store_empty(content, damage,
+            "No Store applications installed",
+            "System applications remain available in the Dock.");
+    }
+    if (store_section == 2U) {
+        return draw_store_empty(content, damage,
+            "No updates available",
+            "There are no published packages to check.");
+    }
+    if (store_section >= 3U && store_section <= 10U) {
+        return draw_store_empty(content, damage,
+            "No applications in this category",
+            "The catalog is ready for its first published package.");
+    }
+    return draw_store_empty(content, damage,
+        "The catalog is ready",
+        "Applications will appear here after they are published.");
 }
 
 static void begin_dock_spring(void)
@@ -4776,41 +5362,9 @@ static void begin_dock_spring(void)
         dock_spring_last_ns = clock_monotonic_ns();
     }
     dock_spring_active = true;
-    if (timer_is_started() && panel_spring_timer_id == 0U) {
-        (void)panel_spring_schedule_wake(dock_spring_last_ns);
+    if (timer_is_started() && motion_timer_id == 0U) {
+        (void)motion_schedule_wake(dock_spring_last_ns);
     }
-}
-
-static struct ui_rect spring_panel_rect(void)
-{
-    const struct ui_rect target = state.layout.panel;
-    struct ui_rect panel = {
-        spring_interpolate(panel_spring_origin.x, target.x,
-            panel_spring_position),
-        spring_interpolate(panel_spring_origin.y, target.y,
-            panel_spring_position),
-        spring_interpolate(panel_spring_origin.width, target.width,
-            panel_spring_position),
-        spring_interpolate(panel_spring_origin.height, target.height,
-            panel_spring_position)
-    };
-
-    /* A deliberate spring overshoot may grow a cascaded window a few pixels
-     * beyond the framebuffer.  Keep the animated shell inside the surface so
-     * every clipped font and surface operation retains valid bounds. */
-    if (panel.x >= state.layout.surface.width) {
-        panel.x = state.layout.surface.width - 1U;
-    }
-    if (panel.y >= state.layout.surface.height) {
-        panel.y = state.layout.surface.height - 1U;
-    }
-    if (panel.width > state.layout.surface.width - panel.x) {
-        panel.width = state.layout.surface.width - panel.x;
-    }
-    if (panel.height > state.layout.surface.height - panel.y) {
-        panel.height = state.layout.surface.height - panel.y;
-    }
-    return panel;
 }
 
 static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
@@ -4820,26 +5374,6 @@ static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
 
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_STATUS_OK;
-    }
-    if (focused && panel_spring_active) {
-        const struct ui_rect panel = spring_panel_rect();
-        status = window_shadows ?
-            fill_clipped(drop_shadow_draw_rect(panel, 6U), damage,
-                state.theme.shadow) : UI_STATUS_OK;
-        if (status == UI_STATUS_OK) {
-            status = fill_clipped(panel, damage, state.theme.window_face);
-        }
-        if (status == UI_STATUS_OK && panel.width >= 4U && panel.height >= 4U) {
-            status = stroke_clipped(panel, damage, 1U, state.theme.ink);
-        }
-        if (status == UI_STATUS_OK && panel.width >= 48U &&
-                panel.height >= UI_PANEL_TITLE_HEIGHT + 4U) {
-            status = draw_window_title((struct ui_rect){ panel.x + 4U,
-                panel.y + 4U, panel.width - 8U, UI_PANEL_TITLE_HEIGHT },
-                damage, panel.y + 22U, ui_panel_name(state.active_panel),
-                true);
-        }
-        return status;
     }
     status = window_shadows ?
         fill_clipped(drop_shadow_draw_rect(state.layout.panel, 6U),
@@ -4886,22 +5420,57 @@ static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
             state.layout.panel_client, damage);
 
         if (!native->active || native->pixels == NULL ||
-            native->width != state.layout.panel_client.width ||
-            native->height != state.layout.panel_client.height) {
+            native->width == 0U || native->height == 0U ||
+            state.layout.panel_client.width == 0U ||
+            state.layout.panel_client.height == 0U) {
             return UI_STATUS_BAD_PANEL;
         }
         if (clipped.width == 0U || clipped.height == 0U) {
             return UI_STATUS_OK;
         }
-        const uint32_t source_x = clipped.x - state.layout.panel_client.x;
-        const uint32_t source_y = clipped.y - state.layout.panel_client.y;
-        const uint32_t *source = native->pixels +
-            (size_t)source_y * (native->stride_bytes /
-                SURFACE_BYTES_PER_PIXEL) + source_x;
+        if (native->width == state.layout.panel_client.width &&
+                native->height == state.layout.panel_client.height) {
+            const uint32_t source_x = clipped.x -
+                state.layout.panel_client.x;
+            const uint32_t source_y = clipped.y -
+                state.layout.panel_client.y;
+            const uint32_t *source = native->pixels +
+                (size_t)source_y * (native->stride_bytes /
+                    SURFACE_BYTES_PER_PIXEL) + source_x;
 
-        return surface_blit(canvas, clipped.x, clipped.y, source,
-            clipped.width, clipped.height, native->stride_bytes) ==
-                SURFACE_STATUS_OK ? UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
+            return surface_blit(canvas, clipped.x, clipped.y, source,
+                clipped.width, clipped.height, native->stride_bytes) ==
+                    SURFACE_STATUS_OK ? UI_STATUS_OK :
+                        UI_STATUS_SURFACE_FAILURE;
+        }
+        const size_t stride_pixels = native->stride_bytes /
+            SURFACE_BYTES_PER_PIXEL;
+        for (uint32_t y = 0U; y < clipped.height; ++y) {
+            const uint32_t destination_y = clipped.y + y -
+                state.layout.panel_client.y;
+            uint32_t source_y = (uint32_t)((uint64_t)destination_y *
+                native->height / state.layout.panel_client.height);
+
+            if (source_y >= native->height) {
+                source_y = native->height - 1U;
+            }
+            for (uint32_t x = 0U; x < clipped.width; ++x) {
+                const uint32_t destination_x = clipped.x + x -
+                    state.layout.panel_client.x;
+                uint32_t source_x = (uint32_t)((uint64_t)destination_x *
+                    native->width / state.layout.panel_client.width);
+
+                if (source_x >= native->width) {
+                    source_x = native->width - 1U;
+                }
+                if (surface_pixel(canvas, clipped.x + x, clipped.y + y,
+                        native->pixels[(size_t)source_y * stride_pixels +
+                            source_x]) != SURFACE_STATUS_OK) {
+                    return UI_STATUS_SURFACE_FAILURE;
+                }
+            }
+        }
+        return UI_STATUS_OK;
     }
 
     if (state.active_panel == UI_PANEL_FILES) {
@@ -4926,10 +5495,65 @@ static enum ui_status draw_one_panel(struct ui_rect damage, bool focused)
     if (state.active_panel == UI_PANEL_CAMERA) {
         return draw_camera_app(damage);
     }
+    if (state.active_panel == UI_PANEL_STORE) {
+        return draw_store_app(damage);
+    }
     if (state.active_panel == UI_PANEL_SETTINGS) {
         return draw_settings_app(damage);
     }
     return UI_STATUS_BAD_PANEL;
+}
+
+/*
+ * Capture the finished window once, then let ui_anim.c warp that immutable
+ * picture.  Opening draws the new front window into the cached surface before
+ * taking the copy.  Closing reuses the last fully presented pixels, so the
+ * panel may already be absent from the live stacking order.
+ */
+static enum ui_status panel_anim_start(void)
+{
+    const enum ui_anim_pending pending = panel_anim_pending;
+    const bool opening = pending == UI_ANIM_PENDING_OPEN;
+
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    if (pending == UI_ANIM_PENDING_NONE || canvas == NULL) {
+        return UI_STATUS_OK;
+    }
+    if (opening) {
+        const enum ui_panel_id saved_panel = state.active_panel;
+
+        state.active_panel = panel_anim_panel;
+        install_panel_geometry(panel_anim_panel);
+        const enum ui_status status = draw_one_panel(panel_anim_frame, true);
+        state.active_panel = saved_panel;
+        install_panel_geometry(saved_panel);
+        if (status != UI_STATUS_OK) {
+            return status;
+        }
+    }
+    if (ui_anim_begin(&panel_anim, canvas, panel_anim_frame,
+            panel_anim_origin, opening, clock_monotonic_ns(),
+            opening ? UI_ANIM_DEFAULT_OPEN_NS : UI_ANIM_DEFAULT_CLOSE_NS) !=
+                UI_ANIM_STATUS_OK) {
+        ui_anim_end(&panel_anim);
+        return UI_STATUS_OK;
+    }
+    if (timer_is_started() && motion_timer_id == 0U) {
+        (void)motion_schedule_wake(clock_monotonic_ns());
+    }
+    return UI_STATUS_OK;
+}
+
+static enum ui_status draw_animated_panel(struct ui_rect damage)
+{
+    const struct ui_rect clip = rect_intersection(
+        ui_anim_bounds(&panel_anim), damage);
+
+    if (clip.width == 0U || clip.height == 0U) {
+        return UI_STATUS_OK;
+    }
+    return ui_anim_draw(&panel_anim, canvas, clip) == UI_ANIM_STATUS_OK ?
+        UI_STATUS_OK : UI_STATUS_SURFACE_FAILURE;
 }
 
 static enum ui_status draw_panel(struct ui_rect damage)
@@ -4945,7 +5569,8 @@ static enum ui_status draw_panel(struct ui_rect damage)
          status == UI_STATUS_OK; ++index) {
         const enum ui_panel_id panel = panel_order[index];
 
-        if (!panel_open[panel]) {
+        if (!panel_open[panel] ||
+                (ui_anim_running(&panel_anim) && panel == panel_anim_panel)) {
             continue;
         }
         state.active_panel = panel;
@@ -5492,7 +6117,15 @@ static enum ui_status draw_menu_brand(struct ui_rect damage)
 
 static enum ui_status render_region(struct ui_rect damage, bool full)
 {
-    enum ui_status status = draw_desktop_pattern(damage);
+    enum ui_status status;
+
+    if (panel_anim_pending != UI_ANIM_PENDING_NONE) {
+        status = panel_anim_start();
+        if (status != UI_STATUS_OK) {
+            return status;
+        }
+    }
+    status = draw_desktop_pattern(damage);
 
     if (status == UI_STATUS_OK) {
         status = menu_glass ?
@@ -5513,6 +6146,9 @@ static enum ui_status render_region(struct ui_rect damage, bool full)
     }
     if (status == UI_STATUS_OK) {
         status = draw_panel(damage);
+    }
+    if (status == UI_STATUS_OK && ui_anim_running(&panel_anim)) {
+        status = draw_animated_panel(damage);
     }
     if (status == UI_STATUS_OK) {
         status = draw_launcher(damage);
@@ -5779,6 +6415,31 @@ enum ui_status ui_construct(bool pointer_present)
         canvas = NULL;
         return UI_STATUS_APP_ICON_FAILURE;
     }
+    if (sapote_store_icon_geometry(&store_icon_width,
+            &store_icon_height) != LOGO_STATUS_OK ||
+        store_icon_width == 0U || store_icon_width > 80U ||
+        store_icon_height == 0U || store_icon_height > 80U ||
+        sapote_store_icon_decode(store_icon_pixels,
+            (size_t)store_icon_width * store_icon_height,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_store_icon_decode_alpha(store_icon_alpha,
+            (size_t)store_icon_width * store_icon_height) !=
+                LOGO_STATUS_OK ||
+        sapote_store_ui_icons_geometry(&store_ui_icon_width,
+            &store_ui_icon_height) != LOGO_STATUS_OK ||
+        store_ui_icon_width != UI_STORE_ICON_SHEET_WIDTH ||
+        store_ui_icon_height != UI_STORE_ICON_SHEET_HEIGHT ||
+        sapote_store_ui_icons_decode(store_ui_icon_pixels,
+            UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT,
+            framebuffer.red_position, framebuffer.green_position,
+            framebuffer.blue_position, 0U) != LOGO_STATUS_OK ||
+        sapote_store_ui_icons_decode_alpha(store_ui_icon_alpha,
+            UI_STORE_ICON_SHEET_WIDTH * UI_STORE_ICON_SHEET_HEIGHT) !=
+                LOGO_STATUS_OK) {
+        canvas = NULL;
+        return UI_STATUS_APP_ICON_FAILURE;
+    }
     if (sapote_settings_category_icons_geometry(
             &settings_category_icon_width,
             &settings_category_icon_height) != LOGO_STATUS_OK ||
@@ -5815,7 +6476,12 @@ enum ui_status ui_construct(bool pointer_present)
     panel_cascade = 0U;
     for (size_t index = 0U; index < UI_PANEL_COUNT; ++index) {
         panel_open[index] = false;
+        panel_minimized[index] = false;
+        panel_maximized[index] = false;
         panel_windows[index] = panel_home;
+        panel_restore[index] = panel_home;
+        panel_origins[index] = (struct ui_rect){ 0U, 0U, 0U, 0U };
+        panel_origin_valid[index] = false;
     }
     for (size_t index = 0U; index < UI_NATIVE_WINDOW_COUNT; ++index) {
         native_windows[index] = (struct ui_native_window_record){ 0 };
@@ -5831,17 +6497,24 @@ enum ui_status ui_construct(bool pointer_present)
     launcher_query[0] = '\0';
     launcher_page = 0U;
     application_launch_path[0] = '\0';
+    store_section = 0U;
+    store_search_focused = false;
+    store_query_length = 0U;
+    store_query[0] = '\0';
     desktop_wallpaper = 0U;
     camera_capture_count = 0U;
     camera_frame_available = false;
     camera_seen_generation = 0U;
     camera_initialize();
-    panel_spring_active = false;
-    panel_spring_force_settle = false;
-    panel_spring_timer_id = 0U;
-    panel_spring_position = UI_SPRING_TARGET;
-    panel_spring_velocity = 0;
-    panel_spring_last_ns = 0U;
+    ui_anim_reset(&panel_anim);
+    panel_anim_panel = UI_PANEL_NONE;
+    panel_anim_origin = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    panel_anim_frame = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    panel_anim_driver = false;
+    pending_native_origin = (struct ui_rect){ 0U, 0U, 0U, 0U };
+    pending_native_origin_valid = false;
+    motion_timer_id = 0U;
     dock_spring_active = false;
     dock_spring_last_ns = 0U;
     panel_drag_active = false;
@@ -5910,6 +6583,18 @@ enum ui_status ui_terminal_draw_logo(void)
     return screen_draw_image(logo_pixels, logo_alpha,
         UI_LOGO_WIDTH, UI_LOGO_HEIGHT, width, height, 9U) == SCREEN_STATUS_OK ?
         UI_STATUS_OK : UI_STATUS_SCREEN_FAILURE;
+}
+
+void ui_animation_attach(void)
+{
+    panel_anim_driver = true;
+}
+
+bool ui_animation_active(void)
+{
+    return state.active &&
+        (panel_anim_pending != UI_ANIM_PENDING_NONE ||
+            ui_anim_running(&panel_anim));
 }
 
 bool ui_is_active(void)
@@ -6052,7 +6737,14 @@ enum ui_status ui_handle_keyboard(const struct keyboard_event *event)
     if (!event->pressed) {
         return UI_STATUS_OK;
     }
-    if ((state.active_panel == UI_PANEL_NOTES ||
+    if (state.active_panel == UI_PANEL_STORE && store_search_focused &&
+            event->scancode != 0x01U && !event->control &&
+            (event->scancode == 0x0EU ||
+                (event->character >= ' ' && event->character <= '~'))) {
+        ui_event.type = UI_EVENT_TEXT_INPUT;
+        ui_event.character = event->scancode == 0x0EU ? '\b' :
+            event->character;
+    } else if ((state.active_panel == UI_PANEL_NOTES ||
             state.active_panel == UI_PANEL_STUDIO) &&
         event->scancode != 0x01U) {
         ui_event.type = UI_EVENT_TEXT_INPUT;
@@ -6107,6 +6799,7 @@ static enum ui_status set_panel(
 {
     const enum ui_panel_id old_panel = state.active_panel;
     bool opening = false;
+    bool restoring = false;
 
     if (panel < UI_PANEL_NONE || panel >= UI_PANEL_COUNT || damage == NULL) {
         return UI_STATUS_BAD_PANEL;
@@ -6114,6 +6807,13 @@ static enum ui_status set_panel(
     panel_drag_active = false;
     if (old_panel == panel) {
         return UI_STATUS_OK;
+    }
+    ui_anim_end(&panel_anim);
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    panel_anim_panel = UI_PANEL_NONE;
+    if (!dock_spring_active && motion_timer_id != 0U) {
+        (void)timer_cancel((uint64_t)motion_timer_id);
+        motion_timer_id = 0U;
     }
     if (panel == UI_PANEL_NONE &&
         native_panel_slot(old_panel, NULL)) {
@@ -6143,62 +6843,63 @@ static enum ui_status set_panel(
                     state.layout.dock_items[index].id));
         }
     }
-    if (panel_spring_timer_id != 0U) {
-        (void)timer_cancel((uint64_t)panel_spring_timer_id);
-        panel_spring_timer_id = 0U;
-    }
-    panel_spring_force_settle = false;
     if (panel == UI_PANEL_NONE) {
         if (old_panel != UI_PANEL_NONE) {
+            if (panel_anim_driver && window_motion) {
+                panel_anim_panel = old_panel;
+                panel_anim_frame = panel_windows[old_panel];
+                panel_anim_origin = origin_for_panel(old_panel, false);
+                panel_anim_pending = UI_ANIM_PENDING_CLOSE;
+            }
             panel_open[old_panel] = false;
+            panel_minimized[old_panel] = false;
+            panel_maximized[old_panel] = false;
+            panel_origin_valid[old_panel] = false;
             remove_panel_from_order(old_panel);
         }
         state.active_panel = front_panel();
         install_panel_geometry(state.active_panel);
-        panel_spring_active = false;
-        panel_spring_position = UI_SPRING_TARGET;
-        panel_spring_velocity = 0;
     } else {
         opening = !panel_open[panel];
+        restoring = panel_minimized[panel];
         if (opening) {
-            const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
-            const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
+            uint32_t native_slot;
 
-            panel_windows[panel] = (struct ui_rect){
-                panel_home.x + offset_x, panel_home.y + offset_y,
-                panel_home.width, panel_home.height
-            };
-            panel_cascade = (uint8_t)((panel_cascade + 1U) %
-                (UI_PANEL_COUNT - 1U));
+            if (!native_panel_slot(panel, &native_slot)) {
+                const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
+                const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
+
+                panel_windows[panel] = (struct ui_rect){
+                    panel_home.x + offset_x, panel_home.y + offset_y,
+                    panel_home.width, panel_home.height
+                };
+                panel_cascade = (uint8_t)((panel_cascade + 1U) %
+                    (UI_PANEL_COUNT - 1U));
+            }
+            panel_restore[panel] = panel_windows[panel];
+            panel_maximized[panel] = false;
             panel_open[panel] = true;
         }
+        panel_minimized[panel] = false;
         bring_panel_to_front(panel);
         state.active_panel = panel;
         install_panel_geometry(panel);
+        if ((opening || restoring) && panel_anim_driver && window_motion) {
+            panel_anim_panel = panel;
+            panel_anim_frame = panel_windows[panel];
+            panel_anim_origin = origin_for_panel(panel, opening);
+            panel_origins[panel] = panel_anim_origin;
+            panel_origin_valid[panel] = true;
+            panel_anim_pending = UI_ANIM_PENDING_OPEN;
+        }
     }
     native_focus_emit(state.active_panel, true);
     state.renders.panel_transitions += 1U;
     *damage = rect_union(*damage, state.layout.surface);
 
-    if (panel >= UI_PANEL_FILES && panel <= UI_PANEL_SETTINGS && opening &&
-        spring_motion) {
-        const size_t dock_index = (size_t)panel - 1U;
-        panel_spring_origin = state.layout.dock_items[dock_index].icon_bounds;
-        panel_spring_active = true;
-        panel_spring_position = 0;
-        panel_spring_velocity = 0;
-        panel_spring_last_ns = clock_monotonic_ns();
-        if (timer_is_started()) {
-            (void)panel_spring_schedule_wake(panel_spring_last_ns);
-        }
-    } else if (panel != UI_PANEL_NONE) {
-        panel_spring_active = false;
-        panel_spring_position = UI_SPRING_TARGET;
-        panel_spring_velocity = 0;
-    }
-    if (dock_spring_active && panel_spring_timer_id == 0U &&
+    if (dock_spring_active && motion_timer_id == 0U &&
             timer_is_started()) {
-        (void)panel_spring_schedule_wake(clock_monotonic_ns());
+        (void)motion_schedule_wake(clock_monotonic_ns());
     }
 
     if (opening && panel == UI_PANEL_FILES) {
@@ -6233,6 +6934,86 @@ static enum ui_status set_panel(
     } else if (screen_set_visible(false) != SCREEN_STATUS_OK) {
         return UI_STATUS_SCREEN_FAILURE;
     }
+    return UI_STATUS_OK;
+}
+
+static struct ui_rect maximized_panel_geometry(void)
+{
+    const uint32_t x = 8U;
+    const uint32_t y = UI_MENU_HEIGHT + 8U;
+    const uint32_t bottom = state.layout.surface.height > 98U ?
+        state.layout.surface.height - 98U : state.layout.surface.height;
+
+    return (struct ui_rect){ x, y,
+        state.layout.surface.width - x * 2U,
+        bottom > y ? bottom - y : 1U };
+}
+
+static enum ui_status toggle_panel_maximized(struct ui_rect *damage)
+{
+    const enum ui_panel_id panel = state.active_panel;
+
+    if (damage == NULL || panel <= UI_PANEL_NONE || panel >= UI_PANEL_COUNT) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    if (panel_maximized[panel]) {
+        panel_windows[panel] = panel_restore[panel];
+        panel_maximized[panel] = false;
+    } else {
+        panel_restore[panel] = panel_windows[panel];
+        panel_windows[panel] = maximized_panel_geometry();
+        panel_maximized[panel] = true;
+    }
+    install_panel_geometry(panel);
+    panel_drag_active = false;
+    ui_anim_end(&panel_anim);
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    panel_anim_panel = UI_PANEL_NONE;
+    if (panel == UI_PANEL_TERMINAL &&
+            screen_set_viewport(surface_rect_of(state.layout.panel_client),
+                true) != SCREEN_STATUS_OK) {
+        return UI_STATUS_SCREEN_FAILURE;
+    }
+    state.renders.panel_transitions += 1U;
+    *damage = state.layout.surface;
+    return UI_STATUS_OK;
+}
+
+static enum ui_status minimize_active_panel(struct ui_rect *damage)
+{
+    const enum ui_panel_id panel = state.active_panel;
+
+    if (damage == NULL || panel <= UI_PANEL_NONE || panel >= UI_PANEL_COUNT ||
+            !panel_open[panel]) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    ui_anim_end(&panel_anim);
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    panel_anim_panel = UI_PANEL_NONE;
+    if (panel_anim_driver && window_motion) {
+        panel_anim_panel = panel;
+        panel_anim_frame = panel_windows[panel];
+        panel_anim_origin = origin_for_panel(panel, false);
+        panel_anim_pending = UI_ANIM_PENDING_CLOSE;
+    }
+    native_focus_emit(panel, false);
+    panel_minimized[panel] = true;
+    remove_panel_from_order(panel);
+    state.active_panel = front_panel();
+    install_panel_geometry(state.active_panel);
+    native_focus_emit(state.active_panel, true);
+    panel_drag_active = false;
+    if (panel == UI_PANEL_TERMINAL &&
+            screen_set_visible(false) != SCREEN_STATUS_OK) {
+        return UI_STATUS_SCREEN_FAILURE;
+    }
+    if (state.active_panel == UI_PANEL_TERMINAL &&
+            screen_set_viewport(surface_rect_of(state.layout.panel_client),
+                true) != SCREEN_STATUS_OK) {
+        return UI_STATUS_SCREEN_FAILURE;
+    }
+    state.renders.panel_transitions += 1U;
+    *damage = state.layout.surface;
     return UI_STATUS_OK;
 }
 
@@ -6279,10 +7060,19 @@ static enum ui_element_id active_hit(struct ui_point point)
     if (state.active_panel == UI_PANEL_NONE) {
         return UI_ELEMENT_NONE;
     }
-    const struct ui_rect close = { state.layout.panel.x + 10U,
-        state.layout.panel.y + 8U, 18U, 18U };
-    if (rect_contains_point(close, point)) {
-        return UI_ELEMENT_WINDOW_CLOSE;
+    const struct ui_rect window_controls[3U] = {
+        { state.layout.panel.x + 10U, state.layout.panel.y + 8U, 18U, 18U },
+        { state.layout.panel.x + 32U, state.layout.panel.y + 8U, 18U, 18U },
+        { state.layout.panel.x + 54U, state.layout.panel.y + 8U, 18U, 18U }
+    };
+    static const enum ui_element_id window_control_ids[3U] = {
+        UI_ELEMENT_WINDOW_CLOSE, UI_ELEMENT_WINDOW_MAXIMIZE,
+        UI_ELEMENT_WINDOW_MINIMIZE
+    };
+    for (size_t index = 0U; index < 3U; ++index) {
+        if (rect_contains_point(window_controls[index], point)) {
+            return window_control_ids[index];
+        }
     }
     const struct ui_rect client = state.layout.panel_client;
     if (state.active_panel == UI_PANEL_FILES) {
@@ -6322,6 +7112,15 @@ static enum ui_element_id active_hit(struct ui_point point)
         }
         if (rect_contains_point(studio_timeline_rect(), point)) {
             return UI_ELEMENT_STUDIO_TIMELINE;
+        }
+    } else if (state.active_panel == UI_PANEL_STORE) {
+        if (rect_contains_point(store_search_rect(), point)) {
+            return UI_ELEMENT_STORE_SEARCH;
+        }
+        for (size_t index = 0U; index < UI_STORE_NAV_COUNT; ++index) {
+            if (rect_contains_point(store_nav_rect(index), point)) {
+                return (enum ui_element_id)(UI_ELEMENT_STORE_NAV_0 + index);
+            }
         }
     } else if (state.active_panel == UI_PANEL_SETTINGS) {
         if (settings_page < 0) {
@@ -6372,12 +7171,12 @@ static enum ui_element_id active_hit(struct ui_point point)
 
 static bool panel_title_contains(struct ui_rect panel, struct ui_point point)
 {
-    if (panel.width <= 42U || panel.height <= UI_PANEL_TITLE_HEIGHT + 4U) {
+    if (panel.width <= 82U || panel.height <= UI_PANEL_TITLE_HEIGHT + 4U) {
         return false;
     }
     return rect_contains_point((struct ui_rect){
-        panel.x + 34U, panel.y + 4U,
-        panel.width - 38U, UI_PANEL_TITLE_HEIGHT
+        panel.x + 76U, panel.y + 4U,
+        panel.width - 80U, UI_PANEL_TITLE_HEIGHT
     }, point);
 }
 
@@ -6388,6 +7187,9 @@ static enum ui_status drag_panel_to(
 {
     if (!panel_drag_active || panel_drag_panel <= UI_PANEL_NONE ||
             panel_drag_panel >= UI_PANEL_COUNT || damage == NULL) {
+        return UI_STATUS_BAD_PANEL;
+    }
+    if (panel_maximized[panel_drag_panel]) {
         return UI_STATUS_BAD_PANEL;
     }
     const struct ui_rect old_window = panel_windows[panel_drag_panel];
@@ -6468,7 +7270,7 @@ static enum ui_status activate_element(
         return UI_STATUS_OK;
     }
     if (element >= UI_ELEMENT_LAUNCHER_APP_0 &&
-            element <= UI_ELEMENT_LAUNCHER_APP_6 && launcher_open) {
+            element <= UI_ELEMENT_LAUNCHER_APP_7 && launcher_open) {
         const size_t dock_index = (size_t)(element -
             UI_ELEMENT_LAUNCHER_APP_0);
 
@@ -6485,6 +7287,9 @@ static enum ui_status activate_element(
         begin_dock_spring();
         if (state.layout.dock_items[dock_index].action ==
                 UI_ACTION_OPEN_CANVAS) {
+            pending_native_origin =
+                state.layout.dock_items[dock_index].icon_bounds;
+            pending_native_origin_valid = true;
             return copy_string(application_launch_path,
                 sizeof(application_launch_path), "CANVAS.MAN") ?
                     UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
@@ -6501,6 +7306,9 @@ static enum ui_status activate_element(
         *damage = rect_union(*damage, dock_visual_bounds(&state.layout));
         if (state.layout.dock_items[dock_index].action ==
                 UI_ACTION_OPEN_CANVAS) {
+            pending_native_origin =
+                state.layout.dock_items[dock_index].icon_bounds;
+            pending_native_origin_valid = true;
             return copy_string(application_launch_path,
                 sizeof(application_launch_path), "CANVAS.MAN") ?
                     UI_STATUS_OK : UI_STATUS_BAD_ELEMENT;
@@ -6509,6 +7317,26 @@ static enum ui_status activate_element(
     }
     if (element == UI_ELEMENT_WINDOW_CLOSE) {
         return set_panel(UI_PANEL_NONE, damage);
+    }
+    if (element == UI_ELEMENT_WINDOW_MAXIMIZE) {
+        return toggle_panel_maximized(damage);
+    }
+    if (element == UI_ELEMENT_WINDOW_MINIMIZE) {
+        return minimize_active_panel(damage);
+    }
+    if (element == UI_ELEMENT_STORE_SEARCH &&
+            state.active_panel == UI_PANEL_STORE) {
+        store_search_focused = true;
+        *damage = rect_union(*damage, store_search_rect());
+        return UI_STATUS_OK;
+    }
+    if (element >= UI_ELEMENT_STORE_NAV_0 &&
+            element <= UI_ELEMENT_STORE_NAV_12 &&
+            state.active_panel == UI_PANEL_STORE) {
+        store_section = (uint8_t)(element - UI_ELEMENT_STORE_NAV_0);
+        store_search_focused = false;
+        *damage = rect_union(*damage, state.layout.panel_client);
+        return UI_STATUS_OK;
     }
     if (element == UI_ELEMENT_FILES_UP) {
         files_up();
@@ -6641,7 +7469,7 @@ static enum ui_status activate_element(
             *damage = rect_union(*damage,
                 cursor_damage_rect_for(state.pointer));
         } else if (settings_page == 6 && option < 1U) {
-            spring_motion = !spring_motion;
+            window_motion = !window_motion;
         } else if (settings_page == 10) {
             if (option == 0U) {
                 window_shadows = !window_shadows;
@@ -6717,13 +7545,26 @@ static void native_pointer_emit(
             !rect_contains_point(state.layout.panel_client, point))) {
         return;
     }
+    const struct ui_native_window_record *native = &native_windows[slot];
+    const int64_t local_x = ((int64_t)point.x -
+        (int64_t)state.layout.panel_client.x) * native->width /
+        state.layout.panel_client.width;
+    const int64_t local_y = ((int64_t)point.y -
+        (int64_t)state.layout.panel_client.y) * native->height /
+        state.layout.panel_client.height;
+    const int64_t previous_x = ((int64_t)previous.x -
+        (int64_t)state.layout.panel_client.x) * native->width /
+        state.layout.panel_client.width;
+    const int64_t previous_y = ((int64_t)previous.y -
+        (int64_t)state.layout.panel_client.y) * native->height /
+        state.layout.panel_client.height;
     const struct ui_native_event event = {
         .type = type,
         .monotonic_ns = clock_monotonic_ns(),
-        .x = point.x - (int32_t)state.layout.panel_client.x,
-        .y = point.y - (int32_t)state.layout.panel_client.y,
-        .delta_x = point.x - previous.x,
-        .delta_y = point.y - previous.y,
+        .x = (int32_t)local_x,
+        .y = (int32_t)local_y,
+        .delta_x = (int32_t)(local_x - previous_x),
+        .delta_y = (int32_t)(local_y - previous_y),
         .code = (uint32_t)button,
         .value = pressed ? 1U : 0U
     };
@@ -6740,6 +7581,11 @@ static enum ui_status apply_event(
 
     if (event == NULL || damage == NULL) {
         return UI_STATUS_NULL_ARGUMENT;
+    }
+    if (ui_animation_active() &&
+            event->type != UI_EVENT_POINTER_MOVEMENT) {
+        state.pressed = UI_ELEMENT_NONE;
+        return UI_STATUS_OK;
     }
     if (event->type == UI_EVENT_POINTER_MOVEMENT) {
         const struct ui_rect old_cursor = cursor_damage_rect_for(state.pointer);
@@ -6811,7 +7657,8 @@ static enum ui_status apply_event(
         }
         hit = active_hit(event->point);
         if (hit == UI_ELEMENT_NONE && state.active_panel != UI_PANEL_NONE &&
-                !panel_spring_active &&
+                !ui_animation_active() &&
+                !panel_maximized[state.active_panel] &&
                 panel_title_contains(state.layout.panel, event->point)) {
             panel_drag_active = true;
             panel_drag_panel = state.active_panel;
@@ -6904,6 +7751,19 @@ static enum ui_status apply_event(
         launcher_page = 0U;
         *damage = rect_union(*damage, launcher_bounds());
     } else if (event->type == UI_EVENT_TEXT_INPUT &&
+            state.active_panel == UI_PANEL_STORE && store_search_focused) {
+        if (event->character == '\b') {
+            if (store_query_length != 0U) {
+                --store_query_length;
+                store_query[store_query_length] = '\0';
+            }
+        } else if (event->character >= ' ' && event->character <= '~' &&
+                store_query_length + 1U < sizeof(store_query)) {
+            store_query[store_query_length++] = event->character;
+            store_query[store_query_length] = '\0';
+        }
+        *damage = rect_union(*damage, state.layout.panel_client);
+    } else if (event->type == UI_EVENT_TEXT_INPUT &&
         state.active_panel == UI_PANEL_NOTES) {
         note_input(event->character, event->control);
         *damage = rect_union(*damage, state.layout.panel);
@@ -6936,9 +7796,8 @@ enum ui_status ui_process_events(void)
             return status;
         }
     }
-    /* Pointer input does not advance the window spring.  Keep its ordinary
-     * pointer/Dock damage local; ui_flush() owns geometry changes and restores
-     * the exact union of the previous and next spring shells. */
+    /* Pointer input does not advance the genie warp.  Keep ordinary pointer
+     * and Dock damage local; ui_flush() owns time-based animation frames. */
     if (damage.width == 0U || damage.height == 0U) {
         return UI_STATUS_OK;
     }
@@ -6956,45 +7815,19 @@ enum ui_status ui_flush(void)
     if (!state.active) {
         return UI_STATUS_NOT_ACTIVE;
     }
-    if (panel_spring_force_settle) {
-        const struct ui_rect old_panel = drop_shadow_draw_rect(
-            spring_panel_rect(), 6U);
-        panel_spring_force_settle = false;
-        panel_spring_active = false;
-        panel_spring_position = UI_SPRING_TARGET;
-        panel_spring_velocity = 0;
-        damage = rect_union(old_panel, drop_shadow_draw_rect(
-            state.layout.panel, 6U));
-    } else if (panel_spring_active) {
-        const uint64_t now = clock_monotonic_ns();
+    if (ui_anim_running(&panel_anim)) {
+        const struct ui_rect bounds = ui_anim_bounds(&panel_anim);
 
-        if (now - panel_spring_last_ns >= UI_SPRING_FRAME_NS) {
-            const struct ui_rect old_panel = drop_shadow_draw_rect(
-                spring_panel_rect(), 6U);
-            uint64_t frames = (now - panel_spring_last_ns) /
-                UI_SPRING_FRAME_NS;
-            bool settled = false;
-
-            /* Present the motion instead of silently consuming a whole spring
-             * during one slow virtual-machine frame. */
-            if (frames > 4U) {
-                frames = 4U;
+        (void)ui_anim_advance(&panel_anim, clock_monotonic_ns());
+        if (!ui_anim_running(&panel_anim)) {
+            ui_anim_end(&panel_anim);
+            panel_anim_panel = UI_PANEL_NONE;
+            if (!dock_spring_active && motion_timer_id != 0U) {
+                (void)timer_cancel((uint64_t)motion_timer_id);
+                motion_timer_id = 0U;
             }
-            for (uint64_t frame = 0U; frame < frames && !settled; ++frame) {
-                settled = spring_advance(&panel_spring_position,
-                    &panel_spring_velocity);
-            }
-            panel_spring_last_ns = now;
-            if (settled) {
-                panel_spring_active = false;
-                if (!dock_spring_active && panel_spring_timer_id != 0U) {
-                    (void)timer_cancel((uint64_t)panel_spring_timer_id);
-                    panel_spring_timer_id = 0U;
-                }
-            }
-            damage = rect_union(damage, rect_union(old_panel,
-                drop_shadow_draw_rect(spring_panel_rect(), 6U)));
         }
+        damage = rect_union(damage, bounds);
     }
     if (dock_spring_active) {
         const uint64_t now = clock_monotonic_ns();
@@ -7014,9 +7847,9 @@ enum ui_status ui_flush(void)
             dock_spring_last_ns = now;
             if (!dock3d_animating(&dock_model)) {
                 dock_spring_active = false;
-                if (!panel_spring_active && panel_spring_timer_id != 0U) {
-                    (void)timer_cancel((uint64_t)panel_spring_timer_id);
-                    panel_spring_timer_id = 0U;
+                if (!ui_anim_running(&panel_anim) && motion_timer_id != 0U) {
+                    (void)timer_cancel((uint64_t)motion_timer_id);
+                    motion_timer_id = 0U;
                 }
             }
             damage = rect_union(damage, rect_union(old_dock,
@@ -7155,7 +7988,10 @@ enum ui_status ui_native_window_open(
     native->active = true;
     panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
     panel_windows[panel] = native_window_geometry(slot, width, height);
-    panel_open[panel] = true;
+    panel_restore[panel] = panel_windows[panel];
+    panel_minimized[panel] = false;
+    panel_maximized[panel] = false;
+    panel_open[panel] = false;
     if (set_panel(panel, &damage) != UI_STATUS_OK) {
         panel_open[panel] = false;
         *native = (struct ui_native_window_record){ 0 };
@@ -7177,10 +8013,22 @@ enum ui_status ui_native_window_close(uint32_t slot)
     }
     panel = (enum ui_panel_id)(UI_PANEL_NATIVE_0 + slot);
     damage = drop_shadow_draw_rect(panel_windows[panel], 6U);
+    ui_anim_end(&panel_anim);
+    panel_anim_pending = UI_ANIM_PENDING_NONE;
+    panel_anim_panel = UI_PANEL_NONE;
+    if (state.active_panel == panel && panel_anim_driver && window_motion) {
+        panel_anim_panel = panel;
+        panel_anim_frame = panel_windows[panel];
+        panel_anim_origin = origin_for_panel(panel, false);
+        panel_anim_pending = UI_ANIM_PENDING_CLOSE;
+    }
     if (state.active_panel == panel) {
         native_focus_emit(panel, false);
     }
     panel_open[panel] = false;
+    panel_minimized[panel] = false;
+    panel_maximized[panel] = false;
+    panel_origin_valid[panel] = false;
     remove_panel_from_order(panel);
     native_windows[slot] = (struct ui_native_window_record){ 0 };
     if (state.active_panel == panel) {
@@ -7230,12 +8078,37 @@ enum ui_status ui_native_window_damage(
     if (!panel_open[panel]) {
         return UI_STATUS_OK;
     }
+    const struct ui_rect client = {
+        panel_windows[panel].x + 10U, panel_windows[panel].y + 38U,
+        panel_windows[panel].width - 20U,
+        panel_windows[panel].height - 48U
+    };
     for (size_t index = 0U; index < rectangle_count; ++index) {
-        const struct ui_rect damage = {
-            panel_windows[panel].x + 10U + rectangles[index].x,
-            panel_windows[panel].y + 38U + rectangles[index].y,
-            rectangles[index].width, rectangles[index].height
-        };
+        const struct ui_rect source = rectangles[index];
+        struct ui_rect damage;
+
+        if (client.width == native->width && client.height == native->height) {
+            damage = (struct ui_rect){
+                client.x + source.x, client.y + source.y,
+                source.width, source.height
+            };
+        } else {
+            const uint64_t left = (uint64_t)source.x *
+                client.width / native->width;
+            const uint64_t top = (uint64_t)source.y *
+                client.height / native->height;
+            const uint64_t right = ((uint64_t)(source.x + source.width) *
+                client.width + native->width - 1U) /
+                native->width;
+            const uint64_t bottom = ((uint64_t)(source.y + source.height) *
+                client.height + native->height - 1U) /
+                native->height;
+
+            damage = (struct ui_rect){
+                client.x + (uint32_t)left, client.y + (uint32_t)top,
+                (uint32_t)(right - left), (uint32_t)(bottom - top)
+            };
+        }
         const enum ui_status status = render_region(damage, false);
 
         if (status != UI_STATUS_OK) {
@@ -7497,17 +8370,8 @@ bool ui_self_test(void)
         self_test_failure = "keyboard focus wrap is invalid";
         return false;
     }
-    int32_t spring_position = 0;
-    int32_t spring_velocity = 0;
-    bool spring_overshot = false;
-    bool spring_settled = false;
-    for (size_t frame = 0U; frame < 64U && !spring_settled; ++frame) {
-        spring_settled = spring_advance(&spring_position, &spring_velocity);
-        spring_overshot = spring_overshot || spring_position > UI_SPRING_TARGET;
-    }
-    if (!spring_settled || !spring_overshot ||
-        spring_position != UI_SPRING_TARGET || spring_velocity != 0) {
-        self_test_failure = "bounded spring window animation is invalid";
+    if (!ui_anim_self_test()) {
+        self_test_failure = ui_anim_self_test_failure();
         return false;
     }
     if (!dock3d_self_test()) {
@@ -7543,17 +8407,19 @@ enum ui_status ui_verify_installed(struct ui_proof *proof)
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
         UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
         UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
+        UI_ELEMENT_DOCK_STORE,
         UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
         UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
         UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
+        UI_ACTION_OPEN_STORE,
         UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_STORE, UI_PANEL_SETTINGS
     };
 
     if (proof == NULL) {
@@ -7655,7 +8521,7 @@ const char *ui_panel_name(enum ui_panel_id panel)
 {
     static const char *const names[] = {
         "None", "Files", "Terminal", "Notes", "SapStudio",
-        "Camera", "Settings"
+        "Camera", "Store", "Settings"
     };
     uint32_t slot;
 
@@ -7692,6 +8558,9 @@ const char *ui_element_name(enum ui_element_id element)
     }
     if (element == UI_ELEMENT_DOCK_CANVAS) {
         return "Canvas";
+    }
+    if (element == UI_ELEMENT_DOCK_STORE) {
+        return "Store";
     }
     if (element == UI_ELEMENT_DOCK_SETTINGS) {
         return "Settings";

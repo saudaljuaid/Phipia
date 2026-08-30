@@ -95,6 +95,13 @@ CANVAS_ICON_SOURCE := assets/canvas-icon-dock.png
 CANVAS_ICON_ORIGINAL := assets/canvas-icon.png
 CANVAS_ICON_BLOB := $(BUILD_DIR)/canvas-icon.srl
 CANVAS_ICON_MAX_DIMENSION := 80
+STORE_ICON_SOURCE := assets/store-icon-dock.png
+STORE_ICON_ORIGINAL := assets/store-icon.png
+STORE_ICON_BLOB := $(BUILD_DIR)/store-icon.srl
+STORE_ICON_MAX_DIMENSION := 80
+STORE_UI_ICONS_SOURCE := assets/store-icons.png
+STORE_UI_ICONS_BLOB := $(BUILD_DIR)/store-icons.srl
+STORE_UI_ICONS_MAX_DIMENSION := 256
 SETTINGS_CATEGORY_ICONS_SOURCE := assets/settings-category-icons.png
 SETTINGS_CATEGORY_ICONS_BLOB := $(BUILD_DIR)/settings-category-icons.srl
 SETTINGS_CATEGORY_ICONS_MAX_DIMENSION := 256
@@ -591,6 +598,15 @@ $(CANVAS_ICON_BLOB): $(CANVAS_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DI
 	$(PYTHON) tools/make-logo-asset.py $(CANVAS_ICON_SOURCE) \
 		$(CANVAS_ICON_MAX_DIMENSION) $@
 
+$(STORE_ICON_BLOB): $(STORE_ICON_SOURCE) tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(STORE_ICON_SOURCE) \
+		$(STORE_ICON_MAX_DIMENSION) $@
+
+$(STORE_UI_ICONS_BLOB): $(STORE_UI_ICONS_SOURCE) \
+		tools/make-logo-asset.py | $(BUILD_DIR)
+	$(PYTHON) tools/make-logo-asset.py $(STORE_UI_ICONS_SOURCE) \
+		$(STORE_UI_ICONS_MAX_DIMENSION) $@ --keep-canvas
+
 $(SETTINGS_CATEGORY_ICONS_BLOB): $(SETTINGS_CATEGORY_ICONS_SOURCE) \
 		tools/make-logo-asset.py | $(BUILD_DIR)
 	$(PYTHON) tools/make-logo-asset.py $(SETTINGS_CATEGORY_ICONS_SOURCE) \
@@ -613,7 +629,8 @@ $(UI_FONT_BLOB): $(UI_FONT_SOURCE) $(UI_FONT_METRICS) \
 
 $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 		$(SETTINGS_ICON_BLOB) $(FILES_ICON_BLOB) $(TERMINAL_ICON_BLOB) \
-		$(CAMERA_ICON_BLOB) $(CANVAS_ICON_BLOB) \
+		$(CAMERA_ICON_BLOB) $(CANVAS_ICON_BLOB) $(STORE_ICON_BLOB) \
+		$(STORE_UI_ICONS_BLOB) \
 		$(SETTINGS_CATEGORY_ICONS_BLOB) \
 		$(WALLPAPER_BLOB) $(FONT_BLOB) $(UI_FONT_BLOB) | $(BUILD_DIR)
 	SAPOTE_LOGO_BLOB='$(CURDIR)/$(LOGO_BLOB)' \
@@ -623,6 +640,8 @@ $(RUST_LIB): $(RUST_SOURCES) $(LOGO_BLOB) $(STUDIO_ICON_BLOB) \
 	SAPOTE_TERMINAL_ICON_BLOB='$(CURDIR)/$(TERMINAL_ICON_BLOB)' \
 	SAPOTE_CAMERA_ICON_BLOB='$(CURDIR)/$(CAMERA_ICON_BLOB)' \
 	SAPOTE_CANVAS_ICON_BLOB='$(CURDIR)/$(CANVAS_ICON_BLOB)' \
+	SAPOTE_STORE_ICON_BLOB='$(CURDIR)/$(STORE_ICON_BLOB)' \
+	SAPOTE_STORE_UI_ICONS_BLOB='$(CURDIR)/$(STORE_UI_ICONS_BLOB)' \
 	SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB='$(CURDIR)/$(SETTINGS_CATEGORY_ICONS_BLOB)' \
 	SAPOTE_WALLPAPER_BLOB='$(CURDIR)/$(WALLPAPER_BLOB)' \
 	SAPOTE_FONT_BLOB='$(CURDIR)/$(FONT_BLOB)' \
@@ -756,6 +775,8 @@ verify: toolchain lint
 	@test '$(TERMINAL_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(CAMERA_ICON_MAX_DIMENSION)' -eq 80
 	@test '$(CANVAS_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(STORE_ICON_MAX_DIMENSION)' -eq 80
+	@test '$(STORE_UI_ICONS_MAX_DIMENSION)' -eq 256
 	@test '$(SETTINGS_CATEGORY_ICONS_MAX_DIMENSION)' -eq 256
 	$(PYTHON) tools/make-fat16-fixture.py $(FILESYSTEM_FIXTURE)
 	@test "$$(sha256sum $(FILESYSTEM_FIXTURE) | awk '{ print toupper($$1) }')" = \
@@ -2003,7 +2024,7 @@ qemu-test-%: $(TEST_BUILD_DIR)/%/sapote.iso
 			grep -Fxq 'Sapote: Boot Ledger installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		redwood-proof) \
-		grep -Eq '^ST REDWOOD_PROOF geometry 1024x768 dock 7 events [1-9][0-9]* panels [4-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
+		grep -Eq '^ST REDWOOD_PROOF geometry 1024x768 dock 8 events [1-9][0-9]* panels [1-9][0-9]* cursor [1-9][0-9]* damage [1-9][0-9]* glyphs [1-9][0-9]* fingerprint 0x[0-9A-F]{16}$$' "$$log" && \
 			grep -Fxq 'Sapote: Redwood installed proof passed' "$$log" || \
 				diagnostics_ok=false ;; \
 		device-substrate) \

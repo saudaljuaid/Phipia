@@ -45,7 +45,8 @@ around the unchanged asset:
 | Gold accent | `#E6C462` |
 | Green accent | `#8EAD89` |
 | Red close control | `#D9554F` |
-| Violet accent | `#947BB4` |
+| Violet maximize control and accent | `#947BB4` |
+| White/grey minimize control | `#F3F4F5` / `#82888B` |
 | Shadow | `#050C12` |
 | Window face | `#D9DFE0` |
 | Warm white | `#F8FAF8` |

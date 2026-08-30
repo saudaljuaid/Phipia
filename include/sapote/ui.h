@@ -9,7 +9,7 @@
 #include <sapote/keyboard.h>
 #include <sapote/surface.h>
 
-#define UI_DOCK_ITEM_COUNT 7U
+#define UI_DOCK_ITEM_COUNT 8U
 #define UI_EVENT_QUEUE_CAPACITY 64U
 #define UI_CURSOR_WIDTH 18U
 #define UI_CURSOR_HEIGHT 25U
@@ -70,6 +70,7 @@ enum ui_element_id {
     UI_ELEMENT_DOCK_STUDIO,
     UI_ELEMENT_DOCK_CAMERA,
     UI_ELEMENT_DOCK_CANVAS,
+    UI_ELEMENT_DOCK_STORE,
     UI_ELEMENT_DOCK_SETTINGS,
     UI_ELEMENT_MENU_SEARCH,
     UI_ELEMENT_LAUNCHER_SEARCH,
@@ -81,11 +82,14 @@ enum ui_element_id {
     UI_ELEMENT_LAUNCHER_APP_4,
     UI_ELEMENT_LAUNCHER_APP_5,
     UI_ELEMENT_LAUNCHER_APP_6,
+    UI_ELEMENT_LAUNCHER_APP_7,
     UI_ELEMENT_LAUNCHER_PAGE_0,
     UI_ELEMENT_LAUNCHER_PAGE_1,
     UI_ELEMENT_LAUNCHER_PAGE_2,
     UI_ELEMENT_LAUNCHER_PAGE_3,
     UI_ELEMENT_WINDOW_CLOSE,
+    UI_ELEMENT_WINDOW_MAXIMIZE,
+    UI_ELEMENT_WINDOW_MINIMIZE,
     UI_ELEMENT_FILES_UP,
     UI_ELEMENT_FILES_NEW_FILE,
     UI_ELEMENT_FILES_NEW_FOLDER,
@@ -155,6 +159,20 @@ enum ui_element_id {
     UI_ELEMENT_CAMERA_CHOICE_6,
     UI_ELEMENT_CAMERA_CHOICE_7,
     UI_ELEMENT_CAMERA_CHOICE_8,
+    UI_ELEMENT_STORE_SEARCH,
+    UI_ELEMENT_STORE_NAV_0,
+    UI_ELEMENT_STORE_NAV_1,
+    UI_ELEMENT_STORE_NAV_2,
+    UI_ELEMENT_STORE_NAV_3,
+    UI_ELEMENT_STORE_NAV_4,
+    UI_ELEMENT_STORE_NAV_5,
+    UI_ELEMENT_STORE_NAV_6,
+    UI_ELEMENT_STORE_NAV_7,
+    UI_ELEMENT_STORE_NAV_8,
+    UI_ELEMENT_STORE_NAV_9,
+    UI_ELEMENT_STORE_NAV_10,
+    UI_ELEMENT_STORE_NAV_11,
+    UI_ELEMENT_STORE_NAV_12,
     UI_ELEMENT_COUNT
 };
 
@@ -165,6 +183,7 @@ enum ui_panel_id {
     UI_PANEL_NOTES,
     UI_PANEL_STUDIO,
     UI_PANEL_CAMERA,
+    UI_PANEL_STORE,
     UI_PANEL_SETTINGS,
     UI_PANEL_NATIVE_0,
     UI_PANEL_NATIVE_1,
@@ -207,6 +226,7 @@ enum ui_action {
     UI_ACTION_OPEN_STUDIO,
     UI_ACTION_OPEN_CAMERA,
     UI_ACTION_OPEN_CANVAS,
+    UI_ACTION_OPEN_STORE,
     UI_ACTION_OPEN_SETTINGS,
     UI_ACTION_COUNT
 };
@@ -352,6 +372,8 @@ enum ui_status ui_construct(bool pointer_present);
 enum ui_status ui_activate(void);
 enum ui_status ui_terminal_draw_logo(void);
 bool ui_is_active(void);
+void ui_animation_attach(void);
+bool ui_animation_active(void);
 const struct ui_state *ui_get_state(void);
 
 enum ui_status ui_event_publish(const struct ui_event *event);

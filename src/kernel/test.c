@@ -5462,17 +5462,19 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
         UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
         UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
+        UI_ELEMENT_DOCK_STORE,
         UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
         UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
         UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
+        UI_ACTION_OPEN_STORE,
         UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_STORE, UI_PANEL_SETTINGS
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
@@ -5620,7 +5622,7 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
         }
         redwood_proof_process_ui(
             "Sapote Redwood paged launcher activation draw failed");
-        if (ui_get_state()->active_panel != UI_PANEL_SETTINGS) {
+        if (ui_get_state()->active_panel != UI_PANEL_STORE) {
             kernel_test_fail("Sapote Redwood launcher page chose wrong app");
         }
         redwood_proof_click_point(ui->layout.surface.width - 19U, 12U,
