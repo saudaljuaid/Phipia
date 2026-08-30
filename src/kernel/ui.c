@@ -6863,17 +6863,21 @@ static enum ui_status set_panel(
         opening = !panel_open[panel];
         restoring = panel_minimized[panel];
         if (opening) {
-            const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
-            const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
+            uint32_t native_slot;
 
-            panel_windows[panel] = (struct ui_rect){
-                panel_home.x + offset_x, panel_home.y + offset_y,
-                panel_home.width, panel_home.height
-            };
+            if (!native_panel_slot(panel, &native_slot)) {
+                const uint32_t offset_x = (uint32_t)panel_cascade * 14U;
+                const uint32_t offset_y = (uint32_t)panel_cascade * 11U;
+
+                panel_windows[panel] = (struct ui_rect){
+                    panel_home.x + offset_x, panel_home.y + offset_y,
+                    panel_home.width, panel_home.height
+                };
+                panel_cascade = (uint8_t)((panel_cascade + 1U) %
+                    (UI_PANEL_COUNT - 1U));
+            }
             panel_restore[panel] = panel_windows[panel];
             panel_maximized[panel] = false;
-            panel_cascade = (uint8_t)((panel_cascade + 1U) %
-                (UI_PANEL_COUNT - 1U));
             panel_open[panel] = true;
         }
         panel_minimized[panel] = false;
@@ -8074,12 +8078,37 @@ enum ui_status ui_native_window_damage(
     if (!panel_open[panel]) {
         return UI_STATUS_OK;
     }
+    const struct ui_rect client = {
+        panel_windows[panel].x + 10U, panel_windows[panel].y + 38U,
+        panel_windows[panel].width - 20U,
+        panel_windows[panel].height - 48U
+    };
     for (size_t index = 0U; index < rectangle_count; ++index) {
-        const struct ui_rect damage = {
-            panel_windows[panel].x + 10U + rectangles[index].x,
-            panel_windows[panel].y + 38U + rectangles[index].y,
-            rectangles[index].width, rectangles[index].height
-        };
+        const struct ui_rect source = rectangles[index];
+        struct ui_rect damage;
+
+        if (client.width == native->width && client.height == native->height) {
+            damage = (struct ui_rect){
+                client.x + source.x, client.y + source.y,
+                source.width, source.height
+            };
+        } else {
+            const uint64_t left = (uint64_t)source.x *
+                client.width / native->width;
+            const uint64_t top = (uint64_t)source.y *
+                client.height / native->height;
+            const uint64_t right = ((uint64_t)(source.x + source.width) *
+                client.width + native->width - 1U) /
+                native->width;
+            const uint64_t bottom = ((uint64_t)(source.y + source.height) *
+                client.height + native->height - 1U) /
+                native->height;
+
+            damage = (struct ui_rect){
+                client.x + (uint32_t)left, client.y + (uint32_t)top,
+                (uint32_t)(right - left), (uint32_t)(bottom - top)
+            };
+        }
         const enum ui_status status = render_region(damage, false);
 
         if (status != UI_STATUS_OK) {
