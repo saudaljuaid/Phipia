@@ -31,7 +31,7 @@ HEIGHT = 768
 DOCK_FIXED_ONE = 65536
 DOCK_ICON_SIZE = 58
 DOCK_GAP_FACTOR = 10486
-DOCK_ITEM_COUNT = 7
+DOCK_ITEM_COUNT = 8
 DOCK_POINTER_Y = 700
 DOCK_FILES = 0
 DOCK_TERMINAL = 1
@@ -39,7 +39,8 @@ DOCK_NOTES = 2
 DOCK_STUDIO = 3
 DOCK_CAMERA = 4
 DOCK_CANVAS = 5
-DOCK_SETTINGS = 6
+DOCK_STORE = 6
+DOCK_SETTINGS = 7
 
 
 def dock_item_center(index):
@@ -908,12 +909,46 @@ def main():
                         capture_png(qmp, work, output,
                                     "sapote-ui-redesign-final-dock")
                         events.add("fluid_hover")
+                    elif elapsed >= 6.40 and "store_restored" not in events:
+                        pointer.rehome()
+                        pointer.move_to(dock_item_center(DOCK_STORE),
+                                        DOCK_POINTER_Y)
+                        pointer.click()
+                        capture_png(qmp, work, output,
+                                    "sapote-store-opening")
+                        pointer.settle_guest(0.60)
+                        capture_png(qmp, work, output, "sapote-store")
+
+                        # The fifth newly opened built-in window is cascaded
+                        # to (138, 84); purple is maximize, grey is minimize.
+                        pointer.move_to(179, 101)
+                        pointer.click()
+                        pointer.settle_guest(0.25)
+                        capture_png(qmp, work, output,
+                                    "sapote-store-maximized")
+                        pointer.move_to(49, 49)
+                        pointer.click()
+                        pointer.settle_guest(0.25)
+                        pointer.move_to(201, 101)
+                        pointer.click()
+                        capture_png(qmp, work, output,
+                                    "sapote-store-minimizing")
+                        pointer.settle_guest(0.45)
+                        capture_png(qmp, work, output,
+                                    "sapote-store-minimized")
+                        pointer.move_to(dock_item_center(DOCK_STORE),
+                                        DOCK_POINTER_Y)
+                        pointer.click()
+                        pointer.settle_guest(0.60)
+                        capture_png(qmp, work, output,
+                                    "sapote-store-restored")
+                        events.add("store_restored")
 
                     now = time.monotonic()
                     if now - started >= args.seconds:
                         if {"studio_save", "settings_reopen",
                                 "appearance_light", "window_drag",
-                                "fluid_hover"}.issubset(events):
+                                "fluid_hover", "store_restored"}.issubset(events):
                             break
                         continue
                     remaining = next_capture - now

@@ -21,9 +21,11 @@ fingerprint, glyph ranges, and alpha data are validated before installation.
 
 ## Lucide
 
-The eighteen Settings, Canvas, and search pictograms come from the official Lucide
-repository at commit `23f9abc4ed0146cffededd3d7f94c1018bfdf693`. The selected
-SVG sources and Lucide ISC license are committed under `assets/icons/lucide/`.
+The thirty-three Settings, Canvas, Store, search, and window-control
+pictograms come from the
+official Lucide repository at commit
+`23f9abc4ed0146cffededd3d7f94c1018bfdf693`. The selected SVG sources and
+Lucide ISC license are committed under `assets/icons/lucide/`.
 
 `tools/rasterize-settings-icons.py` composes those pictograms into one coherent
 4×3 glossy category sheet. The sheet is committed, so CairoSVG is a development
@@ -34,7 +36,12 @@ bounded 4× coverage sampling to produce the checked `SCI1` alpha resource used
 by the native Canvas package. Redwood rasterizes the pinned Lucide search
 geometry with bounded integer supersampling at its two small display sizes,
 avoiding both a jagged hand-drawn glyph and a new kernel image decoder.
-`tools/verify-ui-assets.py` pins every selected SVG, the license, and both
+The same bounded sampler renders the pinned Lucide X, square, and minus
+geometry over the close, maximize, and minimize controls.
+`tools/rasterize-store-icons.py` composes the selected Lucide navigation marks
+into the committed monochrome Store sprite; CairoSVG and Pillow are required
+only to regenerate that source sprite, never by the ordinary build.
+`tools/verify-ui-assets.py` pins every selected SVG, the license, and the
 committed raster resources by SHA-256.
 
 ## 3d-dock
@@ -46,7 +53,7 @@ written in C with Cairo and X11. Sapote preserves its raised-cosine hover
 curve, pointer-anchored layout, eased panel width, press squash, decaying
 bounce, trapezoidal shelf flare, warped reflection strips, running lights, and
 tooltip fades, while replacing those hosted dependencies with bounded Q16.16
-math and direct cached-framebuffer drawing. Only Sapote's six applications are
+math and direct cached-framebuffer drawing. Only Sapote's eight applications are
 present. The upstream MIT license is committed as
 `docs/third-party/3d-dock-LICENSE`.
 

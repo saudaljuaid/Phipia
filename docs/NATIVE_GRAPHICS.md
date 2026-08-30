@@ -9,8 +9,13 @@ handle, and a process-local RW/NX surface address with explicit width, height,
 and byte stride.
 
 The application owns only content pixels. Redwood owns chrome, focus, stacking,
-movement, close controls, Dock behavior, animation, and composition. The
-surface is never a mapping of physical framebuffer memory. Presentation names
+movement, close/maximize/minimize controls, Dock behavior, animation, and
+composition. A maximized native surface is scaled into the larger content
+area and pointer coordinates are mapped back into its original geometry. The
+same compositor snapshots a completed native window for the bounded Dock genie
+animation; the process surface remains unchanged and is never writable by the
+animation path. The surface is never a mapping of physical framebuffer memory.
+Presentation names
 one to eight checked damage rectangles. The kernel copies only bounded damaged
 rows into the compositor shadow and accounts presented pixels; there is no
 per-pixel syscall and a small update does not trigger an application-sized

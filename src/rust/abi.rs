@@ -119,6 +119,9 @@ static FILES_ICON: &[u8] = include_bytes!(env!("SAPOTE_FILES_ICON_BLOB"));
 static TERMINAL_ICON: &[u8] = include_bytes!(env!("SAPOTE_TERMINAL_ICON_BLOB"));
 static CAMERA_ICON: &[u8] = include_bytes!(env!("SAPOTE_CAMERA_ICON_BLOB"));
 static CANVAS_ICON: &[u8] = include_bytes!(env!("SAPOTE_CANVAS_ICON_BLOB"));
+static STORE_ICON: &[u8] = include_bytes!(env!("SAPOTE_STORE_ICON_BLOB"));
+static STORE_UI_ICONS: &[u8] =
+    include_bytes!(env!("SAPOTE_STORE_UI_ICONS_BLOB"));
 static SETTINGS_CATEGORY_ICONS: &[u8] =
     include_bytes!(env!("SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB"));
 
@@ -635,6 +638,80 @@ pub unsafe extern "C" fn sapote_canvas_icon_decode_alpha(
 ) -> i32 {
     // SAFETY: forwarded unchanged to the checked pointer boundary.
     unsafe { app_icon_decode_alpha(CANVAS_ICON, out, out_pixels) }
+}
+
+/// Read the checked Sapote Store application icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(STORE_ICON, width, height) }
+}
+
+/// Decode the checked Sapote Store application icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(STORE_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the checked Sapote Store application icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(STORE_ICON, out, out_pixels) }
+}
+
+/// Read the checked monochrome Lucide Store sprite geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_ui_icons_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(STORE_UI_ICONS, width, height) }
+}
+
+/// Decode the checked monochrome Lucide Store sprite.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_ui_icons_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(STORE_UI_ICONS, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the checked monochrome Lucide Store sprite alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_store_ui_icons_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(STORE_UI_ICONS, out, out_pixels) }
 }
 
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build

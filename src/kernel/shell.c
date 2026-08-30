@@ -1661,6 +1661,10 @@ _Noreturn void shell_run(void)
         (void)shell_initialize();
     }
 
+    if (ui_operational) {
+        ui_animation_attach();
+    }
+
     console_write("\n");
     console_write(SHELL_PROMPT);
 
@@ -1701,6 +1705,16 @@ _Noreturn void shell_run(void)
                 report_native_result(native_process_launch(manifest,
                     &result), &result);
             }
+        }
+
+        /*
+         * A moving window is active rendering work: keep producing frames
+         * until the monotonic-clock animation settles.  Once it is still,
+         * the ordinary sti/hlt path below resumes immediately, so an idle
+         * desktop never burns the only core.
+         */
+        if (ui_operational && ui_animation_active()) {
+            continue;
         }
 
         /*
