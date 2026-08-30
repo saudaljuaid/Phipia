@@ -9,6 +9,7 @@
 #include <sapote/interrupts.h>
 #include <sapote/ioapic.h>
 #include <sapote/interrupt_vector.h>
+#include <sapote/native_process.h>
 #include <sapote/pic.h>
 #include <sapote/thread.h>
 #include <sapote/test.h>
@@ -655,6 +656,64 @@ uintptr_t interrupt_dispatch(struct interrupt_frame *frame)
             process_gate_runtime.state != INTERRUPT_PROCESS_GATE_ARMED ||
             proof_slot->handler == NULL || !interrupt_frame_has_stack_tail(frame)) {
             fatal_interrupt(frame);
+        }
+        /*
+         * Native applications run with IF set, unlike the original one-shot
+         * proof. Service and acknowledge a real device interrupt before the
+         * native scheduler saves the userspace context. The scheduler return
+         * replaces thread_on_interrupt_return for this boundary.
+         */
+        if (native_process_interrupt_active()) {
+            if (vector >= INTERRUPT_PIC_MASTER_BASE &&
+                vector < INTERRUPT_PIC_LIMIT) {
+                const uint8_t irq =
+                    (uint8_t)(vector - INTERRUPT_PIC_MASTER_BASE);
+
+                if (!pic_irq_is_real(irq)) {
+                    return 0U;
+                }
+                if (slot->handler == NULL) {
+                    pic_send_eoi(irq);
+                    fatal_interrupt(frame);
+                }
+                slot->handler(frame, slot->context);
+                pic_send_eoi(irq);
+            } else if (vector >= INTERRUPT_IOAPIC_BASE &&
+                vector < INTERRUPT_LOCAL_APIC_LIMIT) {
+                const bool level_triggered =
+                    ioapic_vector_is_level_triggered(vector);
+
+                if (slot->handler == NULL) {
+                    if (level_triggered) {
+                        if (ioapic_send_eoi(vector) != IOAPIC_STATUS_OK) {
+                            console_panic("native I/O APIC EOI failed");
+                        }
+                    } else {
+                        apic_send_eoi();
+                    }
+                    fatal_interrupt(frame);
+                }
+                slot->handler(frame, slot->context);
+                if (level_triggered) {
+                    if (ioapic_send_eoi(vector) != IOAPIC_STATUS_OK) {
+                        console_panic("native I/O APIC EOI failed");
+                    }
+                } else {
+                    apic_send_eoi();
+                }
+            } else if (vector >= INTERRUPT_DYNAMIC_BASE &&
+                vector < INTERRUPT_DYNAMIC_LIMIT) {
+                if (slot->handler == NULL ||
+                    !interrupt_vector_is_allocated(vector)) {
+                    apic_send_eoi();
+                    fatal_interrupt(frame);
+                }
+                slot->handler(frame, slot->context);
+                apic_send_eoi();
+            } else if (vector >= INTERRUPT_EXCEPTION_COUNT &&
+                vector != INTERRUPT_PROCESS_PROOF_VECTOR) {
+                fatal_interrupt(frame);
+            }
         }
         process_gate_runtime.state = INTERRUPT_PROCESS_GATE_ENTERED;
         process_gate_runtime.dispatch_frame = frame;

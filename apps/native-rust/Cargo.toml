@@ -1,0 +1,16 @@
+[package]
+name = "sapote-native-rust-proof"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[dependencies]
+sapote = { path = "../../rust/sapote" }
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = false
+opt-level = 2
+panic = "abort"
+strip = "none"

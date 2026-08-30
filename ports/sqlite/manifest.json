@@ -1,0 +1,17 @@
+{
+  "name": "SQLite 3.46.0 persistence proof",
+  "identifier": "SQLITE",
+  "executable": "SQLITE.APP",
+  "data_namespace": "SQLITE",
+  "memory_limit": 67108864,
+  "max_handles": 32,
+  "max_threads": 1,
+  "capabilities": [
+    "console",
+    "data-read",
+    "data-write",
+    "time",
+    "entropy"
+  ],
+  "arguments": []
+}

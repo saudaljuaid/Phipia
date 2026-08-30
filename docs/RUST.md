@@ -2,9 +2,11 @@
 
 # Rust in Sapote
 
-Rust has one job in Sapote: validate selected byte streams the kernel did not
-produce. C and x86_64 assembly continue to own hardware, page tables, interrupt
-entry, context switches, and resource lifecycles.
+Rust has two deliberately separate roles in Sapote: validating selected byte
+streams at the kernel boundary, and supporting freestanding native
+applications through the public ABI. C and x86_64 assembly continue to own
+hardware, page tables, interrupt entry, context switches, and kernel resource
+lifecycles.
 
 ## Boundary
 
@@ -52,8 +54,23 @@ refusals. See [`FAT32.md`](FAT32.md).
 - `unsafe_op_in_unsafe_fn` denied;
 - linker rejection of unexpected sections, relocations, GOT growth, and W+X.
 
-The resulting archive links directly into the kernel ELF. There is no allocator,
-unwinder, hosted runtime, dynamic loader, or Rust entry point.
+The resulting archive links directly into the kernel ELF. There is no kernel
+allocator supplied by Rust, unwinder, hosted runtime, dynamic loader, or Rust
+kernel entry point.
+
+## Native application crate
+
+`rust/sapote` is a separate `#![no_std]` application crate. It supplies the
+native entry shim, panic-to-exit behavior, a page-mapping global allocator,
+typed handle cleanup, and wrappers for files, monotonic time, sleeping,
+entropy, event waits, Redwood windows and surfaces, DNS, TCP, threads, futexes,
+and FS-base TLS control. It uses `alloc` but does not claim Rust `std` support.
+
+`apps/native-rust` builds with Cargo's `x86_64-unknown-none` target in locked
+offline mode. Its static `ET_EXEC` image uses the same linker and manifest
+rules as C applications. The installed guest allocates a `Vec`, obtains
+entropy, creates and joins a native thread, writes `RUSTAPP/RUST.TXT` on Data,
+sleeps to a monotonic deadline, and exits with a clean resource census.
 
 ## Safety rules
 

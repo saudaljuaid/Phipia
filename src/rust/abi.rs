@@ -18,6 +18,7 @@ use crate::font;
 use crate::linux_elf64;
 use crate::linux_fat16;
 use crate::logo::{self, Format, Status};
+use crate::native_image;
 use crate::nvbios;
 use crate::wallpaper;
 use crate::ui_font;
@@ -84,6 +85,18 @@ const _: () = {
     assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, non_load_count) == 12);
     assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, entry) == 16);
     assert!(core::mem::offset_of!(linux_elf64::ValidatedImage, segments) == 24);
+
+    assert!(native_image::Status::DigestMismatch as i32 == 30);
+    assert!(core::mem::size_of::<native_image::Manifest>() == 432);
+    assert!(core::mem::align_of::<native_image::Manifest>() == 8);
+    assert!(core::mem::offset_of!(native_image::Manifest, capabilities) == 8);
+    assert!(core::mem::offset_of!(native_image::Manifest, name) == 32);
+    assert!(core::mem::offset_of!(native_image::Manifest, arguments) == 176);
+    assert!(core::mem::size_of::<native_image::Tls>() == 40);
+    assert!(core::mem::size_of::<native_image::Segment>() == 56);
+    assert!(core::mem::size_of::<native_image::ValidatedImage>() == 976);
+    assert!(core::mem::offset_of!(native_image::ValidatedImage, tls) == 40);
+    assert!(core::mem::offset_of!(native_image::ValidatedImage, segments) == 80);
 };
 
 /// Stop in C's console panic path if a compiler-inserted check ever fires.
@@ -105,6 +118,7 @@ static SETTINGS_ICON: &[u8] = include_bytes!(env!("SAPOTE_SETTINGS_ICON_BLOB"));
 static FILES_ICON: &[u8] = include_bytes!(env!("SAPOTE_FILES_ICON_BLOB"));
 static TERMINAL_ICON: &[u8] = include_bytes!(env!("SAPOTE_TERMINAL_ICON_BLOB"));
 static CAMERA_ICON: &[u8] = include_bytes!(env!("SAPOTE_CAMERA_ICON_BLOB"));
+static CANVAS_ICON: &[u8] = include_bytes!(env!("SAPOTE_CANVAS_ICON_BLOB"));
 static SETTINGS_CATEGORY_ICONS: &[u8] =
     include_bytes!(env!("SAPOTE_SETTINGS_CATEGORY_ICONS_BLOB"));
 
@@ -584,6 +598,43 @@ pub unsafe extern "C" fn sapote_camera_icon_decode_alpha(
 ) -> i32 {
     // SAFETY: forwarded unchanged to the checked pointer boundary.
     unsafe { app_icon_decode_alpha(CAMERA_ICON, out, out_pixels) }
+}
+
+/// Read the checked Canvas application icon geometry.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_canvas_icon_geometry(
+    width: *mut u32,
+    height: *mut u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_geometry(CANVAS_ICON, width, height) }
+}
+
+/// Decode the checked Canvas application icon.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_canvas_icon_decode(
+    out: *mut u32,
+    out_pixels: usize,
+    red_shift: u8,
+    green_shift: u8,
+    blue_shift: u8,
+    background: u32,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe {
+        app_icon_decode(CANVAS_ICON, out, out_pixels, red_shift,
+            green_shift, blue_shift, background)
+    }
+}
+
+/// Decode the checked Canvas application icon alpha channel.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_canvas_icon_decode_alpha(
+    out: *mut u8,
+    out_pixels: usize,
+) -> i32 {
+    // SAFETY: forwarded unchanged to the checked pointer boundary.
+    unsafe { app_icon_decode_alpha(CANVAS_ICON, out, out_pixels) }
 }
 
 /// The packed glyph table, produced by `tools/make-font-asset.py` at build
@@ -1587,6 +1638,62 @@ pub unsafe extern "C" fn sapote_linux_cat_fat16_validate_payload(
 
 fn linux_elf64_status_code(status: linux_elf64::Status) -> i32 {
     status as i32
+}
+
+fn native_image_status_code(status: native_image::Status) -> i32 {
+    status as i32
+}
+
+/// Run the allocation-free native manifest, ELF, and SHA-256 invariants.
+#[unsafe(no_mangle)]
+pub extern "C" fn sapote_native_image_self_test() -> u32 {
+    native_image::self_test()
+}
+
+/// Validate one CPU-owned manifest and executable as a single admission unit.
+///
+/// # Safety
+///
+/// Both inputs must name their complete readable lengths. `manifest_out` and
+/// `image_out` must each name one writable, non-overlapping result, and neither
+/// output may overlap either input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sapote_native_image_validate(
+    manifest_bytes: *const u8,
+    manifest_length: usize,
+    elf_bytes: *const u8,
+    elf_length: usize,
+    manifest_out: *mut native_image::Manifest,
+    image_out: *mut native_image::ValidatedImage,
+) -> i32 {
+    if manifest_out.is_null() || image_out.is_null() {
+        return native_image_status_code(native_image::Status::NullArgument);
+    }
+    // SAFETY: the caller promises both writable results and null was refused.
+    unsafe {
+        *manifest_out = native_image::Manifest::invalid();
+        *image_out = native_image::ValidatedImage::invalid();
+    }
+    if manifest_bytes.is_null() || elf_bytes.is_null() {
+        return native_image_status_code(native_image::Status::NullArgument);
+    }
+    // SAFETY: the caller promises both complete readable ranges.
+    let manifest = unsafe {
+        core::slice::from_raw_parts(manifest_bytes, manifest_length)
+    };
+    // SAFETY: as above, for the complete executable range.
+    let elf = unsafe { core::slice::from_raw_parts(elf_bytes, elf_length) };
+    match native_image::validate(manifest, elf) {
+        Ok((manifest_value, image_value)) => {
+            // SAFETY: both validated outputs still name one writable value.
+            unsafe {
+                *manifest_out = manifest_value;
+                *image_out = image_value;
+            }
+            native_image_status_code(native_image::Status::Ok)
+        }
+        Err(status) => native_image_status_code(status),
+    }
 }
 
 /// Run the pointer-free measured BusyBox ELF conjunction controls.

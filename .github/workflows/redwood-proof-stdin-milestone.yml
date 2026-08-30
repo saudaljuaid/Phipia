@@ -69,7 +69,7 @@ jobs:
                   cat build/cat-measure/one/raw-read-write-trace.txt
                   cat build/cat-measure/one/minimal-stack-syscall-trace.txt
             - name: Upload measured cat evidence
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: sapote-busybox-cat-measurement-${{ github.sha }}
                   path: build/cat-measure/one
@@ -93,8 +93,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils build-essential bzip2 ffmpeg file grub-common \
-                      grub-pc-bin make mtools qemu-system-x86 qemu-user \
+                      binutils build-essential bzip2 clang ffmpeg file grub-common \
+                      grub-pc-bin lld make mtools qemu-system-x86 qemu-user \
                       strace xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
@@ -159,13 +159,13 @@ jobs:
                       make --no-print-directory -s contract-scenarios | wc -l
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 101
+                  test "$expected_scenarios" -eq 112
                   test "$scenario_count" -eq "$expected_scenarios"
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee build/all-qemu-scenarios.txt
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      build/all-qemu-scenarios.txt)" -eq 101
+                      build/all-qemu-scenarios.txt)" -eq 112
             - name: Capture authentic interactive Sapote Redwood evidence
               if: github.ref == 'refs/tags/v1.1.0'
               shell: bash
@@ -308,7 +308,7 @@ jobs:
                   cat "$release/SHA256SUMS"
             - name: Upload v1.1.0 milestone evidence
               if: github.ref == 'refs/tags/v1.1.0'
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: Sapote-v1.1.0-evidence-${{ github.sha }}
                   path: evidence

@@ -14,6 +14,7 @@
 #include <sapote/linux_userland.h>
 #include <sapote/linux_syscall.h>
 #include <sapote/memory.h>
+#include <sapote/native_process.h>
 #include <sapote/network.h>
 #include <sapote/pci.h>
 #include <sapote/screen.h>
@@ -159,6 +160,8 @@ static void command_help(void)
     console_write("  help      this list\n");
     console_write("  echo      print the rest of the line\n");
     console_write("  linux     run measured echo, uname, or bounded cat userspace\n");
+    console_write("  native    launch one native application manifest\n");
+    console_write("  native-start/native-go  stage and run several native apps\n");
     console_write("  drives    mounted FAT32 system and data volumes\n");
     console_write("  mount     retry a recoverable FAT32 mount\n");
     console_write("  ls/cd/pwd  browse the writable data volume\n");
@@ -226,6 +229,68 @@ static void command_linux(const char *arguments)
         console_write(linux_userland_status_string(status));
         console_putc('\n');
     }
+}
+
+static void report_native_result(
+    enum native_process_status status,
+    const struct native_process_result *result
+)
+{
+    console_write("native: ");
+    console_write(native_process_status_string(status));
+    if (status == NATIVE_PROCESS_OK && result != NULL) {
+        console_write(" exit=");
+        if (result->exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result->exit_status));
+        } else {
+            console_write_u64((uint32_t)result->exit_status);
+        }
+        console_write(" syscalls=");
+        console_write_u64(result->syscall_count);
+        console_write(" switches=");
+        console_write_u64(result->thread_switches);
+        console_write(" released=");
+        console_write(result->resources_released ? "yes" : "no");
+    }
+    console_putc('\n');
+}
+
+static void command_native(const char *arguments)
+{
+    struct native_process_result result;
+
+    if (arguments[0] == '\0') {
+        console_write("native: supply an 8.3 System manifest path\n");
+        return;
+    }
+    report_native_result(native_process_launch(arguments, &result), &result);
+}
+
+static void command_native_start(const char *arguments)
+{
+    uint64_t generation;
+    enum native_process_status status;
+
+    if (arguments[0] == '\0') {
+        console_write("native-start: supply an 8.3 System manifest path\n");
+        return;
+    }
+    status = native_process_spawn(arguments, &generation);
+    console_write("native-start: ");
+    console_write(native_process_status_string(status));
+    if (status == NATIVE_PROCESS_OK) {
+        console_write(" generation=");
+        console_write_u64(generation);
+    }
+    console_putc('\n');
+}
+
+static void command_native_go(void)
+{
+    struct native_process_result result;
+
+    report_native_result(native_process_run(&result), &result);
 }
 
 static void filesystem_error(const char *command, enum sapfs_status status)
@@ -1242,6 +1307,12 @@ enum shell_status shell_execute(const char *text)
     } else if (matches(text, "linux")) {
         linux_prompt_evidence_pending = true;
         command_linux(arguments_of(text));
+    } else if (matches(text, "native-start")) {
+        command_native_start(arguments_of(text));
+    } else if (matches(text, "native-go")) {
+        command_native_go();
+    } else if (matches(text, "native")) {
+        command_native(arguments_of(text));
     } else if (matches(text, "drives")) {
         command_drives();
     } else if (matches(text, "mount")) {
@@ -1618,6 +1689,17 @@ _Noreturn void shell_run(void)
                 console_write("Sapote: Redwood runtime disabled: ");
                 console_write(ui_status_string(status));
                 console_putc('\n');
+            }
+        }
+        if (ui_operational) {
+            char manifest[SAPFS_MAX_PATH + 1U];
+
+            if (ui_application_launch_dequeue(manifest,
+                    sizeof(manifest))) {
+                struct native_process_result result;
+
+                report_native_result(native_process_launch(manifest,
+                    &result), &result);
             }
         }
 

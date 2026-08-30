@@ -262,6 +262,13 @@ enum network_status network_tcp_shutdown(
 );
 enum network_status network_close(uint64_t owner, network_handle handle);
 enum network_status network_cancel(uint64_t owner, network_handle handle);
+enum network_status network_address(
+    uint64_t owner,
+    network_handle handle,
+    bool peer,
+    uint32_t *address,
+    uint16_t *port
+);
 enum network_status network_poll(
     uint64_t owner,
     const struct network_poll_request *requests,

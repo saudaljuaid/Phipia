@@ -31,8 +31,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils build-essential bzip2 ffmpeg file grub-common \
-                      grub-pc-bin make mtools qemu-system-x86 qemu-user \
+                      binutils build-essential bzip2 clang ffmpeg file grub-common \
+                      grub-pc-bin lld make mtools qemu-system-x86 qemu-user \
                       strace xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
@@ -96,7 +96,7 @@ jobs:
                       build/busybox-uname-contract/busybox
                   cmp build/release-cat/one/busybox \
                       build/busybox-cat-contract/busybox
-            - name: Run all 101 production-path QEMU scenarios individually
+            - name: Run all 112 production-path QEMU scenarios individually
               shell: bash
               run: |
                   set -euo pipefail
@@ -107,13 +107,13 @@ jobs:
                       make --no-print-directory -s contract-scenarios | wc -l
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 101
+                  test "$expected_scenarios" -eq 112
                   test "$scenario_count" -eq "$expected_scenarios"
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee build/evidence-logs/all-qemu-scenarios.txt
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 101
+                      build/evidence-logs/all-qemu-scenarios.txt)" -eq 112
             - name: Capture authentic clean-reboot persistence media
               shell: bash
               run: |
@@ -170,7 +170,7 @@ jobs:
                   done < <(find build/tests -mindepth 2 -maxdepth 2 \
                       -name serial.log -print | sort)
                   test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
-                      -eq 101
+                      -eq 112
                   for profile in echo uname cat; do
                       cp "build/release-$profile/one/build-record.txt" \
                           "$release/$profile-reproducible-build-record.txt"
@@ -238,7 +238,7 @@ jobs:
                   cat "$release/verification-summary.txt"
                   cat "$release/SHA256SUMS"
             - name: Upload v2.0.0 exact-commit evidence
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: Sapote-v2.0.0-evidence-${{ github.sha }}
                   path: evidence

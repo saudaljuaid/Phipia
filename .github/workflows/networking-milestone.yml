@@ -31,8 +31,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils build-essential bzip2 ffmpeg file grub-common \
-                      grub-pc-bin make mtools qemu-system-x86 qemu-user \
+                      binutils build-essential bzip2 clang ffmpeg file grub-common \
+                      grub-pc-bin lld make mtools qemu-system-x86 qemu-user \
                       strace xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
@@ -51,7 +51,7 @@ jobs:
                       | tee "$log_dir/network-fixture-self-test.log"
                   make verify | tee "$log_dir/make-verify.log"
                   git diff --check
-            - name: Run all 101 production QEMU scenarios
+            - name: Run all 112 production QEMU scenarios
               shell: bash
               run: |
                   set -euo pipefail
@@ -68,16 +68,16 @@ jobs:
                           | grep -c '^network-'
                   )
                   assertion_count=$(grep -c 'grep -F\|grep -E' Makefile)
-                  test "$expected_scenarios" -eq 101
-                  test "$scenario_count" -eq 101
-                  test "$network_count" -eq 36
+                  test "$expected_scenarios" -eq 112
+                  test "$scenario_count" -eq 112
+                  test "$network_count" -eq 37
                   test "$assertion_count" -eq "$expected_assertions"
                   make qemu-tests QEMU_ACCEL=tcg \
                       | tee "$log_dir/all-qemu-scenarios.txt"
                   test "$(grep -Ec '^QEMU scenario [a-z0-9-]+ passed$' \
-                      "$log_dir/all-qemu-scenarios.txt")" -eq 101
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 112
                   test "$(grep -Ec '^QEMU scenario network-[a-z0-9-]+ passed$' \
-                      "$log_dir/all-qemu-scenarios.txt")" -eq 36
+                      "$log_dir/all-qemu-scenarios.txt")" -eq 37
                   cp build/tests/network-http-length/network.pcap \
                       "$log_dir/network-http-length.pcap"
                   cp build/tests/network-http-length/packet-audit.json \
@@ -146,7 +146,7 @@ jobs:
                   done < <(find build/tests -mindepth 2 -maxdepth 2 \
                       -name serial.log -print | sort)
                   test "$(find "$release/qemu-transcripts" -type f | wc -l)" \
-                      -eq 101
+                      -eq 112
                   cp tools/network_fixture.py tools/network_packet_audit.py \
                       tools/run_network_scenario.py tools/capture-networking.py \
                       docs/NETWORKING.md docs/BROWSER_PORT.md \
@@ -182,7 +182,7 @@ jobs:
                   )
                   cat "$release/verification-summary.txt"
             - name: Upload v2.1.0 exact-commit evidence
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: Sapote-v2.1.0-evidence-${{ github.sha }}
                   path: evidence

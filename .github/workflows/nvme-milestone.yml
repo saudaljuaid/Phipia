@@ -16,7 +16,7 @@ jobs:
     bounded-evidence:
         name: bounded-nvme-evidence
         runs-on: ubuntu-24.04
-        # Ten complete 101-scenario TCG sweeps take about 105 minutes on the
+        # Ten complete 112-scenario TCG sweeps take about 105 minutes on the
         # hosted runner.  Keep enough headroom for evidence assembly instead
         # of cancelling a healthy ninth sweep at the old 90-minute ceiling.
         timeout-minutes: 150
@@ -28,7 +28,8 @@ jobs:
                   sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
                   sudo apt-get update
                   sudo apt-get install --yes --no-install-recommends \
-                      binutils gcc grub-common grub-pc-bin make mtools qemu-system-x86 xorriso
+                      binutils clang ffmpeg gcc grub-common grub-pc-bin lld \
+                      make mtools qemu-system-x86 xorriso
             - name: Install the Rust bare-metal target
               run: rustup target add x86_64-unknown-none
             - name: Record the fixture and accelerator surface
@@ -152,7 +153,7 @@ jobs:
                   cat evidence/nvme/verification-summary.txt
                   cat evidence/nvme/SHA256SUMS
             - name: Upload the bounded milestone evidence
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                   name: sapote-nvme-milestone-${{ github.sha }}
                   path: evidence/nvme

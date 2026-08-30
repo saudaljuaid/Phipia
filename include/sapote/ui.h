@@ -9,12 +9,14 @@
 #include <sapote/keyboard.h>
 #include <sapote/surface.h>
 
-#define UI_DOCK_ITEM_COUNT 6U
+#define UI_DOCK_ITEM_COUNT 7U
 #define UI_EVENT_QUEUE_CAPACITY 64U
 #define UI_CURSOR_WIDTH 18U
 #define UI_CURSOR_HEIGHT 25U
 #define UI_CURSOR_HOTSPOT_X 0U
 #define UI_CURSOR_HOTSPOT_Y 0U
+#define UI_NATIVE_WINDOW_COUNT 4U
+#define UI_NATIVE_TITLE_BYTES 32U
 
 enum ui_status {
     UI_STATUS_OK = 0,
@@ -67,7 +69,22 @@ enum ui_element_id {
     UI_ELEMENT_DOCK_NOTES,
     UI_ELEMENT_DOCK_STUDIO,
     UI_ELEMENT_DOCK_CAMERA,
+    UI_ELEMENT_DOCK_CANVAS,
     UI_ELEMENT_DOCK_SETTINGS,
+    UI_ELEMENT_MENU_SEARCH,
+    UI_ELEMENT_LAUNCHER_SEARCH,
+    UI_ELEMENT_LAUNCHER_DISMISS,
+    UI_ELEMENT_LAUNCHER_APP_0,
+    UI_ELEMENT_LAUNCHER_APP_1,
+    UI_ELEMENT_LAUNCHER_APP_2,
+    UI_ELEMENT_LAUNCHER_APP_3,
+    UI_ELEMENT_LAUNCHER_APP_4,
+    UI_ELEMENT_LAUNCHER_APP_5,
+    UI_ELEMENT_LAUNCHER_APP_6,
+    UI_ELEMENT_LAUNCHER_PAGE_0,
+    UI_ELEMENT_LAUNCHER_PAGE_1,
+    UI_ELEMENT_LAUNCHER_PAGE_2,
+    UI_ELEMENT_LAUNCHER_PAGE_3,
     UI_ELEMENT_WINDOW_CLOSE,
     UI_ELEMENT_FILES_UP,
     UI_ELEMENT_FILES_NEW_FILE,
@@ -149,8 +166,38 @@ enum ui_panel_id {
     UI_PANEL_STUDIO,
     UI_PANEL_CAMERA,
     UI_PANEL_SETTINGS,
+    UI_PANEL_NATIVE_0,
+    UI_PANEL_NATIVE_1,
+    UI_PANEL_NATIVE_2,
+    UI_PANEL_NATIVE_3,
     UI_PANEL_COUNT
 };
+
+enum ui_native_event_type {
+    UI_NATIVE_EVENT_KEY = 1,
+    UI_NATIVE_EVENT_POINTER_MOVE,
+    UI_NATIVE_EVENT_POINTER_BUTTON,
+    UI_NATIVE_EVENT_FOCUS,
+    UI_NATIVE_EVENT_CLOSE
+};
+
+struct ui_native_event {
+    enum ui_native_event_type type;
+    uint64_t monotonic_ns;
+    int32_t x;
+    int32_t y;
+    int32_t delta_x;
+    int32_t delta_y;
+    uint32_t code;
+    uint32_t value;
+    uint32_t modifiers;
+};
+
+typedef void (*ui_native_event_fn)(
+    uint32_t slot,
+    const struct ui_native_event *event,
+    void *context
+);
 
 enum ui_action {
     UI_ACTION_NONE = 0,
@@ -159,6 +206,7 @@ enum ui_action {
     UI_ACTION_OPEN_NOTES,
     UI_ACTION_OPEN_STUDIO,
     UI_ACTION_OPEN_CAMERA,
+    UI_ACTION_OPEN_CANVAS,
     UI_ACTION_OPEN_SETTINGS,
     UI_ACTION_COUNT
 };
@@ -310,6 +358,26 @@ enum ui_status ui_event_publish(const struct ui_event *event);
 enum ui_status ui_handle_keyboard(const struct keyboard_event *event);
 enum ui_status ui_process_events(void);
 enum ui_status ui_flush(void);
+
+enum ui_status ui_native_window_open(
+    uint32_t slot,
+    const char *title,
+    const uint32_t *pixels,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride_bytes,
+    ui_native_event_fn event_handler,
+    void *context
+);
+enum ui_status ui_native_window_close(uint32_t slot);
+enum ui_status ui_native_window_damage(
+    uint32_t slot,
+    const struct ui_rect *rectangles,
+    size_t rectangle_count
+);
+enum ui_status ui_native_pointer_capture(uint32_t slot, bool capture);
+bool ui_native_window_is_open(uint32_t slot);
+bool ui_application_launch_dequeue(char *manifest_path, size_t capacity);
 
 bool ui_self_test(void);
 const char *ui_self_test_failure(void);

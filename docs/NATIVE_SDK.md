@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
+# Offline C SDK and porting guide
+
+`make sdk` creates `build/sdk` without downloading anything. It contains
+public ABI and runtime headers, `crt0.o`, `libsapote.a`, the static linker
+script, and `bin/sapote-cc`. `make reproducible-sdk` builds the complete tree
+twice in clean directories and compares all files byte-for-byte.
+
+The reference compiler is Clang targeting `x86_64-unknown-none-elf`; linking
+uses LLD and `sdk/linker.ld`. Applications are freestanding, static, large code
+model, no red zone, local-exec TLS, no stack protector, and no builtin libc.
+The linker fixes the native image arena, separates RX/R/RW loads, emits a
+non-executable stack, and refuses orphan sections, unresolved relocations, and
+W+X layout.
+
+To add an application:
+
+1. Depend only on headers listed in `LIBC_COVERAGE.md`, or add a tested SDK
+   implementation before the port.
+2. Compile every source with `$(SDK_CC) $(SDK_CFLAGS)` and link `crt0.o`, the
+   objects, and `libsapote.a` using `$(SDK_LDFLAGS)`.
+3. Add a version 1 manifest with the minimum capabilities and realistic memory,
+   handle, and thread limits.
+4. Build and inspect the package with `tools/sapote-package.py`.
+5. Add the package to a System image and put mutable fixtures under its Data
+   namespace.
+6. Run `make port-tests` and a Ring 3 QEMU scenario that proves output and the
+   final resource census.
+
+The runtime supplies startup/exit, negative-error translation to `errno`, a
+page-backed heap, buffered `FILE`, FAT file/directory wrappers, time, entropy,
+pthread/TLS/futex support, Redwood surfaces/input, and typed networking
+wrappers. Familiar names are a source-porting layer; the kernel remains the
+Sapote ABI rather than a Linux personality.
+
+`make native-apps` builds the C proof, Lua, SQLite, Canvas, the native network
+client, and the Rust proof entirely from checked-in inputs. The Lua and SQLite
+scripts extract their pinned archives into disposable build directories and do
+not modify the upstream source archives.

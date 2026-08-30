@@ -5,6 +5,7 @@
 
 #include <sapote/acpi.h>
 #include <sapote/acpi_util.h>
+#include <sapote/abi/base.h>
 #include <sapote/apic.h>
 #include <sapote/apic_timer.h>
 #include <sapote/boot_ledger.h>
@@ -22,6 +23,7 @@
 #include <sapote/ioapic.h>
 #include <sapote/memory.h>
 #include <sapote/network.h>
+#include <sapote/native_process.h>
 #include <sapote/network_syscall.h>
 #include <sapote/audio.h>
 #include <sapote/nvidia.h>
@@ -528,6 +530,39 @@ static enum kernel_test_scenario scenario_from_value(
     if (token_equals(value, length, "nvidia-builtin")) {
         return KERNEL_TEST_NVIDIA_BUILTIN;
     }
+    if (token_equals(value, length, "native")) {
+        return KERNEL_TEST_NATIVE;
+    }
+    if (token_equals(value, length, "native-lua")) {
+        return KERNEL_TEST_NATIVE_LUA;
+    }
+    if (token_equals(value, length, "native-sqlite")) {
+        return KERNEL_TEST_NATIVE_SQLITE;
+    }
+    if (token_equals(value, length, "native-canvas")) {
+        return KERNEL_TEST_NATIVE_CANVAS;
+    }
+    if (token_equals(value, length, "network-native")) {
+        return KERNEL_TEST_NATIVE_NETWORK;
+    }
+    if (token_equals(value, length, "native-rust")) {
+        return KERNEL_TEST_NATIVE_RUST;
+    }
+    if (token_equals(value, length, "native-crash")) {
+        return KERNEL_TEST_NATIVE_CRASH;
+    }
+    if (token_equals(value, length, "native-elf-refusal")) {
+        return KERNEL_TEST_NATIVE_ELF_REFUSAL;
+    }
+    if (token_equals(value, length, "native-digest-refusal")) {
+        return KERNEL_TEST_NATIVE_DIGEST_REFUSAL;
+    }
+    if (token_equals(value, length, "native-abi-refusal")) {
+        return KERNEL_TEST_NATIVE_ABI_REFUSAL;
+    }
+    if (token_equals(value, length, "native-relaunch")) {
+        return KERNEL_TEST_NATIVE_RELAUNCH;
+    }
 
     return KERNEL_TEST_INVALID;
 }
@@ -703,6 +738,18 @@ static uint8_t scenario_exit_value(enum kernel_test_scenario scenario)
     case KERNEL_TEST_AUDIO: return UINT8_C(0x73);
     case KERNEL_TEST_NVIDIA: return UINT8_C(0x74);
     case KERNEL_TEST_NVIDIA_BUILTIN: return UINT8_C(0x75);
+    case KERNEL_TEST_NATIVE: return UINT8_C(0x76);
+    case KERNEL_TEST_NATIVE_LUA: return UINT8_C(0x77);
+    case KERNEL_TEST_NATIVE_SQLITE: return UINT8_C(0x78);
+    case KERNEL_TEST_NATIVE_CANVAS: return UINT8_C(0x79);
+    case KERNEL_TEST_NATIVE_NETWORK: return UINT8_C(0x7A);
+    case KERNEL_TEST_NATIVE_RUST: return UINT8_C(0x7B);
+    case KERNEL_TEST_NATIVE_CRASH: return UINT8_C(0x7C);
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL: return UINT8_C(0x7D);
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL: return UINT8_C(0x7E);
+    /* 0x7F is the invariant QEMU failure value. */
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL: return UINT8_C(0x80);
+    case KERNEL_TEST_NATIVE_RELAUNCH: return UINT8_C(0x81);
     default:
         return QEMU_FAILURE_VALUE;
     }
@@ -4664,6 +4711,17 @@ void kernel_test_run(
     case KERNEL_TEST_AUDIO:
     case KERNEL_TEST_NVIDIA:
     case KERNEL_TEST_NVIDIA_BUILTIN:
+    case KERNEL_TEST_NATIVE:
+    case KERNEL_TEST_NATIVE_LUA:
+    case KERNEL_TEST_NATIVE_SQLITE:
+    case KERNEL_TEST_NATIVE_CANVAS:
+    case KERNEL_TEST_NATIVE_NETWORK:
+    case KERNEL_TEST_NATIVE_RUST:
+    case KERNEL_TEST_NATIVE_CRASH:
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+    case KERNEL_TEST_NATIVE_RELAUNCH:
         /* Deferred until Sapote Redwood and the Boot Ledger are published. */
         return;
     case KERNEL_TEST_MULTIPROCESS_SLOTS:
@@ -4687,6 +4745,415 @@ _Noreturn void kernel_test_complete_normal(void)
         kernel_test_fail("normal completion used outside the normal scenario");
     }
 
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native(void)
+{
+    static const uint8_t expected[] = "native ABI v1\n";
+    struct native_process_result result = { 0 };
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+    enum native_process_status launch_status;
+
+    if (active_scenario != KERNEL_TEST_NATIVE) {
+        kernel_test_fail("native completion used outside its scenario");
+    }
+    launch_status = native_process_launch("NATIVET.MAN", &result);
+    if (launch_status != NATIVE_PROCESS_OK) {
+        console_write("Sapote: native launch refusal: ");
+        console_write(native_process_status_string(launch_status));
+        console_putc('\n');
+        kernel_test_fail("native application admission failed");
+    }
+    if (!result.exited || result.faulted ||
+        result.exit_status != 0 || !result.resources_released ||
+        result.syscall_count < 20U || result.thread_switches < 4U ||
+        result.context_transition_samples == 0U ||
+        result.context_cycles_with_fpu < result.context_cycles_without_fpu ||
+        !native_process_resources_released()) {
+        console_write("Sapote: native result exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" switches ");
+        console_write_u64(result.thread_switches);
+        console_write(" peak pages ");
+        console_write_u64(result.peak_pages);
+        console_write(" peak handles ");
+        console_write_u64(result.peak_handles);
+        console_write(" exited ");
+        console_write(result.exited ? "yes" : "no");
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_putc('\n');
+        kernel_test_fail("native application did not exit with a clean census");
+    }
+    console_write("SAPOTE PERF context-switch transitions=");
+    console_write_u64(result.context_transition_samples);
+    console_write(" without_fpu_cycles=");
+    console_write_u64(result.context_cycles_without_fpu /
+        result.context_transition_samples);
+    console_write(" with_fpu_cycles=");
+    console_write_u64(result.context_cycles_with_fpu /
+        result.context_transition_samples);
+    console_putc('\n');
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "NATIVET/FOUND.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("native Ring 3 file result is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches) {
+        kernel_test_fail("native Ring 3 file result is wrong");
+    }
+    console_write("Sapote: native general loader, SDK, TLS, threads and FPU passed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_lua(void)
+{
+    static const uint8_t expected[] =
+        "input=sapote\nsum=5050\nmath=ok\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_LUA) {
+        kernel_test_fail("Lua completion used outside its scenario");
+    }
+    if (native_process_launch("LUA.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 10U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("Lua did not exit with a clean resource census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "LUA/RESULT.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("Lua result file is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
+        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+        kernel_test_fail("Lua result file is wrong or could not be synchronized");
+    }
+    console_write("Sapote: upstream Lua used stdin, Data, math and stdout\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_sqlite(void)
+{
+    static const uint8_t expected[] =
+        "rows=3\nsum=66\nintegrity=ok\n";
+    struct native_process_result result;
+    struct sapfs_stat database;
+    struct sapfs_stat journal;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool content_matches = true;
+    const enum sapfs_status before = sapfs_stat_path(SAPFS_VOLUME_DATA,
+        "SQLITE/PORT.DB", &database);
+
+    if (active_scenario != KERNEL_TEST_NATIVE_SQLITE) {
+        kernel_test_fail("SQLite completion used outside its scenario");
+    }
+    if (before != SAPFS_STATUS_OK && before != SAPFS_STATUS_NOT_FOUND) {
+        kernel_test_fail("SQLite database census failed before launch");
+    }
+    if (native_process_launch("SQLITE.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 20U ||
+        !native_process_resources_released()) {
+        kernel_test_fail("SQLite did not exit with a clean resource census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.JRN", &journal) !=
+            SAPFS_STATUS_NOT_FOUND) {
+        kernel_test_fail("SQLite left a rollback journal after clean close");
+    }
+    if (before == SAPFS_STATUS_NOT_FOUND) {
+        if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/PORT.DB", &database) !=
+                SAPFS_STATUS_OK || database.directory || database.size == 0U ||
+            sapfs_unmount(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+            kernel_test_fail("SQLite first phase did not synchronize its database");
+        }
+        console_write("Sapote: upstream SQLite synchronized reboot phase\n");
+        cpu_out8(UINT16_C(0x0064), UINT8_C(0xFE));
+        kernel_test_fail("platform reset did not restart SQLite scenario");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "SQLITE/RESULT.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("SQLite reboot result is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        content_matches = content_matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !content_matches ||
+        sapfs_sync(SAPFS_VOLUME_DATA) != SAPFS_STATUS_OK) {
+        kernel_test_fail("SQLite reboot result is wrong or could not be synchronized");
+    }
+    console_write("Sapote: upstream SQLite retained and verified three rows after reboot\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_canvas(void)
+{
+    struct native_process_result result;
+    uint64_t first_generation;
+    uint64_t second_generation;
+    enum native_process_status run_status;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_CANVAS) {
+        kernel_test_fail("Canvas completion used outside its scenario");
+    }
+    if (native_process_spawn("CANVAS.MAN", &first_generation) !=
+            NATIVE_PROCESS_OK ||
+        native_process_spawn("CANVAS.MAN", &second_generation) !=
+            NATIVE_PROCESS_OK ||
+        first_generation == 0U || second_generation <= first_generation) {
+        kernel_test_fail("Canvas applications were not admitted together");
+    }
+    run_status = native_process_run(&result);
+    if (run_status != NATIVE_PROCESS_OK || !result.exited ||
+        result.faulted || result.exit_status != 0 ||
+        result.generation != second_generation || !result.resources_released ||
+        result.syscall_count < 20U || result.thread_switches < 10U ||
+        !native_process_resources_released() ||
+        ui_native_window_is_open(0U) || ui_native_window_is_open(1U)) {
+        console_write("Sapote: native Canvas run ");
+        console_write(native_process_status_string(run_status));
+        console_write(" generation ");
+        console_write_u64(result.generation);
+        console_write(" expected ");
+        console_write_u64(second_generation);
+        console_write(" exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" switches ");
+        console_write_u64(result.thread_switches);
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_write(" windows ");
+        console_write(ui_native_window_is_open(0U) ? "1" : "0");
+        console_write(ui_native_window_is_open(1U) ? "1" : "0");
+        console_putc('\n');
+        kernel_test_fail("Canvas windows did not exit with a clean census");
+    }
+    console_write("Sapote: two native Canvas windows handled focus, input and partial damage\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_network(void)
+{
+    static const uint8_t expected[] = "hello from the Sapote network\n";
+    struct native_process_result result = { 0 };
+    struct sapfs_stat output;
+    struct network_state network;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
+    enum native_process_status launch_status;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_NETWORK) {
+        kernel_test_fail("native network completion used outside its scenario");
+    }
+    launch_status = native_process_launch("NETAPP.MAN", &result);
+    if (launch_status != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 25U ||
+        !native_process_resources_released()) {
+        console_write("Sapote: native network launch ");
+        console_write(native_process_status_string(launch_status));
+        console_write(" result exit ");
+        if (result.exit_status < 0) {
+            console_putc('-');
+            console_write_u64((uint64_t)(-(int64_t)result.exit_status));
+        } else {
+            console_write_u64((uint64_t)result.exit_status);
+        }
+        console_write(" syscalls ");
+        console_write_u64(result.syscall_count);
+        console_write(" peak handles ");
+        console_write_u64(result.peak_handles);
+        console_write(" faulted ");
+        console_write(result.faulted ? "yes" : "no");
+        console_write(" released ");
+        console_write(result.resources_released ? "yes" : "no");
+        console_putc('\n');
+        kernel_test_fail("native network app did not exit with a clean census");
+    }
+    network = network_get_state();
+    if (network.udp_sockets != 0U || network.tcp_connections != 0U ||
+        network.timers != 0U) {
+        kernel_test_fail("native network handles survived process teardown");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "NETAPP/HTTP.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("native HTTP body is missing from Data");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+        kernel_test_fail("native HTTP body framing or contents are wrong");
+    }
+    console_write("Sapote: native DNS, TCP, UDP, timeout, reset and cancellation passed\n");
+    console_write("ST NETWORK production path bounded and recoverable\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_rust(void)
+{
+    static const uint8_t expected[] = "native Rust no_std ABI v1\n";
+    struct native_process_result result;
+    struct sapfs_stat output;
+    sapfs_handle file;
+    uint8_t bytes[sizeof(expected) - 1U];
+    size_t read_bytes = 0U;
+    bool matches = true;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_RUST) {
+        kernel_test_fail("Rust completion used outside its scenario");
+    }
+    if (native_process_launch("RUSTAPP.MAN", &result) != NATIVE_PROCESS_OK ||
+        !result.exited || result.faulted || result.exit_status != 0 ||
+        !result.resources_released || result.syscall_count < 12U ||
+        result.thread_switches == 0U || !native_process_resources_released()) {
+        kernel_test_fail("Rust application did not exit with a clean census");
+    }
+    if (sapfs_stat_path(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", &output) !=
+            SAPFS_STATUS_OK || output.directory || output.size != sizeof(bytes) ||
+        sapfs_open(SAPFS_VOLUME_DATA, "RUSTAPP/RUST.TXT", SAPFS_ACCESS_READ,
+            &file) != SAPFS_STATUS_OK ||
+        sapfs_read(file, bytes, sizeof(bytes), &read_bytes) != SAPFS_STATUS_OK ||
+        read_bytes != sizeof(bytes)) {
+        kernel_test_fail("Rust application output is missing");
+    }
+    for (size_t index = 0U; index < sizeof(bytes); ++index) {
+        matches = matches && bytes[index] == expected[index];
+    }
+    if (sapfs_close(file) != SAPFS_STATUS_OK || !matches) {
+        kernel_test_fail("Rust application output is wrong");
+    }
+    console_write("Sapote: no_std Rust application used native ABI v1 services\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_crash(void)
+{
+    struct native_process_result crash;
+    struct native_process_result survivor;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_CRASH) {
+        kernel_test_fail("native crash completion used outside its scenario");
+    }
+    if (native_process_launch("CRASH.MAN", &crash) != NATIVE_PROCESS_OK ||
+        !crash.exited || !crash.faulted || crash.exit_status != -SAPOTE_EFAULT ||
+        !crash.resources_released || crash.peak_handles < 6U ||
+        crash.peak_pages < 20U || !native_process_resources_released()) {
+        kernel_test_fail("faulted process did not release its live resources");
+    }
+    if (native_process_launch("NATIVET.MAN", &survivor) != NATIVE_PROCESS_OK ||
+        !survivor.exited || survivor.faulted || survivor.exit_status != 0 ||
+        !survivor.resources_released || !native_process_resources_released()) {
+        kernel_test_fail("process after fault observed damaged or leaked state");
+    }
+    console_write("Sapote: native crash contained; mappings handles threads windows FS x87 SSE reclaimed\n");
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_admission_refusal(void)
+{
+    struct native_process_result result;
+    const char *manifest;
+    const char *diagnostic;
+
+    switch (active_scenario) {
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+        manifest = "BADELF.MAN";
+        diagnostic = "Sapote: native malformed ELF refused; resource census unchanged\n";
+        break;
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+        manifest = "BADDGST.MAN";
+        diagnostic = "Sapote: native manifest digest mismatch refused; resource census unchanged\n";
+        break;
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+        manifest = "BADABI.MAN";
+        diagnostic = "Sapote: native unsupported ABI version refused; resource census unchanged\n";
+        break;
+    default:
+        kernel_test_fail("native admission completion used outside its scenario");
+    }
+    if (!native_process_resources_released() ||
+        native_process_launch(manifest, &result) !=
+            NATIVE_PROCESS_IMAGE_REFUSED ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native admission refusal changed the resource census");
+    }
+    console_write(diagnostic);
+    kernel_test_pass();
+}
+
+_Noreturn void kernel_test_complete_native_relaunch(void)
+{
+    struct native_process_result first;
+    struct native_process_result second;
+
+    if (active_scenario != KERNEL_TEST_NATIVE_RELAUNCH) {
+        kernel_test_fail("native relaunch completion used outside its scenario");
+    }
+    if (native_process_launch("NATIVET.MAN", &first) != NATIVE_PROCESS_OK ||
+        !first.exited || first.faulted || first.exit_status != 0 ||
+        !first.resources_released || !native_process_resources_released() ||
+        native_process_launch("NATIVET.MAN", &second) != NATIVE_PROCESS_OK ||
+        !second.exited || second.faulted || second.exit_status != 0 ||
+        !second.resources_released || second.generation <= first.generation ||
+        !native_process_resources_released()) {
+        kernel_test_fail("native relaunch did not reset generations and resources");
+    }
+    console_write("Sapote: native relaunch advanced generation; both resource censuses clean\n");
     kernel_test_pass();
 }
 
@@ -4978,21 +5445,34 @@ static void redwood_proof_click_dock_item(
     }
 }
 
+static void redwood_proof_click_point(
+    uint32_t target_x,
+    uint32_t target_y,
+    const char *failure
+)
+{
+    redwood_proof_move_pointer(target_x, target_y, failure);
+    redwood_proof_inject_pointer(UINT8_C(0x01), 0, 0, failure);
+    redwood_proof_inject_pointer(0U, 0, 0, failure);
+}
+
 _Noreturn void kernel_test_complete_redwood_proof(void)
 {
     static const enum ui_element_id ids[UI_DOCK_ITEM_COUNT] = {
         UI_ELEMENT_DOCK_FILES, UI_ELEMENT_DOCK_TERMINAL,
         UI_ELEMENT_DOCK_NOTES, UI_ELEMENT_DOCK_STUDIO,
-        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_SETTINGS
+        UI_ELEMENT_DOCK_CAMERA, UI_ELEMENT_DOCK_CANVAS,
+        UI_ELEMENT_DOCK_SETTINGS
     };
     static const enum ui_action actions[UI_DOCK_ITEM_COUNT] = {
         UI_ACTION_OPEN_FILES, UI_ACTION_OPEN_TERMINAL,
         UI_ACTION_OPEN_NOTES, UI_ACTION_OPEN_STUDIO,
-        UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_SETTINGS
+        UI_ACTION_OPEN_CAMERA, UI_ACTION_OPEN_CANVAS,
+        UI_ACTION_OPEN_SETTINGS
     };
     static const enum ui_panel_id panels[UI_DOCK_ITEM_COUNT] = {
         UI_PANEL_FILES, UI_PANEL_TERMINAL, UI_PANEL_NOTES, UI_PANEL_STUDIO,
-        UI_PANEL_CAMERA, UI_PANEL_SETTINGS
+        UI_PANEL_CAMERA, UI_PANEL_NONE, UI_PANEL_SETTINGS
     };
     const struct boot_ledger *ledger = boot_ledger_installed();
     const struct boot_stage_receipt *font;
@@ -5105,9 +5585,95 @@ _Noreturn void kernel_test_complete_redwood_proof(void)
         kernel_test_fail("Sapote Redwood cursor trail probe is not visible");
     }
 
+    /* Exercise the public launcher as a person would: open it from the menu,
+     * select its second bounded page, then filter and launch Canvas. */
+    redwood_proof_click_point(ui->layout.surface.width - 19U, 12U,
+        "Sapote Redwood application search did not open");
+    {
+        uint32_t launcher_width = ui->layout.surface.width > 700U ? 620U :
+            ui->layout.surface.width - 80U;
+        uint32_t launcher_height = ui->layout.surface.height > 630U ? 440U :
+            ui->layout.surface.height - 160U;
+        const uint32_t maximum_height = ui->layout.dock.y - 44U;
+        uint32_t launcher_x;
+
+        if (launcher_width > ui->layout.surface.width - 40U) {
+            launcher_width = ui->layout.surface.width - 40U;
+        }
+        if (launcher_height > maximum_height) {
+            launcher_height = maximum_height;
+        }
+        launcher_x = (ui->layout.surface.width - launcher_width) / 2U;
+        redwood_proof_click_point(
+            launcher_x + (launcher_width - 36U) / 2U + 24U,
+            42U + launcher_height - 22U,
+            "Sapote Redwood application page did not activate");
+    }
+    {
+        struct keyboard_event launcher_key = {
+            .scancode = 0x1CU, .pressed = true, .shift = false,
+            .control = false, .character = '\0'
+        };
+
+        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+            kernel_test_fail("Sapote Redwood paged launcher activation failed");
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood paged launcher activation draw failed");
+        if (ui_get_state()->active_panel != UI_PANEL_SETTINGS) {
+            kernel_test_fail("Sapote Redwood launcher page chose wrong app");
+        }
+        redwood_proof_click_point(ui->layout.surface.width - 19U, 12U,
+            "Sapote Redwood application search did not reopen");
+        static const char query[] = "canvas";
+        for (size_t index = 0U; index < sizeof(query) - 1U; ++index) {
+            launcher_key.scancode = 0U;
+            launcher_key.character = query[index];
+            if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+                kernel_test_fail("Sapote Redwood application filter failed");
+            }
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood application filter draw failed");
+        launcher_key.scancode = 0x1CU;
+        launcher_key.character = '\0';
+        if (ui_handle_keyboard(&launcher_key) != UI_STATUS_OK) {
+            kernel_test_fail("Sapote Redwood filtered launch failed");
+        }
+        redwood_proof_process_ui(
+            "Sapote Redwood filtered launch draw failed");
+        char manifest[13U];
+        if (!ui_application_launch_dequeue(manifest, sizeof(manifest)) ||
+                manifest[0] != 'C' || manifest[1] != 'A' ||
+                manifest[2] != 'N' || manifest[3] != 'V' ||
+                manifest[4] != 'A' || manifest[5] != 'S' ||
+                manifest[6] != '.' || manifest[7] != 'M' ||
+                manifest[8] != 'A' || manifest[9] != 'N' ||
+                manifest[10] != '\0') {
+            kernel_test_fail("Sapote Redwood filtered Canvas launch is wrong");
+        }
+    }
+
     for (size_t index = 0U; index < UI_DOCK_ITEM_COUNT; ++index) {
+        const enum ui_panel_id expected_panel =
+            actions[index] == UI_ACTION_OPEN_CANVAS ?
+                ui->active_panel : panels[index];
+
         redwood_proof_click_dock_item(&ui->layout.dock_items[index],
-            panels[index]);
+            expected_panel);
+        if (actions[index] == UI_ACTION_OPEN_CANVAS) {
+            char manifest[13U];
+
+            if (!ui_application_launch_dequeue(manifest,
+                    sizeof(manifest)) || manifest[0] != 'C' ||
+                manifest[1] != 'A' || manifest[2] != 'N' ||
+                manifest[3] != 'V' || manifest[4] != 'A' ||
+                manifest[5] != 'S' || manifest[6] != '.' ||
+                manifest[7] != 'M' || manifest[8] != 'A' ||
+                manifest[9] != 'N' || manifest[10] != '\0') {
+                kernel_test_fail("Sapote Redwood Canvas launch request is wrong");
+            }
+        }
         ui = ui_get_state();
     }
     if (trail_probe.x < 0 || trail_probe.y < 0 ||
@@ -5957,7 +6523,11 @@ static bool fat32_file_equals(
     size_t expected_bytes
 )
 {
-    uint8_t buffer[4096];
+    /* HTTP already uses a bounded 7 KiB parser frame.  Keep this serial,
+     * test-only comparison buffer off the 16 KiB bootstrap stack so compiler
+     * inlining decisions cannot turn a test assertion into a double fault.
+     */
+    static uint8_t buffer[4096];
     size_t file_bytes = 0U;
 
     if (expected == NULL || expected_bytes > sizeof(buffer) ||
@@ -8111,6 +8681,28 @@ const char *kernel_test_scenario_name(enum kernel_test_scenario scenario)
         return "nvidia";
     case KERNEL_TEST_NVIDIA_BUILTIN:
         return "nvidia-builtin";
+    case KERNEL_TEST_NATIVE:
+        return "native";
+    case KERNEL_TEST_NATIVE_LUA:
+        return "native-lua";
+    case KERNEL_TEST_NATIVE_SQLITE:
+        return "native-sqlite";
+    case KERNEL_TEST_NATIVE_CANVAS:
+        return "native-canvas";
+    case KERNEL_TEST_NATIVE_NETWORK:
+        return "network-native";
+    case KERNEL_TEST_NATIVE_RUST:
+        return "native-rust";
+    case KERNEL_TEST_NATIVE_CRASH:
+        return "native-crash";
+    case KERNEL_TEST_NATIVE_ELF_REFUSAL:
+        return "native-elf-refusal";
+    case KERNEL_TEST_NATIVE_DIGEST_REFUSAL:
+        return "native-digest-refusal";
+    case KERNEL_TEST_NATIVE_ABI_REFUSAL:
+        return "native-abi-refusal";
+    case KERNEL_TEST_NATIVE_RELAUNCH:
+        return "native-relaunch";
     case KERNEL_TEST_INVALID:
         return "invalid";
     default:

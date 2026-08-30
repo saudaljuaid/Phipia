@@ -113,6 +113,17 @@ enum kernel_test_scenario {
     KERNEL_TEST_AUDIO,
     KERNEL_TEST_NVIDIA,
     KERNEL_TEST_NVIDIA_BUILTIN,
+    KERNEL_TEST_NATIVE,
+    KERNEL_TEST_NATIVE_LUA,
+    KERNEL_TEST_NATIVE_SQLITE,
+    KERNEL_TEST_NATIVE_CANVAS,
+    KERNEL_TEST_NATIVE_NETWORK,
+    KERNEL_TEST_NATIVE_RUST,
+    KERNEL_TEST_NATIVE_CRASH,
+    KERNEL_TEST_NATIVE_ELF_REFUSAL,
+    KERNEL_TEST_NATIVE_DIGEST_REFUSAL,
+    KERNEL_TEST_NATIVE_ABI_REFUSAL,
+    KERNEL_TEST_NATIVE_RELAUNCH,
     KERNEL_TEST_INVALID
 };
 
@@ -170,6 +181,15 @@ _Noreturn void kernel_test_complete_driver_matrix(void);
 bool kernel_test_driver_matrix_exit_self_test(void);
 _Noreturn void kernel_test_complete_audio(void);
 _Noreturn void kernel_test_complete_nvidia(void);
+_Noreturn void kernel_test_complete_native(void);
+_Noreturn void kernel_test_complete_native_lua(void);
+_Noreturn void kernel_test_complete_native_sqlite(void);
+_Noreturn void kernel_test_complete_native_canvas(void);
+_Noreturn void kernel_test_complete_native_network(void);
+_Noreturn void kernel_test_complete_native_rust(void);
+_Noreturn void kernel_test_complete_native_crash(void);
+_Noreturn void kernel_test_complete_native_admission_refusal(void);
+_Noreturn void kernel_test_complete_native_relaunch(void);
 bool kernel_test_audio_exit_self_test(void);
 bool kernel_test_nvidia_exit_self_test(void);
 bool kernel_test_handle_fatal_interrupt(const struct interrupt_frame *frame);

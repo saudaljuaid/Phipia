@@ -1,0 +1,65 @@
+name: Native application porting foundation
+
+on:
+    pull_request:
+        branches: [main]
+    push:
+        branches: [main]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: native-porting-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    native-porting:
+        name: native-porting
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+        steps:
+            - name: Check out source
+              uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+              with:
+                  persist-credentials: false
+            - name: Install build and emulation tools
+              run: |
+                  sudo sed -i '\|azure.archive.ubuntu.com|d' /etc/apt/apt-mirrors.txt
+                  sudo apt-get update
+                  sudo apt-get install --yes --no-install-recommends \
+                      binutils build-essential clang grub-common grub-pc-bin \
+                      ffmpeg lld make mtools qemu-system-x86 xorriso
+            - name: Install the Rust bare-metal target
+              run: rustup target add x86_64-unknown-none
+            - name: Rebuild the offline SDK and applications
+              run: |
+                  set -euo pipefail
+                  make reproducible-sdk
+                  make native-apps
+                  make port-tests
+                  git diff --check
+            - name: Run native application QEMU proofs
+              run: |
+                  set -o pipefail
+                  make qemu-port-tests QEMU_ACCEL=tcg \
+                      | tee build/native-porting-qemu.txt
+            - name: Retain native guest evidence
+              if: always()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: native-porting-${{ github.sha }}
+                  if-no-files-found: warn
+                  retention-days: 14
+                  path: |
+                      build/native-porting-qemu.txt
+                      build/tests/native*/serial.log
+                      build/tests/native*/data.raw
+                      build/tests/native-canvas/canvas.png
+                      build/tests/native-canvas/canvas.mp4
+                      build/tests/network-native/serial.log
+                      build/tests/network-native/data.raw
+                      build/tests/network-native/network.pcap
+                      build/tests/network-native/fixture.log
+                      build/ports/lua/LUA.APP
+                      build/ports/lua/LUA.map

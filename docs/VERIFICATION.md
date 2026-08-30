@@ -20,8 +20,18 @@ rejects warnings, unresolved symbols, unexpected sections, W+X mappings,
 floating-point or SIMD instructions in the kernel, modified pinned assets, and
 non-reproducible filesystem images.
 
-`make qemu-tests` runs the complete 101-scenario guest suite. The Makefile is
+`make qemu-tests` runs the complete 112-scenario guest suite. The Makefile is
 the source of truth for scenario names and expected results.
+
+The `native-canvas` scenario captures `canvas.png` and `canvas.mp4` directly
+from QEMU's guest framebuffer while two independently loaded native Canvas
+processes are alive. The same run injects hardware keyboard and pointer input;
+the serial proof requires both applications to report focus and partial-damage
+activity before their resource census is checked.
+
+[`NATIVE_SCENARIOS.md`](NATIVE_SCENARIOS.md) maps each required native
+application proof to its Ring 3 action, exact QEMU scenario, and retained
+evidence.
 
 ## Coverage
 

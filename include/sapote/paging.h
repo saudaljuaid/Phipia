@@ -75,8 +75,18 @@
     (PAGING_LINUX_STACK_GUARD + PAGING_PAGE_SIZE)
 #define PAGING_LINUX_STACK_END \
     (PAGING_LINUX_STACK_BASE + PAGING_LINUX_STACK_PAGES * PAGING_PAGE_SIZE)
-#define PAGING_PROCESS_ALIAS_MAX_PAGES 16U
-#define PAGING_PROCESS_EXPECTED_MAX_PAGES 24U
+#define PAGING_PROCESS_ALIAS_MAX_PAGES 4096U
+#define PAGING_PROCESS_EXPECTED_MAX_PAGES 16384U
+
+/* General native applications occupy disjoint, bounded user arenas. */
+#define PAGING_NATIVE_IMAGE_BASE UINT64_C(0x0000400000000000)
+#define PAGING_NATIVE_IMAGE_END UINT64_C(0x0000400100000000)
+#define PAGING_NATIVE_ANON_BASE UINT64_C(0x0000500000000000)
+#define PAGING_NATIVE_ANON_END UINT64_C(0x0000500040000000)
+#define PAGING_NATIVE_SURFACE_BASE UINT64_C(0x0000580000000000)
+#define PAGING_NATIVE_SURFACE_END UINT64_C(0x0000580010000000)
+#define PAGING_NATIVE_STACK_BASE UINT64_C(0x0000600000000000)
+#define PAGING_NATIVE_STACK_END UINT64_C(0x0000600001000000)
 
 /*
  * How many private user address spaces may exist at once. One is what the
@@ -287,6 +297,11 @@ enum paging_process_mapping_kind {
     PAGING_PROCESS_MAPPING_LINUX_STACK,
     PAGING_PROCESS_MAPPING_LINUX_HEAP,
     PAGING_PROCESS_MAPPING_LINUX_ANON,
+    PAGING_PROCESS_MAPPING_NATIVE_IMAGE,
+    PAGING_PROCESS_MAPPING_NATIVE_ANON,
+    PAGING_PROCESS_MAPPING_NATIVE_TLS,
+    PAGING_PROCESS_MAPPING_NATIVE_SURFACE,
+    PAGING_PROCESS_MAPPING_NATIVE_STACK,
     PAGING_PROCESS_MAPPING_KIND_COUNT
 };
 
@@ -402,6 +417,11 @@ enum paging_status paging_process_validate(
     const uintptr_t stack_frames[PAGING_PROCESS_STACK_PAGES]
 );
 enum paging_status paging_process_validate_linux(
+    struct paging_process_space *space,
+    const struct paging_process_expected_page *pages,
+    size_t page_count
+);
+enum paging_status paging_process_validate_native(
     struct paging_process_space *space,
     const struct paging_process_expected_page *pages,
     size_t page_count
