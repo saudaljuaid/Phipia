@@ -279,7 +279,13 @@ def main() -> int:
                     )
                     events.add("terminal_hover")
                 elif elapsed >= 1.50 and "terminal_open" not in events:
-                    pointer.click()
+                    # Keyboard activation is deterministic even while the
+                    # magnified Dock is still settling after the hover.  The
+                    # installed focus starts on Files, so Tab selects Terminal
+                    # and Enter opens it through the ordinary PS/2 path.
+                    qmp.hmp("sendkey tab 15")
+                    time.sleep(0.08)
+                    qmp.hmp("sendkey ret 15")
                     support.wait_serial(
                         serial, (b"Sapote: Redwood Terminal opened",),
                         timeout=5.0,
