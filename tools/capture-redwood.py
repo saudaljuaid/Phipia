@@ -986,7 +986,7 @@ def main():
                 "studio_open", "studio_new",
                 "studio_import", "studio_trim", "studio_seek", "studio_save",
                 "settings_reopen", "appearance_light", "fluid_hover",
-                "window_drag", "studio_export"
+                "window_drag", "studio_export", "store_restored"
             }
             if not args.fast_demo and events != required:
                 raise RuntimeError(f"capture omitted interactions: {required - events}")
