@@ -145,14 +145,14 @@ async fn add_dir_entry_inner(
     }
 
     // Fail if name already exists.
-    if get_dir_entry_inode_by_name(fs, dir_inode, name)
-        .await
-        .is_ok()
-    {
-        return Err(Ext4Error::AlreadyExists);
+    match get_dir_entry_inode_by_name(fs, dir_inode, name).await {
+        Ok(_) => return Err(Ext4Error::AlreadyExists),
+        Err(Ext4Error::NotFound) => {},
+        Err(error) => return Err(error),
     }
 
     let block_size = fs.0.superblock.block_size().to_usize();
+    let usable_size = block_size - if fs.has_metadata_checksums() { 12 } else { 0 };
     let mut file_blocks = FileBlocks::new(fs.clone(), dir_inode)?;
 
     let need = dir_entry_min_size(name.as_ref().len(), dir_inode.index)?;
@@ -161,11 +161,14 @@ async fn add_dir_entry_inner(
 
     while let Some(block_index_res) = file_blocks.next().await {
         let block_index = block_index_res?;
-        fs.read_from_block(block_index, 0, &mut block_buf).await?;
+        DirBlock { fs, block_index, is_first, dir_inode: dir_inode.index,
+            has_htree: false, checksum_base: dir_inode.checksum_base().clone() }
+            .read(&mut block_buf).await?;
 
         // Walk entries in this block looking for usable slack space.
         let mut off = 0usize;
-        while off < block_size {
+        while off < usable_size {
+            if usable_size - off < 8 { return Err(dir_entry_error(dir_inode.index)); }
             let inode_field = read_u32le(&block_buf, off);
             let rec_len_offset = checked_add_usize(off, 4, dir_inode.index)?;
             let rec_len = read_u16le(&block_buf, rec_len_offset);
@@ -173,7 +176,7 @@ async fn add_dir_entry_inner(
             let rec_end =
                 checked_add_usize(off, rec_len_usize, dir_inode.index)?;
 
-            if rec_len_usize < 8 || rec_end > block_size {
+            if rec_len_usize < 8 || rec_end > usable_size {
                 return Err(dir_entry_error(dir_inode.index));
             }
 
@@ -803,7 +806,7 @@ impl Dir {
         Ok(())
     }
 
-    /// Move a non-indexed directory to a different parent in the same filesystem.
+    /// Move a directory to a different parent in the same filesystem.
     /// The caller must stage all writes atomically and discard the stage on error.
     #[maybe_async::maybe_async]
     pub async fn move_directory(
@@ -823,11 +826,10 @@ impl Dir {
         if self.inode.index == destination_parent.inode.index {
             return self.rename_entry(source, destination, inode).await;
         }
-        // Indexed-root checksum layout needs separate admission and fixtures.
         if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
             || destination_parent.inode.flags().contains(InodeFlags::IMMUTABLE)
-            || inode.flags().intersects(InodeFlags::DIRECTORY_HTREE
-            | InodeFlags::DIRECTORY_ENCRYPTED | InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
+            || inode.flags().intersects(InodeFlags::DIRECTORY_ENCRYPTED
+            | InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         if self.get_entry(source).await?.index != inode.index {
@@ -878,7 +880,7 @@ impl Dir {
             block_index,
             is_first: true,
             dir_inode: inode.index,
-            has_htree: false,
+            has_htree: inode.flags().contains(InodeFlags::DIRECTORY_HTREE),
             checksum_base: inode.checksum_base().clone(),
         };
         let mut block = vec![0; self.fs.0.superblock.block_size().to_usize()];

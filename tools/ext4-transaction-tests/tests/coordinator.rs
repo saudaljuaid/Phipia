@@ -1215,6 +1215,75 @@ fn unlink_open_preserves_inode_io_until_sync_observes_final_close() {
 }
 
 #[test]
+fn short_directory_entries_grow_without_consuming_checksum_tails() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/short-names").unwrap();
+    for index in 0..340 {
+        let name = format!("system/short-names/{index:03}");
+        ext4::create_file_probe(&mut mounted, name.as_bytes(), 0o600).unwrap();
+    }
+    assert_eq!(ext4::stat(&mounted, b"system/short-names").unwrap().size, 8192);
+    ext4::sync(&mut mounted).unwrap();
+    fsck(&path, "coordinator-short-name-growth");
+    for index in (0..340).rev() {
+        let name = format!("system/short-names/{index:03}");
+        ext4::unlink_file_probe(&mut mounted, name.as_bytes()).unwrap();
+    }
+    assert_eq!(ext4::stat(&mounted, b"system/short-names").unwrap().size, 4096);
+    ext4::remove_directory_probe(&mut mounted, b"system/short-names").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-short-name-shrink");
+}
+
+#[test]
+fn indexed_directory_moves_update_dotdot_checksum_and_refuse_hostile_counts() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let inode = ext4::stat(&mounted, b"indexed").unwrap().inode;
+    let root_links = ext4::stat(&mounted, b".").unwrap().links;
+    let parent = ext4::stat(&mounted, b"data/user").unwrap();
+    ext4::rename_probe(&mut mounted, b"indexed", b"data/user/moved-index").unwrap();
+    assert_eq!(ext4::stat(&mounted, b"data/user/moved-index").unwrap().inode, inode);
+    assert_eq!(ext4::stat(&mounted, b"data/user/moved-index/..").unwrap().inode, parent.inode);
+    assert_eq!(ext4::stat(&mounted, b".").unwrap().links, root_links - 1);
+    assert_eq!(ext4::stat(&mounted, b"data/user").unwrap().links, parent.links + 1);
+    ext4::create_file_probe(&mut mounted, b"data/user/moved-index/new", 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, b"data/user/moved-index/new", 0, b"indexed").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    let disk = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let mut mounted = mount_bytes(disk);
+    let mut content = [0; 7];
+    read_exact(&mounted, b"data/user/moved-index/new", &mut content);
+    assert_eq!(&content, b"indexed");
+    ext4::rename_probe(&mut mounted, b"data/user/moved-index", b"indexed").unwrap();
+    ext4::unlink_file_probe(&mut mounted, b"indexed/new").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-indexed-directory-move");
+    let original = std::fs::read(&path).unwrap();
+    let result = std::process::Command::new("debugfs").args(["-R", "bmap /indexed 0"]).arg(&path).output().unwrap();
+    assert!(result.status.success());
+    let block: usize = String::from_utf8(result.stdout).unwrap().trim().parse().unwrap();
+    for (offset, value) in [(0x22, u16::MAX), (0x22, 0), (0x20, u16::MAX)] {
+        let mut hostile = original.clone();
+        hostile[block * 4096 + offset..block * 4096 + offset + 2].copy_from_slice(&value.to_le_bytes());
+        let bytes = hostile.len() as u64;
+        DEVICE.with_borrow_mut(|device| *device = Device { bytes: hostile.clone(), ..Device::default() });
+        assert!(ext4::mount(1, bytes).is_err());
+        DEVICE.with_borrow(|device| {
+            assert!(device.events.is_empty());
+            assert!(device.bytes == hostile);
+        });
+    }
+}
+
+#[test]
 fn final_orphan_release_retries_identical_bytes_without_a_live_handle() {
     let Some(path) = fixture() else { return };
     let mut baseline = mount_fixture(&path);

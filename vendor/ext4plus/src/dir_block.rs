@@ -65,12 +65,12 @@ impl DirBlock<'_> {
 
         let block_type = self.get_block_type(block);
 
-        let expected_checksum = self.read_expected_checksum(block);
-        let actual_checksum = if block_type == DirBlockType::Leaf {
-            self.calc_leaf_checksum(block)
+        let (actual_checksum, offset) = if block_type == DirBlockType::Leaf {
+            (self.calc_leaf_checksum(block)?, block.len() - 4)
         } else {
-            self.calc_internal_checksum(block, block_type)
+            self.calc_internal_checksum(block, block_type)?
         };
+        let expected_checksum = read_u32le(block, offset);
 
         if actual_checksum.finalize() == expected_checksum {
             Ok(())
@@ -96,39 +96,34 @@ impl DirBlock<'_> {
 
         let block_type = self.get_block_type(block);
 
-        let checksum = if block_type == DirBlockType::Leaf {
-            self.calc_leaf_checksum(block)
+        let (checksum, offset) = if block_type == DirBlockType::Leaf {
+            (self.calc_leaf_checksum(block)?, block.len() - 4)
         } else {
-            self.calc_internal_checksum(block, block_type)
+            self.calc_internal_checksum(block, block_type)?
         };
 
-        // Stored in the last four bytes of the block.
-        let offset = block.len().checked_sub(4).unwrap();
         write_u32le(block, offset, checksum.finalize());
 
         Ok(())
     }
 
-    /// Get the stored checksum from the last four bytes of the block.
-    fn read_expected_checksum(&self, block: &[u8]) -> u32 {
-        // OK to unwrap: minimum block size is 1024.
-        let offset = block.len().checked_sub(4).unwrap();
-
-        read_u32le(block, offset)
-    }
-
     /// Calculate the checksum of a leaf block.
-    fn calc_leaf_checksum(&self, block: &[u8]) -> Checksum {
+    fn calc_leaf_checksum(&self, block: &[u8]) -> Result<Checksum, Ext4Error> {
         let tail_entry_size = 12;
 
         // OK to unwrap: minimum block size is 1024.
         let tail_entry_offset =
             block.len().checked_sub(tail_entry_size).unwrap();
+        if read_u32le(block, tail_entry_offset) != 0
+            || read_u16le(block, tail_entry_offset + 4) != 12
+            || block[tail_entry_offset + 6] != 0 || block[tail_entry_offset + 7] != 0xde {
+            return Err(CorruptKind::DirBlockChecksum(self.dir_inode).into());
+        }
 
         let mut checksum = self.checksum_base.clone();
         checksum.update(&block[..tail_entry_offset]);
 
-        checksum
+        Ok(checksum)
     }
 
     /// Calculate the checksum of a non-leaf block.
@@ -136,14 +131,12 @@ impl DirBlock<'_> {
         &self,
         block: &[u8],
         block_type: DirBlockType,
-    ) -> Checksum {
-        let tail_entry_size = 8;
-
-        // OK to unwrap: minimum block size is 1024.
-        let tail_entry_offset =
-            block.len().checked_sub(tail_entry_size).unwrap();
-
+    ) -> Result<(Checksum, usize), Ext4Error> {
         let limit_offset: usize = if block_type == DirBlockType::Root {
+            if read_u16le(block, 4) != 12 || usize::from(read_u16le(block, 16)) != block.len() - 12
+                || read_u32le(block, 24) != 0 || block[29] != 8 {
+                return Err(CorruptKind::DirBlockChecksum(self.dir_inode).into());
+            }
             0x20
         } else {
             0x8
@@ -152,21 +145,23 @@ impl DirBlock<'_> {
         // OK to unwrap: `limit_offset` is at most 0x20.
         let count_offset = limit_offset.checked_add(2).unwrap();
 
-        let count = read_u16le(block, count_offset);
+        let count = usize::from(read_u16le(block, count_offset));
+        let limit = usize::from(read_u16le(block, limit_offset));
+        let tail_entry_offset = limit_offset + limit * 8;
+        if count == 0 || count > limit || tail_entry_offset > block.len() - 8 {
+            return Err(CorruptKind::DirBlockChecksum(self.dir_inode).into());
+        }
 
-        // OK to unwrap: `count` is at most 2^16-1, `limit_offset` is
-        // at most 0x20, so the maximum result is 524,312. This fits in
-        // a `u32`, and we assume that `usize` is at least that large.
-        let num_bytes = limit_offset
-            .checked_add(usize::from(count).checked_mul(8).unwrap())
-            .unwrap();
+        // Count is bounded by the validated limit and tail, so the checksum
+        // slice cannot escape the directory block on hostile input.
+        let num_bytes = limit_offset + count * 8;
 
         let mut checksum = self.checksum_base.clone();
         checksum.update(&block[..num_bytes]);
         checksum.update_u32_le(read_u32le(block, tail_entry_offset));
         checksum.update_u32_le(0);
 
-        checksum
+        Ok((checksum, tail_entry_offset + 4))
     }
 
     fn get_block_type(&self, block: &[u8]) -> DirBlockType {
