@@ -487,6 +487,60 @@ fn debugfs(image: &std::path::Path, command: &str) {
 }
 
 #[test]
+fn external_xattr_checksums_shared_release_and_final_free() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    ext4::create_file_probe(&mut mounted, b"system/ea-first", 0o600).unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/ea-second", 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    drop(mounted);
+    let image = path.with_extension("coordinator-xattr-input.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    debugfs(&image, &format!("ea_set /system/ea-first user.large {}", "q".repeat(300)));
+    let stat = std::process::Command::new("debugfs").args(["-R", "stat /system/ea-first"])
+        .arg(&image).output().unwrap();
+    assert!(stat.status.success());
+    let stat = String::from_utf8(stat.stdout).unwrap();
+    let block: u64 = stat.lines().find_map(|line| line.strip_prefix("File ACL: "))
+        .expect("debugfs xattr block").split_whitespace().next().unwrap().parse().unwrap();
+    assert_ne!(block, 0, "fixture must have external attributes");
+    // Construct two independent inode references to Linux-created attributes.
+    debugfs(&image, &format!("set_inode_field /system/ea-second file_acl {block}"));
+    debugfs(&image, "set_inode_field /system/ea-second blocks 8");
+    let mut initial = std::fs::read(&image).unwrap();
+    let start = block as usize * 4096;
+    initial[start + 4..start + 8].copy_from_slice(&2u32.to_le_bytes());
+    initial[start + 16..start + 20].fill(0);
+    let mut crc = u32::from_le_bytes(initial[1024 + 0x270..1024 + 0x274].try_into().unwrap());
+    for byte in block.to_le_bytes().iter().chain(&initial[start..start + 4096]) {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 { crc = (crc >> 1) ^ (0x82f6_3b78u32 & 0u32.wrapping_sub(crc & 1)); }
+    }
+    initial[start + 16..start + 20].copy_from_slice(&crc.to_le_bytes());
+    let mut mounted = mount_bytes(initial.clone());
+    fsck(&path, "coordinator-xattr-shared-input");
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::unlink_file_probe(&mut mounted, b"system/ea-first").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::sync(&mut mounted).unwrap();
+    fsck(&path, "coordinator-xattr-shared-release");
+    let shared = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let mut mounted = mount_bytes(shared);
+    ext4::unlink_file_probe(&mut mounted, b"system/ea-second").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free + 4096));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-xattr-final-free");
+    drop(mounted);
+    initial[start + 4095] ^= 1;
+    let length = initial.len() as u64;
+    DEVICE.with_borrow_mut(|device| *device = Device { bytes: initial, ..Device::default() });
+    assert!(ext4::mount(1, length).is_err(), "corrupt external xattr admitted");
+    DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
+}
+
+#[test]
 fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

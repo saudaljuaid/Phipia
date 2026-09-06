@@ -251,3 +251,11 @@ fixtures are deliberately outside the runtime vendor boundary.
 Vendored scope is intentionally limited to `Cargo.toml`, `Cargo.lock`, the two
 license files, `README.md`, and `src/`. Upstream test disk images, `xtask`, and
 host integration tests are not runtime build inputs and are not vendored.
+
+External xattr reads validate the one-block header, reference count, and
+metadata checksum. Detaching an external block decrements shared references
+with a new checksum, or revokes/frees the final reference; inode deletion uses
+the same path. The checksum covers the filesystem seed, little-endian 64-bit
+block number, and complete block with h_checksum zeroed, following Linux
+v6.12 fs/ext4/xattr.c and e2fsprogs v1.47.2 lib/ext2fs/csum.c. The Linux fixture
+test checks shared release, final free, clean fsck, and corrupt-block refusal.

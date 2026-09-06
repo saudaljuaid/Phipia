@@ -1135,6 +1135,7 @@ impl Ext4 {
         &self,
         mut inode: Inode,
     ) -> Result<(), Ext4Error> {
+        inode.release_xattr_block(self).await?;
         // Fast symlinks keep target bytes in i_block, not block pointers.
         if !(inode.file_type().is_symlink() && inode.size_in_bytes() < 60) {
             let blocks = FileBlocks::from_inode(&inode, self.clone())?;

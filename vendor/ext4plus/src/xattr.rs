@@ -8,6 +8,7 @@
 //! Extended attribute support.
 
 use crate::Ext4;
+use crate::checksum::Checksum;
 use crate::error::{CorruptKind, Ext4Error};
 use crate::features::{CompatibleFeatures, FilesystemFeature};
 use crate::inode::Inode;
@@ -283,6 +284,56 @@ fn serialize_xattrs_to_ibody(
 }
 
 impl Inode {
+    fn xattr_block_checksum(ext4: &Ext4, block_index: u64, block: &[u8]) -> u32 {
+        let mut checksum = Checksum::with_seed(ext4.0.superblock.checksum_seed());
+        checksum.update(&block_index.to_le_bytes());
+        checksum.update(&block[..16]);
+        checksum.update_u32_le(0);
+        checksum.update(&block[20..]);
+        checksum.finalize()
+    }
+
+    #[maybe_async::maybe_async]
+    async fn read_xattr_block(&self, ext4: &Ext4) -> Result<Vec<u8>, Ext4Error> {
+        let block_index = self.file_acl();
+        let block = ext4.read_block(block_index).await?;
+        if block.len() < EXT4_XATTR_BLOCK_HEADER_SIZE
+            || read_u32le(&block, 0) != EXT4_XATTR_MAGIC
+            || !(1..=1024).contains(&read_u32le(&block, 4))
+            || read_u32le(&block, 8) != 1
+            || (ext4.has_metadata_checksums()
+                && read_u32le(&block, 16) != Self::xattr_block_checksum(ext4, block_index, &block))
+        {
+            return Err(CorruptKind::Xattr(self.index).into());
+        }
+        Ok(block)
+    }
+
+    /// Detach an external attribute block, preserving other inode references.
+    /// All writes and any final free are captured by the caller's transaction.
+    #[maybe_async::maybe_async]
+    pub(crate) async fn release_xattr_block(&mut self, ext4: &Ext4) -> Result<(), Ext4Error> {
+        let block_index = self.file_acl();
+        if block_index == 0 { return Ok(()); }
+        let mut block = self.read_xattr_block(ext4).await?;
+        let fs_blocks = self.fs_blocks(ext4)?.checked_sub(1)
+            .ok_or(CorruptKind::Xattr(self.index))?;
+        let references = read_u32le(&block, 4);
+        if references == 1 {
+            ext4.free_block(block_index).await?;
+        } else {
+            write_u32le(&mut block, 4, references - 1);
+            if ext4.has_metadata_checksums() {
+                let checksum = Self::xattr_block_checksum(ext4, block_index, &block);
+                write_u32le(&mut block, 16, checksum);
+            }
+            ext4.write_to_block(block_index, 0, &block).await?;
+        }
+        self.set_file_acl(0);
+        self.set_fs_blocks(fs_blocks, ext4)?;
+        Ok(())
+    }
+
     #[maybe_async::maybe_async]
     async fn read_xattrs(
         &self,
@@ -322,12 +373,7 @@ impl Inode {
 
         let file_acl = self.file_acl();
         if file_acl != 0 {
-            let block = ext4.read_block(file_acl).await?;
-            if block.len() < EXT4_XATTR_BLOCK_HEADER_SIZE
-                || read_u32le(&block, 0) != EXT4_XATTR_MAGIC
-            {
-                return Err(CorruptKind::Xattr(self.index).into());
-            }
+            let block = self.read_xattr_block(ext4).await?;
             entries.extend(parse_xattr_entries(
                 self,
                 &block,
@@ -465,13 +511,7 @@ impl Inode {
             return Err(Ext4Error::NoSpace);
         }
 
-        let file_acl = self.file_acl();
-        if file_acl != 0 {
-            ext4.free_block(file_acl).await?;
-            self.set_file_acl(0);
-            let fs_blocks = self.fs_blocks(ext4)?;
-            self.set_fs_blocks(fs_blocks.checked_sub(1).unwrap(), ext4)?;
-        }
+        self.release_xattr_block(ext4).await?;
 
         self.write(ext4).await
     }
@@ -515,13 +555,7 @@ impl Inode {
             self.inode_data[ibody_start..].copy_from_slice(&serialized);
         }
 
-        let file_acl = self.file_acl();
-        if file_acl != 0 {
-            ext4.free_block(file_acl).await?;
-            self.set_file_acl(0);
-            let fs_blocks = self.fs_blocks(ext4)?;
-            self.set_fs_blocks(fs_blocks.checked_sub(1).unwrap(), ext4)?;
-        }
+        self.release_xattr_block(ext4).await?;
 
         self.write(ext4).await
     }
