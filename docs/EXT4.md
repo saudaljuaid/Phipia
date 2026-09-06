@@ -427,7 +427,7 @@ the snapshot, and handle-allocation failure frees it before returning. Native
 DIRECTORY_READ_LONG and SDK readdir carry full 255-byte ext4 names while the
 existing pathname length limit still applies to operations on those names.
 
-VFS chmod changes ordinary permission bits through JBD2; immutable inodes and
+VFS chmod replaces permission/special bits (0000–07777) through JBD2; immutable inodes and
 inodes with access ACLs are refused. The admitted xattr mutation namespace is
 `user.*`, with names up to 255 bytes. Set/replace/remove journal the inode and
 any released external attribute block. The complete resulting attribute set
@@ -436,10 +436,12 @@ and allocation counters preserved. Reads support size queries and refuse
 undersized buffers. Native PATH_CHMOD/PATH_XATTR and SDK wrappers expose these
 operations with Data write capability checks; POSIX chmod uses PATH_CHMOD.
 Mutations sample validated RTC seconds before staging; inode changes record
-ctime, file write/truncate records mtime, and directory inode changes record
-mtime. New inodes receive atime/mtime/ctime/crtime. Reads use noatime behavior.
+ctime, file write/truncate records mtime, and directory entry changes record
+mtime. Chmod preserves mtime; rename records the moved inode's ctime. New
+inodes receive atime/mtime/ctime/crtime. Reads use noatime behavior.
 Retries retain the staged timestamp bytes. Invalid RTC readings refuse a new
 mutation before storage writes. The admitted write-time range is Unix epoch
-through 2446-05-10 (0x37fffffff seconds); explicit time-setting APIs remain
-incomplete. The upstream Duration metadata API reports pre-epoch dates as zero
+through 2446-05-10 (0x37fffffff seconds). VFS/native/SDK set-times accepts explicit
+atime/mtime in this range with nanoseconds below one billion; ctime still
+comes from the transaction clock. The upstream Duration metadata API reports pre-epoch dates as zero
 while preserving their raw fields unless the timestamp is changed.

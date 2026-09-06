@@ -250,7 +250,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..15 {
+    for case in 0..16 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -308,6 +308,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             12 => ext4::append_inode(mounted, inode, b"stable", 16384).map(|result| assert_eq!(result, (0, 6))),
             13 => ext4::write_inode(mounted, inode, 4095, b"stable").map(|count| assert_eq!(count, 6)),
             14 => ext4::truncate_inode(mounted, inode, 101),
+            15 => ext4::set_times(mounted, b"system/retry-test", 2_200_000_000, 123, 2_300_000_000, 456),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -455,6 +456,47 @@ fn mutation_timestamps_are_journaled_and_linux_epoch_encoding_matches() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-timestamps");
+}
+
+#[test]
+fn directory_times_follow_namespace_changes_and_explicit_times_preserve_nanoseconds() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let dir = b"system/time-dir";
+    let now = 1_780_000_000;
+    MUTATION_TIME.with(|time| time.set(now));
+    ext4::create_directory_probe(&mut mounted, dir).unwrap();
+    let metadata = |path: &[u8]| {
+        let bytes = DEVICE.with_borrow(|device| device.bytes.clone());
+        ext4plus::Ext4::load(Box::new(bytes)).unwrap().metadata(path).unwrap()
+    };
+    MUTATION_TIME.with(|time| time.set(now + 1));
+    ext4::create_file_probe(&mut mounted, b"system/time-dir/child", 0o600).unwrap();
+    assert_eq!(metadata(b"/system/time-dir").mtime.as_secs(), now + 1);
+    MUTATION_TIME.with(|time| time.set(now + 2));
+    ext4::chmod(&mut mounted, dir, 0o2751).unwrap();
+    assert_eq!(metadata(b"/system/time-dir").mtime.as_secs(), now + 1);
+    assert_eq!(metadata(b"/system/time-dir").ctime.as_secs(), now + 2);
+    ext4::chmod(&mut mounted, dir, 0o751).unwrap();
+    assert_eq!(metadata(b"/system/time-dir").mode.bits() & 0o7777, 0o751);
+    ext4::set_times(&mut mounted, dir, 0x8000_0000, 123_456_789, 0xffff_ffff, 999_999_999).unwrap();
+    let value = metadata(b"/system/time-dir");
+    assert_eq!(value.atime, std::time::Duration::new(0x8000_0000, 123_456_789));
+    assert_eq!(value.mtime, std::time::Duration::new(0xffff_ffff, 999_999_999));
+    assert_eq!(value.ctime.as_secs(), now + 2);
+    DEVICE.with_borrow_mut(|device| device.events.clear());
+    assert_eq!(ext4::set_times(&mut mounted, dir, 1, 1_000_000_000, 2, 0), Err(Status::Range));
+    DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
+    MUTATION_TIME.with(|time| time.set(now + 3));
+    ext4::rename_probe(&mut mounted, dir, b"data/user/time-dir").unwrap();
+    let renamed = metadata(b"/data/user/time-dir");
+    assert_eq!(renamed.ctime.as_secs(), now + 3);
+    assert_eq!(renamed.mtime, value.mtime);
+    assert_eq!(metadata(b"/system").mtime.as_secs(), now + 3);
+    assert_eq!(metadata(b"/data/user").mtime.as_secs(), now + 3);
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-explicit-times");
 }
 
 #[test]

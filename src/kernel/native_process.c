@@ -3662,13 +3662,31 @@ static int64_t syscall_chmod(struct native_process *process, uint64_t path_addre
     struct phipia_path request;
     char path[PHIPFS_MAX_PATH];
     enum phipfs_volume volume;
-    if (mode > 0777U) return -PHIPIA_EINVAL;
+    if (mode > 07777U) return -PHIPIA_EINVAL;
     if (!copy_from_user(process, &request, path_address, sizeof(request))) return -PHIPIA_EFAULT;
     if (!path_from_user(process, &request, path, &volume)) return -PHIPIA_EINVAL;
     if (volume != PHIPFS_VOLUME_DATA ||
         (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) return -PHIPIA_EACCES;
     cpu_interrupt_enable();
     enum phipfs_status status = phipfs_chmod(volume, path, (uint16_t)mode);
+    cpu_interrupt_disable();
+    return filesystem_error(status);
+}
+
+static int64_t syscall_set_times(struct native_process *process, uint64_t address)
+{
+    struct phipia_set_times_request request;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    if (!copy_from_user(process, &request, address, sizeof(request))) return -PHIPIA_EFAULT;
+    if (request.size != sizeof(request) || request.version != PHIPIA_ABI_VERSION ||
+        !path_from_user(process, &request.path, path, &volume)) return -PHIPIA_EINVAL;
+    if (volume != PHIPFS_VOLUME_DATA ||
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) return -PHIPIA_EACCES;
+    const struct phipfs_times times = { request.times.atime_seconds, request.times.mtime_seconds,
+        request.times.atime_nanos, request.times.mtime_nanos };
+    cpu_interrupt_enable();
+    enum phipfs_status status = phipfs_set_times(volume, path, &times);
     cpu_interrupt_disable();
     return filesystem_error(status);
 }
@@ -5904,6 +5922,8 @@ static int64_t dispatch_syscall(
         return syscall_chmod(process, frame->rdi, frame->rsi);
     case PHIPIA_SYS_FILE_TRUNCATE:
         return syscall_file_truncate(process, frame->rdi, frame->rsi);
+    case PHIPIA_SYS_PATH_SET_TIMES:
+        return syscall_set_times(process, frame->rdi);
     case PHIPIA_SYS_PATH_XATTR:
         return syscall_xattr(process, frame->rdi);
     case PHIPIA_SYS_TIME_MONOTONIC:

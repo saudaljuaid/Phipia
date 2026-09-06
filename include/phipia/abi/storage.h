@@ -124,6 +124,22 @@ enum phipia_xattr_operation {
     PHIPIA_XATTR_REMOVE = 2
 };
 
+struct phipia_file_times {
+    uint64_t atime_seconds;
+    uint64_t mtime_seconds;
+    uint32_t atime_nanos;
+    uint32_t mtime_nanos;
+} __attribute__((packed));
+
+struct phipia_set_times_request {
+    uint32_t size;
+    uint32_t version;
+    struct phipia_path path;
+    struct phipia_file_times times;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct phipia_set_times_request) == 48U, "Phipia set-times ABI changed");
+
 struct phipia_xattr_request {
     uint32_t size;
     uint32_t version;

@@ -80,6 +80,13 @@ struct phipfs_stat {
     bool read_only;
 };
 
+struct phipfs_times {
+    uint64_t atime_seconds;
+    uint64_t mtime_seconds;
+    uint32_t atime_nanos;
+    uint32_t mtime_nanos;
+};
+
 struct phipfs_list_entry {
     char name[PHIPFS_MAX_COMPONENT_BYTES];
     uint64_t size;
@@ -189,6 +196,8 @@ enum phipfs_status phipfs_rename_replace(enum phipfs_volume volume,
 bool phipfs_has_atomic_replace(enum phipfs_volume volume);
 enum phipfs_status phipfs_set_append(phipfs_handle handle, bool append);
 enum phipfs_status phipfs_ftruncate(phipfs_handle handle, uint64_t size);
+enum phipfs_status phipfs_set_times(enum phipfs_volume volume, const char *path,
+    const struct phipfs_times *times);
 enum phipfs_status phipfs_symlink(enum phipfs_volume volume,
     const char *path, const char *target);
 /* Copies at most capacity literal target bytes, without adding a NUL. */

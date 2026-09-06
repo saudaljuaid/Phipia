@@ -842,6 +842,21 @@ pub(crate) unsafe extern "C" fn phipia_ext4_chmod(
     }
 }
 
+/// Set explicit atime/mtime while ctime comes from the transaction clock.
+///
+/// # Safety
+/// The mount/path are live and disjoint; C holds an exclusive writable lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_set_times(mounted: usize, path: *const u8, path_length: usize,
+    atime_seconds: u64, atime_nanos: u32, mtime_seconds: u64, mtime_nanos: u32) -> i32 {
+    if mounted == 0 || path.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: C guarantees exclusion and a complete readable path.
+    let (mounted, path) = unsafe { (&mut *(mounted as *mut ext4::Mounted), core::slice::from_raw_parts(path, path_length)) };
+    match ext4::set_times(mounted, path, atime_seconds, atime_nanos, mtime_seconds, mtime_nanos) {
+        Ok(()) => ext4::Status::Ok as i32, Err(status) => status as i32,
+    }
+}
+
 /// Mutate an admitted user xattr; remove=1 deletes, remove=0 sets even an empty value.
 ///
 /// # Safety

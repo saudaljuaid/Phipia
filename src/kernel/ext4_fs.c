@@ -126,6 +126,8 @@ extern int32_t phipia_ext4_snapshot_entry(uintptr_t snapshot, uint64_t index,
 extern void phipia_ext4_snapshot_free(uintptr_t snapshot);
 extern int32_t phipia_ext4_stat_inode(uintptr_t mounted, uint64_t inode, struct phipia_ext4_metadata *metadata);
 extern int32_t phipia_ext4_truncate_inode(uintptr_t mounted, uint64_t inode, uint64_t size);
+extern int32_t phipia_ext4_set_times(uintptr_t mounted, const uint8_t *path, size_t path_bytes,
+    uint64_t atime_seconds, uint32_t atime_nanos, uint64_t mtime_seconds, uint32_t mtime_nanos);
 extern int32_t phipia_ext4_pread_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
     uint8_t *output, size_t capacity, size_t *count);
 extern int32_t phipia_ext4_write_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
@@ -1608,6 +1610,22 @@ enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
     return ext4_backend_link_file_probe(volume, source, destination);
+}
+
+enum phipfs_status ext4_backend_set_times(enum phipfs_volume volume, const char *path,
+    const struct phipfs_times *times)
+{
+    const size_t length = path_length(path);
+    if (!valid_volume(volume) || length == 0U || length >= PHIPFS_MAX_PATH || times == NULL) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    struct ext4_mount_state *mount = &ext4_mounts[volume];
+    enum phipfs_status status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) return status;
+    status = map_status(phipia_ext4_set_times(mount->rust_mount, (const uint8_t *)path, length,
+        times->atime_seconds, times->atime_nanos, times->mtime_seconds, times->mtime_nanos));
+    enum phipfs_status close_status = end_operation(mount, NULL);
+    return status != PHIPFS_STATUS_OK ? status : close_status;
 }
 
 enum phipfs_status ext4_backend_ftruncate(phipfs_handle handle, uint64_t size)

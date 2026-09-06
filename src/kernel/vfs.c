@@ -126,6 +126,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .append = ext4_backend_append,
     .chmod = ext4_backend_chmod,
     .ftruncate = ext4_backend_ftruncate,
+    .set_times = ext4_backend_set_times,
     .set_xattr = ext4_backend_set_xattr,
     .get_xattr = ext4_backend_get_xattr,
     .rename_replace = ext4_backend_rename_replace,
@@ -1140,6 +1141,16 @@ enum phipfs_status phipfs_link(
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == PHIPFS_STATUS_OK ? mounts[volume].backend->link(volume,
         source_canonical, destination_canonical) : status;
+}
+
+enum phipfs_status phipfs_set_times(enum phipfs_volume volume, const char *path,
+    const struct phipfs_times *times)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) return status;
+    return mounts[volume].backend->set_times == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->set_times(volume, canonical, times);
 }
 
 enum phipfs_status phipfs_chmod(enum phipfs_volume volume, const char *path, uint16_t mode)

@@ -118,6 +118,19 @@ pub(crate) async fn add_dir_entry(
     inode: InodeIndex,
     file_type: FileType,
 ) -> Result<(), Ext4Error> {
+    add_dir_entry_inner(fs, dir_inode, name, inode, file_type).await?;
+    if let Some(time) = fs.mutation_time() {
+        dir_inode.set_mtime(time);
+        dir_inode.write(fs).await?;
+    }
+    Ok(())
+}
+
+#[maybe_async::maybe_async]
+async fn add_dir_entry_inner(
+    fs: &Ext4, dir_inode: &mut Inode, name: DirEntryName<'_>,
+    inode: InodeIndex, file_type: FileType,
+) -> Result<(), Ext4Error> {
     assert!(dir_inode.file_type().is_dir());
 
     if dir_inode.flags().contains(InodeFlags::DIRECTORY_ENCRYPTED) {
@@ -299,6 +312,18 @@ pub(crate) async fn remove_dir_entry(
     fs: &Ext4,
     dir_inode: &mut Inode,
     name: DirEntryName<'_>,
+) -> Result<(), Ext4Error> {
+    remove_dir_entry_inner(fs, dir_inode, name).await?;
+    if let Some(time) = fs.mutation_time() {
+        dir_inode.set_mtime(time);
+        dir_inode.write(fs).await?;
+    }
+    Ok(())
+}
+
+#[maybe_async::maybe_async]
+async fn remove_dir_entry_inner(
+    fs: &Ext4, dir_inode: &mut Inode, name: DirEntryName<'_>,
 ) -> Result<(), Ext4Error> {
     assert!(dir_inode.file_type().is_dir());
 
@@ -721,7 +746,7 @@ impl Dir {
         &mut self,
         source: DirEntryName<'_>,
         destination: DirEntryName<'_>,
-        inode: Inode,
+        mut inode: Inode,
     ) -> Result<(), Ext4Error> {
         if source.0 == b"."
             || source.0 == b".."
@@ -759,7 +784,9 @@ impl Dir {
             inode.file_type(),
         )
         .await?;
-        remove_dir_entry(&self.fs, &mut self.inode, source).await
+        remove_dir_entry(&self.fs, &mut self.inode, source).await?;
+        if self.fs.mutation_time().is_some() { inode.write(&self.fs).await?; }
+        Ok(())
     }
 
     /// Move a non-indexed directory to a different parent in the same filesystem.
@@ -770,7 +797,7 @@ impl Dir {
         source: DirEntryName<'_>,
         destination_parent: &mut Self,
         destination: DirEntryName<'_>,
-        inode: Inode,
+        mut inode: Inode,
     ) -> Result<(), Ext4Error> {
         if source.0 == b"." || source.0 == b".."
             || destination.0 == b"." || destination.0 == b".." {
@@ -862,6 +889,7 @@ impl Dir {
         self.inode.write(&self.fs).await?;
         destination_parent.inode.set_links_count(destination_links);
         destination_parent.inode.write(&self.fs).await?;
+        if self.fs.mutation_time().is_some() { inode.write(&self.fs).await?; }
         Ok(())
     }
 

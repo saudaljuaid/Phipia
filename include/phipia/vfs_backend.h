@@ -58,6 +58,8 @@ struct vfs_backend_ops {
         uint8_t *output, size_t capacity, size_t *read_bytes);
     enum phipfs_status (*chmod)(enum phipfs_volume volume, const char *path, uint16_t mode);
     enum phipfs_status (*ftruncate)(phipfs_handle handle, uint64_t size);
+    enum phipfs_status (*set_times)(enum phipfs_volume volume, const char *path,
+        const struct phipfs_times *times);
     enum phipfs_status (*set_xattr)(enum phipfs_volume volume, const char *path,
         const char *name, const uint8_t *value, size_t length, bool remove);
     enum phipfs_status (*get_xattr)(enum phipfs_volume volume, const char *path,

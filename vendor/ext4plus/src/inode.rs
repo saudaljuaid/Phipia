@@ -384,7 +384,6 @@ impl Inode {
     pub async fn write(&mut self, ext4: &Ext4) -> Result<(), Ext4Error> {
         if let Some(time) = ext4.mutation_time() {
             self.set_ctime(time);
-            if self.file_type().is_dir() { self.set_mtime(time); }
         }
         let (block_index, offset_within_block) =
             get_inode_location(ext4, self.index)?;

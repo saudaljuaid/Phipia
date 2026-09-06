@@ -23,6 +23,16 @@ static uint16_t changed_mode;
 static unsigned live_snapshots;
 static unsigned freed_snapshots;
 
+int32_t phipia_ext4_set_times(uintptr_t mounted, const uint8_t *path, size_t path_bytes,
+    uint64_t atime_seconds, uint32_t atime_nanos, uint64_t mtime_seconds, uint32_t mtime_nanos)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    assert(atime_seconds == 2200000000U && atime_nanos == 123U);
+    assert(mtime_seconds == 2300000000U && mtime_nanos == 456U);
+    return permanent_status;
+}
+
 int32_t phipia_ext4_directory_snapshot(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, struct phipia_ext4_metadata *metadata, uintptr_t *snapshot)
 {
@@ -362,6 +372,11 @@ int main(void)
     permanent_status = PHIPIA_EXT4_STATUS_OK;
     assert(ext4_backend_chmod(PHIPFS_VOLUME_DATA, "file", 0640U) == PHIPFS_STATUS_OK);
     assert(changed_mode == 0640U);
+    const struct phipfs_times times = {2200000000U, 2300000000U, 123U, 456U};
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_set_times(PHIPFS_VOLUME_DATA, "file", &times) == PHIPFS_STATUS_IO);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_set_times(PHIPFS_VOLUME_DATA, "file", &times) == PHIPFS_STATUS_OK);
     assert(ext4_backend_set_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, false) == PHIPFS_STATUS_OK);
     assert(ext4_backend_set_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, true) == PHIPFS_STATUS_OK);
     assert(ext4_backend_get_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, &read_bytes) == PHIPFS_STATUS_OK);

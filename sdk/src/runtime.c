@@ -260,6 +260,15 @@ long phipia_path_unlink(uint16_t volume, const char *path)
     return single_path(PHIPIA_SYS_PATH_UNLINK, volume, path, 0U);
 }
 
+long phipia_path_set_times(uint16_t volume, const char *path, const struct phipia_file_times *times)
+{
+    if (path == NULL || times == NULL) return -PHIPIA_EFAULT;
+    const struct phipia_set_times_request request = {
+        sizeof(request), PHIPIA_ABI_VERSION, make_path(volume, path), *times
+    };
+    return phipia_syscall1(PHIPIA_SYS_PATH_SET_TIMES, (uint64_t)(uintptr_t)&request);
+}
+
 long phipia_file_truncate(phipia_handle_t handle, uint64_t size)
 {
     return phipia_syscall2(PHIPIA_SYS_FILE_TRUNCATE, handle, size);

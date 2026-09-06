@@ -143,6 +143,7 @@ enum PendingMutationKind {
     Chmod,
     SetXattr,
     RemoveXattr,
+    SetTimes,
 }
 
 struct PendingMutation {
@@ -1263,16 +1264,34 @@ where F: FnOnce(&Ext4, &mut Inode) -> Result<(), Ext4Error> {
 }
 
 pub(crate) fn chmod(mounted: &mut Mounted, path: &[u8], mode: u16) -> Result<(), Status> {
-    if mode & !0o777 != 0 { return Err(Status::Invalid); }
+    if mode & !0o7777 != 0 { return Err(Status::Invalid); }
     mutate_inode(mounted, path, PendingMutationKind::Chmod, Vec::from(mode.to_le_bytes()),
         |filesystem, inode| {
             // Updating mode alone would leave an access ACL inconsistent.
             if inode.get_xattr(filesystem, b"system.posix_acl_access")?.is_some() {
                 return Err(Ext4Error::Readonly);
             }
-            inode.set_mode(InodeMode::from_bits_retain((inode.mode().bits() & !0o777) | mode))?;
+            inode.set_mode(InodeMode::from_bits_retain((inode.mode().bits() & !0o7777) | mode))?;
             inode.write(filesystem)
         })
+}
+
+pub(crate) fn set_times(mounted: &mut Mounted, path: &[u8], atime_seconds: u64,
+    atime_nanos: u32, mtime_seconds: u64, mtime_nanos: u32) -> Result<(), Status> {
+    if atime_seconds > 0x3_7fff_ffff || mtime_seconds > 0x3_7fff_ffff ||
+        atime_nanos >= 1_000_000_000 || mtime_nanos >= 1_000_000_000 { return Err(Status::Range); }
+    let mut input = Vec::from(atime_seconds.to_le_bytes());
+    input.extend_from_slice(&atime_nanos.to_le_bytes());
+    input.extend_from_slice(&mtime_seconds.to_le_bytes());
+    input.extend_from_slice(&mtime_nanos.to_le_bytes());
+    mutate_inode(mounted, path, PendingMutationKind::SetTimes, input, |filesystem, inode| {
+        // Phipia admits the modern inode extra fields; do not silently truncate
+        // epochs or nanoseconds on an older short-extra inode.
+        if inode.metadata().crtime.is_none() { return Err(Ext4Error::Readonly); }
+        inode.set_atime(Duration::new(atime_seconds, atime_nanos));
+        inode.set_mtime(Duration::new(mtime_seconds, mtime_nanos));
+        inode.write(filesystem)
+    })
 }
 
 fn validate_user_xattr(name: &[u8]) -> Result<(), Status> {
