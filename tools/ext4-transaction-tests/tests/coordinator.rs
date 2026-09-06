@@ -711,7 +711,23 @@ fn sparse_fragmented_extent_tree_grows_overwrites_and_shrinks() {
     expected[4093..4093 + replacement.len()].copy_from_slice(&replacement);
     read_exact(&mounted, name, &mut actual);
     assert_eq!(actual, expected);
+    ext4::sync(&mut mounted).unwrap();
+    fsck(&path, "coordinator-fragmented-before-truncate");
     let shortened = 40 * 8192 + 103;
+    // Keep the upstream error visible instead of losing its precise cause in
+    // the stable C Invalid status. This isolated stage never writes the device.
+    let backing = DEVICE.with_borrow(|device| device.bytes.clone());
+    let stage = std::rc::Rc::new(ext4plus::JournalMutationStage::new(
+        Box::new(backing.clone()), backing.len() as u64).unwrap());
+    let raw = ext4plus::Ext4::load_with_writer(Box::new(stage.clone()),
+        Some(Box::new(stage.clone()))).unwrap();
+    let mut raw_file = raw.open(b"/system/fragmented").unwrap();
+    raw_file.truncate(shortened as u64).expect("upstream fragmented truncate");
+    println!("fragmented truncate stage: {} images, {} revokes",
+        stage.staged_block_count(), stage.revoked_block_count());
+    drop(raw_file);
+    drop(raw);
+    drop(stage);
     ext4::truncate_probe(&mut mounted, name, shortened as u64).unwrap();
     ext4::truncate_probe(&mut mounted, name, expected.len() as u64).unwrap();
     expected[shortened..].fill(0);
