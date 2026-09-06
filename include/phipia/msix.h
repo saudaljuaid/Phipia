@@ -50,6 +50,7 @@ struct msix_binding {
     bool table_mapped_here;
     bool pba_mapped_here;
     bool delivery_masked;
+    bool teardown_started;
     bool active;
 };
 

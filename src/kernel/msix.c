@@ -143,14 +143,14 @@ static enum msix_status enable_masked(
 
 static enum msix_status rollback_binding(struct msix_binding *binding)
 {
-    bool failed = false;
     uint32_t restored_header = 0U;
+    binding->teardown_started = true;
 
     if (binding->claim != NULL && binding->capability_offset != 0U) {
         if (write_control(binding->claim->device, binding->capability_offset,
                 (uint16_t)(binding->original_control |
                     MSIX_CONTROL_FUNCTION_MASK)) != MSIX_STATUS_OK) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         }
     }
 
@@ -162,7 +162,7 @@ static enum msix_status rollback_binding(struct msix_binding *binding)
     if (binding->handler_installed) {
         if (interrupt_unregister_handler(binding->vector.vector) !=
                 INTERRUPT_STATUS_OK) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         } else {
             binding->handler_installed = false;
         }
@@ -176,7 +176,7 @@ static enum msix_status rollback_binding(struct msix_binding *binding)
         cpu_store_fence();
         for (size_t index = 0U; index < 4U; ++index) {
             if (binding->entry[index] != binding->original_entry[index]) {
-                failed = true;
+                return MSIX_STATUS_ROLLBACK_FAILURE;
             }
         }
     }
@@ -184,17 +184,28 @@ static enum msix_status rollback_binding(struct msix_binding *binding)
     /* Never recycle a vector while a handler may still be reachable. */
     if (binding->vector.active) {
         if (binding->handler_installed) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         } else if (interrupt_vector_release(&binding->vector) !=
                 INTERRUPT_VECTOR_STATUS_OK) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         }
+    }
+
+    // Restore and verify the disabled original control before releasing the
+    // table mapping. On failure the next unbind retains every remaining owner.
+    if (binding->claim != NULL && binding->capability_offset != 0U &&
+        (write_control(binding->claim->device, binding->capability_offset,
+            binding->original_control) != MSIX_STATUS_OK ||
+         config_read(binding->claim->device, binding->capability_offset,
+            &restored_header) != MSIX_STATUS_OK ||
+         (uint16_t)(restored_header >> 16U) != binding->original_control)) {
+        return MSIX_STATUS_ROLLBACK_FAILURE;
     }
 
     if (binding->pba_mapped_here && binding->pba_bar != binding->table_bar) {
         if (pci_claim_unmap_last_bar(binding->claim, binding->pba_bar) !=
                 PCI_RESOURCE_STATUS_OK) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         } else {
             binding->pba_mapped_here = false;
         }
@@ -202,29 +213,18 @@ static enum msix_status rollback_binding(struct msix_binding *binding)
     if (binding->table_mapped_here) {
         if (pci_claim_unmap_last_bar(binding->claim, binding->table_bar) !=
                 PCI_RESOURCE_STATUS_OK) {
-            failed = true;
+            return MSIX_STATUS_ROLLBACK_FAILURE;
         } else {
             binding->table_mapped_here = false;
         }
     }
 
-    if (binding->claim != NULL && binding->capability_offset != 0U &&
-        write_control(binding->claim->device, binding->capability_offset,
-            binding->original_control) != MSIX_STATUS_OK) {
-        failed = true;
-    } else if (binding->claim != NULL && binding->capability_offset != 0U &&
-        (config_read(binding->claim->device, binding->capability_offset,
-                &restored_header) != MSIX_STATUS_OK ||
-            (uint16_t)(restored_header >> 16U) !=
-                binding->original_control)) {
-        failed = true;
-    }
-
+    if (binding->active) --state.active_bindings;
     binding->active = false;
     binding->delivery_masked = true;
     binding->entry = NULL;
     ++state.rollback_count;
-    return failed ? MSIX_STATUS_ROLLBACK_FAILURE : MSIX_STATUS_OK;
+    return MSIX_STATUS_OK;
 }
 
 static enum msix_status bind_internal(
@@ -335,6 +335,8 @@ static enum msix_status bind_internal(
         return status;
     }
 
+    binding->active = true;
+    ++state.active_bindings;
     table_region = pci_claim_mapped_bar(claim, binding->table_bar);
     if (table_region == NULL) {
         if (pci_claim_map_bar(claim, binding->table_bar, &table_region) !=
@@ -408,8 +410,6 @@ static enum msix_status bind_internal(
         goto fail;
     }
 
-    binding->active = true;
-    ++state.active_bindings;
     return MSIX_STATUS_OK;
 
 fail:
@@ -455,6 +455,7 @@ enum msix_status msix_set_masked(
     if (!binding->active) {
         return MSIX_STATUS_NOT_BOUND;
     }
+    if (binding->teardown_started) return MSIX_STATUS_ROLLBACK_FAILURE;
     if (masked == binding->delivery_masked) {
         return MSIX_STATUS_OK;
     }
@@ -478,8 +479,6 @@ enum msix_status msix_unbind(struct msix_binding *binding)
         return MSIX_STATUS_NOT_BOUND;
     }
 
-    binding->active = false;
-    --state.active_bindings;
     status = rollback_binding(binding);
     return status;
 }

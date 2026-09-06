@@ -2119,7 +2119,8 @@ static enum nvme_status teardown_controller(
             result = NVME_STATUS_TEARDOWN_FAILURE;
         }
     }
-    if (controller->interrupt.active) {
+    if ((controller->interrupt.active || controller->interrupt.msix.active) &&
+        !controller->interrupt.msix.teardown_started) {
         if (msix_set_masked(&controller->interrupt.msix, true) !=
                 MSIX_STATUS_OK) {
             result = NVME_STATUS_TEARDOWN_FAILURE;
@@ -2136,7 +2137,7 @@ static enum nvme_status teardown_controller(
             controller->bus_master_enabled = false;
         }
     }
-    if (controller->interrupt.active) {
+    if (controller->interrupt.active || controller->interrupt.msix.active) {
         if (msix_unbind(&controller->interrupt.msix) != MSIX_STATUS_OK) {
             result = NVME_STATUS_TEARDOWN_FAILURE;
         } else {
@@ -2144,7 +2145,7 @@ static enum nvme_status teardown_controller(
             controller->interrupt.handler_ready = false;
         }
     }
-    if (dma_stopped && !controller->interrupt.active) {
+    if (dma_stopped && !controller->interrupt.active && !controller->interrupt.msix.active) {
         if (reclaim_all(controller) != NVME_STATUS_OK ||
             controller->handler_saw_freed_state ||
             release_all(controller) != NVME_STATUS_OK) {
