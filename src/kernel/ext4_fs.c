@@ -125,6 +125,7 @@ extern int32_t phipia_ext4_snapshot_entry(uintptr_t snapshot, uint64_t index,
     struct phipia_ext4_directory_entry *entry, bool *present);
 extern void phipia_ext4_snapshot_free(uintptr_t snapshot);
 extern int32_t phipia_ext4_stat_inode(uintptr_t mounted, uint64_t inode, struct phipia_ext4_metadata *metadata);
+extern int32_t phipia_ext4_truncate_inode(uintptr_t mounted, uint64_t inode, uint64_t size);
 extern int32_t phipia_ext4_pread_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
     uint8_t *output, size_t capacity, size_t *count);
 extern int32_t phipia_ext4_write_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
@@ -1607,6 +1608,23 @@ enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
     return ext4_backend_link_file_probe(volume, source, destination);
+}
+
+enum phipfs_status ext4_backend_ftruncate(phipfs_handle handle, uint64_t size)
+{
+    struct ext4_handle_state *state;
+    enum phipfs_status status = handle_state(handle, &state);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (state->directory) return PHIPFS_STATUS_IS_DIRECTORY;
+    if ((state->access & PHIPFS_ACCESS_WRITE) == 0U) return PHIPFS_STATUS_ACCESS;
+    if (size > PHIPFS_MAX_FILE_BYTES) return PHIPFS_STATUS_RANGE;
+    struct ext4_mount_state *mount = &ext4_mounts[state->volume];
+    status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) return status;
+    status = map_status(phipia_ext4_truncate_inode(mount->rust_mount, state->inode, size));
+    if (status == PHIPFS_STATUS_OK) update_open_sizes(state->volume, state->inode, size);
+    enum phipfs_status close_status = end_operation(mount, NULL);
+    return status != PHIPFS_STATUS_OK ? status : close_status;
 }
 
 enum phipfs_status ext4_backend_chmod(enum phipfs_volume volume,

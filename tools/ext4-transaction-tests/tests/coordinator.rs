@@ -250,7 +250,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..14 {
+    for case in 0..15 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -280,6 +280,9 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             if case == 11 {
                 ext4::set_xattr(&mut mounted, b"system/retry-test", b"user.note", Some(b"old")).unwrap();
             }
+            if case == 14 {
+                ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x37; 8192]).unwrap();
+            }
             ext4::sync(&mut mounted).unwrap();
         }
         let initial = DEVICE.with_borrow_mut(|device| {
@@ -304,6 +307,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             11 => ext4::set_xattr(mounted, b"system/retry-test", b"user.note", None),
             12 => ext4::append_inode(mounted, inode, b"stable", 16384).map(|result| assert_eq!(result, (0, 6))),
             13 => ext4::write_inode(mounted, inode, 4095, b"stable").map(|count| assert_eq!(count, 6)),
+            14 => ext4::truncate_inode(mounted, inode, 101),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -711,6 +715,10 @@ fn inode_io_survives_file_and_parent_rename_and_original_name_reuse() {
     let mut replacement = [0; 3];
     read_exact(&mounted, b"data/user/open-parent/file", &mut replacement);
     assert_eq!(&replacement, b"new");
+    ext4::truncate_inode(&mut mounted, inode, 3).unwrap();
+    assert_eq!(ext4::stat(&mounted, b"data/user/open-parent/moved").unwrap().size, 3);
+    assert_eq!(ext4::pread_inode(&mounted, inode, 0, &mut content), Ok(3));
+    assert_eq!(&content[..3], b"ori");
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-inode-io");

@@ -1129,7 +1129,14 @@ pub(crate) fn truncate_probe(
     path: &[u8],
     size: u64,
 ) -> Result<(), Status> {
-    let absolute = absolute_path(path)?;
+    truncate_target(mounted, absolute_path(path)?, size)
+}
+
+pub(crate) fn truncate_inode(mounted: &mut Mounted, inode: u64, size: u64) -> Result<(), Status> {
+    truncate_target(mounted, inode_key(inode)?, size)
+}
+
+fn truncate_target(mounted: &mut Mounted, absolute: Vec<u8>, size: u64) -> Result<(), Status> {
     if mounted.pending_mutation.is_some() {
         let resumed = resume_pending_mutation(
             mounted,
@@ -1152,20 +1159,14 @@ pub(crate) fn truncate_probe(
         discard_uncommitted_stage(mounted, recovery)?;
     }
     ensure_staged_view(mounted)?;
-    let file = mounted
-        .filesystem()?
-        .open(absolute.as_slice())
-        .map_err(map_error)?;
+    let file = open_io_target(mounted.filesystem()?, &absolute)?;
     let old_size = file.inode().size_in_bytes();
     drop(file);
     if size == old_size {
         return Ok(());
     }
     arm_recovery_marker(mounted)?;
-    let mut file = mounted
-        .filesystem()?
-        .open(absolute.as_slice())
-        .map_err(map_error)?;
+    let mut file = open_io_target(mounted.filesystem()?, &absolute)?;
     if let Err(error) = file.truncate(size) {
         discard_uncommitted_stage(mounted, true)?;
         return Err(map_error(error));

@@ -166,8 +166,9 @@ int mkdir(const char *path, mode_t mode)
 int ftruncate(int number, int64_t length)
 {
     struct descriptor_record *record = descriptor(number);
-    if (record == NULL || length < 0) { errno = EINVAL; return -1; }
-    return path_operation(record->path, PHIPIA_SYS_PATH_TRUNCATE, (uint64_t)length);
+    if (record == NULL) { errno = EBADF; return -1; }
+    if (length < 0) { errno = EINVAL; return -1; }
+    return phipia_result(phipia_file_truncate(record->handle, (uint64_t)length));
 }
 int fsync(int number)
 {

@@ -33,7 +33,9 @@ trailing NUL and supports short output buffers. The Rust coordinator accepts
 targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
 unlink/rename inspect the final link itself. Symlink unlink still requires a
 quiescent volume; unlinking an open regular file remains refused until orphan
-tracking is implemented. Path-based SDK ftruncate still needs handle routing.
+tracking is implemented. Native FILE_TRUNCATE and SDK ftruncate also use the
+handle's inode identity, preserve the cursor, and refresh all matching handles'
+sizes after a successful checkpoint.
 Native `PATH_SYMLINK`/`PATH_READLINK` and SDK `symlink()`/`readlink()` expose
 these operations to applications. Native unlink examines the entry itself
 before trying empty-directory removal, so dangling links can be removed.

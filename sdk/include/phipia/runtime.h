@@ -63,6 +63,7 @@ long phipia_path_replace(uint16_t volume, const char *source,
 long phipia_path_unlink(uint16_t volume, const char *path);
 long phipia_path_symlink(uint16_t volume, const char *path, const char *target);
 long phipia_path_chmod(uint16_t volume, const char *path, uint16_t mode);
+long phipia_file_truncate(phipia_handle_t handle, uint64_t size);
 long phipia_path_set_xattr(uint16_t volume, const char *path, const char *name,
     const void *value, size_t length);
 long phipia_path_remove_xattr(uint16_t volume, const char *path, const char *name);

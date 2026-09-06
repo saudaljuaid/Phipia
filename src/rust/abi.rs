@@ -641,6 +641,19 @@ pub(crate) unsafe extern "C" fn phipia_ext4_stat_inode(mounted: usize, inode: u6
     }
 }
 
+/// Truncate through a C-owned inode identity.
+///
+/// # Safety
+/// C owns a live mount and exclusive writable lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_truncate_inode(mounted: usize, inode: u64, size: u64) -> i32 {
+    if mounted == 0 { return ext4::Status::NullArgument as i32; }
+    // SAFETY: the caller retains exclusive access for this operation.
+    match ext4::truncate_inode(unsafe { &mut *(mounted as *mut ext4::Mounted) }, inode, size) {
+        Ok(()) => ext4::Status::Ok as i32, Err(status) => status as i32,
+    }
+}
+
 /// Read through a C-owned inode identity.
 ///
 /// # Safety

@@ -125,6 +125,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .case_sensitive = true,
     .append = ext4_backend_append,
     .chmod = ext4_backend_chmod,
+    .ftruncate = ext4_backend_ftruncate,
     .set_xattr = ext4_backend_set_xattr,
     .get_xattr = ext4_backend_get_xattr,
     .rename_replace = ext4_backend_rename_replace,
@@ -1007,6 +1008,16 @@ enum phipfs_status phipfs_create_mode(enum phipfs_volume volume,
     }
     return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->create(volume, canonical, mode) : status;
+}
+
+enum phipfs_status phipfs_ftruncate(phipfs_handle handle, uint64_t size)
+{
+    struct vfs_open_file_state *state;
+    enum phipfs_status status = open_file_state(handle, &state);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (state->backend->ftruncate != NULL) return state->backend->ftruncate(state->backend_handle, size);
+    struct vfs_vnode_state *vnode = &vnodes[state->vnode_index];
+    return state->backend->truncate(vnode->volume, vnode->path, size);
 }
 
 enum phipfs_status phipfs_truncate(

@@ -3645,6 +3645,18 @@ static int64_t syscall_symlink(
     return (int64_t)count;
 }
 
+static int64_t syscall_file_truncate(struct native_process *process, phipia_handle_t handle, uint64_t size)
+{
+    struct native_resource *resource;
+    enum native_handle_status handle_status = native_handle_resolve(
+        &process->handles, handle, PHIPIA_HANDLE_FILE, &resource);
+    if (handle_status != NATIVE_HANDLE_OK) return handle_error(handle_status);
+    cpu_interrupt_enable();
+    enum phipfs_status status = phipfs_ftruncate((phipfs_handle)resource->words[0], size);
+    cpu_interrupt_disable();
+    return filesystem_error(status);
+}
+
 static int64_t syscall_chmod(struct native_process *process, uint64_t path_address, uint64_t mode)
 {
     struct phipia_path request;
@@ -5890,6 +5902,8 @@ static int64_t dispatch_syscall(
         return syscall_symlink(process, frame->rdi, frame->rsi, frame->rdx, false);
     case PHIPIA_SYS_PATH_CHMOD:
         return syscall_chmod(process, frame->rdi, frame->rsi);
+    case PHIPIA_SYS_FILE_TRUNCATE:
+        return syscall_file_truncate(process, frame->rdi, frame->rsi);
     case PHIPIA_SYS_PATH_XATTR:
         return syscall_xattr(process, frame->rdi);
     case PHIPIA_SYS_TIME_MONOTONIC:

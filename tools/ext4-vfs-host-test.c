@@ -171,6 +171,12 @@ int32_t phipia_ext4_stat_inode(uintptr_t mounted, uint64_t inode, struct phipia_
     return phipia_ext4_stat(mounted, (const uint8_t *)"file", 4U, metadata);
 }
 
+int32_t phipia_ext4_truncate_inode(uintptr_t mounted, uint64_t inode, uint64_t size)
+{
+    assert(inode == 42U);
+    return phipia_ext4_truncate_probe(mounted, (const uint8_t *)"file", 4U, size);
+}
+
 int32_t phipia_ext4_append_inode(uintptr_t mounted, uint64_t inode,
     const uint8_t *source, size_t length, uint64_t maximum_size, uint64_t *start, size_t *count)
 {
@@ -319,6 +325,11 @@ int main(void)
     assert(written == 1U && stat_refusals == 1U);
     stat_refusals = 0U;
     renames = 0U;
+    assert(ext4_backend_ftruncate(first, 5U) == PHIPFS_STATUS_ACCESS);
+    refusals = 1U;
+    assert(ext4_backend_ftruncate(second, 5U) == PHIPFS_STATUS_IO);
+    assert(ext4_backend_ftruncate(second, 5U) == PHIPFS_STATUS_OK);
+    assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 5U && state->offset == 1U);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);

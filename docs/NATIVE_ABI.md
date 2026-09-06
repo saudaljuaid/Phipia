@@ -95,6 +95,7 @@ is immutable; writable Data paths are rooted below the application namespace.
 | `0x0210 PATH_CHMOD(*path, mode)` | `0` | K | Journals ordinary mode bits (0000–0777) on ext4 Data with write capability. Immutable inodes and access ACLs are refused. |
 | `0x0211 PATH_XATTR(*request)` | Value length for get, otherwise `0` | K | Versioned 56-byte request selects get/set/remove of admitted user attributes. Name length is 1–255, value/capacity at most 4096; get with zero capacity queries size. Inputs are copied before mutation. Set/remove require Data write capability and resulting attributes must fit inline. |
 | `0x0212 DIRECTORY_READ_LONG(handle, output)` | `1` entry, `0` end | K | Writes a 280-byte entry with a 255-byte name field. SDK readdir uses this call; the original 40-byte directory-entry ABI remains available. |
+| `0x0213 FILE_TRUNCATE(handle, size)` | `0` | K | Requires a writable file handle. Ext4 truncates by inode identity through JBD2, preserving the cursor and surviving file/parent rename. The current 16 MiB file cap applies. |
 
 ### Time, waiting, and entropy
 
