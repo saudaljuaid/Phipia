@@ -80,7 +80,10 @@ impl FileBlocks {
         buf: &[u8],
         offset: u64,
     ) -> Result<usize, Ext4Error> {
-        if inode.flags().contains(InodeFlags::IMMUTABLE) {
+        if inode.flags().contains(InodeFlags::IMMUTABLE)
+            || (inode.file_type().is_regular_file()
+                && inode.flags().contains(InodeFlags::APPEND_ONLY)
+                && offset != inode.size_in_bytes()) {
             return Err(Ext4Error::Readonly);
         }
 
@@ -101,7 +104,7 @@ impl FileBlocks {
         inode: &mut Inode,
         new_size: u64,
     ) -> Result<(), Ext4Error> {
-        if inode.flags().contains(InodeFlags::IMMUTABLE) {
+        if inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         // Like Linux ext4_block_truncate_page(), discard the retained block's

@@ -316,7 +316,7 @@ pub(crate) async fn remove_dir_entry(
     dir_inode: &mut Inode,
     name: DirEntryName<'_>,
 ) -> Result<(), Ext4Error> {
-    if dir_inode.flags().contains(InodeFlags::IMMUTABLE) {
+    if dir_inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
         return Err(Ext4Error::Readonly);
     }
     remove_dir_entry_inner(fs, dir_inode, name).await?;
@@ -720,7 +720,7 @@ impl Dir {
         target_inode: &mut Inode,
     ) -> Result<(), Ext4Error> {
         if self.inode.flags().contains(InodeFlags::IMMUTABLE)
-            || target_inode.flags().contains(InodeFlags::IMMUTABLE) {
+            || target_inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         let old = target_inode.links_count();
@@ -758,8 +758,8 @@ impl Dir {
         destination: DirEntryName<'_>,
         mut inode: Inode,
     ) -> Result<(), Ext4Error> {
-        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
-            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+        if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
+            || inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         if source.0 == b"."
@@ -824,10 +824,10 @@ impl Dir {
             return self.rename_entry(source, destination, inode).await;
         }
         // Indexed-root checksum layout needs separate admission and fixtures.
-        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+        if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
             || destination_parent.inode.flags().contains(InodeFlags::IMMUTABLE)
             || inode.flags().intersects(InodeFlags::DIRECTORY_HTREE
-            | InodeFlags::DIRECTORY_ENCRYPTED | InodeFlags::IMMUTABLE) {
+            | InodeFlags::DIRECTORY_ENCRYPTED | InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         if self.get_entry(source).await?.index != inode.index {
@@ -923,8 +923,8 @@ impl Dir {
         name: DirEntryName<'_>,
         mut inode: Inode,
     ) -> Result<Option<Inode>, Ext4Error> {
-        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
-            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+        if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
+            || inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         if name.0 == b"." || name.0 == b".." {
@@ -962,8 +962,8 @@ impl Dir {
         name: DirEntryName<'_>,
         inode: Inode,
     ) -> Result<u64, Ext4Error> {
-        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
-            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+        if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
+            || inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
         }
         if name.0 == b"." || name.0 == b".." {

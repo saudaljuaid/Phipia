@@ -304,6 +304,12 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             device.bytes.clone()
         });
         drop(mounted);
+        let initial = if case == 8 || case == 12 {
+            let image = path.with_extension(format!("coordinator-append-retry-{case}.img"));
+            std::fs::write(&image, initial).unwrap();
+            debugfs(&image, "set_inode_field /system/retry-test flags 0x80020");
+            std::fs::read(&image).unwrap()
+        } else { initial };
         let mut mounted = mount_bytes(initial.clone());
         let target = if case == 5 { b"README.TXT".to_vec() } else { vec![b'x'; 97] };
         let inode = ext4::stat(&mounted, b"system/retry-test").map(|metadata| metadata.inode).unwrap_or(0);
@@ -357,6 +363,10 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                 assert_eq!(failed_prefix, expected[..=failed_at]);
                 if failed_at >= 2 {
                     assert_public_reads_refused(&mounted);
+                    if case == 8 {
+                        assert_eq!(ext4::transaction_probe(&mut mounted, b"system/retry-test", 4093, b"append-retry"),
+                            Err(Status::Invalid), "ordinary write stole pending append");
+                    }
                     assert_eq!(
                         ext4::create_file_probe(&mut mounted, b"system/other", 0o600),
                         Err(Status::Invalid)
@@ -1159,6 +1169,74 @@ fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-unlink-open-alias");
+}
+
+#[test]
+fn append_only_inodes_admit_appends_and_new_names_but_refuse_destructive_changes() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/append-only";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, name, 0, b"original").unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/append-dir").unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/append-empty").unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/append-dir/child", 0o600).unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/ordinary", 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    drop(mounted);
+    let image = path.with_extension("coordinator-append-only-input.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    for entry in ["append-only", "append-dir", "append-empty"] {
+        debugfs(&image, &format!("set_inode_field /system/{entry} flags 0x80020"));
+    }
+    let mut mounted = mount_fixture(&image);
+    let inode = ext4::stat(&mounted, name).unwrap().inode;
+    let baseline = DEVICE.with_borrow(|device| device.bytes.clone());
+    for case in 0..16 {
+        let result = match case {
+            0 => ext4::transaction_probe(&mut mounted, name, 0, b"overwrite").map(|_| ()),
+            1 => ext4::write_inode(&mut mounted, inode, 8, b"non-append-mode").map(|_| ()),
+            2 => ext4::truncate_probe(&mut mounted, name, 0),
+            3 => ext4::truncate_inode(&mut mounted, inode, 8), // same-size still refused
+            4 => ext4::truncate_inode(&mut mounted, inode, 8192),
+            5 => ext4::unlink_file_probe(&mut mounted, name),
+            6 => ext4::link_file_probe(&mut mounted, name, b"system/alias"),
+            7 => ext4::rename_probe(&mut mounted, name, b"system/renamed"),
+            8 => ext4::rename_replace_probe(&mut mounted, b"system/ordinary", name),
+            9 => ext4::chmod(&mut mounted, name, 0o777),
+            10 => ext4::set_times(&mut mounted, name, 1780000001, 0, 1780000001, 0),
+            11 => ext4::set_xattr(&mut mounted, name, b"user.note", Some(b"forbidden")),
+            12 => ext4::unlink_file_probe(&mut mounted, b"system/append-dir/child"),
+            13 => ext4::remove_directory_probe(&mut mounted, b"system/append-empty"),
+            14 => ext4::rename_probe(&mut mounted, b"system/append-dir/child", b"system/moved"),
+            _ => ext4::rename_replace_probe(&mut mounted, b"system/ordinary", b"system/append-dir/child"),
+        };
+        assert_eq!(result, Err(Status::ReadOnly), "append-only case {case}");
+        ext4::sync(&mut mounted).unwrap();
+        DEVICE.with_borrow(|device| assert!(device.bytes == baseline, "append-only case {case} escaped rollback"));
+    }
+    assert_eq!(ext4::append_probe(&mut mounted, name, b"+", u64::MAX), Ok((8, 1)));
+    let payload = vec![0x5a; 40 * 4096];
+    assert_eq!(ext4::append_inode(&mut mounted, inode, &payload, u64::MAX), Ok((9, payload.len())));
+    let mut content = vec![0; 9 + payload.len()];
+    read_exact(&mounted, name, &mut content);
+    assert_eq!(&content[..9], b"original+");
+    assert_eq!(&content[9..], &payload);
+    ext4::create_file_probe(&mut mounted, b"system/append-dir/new", 0o600).unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/append-dir/new-dir").unwrap();
+    ext4::symlink_probe(&mut mounted, b"system/append-dir/new-link", b"missing").unwrap();
+    ext4::link_file_probe(&mut mounted, b"system/ordinary", b"system/append-dir/alias").unwrap();
+    ext4::rename_probe(&mut mounted, b"system/ordinary", b"system/append-dir/moved-in").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-append-only");
+    drop(mounted);
+    let mounted = mount_bytes(DEVICE.with_borrow(|device| device.bytes.clone()));
+    let mut content = vec![0; 9 + payload.len()];
+    read_exact(&mounted, name, &mut content);
+    assert_eq!(&content[..9], b"original+");
+    assert_eq!(&content[9..], &payload);
 }
 
 #[test]

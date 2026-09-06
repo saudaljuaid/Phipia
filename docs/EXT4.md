@@ -427,6 +427,15 @@ writes. Direct backend requests remain bounded to 256 KiB and can checkpoint
 multiple transactions, so crash atomicity for the entire request is not claimed.
 The current C file-size cap remains 16 MiB.
 
+Append-only ext4 inodes accept the append operation, including bounded split
+requests, but reject ordinary writes (even at EOF), truncate, unlink, rename,
+new hard links, and explicit mode/time/xattr changes. Append-only directories
+accept new entries and incoming non-replacing moves; removal and replacement
+are refused. These checks run in the journal mutation path; the current open
+interface carries access rights but no append flag, so refusal occurs at the
+mutation rather than at open. Pending requests retain append mode in their
+retry identity.
+
 Directory handles own a snapshot captured under one read lease, bounded by
 8192 visible entries. Create/delete/rename after open do not change the names
 or metadata in that snapshot; reopen observes the new namespace. Close frees

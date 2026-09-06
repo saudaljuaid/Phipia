@@ -55,6 +55,9 @@ bitflags! {
         /// File is immutable.
         const IMMUTABLE = 0x10;
 
+        /// File permits only appends; directory permits only new entries.
+        const APPEND_ONLY = 0x20;
+
         /// Directory is encrypted.
         const DIRECTORY_ENCRYPTED = 0x800;
 

@@ -161,6 +161,7 @@ struct PendingWrite {
     source: Vec<u8>,
     offset: u64,
     completed: usize,
+    append: bool,
 }
 
 #[derive(Debug)]
@@ -900,7 +901,7 @@ pub(crate) fn transaction_probe(
     offset: u64,
     source: &[u8],
 ) -> Result<usize, Status> {
-    write_target(mounted, absolute_path(path)?, offset, source)
+    write_target(mounted, absolute_path(path)?, offset, source, false)
 }
 
 fn inode_key(inode: u64) -> Result<Vec<u8>, Status> {
@@ -923,27 +924,31 @@ fn open_io_target(filesystem: &Ext4, key: &[u8]) -> Result<ext4plus::file::File,
 }
 
 pub(crate) fn write_inode(mounted: &mut Mounted, inode: u64, offset: u64, source: &[u8]) -> Result<usize, Status> {
-    write_target(mounted, inode_key(inode)?, offset, source)
+    write_target(mounted, inode_key(inode)?, offset, source, false)
 }
 
-fn write_target(mounted: &mut Mounted, absolute: Vec<u8>, offset: u64, source: &[u8]) -> Result<usize, Status> {
+fn write_target(mounted: &mut Mounted, absolute: Vec<u8>, offset: u64, source: &[u8], append: bool) -> Result<usize, Status> {
     if source.is_empty() || source.len() > MAX_PROBE_WRITE_BYTES {
         return Err(Status::Range);
     }
     offset.checked_add(source.len() as u64).ok_or(Status::Range)?;
     if let Some(pending) = &mounted.pending_write {
-        if pending.path != absolute || pending.source != source || pending.offset != offset {
+        if pending.path != absolute || pending.source != source || pending.offset != offset || pending.append != append {
             return Err(Status::Invalid);
         }
     } else {
         if mounted.pending_mutation.is_some() {
             return Err(Status::Invalid);
         }
+        let file = open_io_target(mounted.readable_filesystem()?, &absolute)?;
+        if file.inode().flags().contains(InodeFlags::APPEND_ONLY) && !append {
+            return Err(Status::ReadOnly);
+        }
         let mut copy = Vec::new();
         copy.try_reserve_exact(source.len()).map_err(|_| Status::Range)?;
         copy.extend_from_slice(source);
         mounted.pending_write = Some(PendingWrite {
-            path: absolute, source: copy, offset, completed: 0,
+            path: absolute, source: copy, offset, completed: 0, append,
         });
     }
     resume_write_request(mounted)
@@ -994,7 +999,7 @@ pub(crate) fn append_inode(mounted: &mut Mounted, inode: u64, source: &[u8], max
 
 fn append_target(mounted: &mut Mounted, key: Vec<u8>, source: &[u8], maximum_size: u64) -> Result<(u64, usize), Status> {
     let offset = if let Some(pending) = &mounted.pending_write {
-        if pending.path != key || pending.source != source {
+        if pending.path != key || pending.source != source || !pending.append {
             return Err(Status::Invalid);
         }
         pending.offset
@@ -1004,7 +1009,7 @@ fn append_target(mounted: &mut Mounted, key: Vec<u8>, source: &[u8], maximum_siz
     if offset.checked_add(source.len() as u64).is_none_or(|end| end > maximum_size) {
         return Err(Status::Range);
     }
-    write_target(mounted, key, offset, source).map(|written| (offset, written))
+    write_target(mounted, key, offset, source, true).map(|written| (offset, written))
 }
 
 fn write_transaction(
@@ -1167,6 +1172,9 @@ fn truncate_target(mounted: &mut Mounted, absolute: Vec<u8>, size: u64) -> Resul
     }
     ensure_staged_view(mounted)?;
     let file = open_io_target(mounted.filesystem()?, &absolute)?;
+    if file.inode().flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
+        return Err(Status::ReadOnly);
+    }
     let old_size = file.inode().size_in_bytes();
     drop(file);
     if size == old_size {
@@ -1255,7 +1263,7 @@ where F: FnOnce(&Ext4, &mut Inode) -> Result<(), Ext4Error> {
     let result = (|| {
         let path = Path::try_from(absolute.as_slice()).map_err(|_| Ext4Error::MalformedPath)?;
         let mut inode = filesystem.path_to_inode(path, FollowSymlinks::All)?;
-        if inode.flags().contains(InodeFlags::IMMUTABLE) { return Err(Ext4Error::Readonly); }
+        if inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) { return Err(Ext4Error::Readonly); }
         mutation(filesystem, &mut inode)
     })();
     if let Err(error) = result {
@@ -1754,7 +1762,7 @@ fn remove_rename_destination(
     if target.index == source.index {
         return Ok(false); // POSIX same-inode replacement is a no-op.
     }
-    if target.flags().contains(InodeFlags::IMMUTABLE) {
+    if target.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
         return Err(Ext4Error::Readonly);
     }
     if target.file_type().is_dir() {
@@ -1804,7 +1812,7 @@ fn rename_transaction(
     let mut inode = filesystem
         .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)
         .map_err(map_error)?;
-    if inode.flags().contains(InodeFlags::IMMUTABLE) {
+    if inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
         return Err(Status::ReadOnly);
     }
     if !inode.file_type().is_regular_file() && !inode.file_type().is_dir()
@@ -1815,7 +1823,7 @@ fn rename_transaction(
         .path_to_inode(source_parent, FollowSymlinks::All).map_err(map_error)?;
     let destination_parent_inode = filesystem
         .path_to_inode(destination_parent, FollowSymlinks::All).map_err(map_error)?;
-    if source_parent_inode.flags().contains(InodeFlags::IMMUTABLE)
+    if source_parent_inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
         || destination_parent_inode.flags().contains(InodeFlags::IMMUTABLE) {
         return Err(Status::ReadOnly);
     }
