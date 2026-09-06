@@ -2050,11 +2050,21 @@ impl ExtentTree {
                     written_in_run
                 }
                 None => {
-                    let needed_blocks = blocks_needed_for_bytes(
+                    let mut needed_blocks = blocks_needed_for_bytes(
                         start_offset_in_block,
                         bytes_remaining,
                         block_size_usize,
                     )?;
+                    // A write may continue through an existing extent after
+                    // this hole. Allocate only the hole; allocating the whole
+                    // remaining request would overlap the next extent and
+                    // make insertion fail after reserving unrelated blocks.
+                    if let (_, Some(next)) = self.find_prev_next(current_block).await? {
+                        let hole_blocks = next.block_within_file.checked_sub(current_block)
+                            .filter(|blocks| *blocks != 0)
+                            .ok_or(CorruptKind::ExtentBlock(inode.index))?;
+                        needed_blocks = needed_blocks.min(usize_from_u32(hole_blocks));
+                    }
                     if needed_blocks == 0 {
                         return Err(CorruptKind::InvalidBlockSize.into());
                     }
