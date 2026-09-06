@@ -2,6 +2,11 @@
 
 # ext4 storage boundary
 
+The baseline capability matrix, public call graph, additional measured limits,
+and unresolved failure cases are recorded in the
+[Milestone 2 writable audit](EXT4-WRITABLE-AUDIT.md). Its stage gates distinguish
+existing bounded evidence from everyday filesystem support that remains unproven.
+
 Phipia has one ext4 implementation: the audited, pinned `ext4plus` source under
 `vendor/ext4plus`. It is built `no_std`, synchronously, and with default
 features disabled. Cargo is locked and forced offline through `.cargo/config.toml`;

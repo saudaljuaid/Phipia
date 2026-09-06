@@ -160,6 +160,148 @@ fn public_executor_maps_every_block_write_and_preserves_flushes() {
     assert!(storage.events.is_empty());
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ExactStorageEvent {
+    Write(u64, Vec<u8>),
+    Flush(JournalFlush),
+}
+
+/// A refusal can happen after the device has accepted bytes. The coordinator
+/// must retain its reservation in both cases and reissue the original plan.
+#[derive(Default)]
+struct RefusingStorage {
+    events: Vec<ExactStorageEvent>,
+    accepted: BTreeMap<u64, Vec<u8>>,
+    fail_at: Option<usize>,
+    accept_failed_write: bool,
+}
+
+impl JournalStorage for RefusingStorage {
+    type Error = ();
+
+    fn write(&mut self, start: u64, bytes: &[u8]) -> Result<(), Self::Error> {
+        let failed = self.fail_at == Some(self.events.len());
+        self.events
+            .push(ExactStorageEvent::Write(start, bytes.to_vec()));
+        if !failed || self.accept_failed_write {
+            self.accepted.insert(start, bytes.to_vec());
+        }
+        if failed {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn flush(&mut self, boundary: JournalFlush) -> Result<(), Self::Error> {
+        let failed = self.fail_at == Some(self.events.len());
+        self.events.push(ExactStorageEvent::Flush(boundary));
+        if failed {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn every_storage_refusal_retains_exact_plan_and_reserved_slots() {
+    let slots = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007];
+    let mut reference_ring = mapped_ring(17, &slots);
+    let prepared = reference_ring.prepare(&transaction()).unwrap();
+    let plan = reference_ring.prepare_commit_plan(&prepared).unwrap();
+    let mut reference = RefusingStorage::default();
+    execute_commit_operations(&mut reference, &plan).unwrap();
+
+    for accept_failed_write in [false, true] {
+        for failed_index in 0..plan.len() {
+            let mut ring = mapped_ring(17, &slots);
+            let prepared = ring.prepare(&transaction()).unwrap();
+            let original = ring.prepare_commit_plan(&prepared).unwrap();
+            let used = ring.used_slots();
+            let sequence = ring.next_sequence();
+            let mut storage = RefusingStorage {
+                fail_at: Some(failed_index),
+                accept_failed_write,
+                ..Default::default()
+            };
+            assert_eq!(
+                execute_commit_operations(&mut storage, &original),
+                Err(JournalExecutionError::Storage(()))
+            );
+            assert_eq!(storage.events, reference.events[..=failed_index]);
+            assert_eq!(ring.used_slots(), used);
+            assert_eq!(ring.next_sequence(), sequence);
+            assert!(ring.abort_precommit(prepared.ticket()).is_err());
+            assert!(ring.checkpoint_durable(prepared.ticket()).is_err());
+            let retry = ring.prepare_commit_plan(&prepared).unwrap();
+            assert_eq!(retry, original);
+            storage.fail_at = None;
+            storage.events.clear();
+            execute_commit_operations(&mut storage, &retry).unwrap();
+            assert_eq!(storage.events, reference.events);
+            assert_eq!(storage.accepted, reference.accepted);
+            ring.mark_commit_durable(prepared.ticket()).unwrap();
+
+            // The tail write and its flush are separately retryable; commit
+            // completion alone must not release any reserved journal slot.
+            let tail = ring.prepare_checkpoint_plan(prepared.ticket()).unwrap();
+            for tail_failure in 0..tail.len() {
+                let mut tail_storage = RefusingStorage {
+                    fail_at: Some(tail_failure),
+                    accept_failed_write,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    execute_commit_operations(&mut tail_storage, &tail),
+                    Err(JournalExecutionError::Storage(()))
+                );
+                assert_eq!(ring.used_slots(), used);
+                assert_eq!(ring.next_sequence(), sequence);
+                assert_eq!(
+                    ring.prepare_checkpoint_plan(prepared.ticket()).unwrap(),
+                    tail
+                );
+            }
+            execute_commit_operations(&mut storage, &tail).unwrap();
+            ring.checkpoint_durable(prepared.ticket()).unwrap();
+            assert_eq!(ring.used_slots(), 0);
+        }
+    }
+}
+
+#[test]
+fn sealed_stage_refuses_mutations_through_every_shared_writer() {
+    let backing = Rc::new(vec![0u8; JOURNAL_BLOCK_BYTES * 8]);
+    let stage = Rc::new(
+        JournalMutationStage::new(Box::new(backing.clone()), backing.len() as u64).unwrap(),
+    );
+    let writer = stage.clone();
+    Ext4Write::write(&*writer, JOURNAL_BLOCK_BYTES as u64, &[0x51]).unwrap();
+    let base = JournalTransaction::new(17, UUID, MAXIMUM_BLOCK).unwrap();
+    assert!(stage.build_transaction(&base, &[7]).is_err());
+    assert!(!stage.is_sealed());
+    let snapshot = stage.build_transaction(&base, &[]).unwrap();
+    let images = stage.staged_images();
+    assert!(Ext4Write::write(&*writer, JOURNAL_BLOCK_BYTES as u64, &[0x99]).is_err());
+    assert!(Ext4Write::revoke_blocks(&*writer, 1, 1).is_err());
+    assert_eq!(stage.staged_images(), images);
+    assert_eq!(stage.revoked_block_count(), 0);
+    assert!(backing.iter().all(|byte| *byte == 0));
+    let plan = snapshot.commit_plan(&[3000, 3001, 3002]).unwrap();
+    let commit_flush = plan
+        .iter()
+        .position(|operation| {
+            matches!(operation, JournalCommitOperation::Flush(JournalFlush::Commit))
+        })
+        .unwrap();
+    for (index, operation) in plan.iter().enumerate() {
+        if matches!(operation, JournalCommitOperation::WriteHomeMetadata(_)) {
+            assert!(index > commit_flush);
+        }
+    }
+}
+
 #[test]
 fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
     let backing = Rc::new(
@@ -759,10 +901,54 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
         eprintln!("PHIPIA_EXT4_RUST_FIXTURE is unset; journal-inode integration is CI-only");
         return;
     };
-    let Ok(bytes) = std::fs::read(&path) else {
-        eprintln!("journal-inode fixture was not produced because e2fsprogs is unavailable");
-        return;
-    };
+    let bytes = std::fs::read(&path)
+        .expect("configured PHIPIA_EXT4_RUST_FIXTURE must exist and be readable");
+
+    // Exercise the shipped loader against the real fixture. The vendored
+    // superblock unit test references upstream test_data that is not shipped.
+    // Neither coordinator-only recovery admission nor a valid checksum may
+    // turn a permanently readonly or unknown ro-compat image writable.
+    for extra_readonly in [0x1000u32, 0x8000_0000] {
+        for recovery in [false, true] {
+            let mut readonly_bytes = bytes.clone();
+            let superblock = &mut readonly_bytes[1024..2048];
+            let features = u32::from_le_bytes(superblock[0x64..0x68].try_into().unwrap());
+            superblock[0x64..0x68].copy_from_slice(&(features | extra_readonly).to_le_bytes());
+            if recovery {
+                let incompat = u32::from_le_bytes(superblock[0x60..0x64].try_into().unwrap());
+                superblock[0x60..0x64].copy_from_slice(&(incompat | 4).to_le_bytes());
+            }
+            let checksum = ext4_crc32c(&superblock[..0x3fc]);
+            superblock[0x3fc..].copy_from_slice(&checksum.to_le_bytes());
+            for coordinator_loader in [false, true] {
+                let backing = Rc::new(readonly_bytes.clone());
+                let stage = Rc::new(
+                    JournalMutationStage::new(Box::new(backing.clone()), backing.len() as u64)
+                        .unwrap(),
+                );
+                let readonly = if coordinator_loader {
+                    Ext4::load_with_recovery_writer(
+                        Box::new(stage.clone()),
+                        Some(Box::new(stage.clone())),
+                    )
+                } else {
+                    Ext4::load_with_writer(
+                        Box::new(stage.clone()),
+                        Some(Box::new(stage.clone())),
+                    )
+                }
+                .unwrap();
+                let mut file = readonly.open(b"/system/README.TXT").unwrap();
+                assert!(matches!(
+                    file.write_bytes_at(b"x", 0),
+                    Err(Ext4Error::Readonly)
+                ));
+                assert!(stage.is_empty());
+                assert!(!stage.is_sealed());
+                assert_eq!(&*backing, &readonly_bytes);
+            }
+        }
+    }
     let filesystem = Ext4::load(Box::new(bytes.clone())).unwrap();
     let journal = load_journal_inode_map(&filesystem).unwrap();
     assert_eq!(journal.superblock().start_block(), 0);

@@ -106,6 +106,27 @@ class SuperblockTests(unittest.TestCase):
         with self.assertRaisesRegex(ext4.Ext4ImageError, "unsupported incompatible"):
             ext4.parse_superblock(data)
 
+    def test_every_feature_bit_change_refuses_except_recovery(self) -> None:
+        # Recompute the checksum so refusal proves profile admission, rather
+        # than merely detecting a stale checksum after a feature-word edit.
+        for offset in (0x5C, 0x60, 0x64):
+            for bit in range(32):
+                with self.subTest(offset=offset, bit=bit):
+                    data = fake_profile_image()
+                    original = struct.unpack_from("<I", data, 1024 + offset)[0]
+                    struct.pack_into("<I", data, 1024 + offset, original ^ (1 << bit))
+                    struct.pack_into(
+                        "<I", data, 1024 + 0x3FC,
+                        ext4._crc32c_raw(data[1024:1024 + 0x3FC]),
+                    )
+                    before = bytes(data)
+                    if offset == 0x60 and bit == 2:
+                        self.assertTrue(ext4.parse_superblock(data)["needs_recovery"])
+                    else:
+                        with self.assertRaises(ext4.Ext4ImageError):
+                            ext4.parse_superblock(data)
+                    self.assertEqual(bytes(data), before)
+
     def test_refuses_missing_required_feature(self) -> None:
         data = fake_profile_image()
         struct.pack_into("<I", data, 1024 + 0x60, struct.unpack_from("<I", data, 1024 + 0x60)[0] & ~0x40)
