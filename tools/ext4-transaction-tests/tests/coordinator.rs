@@ -1172,6 +1172,45 @@ fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
 }
 
 #[test]
+fn dot_components_walk_symlink_targets_and_preserve_lookup_errors() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let root_mode = ext4::stat(&mounted, b".").unwrap().mode & 0o7777;
+    ext4::chmod(&mut mounted, b".", 0o750).unwrap();
+    assert_eq!(ext4::stat(&mounted, b".").unwrap().mode & 0o7777, 0o750);
+    ext4::chmod(&mut mounted, b".", root_mode).unwrap();
+    let unicode = b"system/caf\xc3\xa9";
+    ext4::create_file_probe(&mut mounted, unicode, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, unicode, 0, b"utf8").unwrap();
+    let mut utf8 = [0; 4];
+    read_exact(&mounted, unicode, &mut utf8);
+    assert_eq!(&utf8, b"utf8");
+    ext4::create_directory_probe(&mut mounted, b"system/walk-target").unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/walk-target/deep").unwrap();
+    ext4::symlink_probe(&mut mounted, b"system/walk-link", b"walk-target/deep").unwrap();
+    let alias = b"system/walk-link/./../new";
+    let actual = b"system/walk-target/new";
+    ext4::create_file_probe(&mut mounted, alias, 0o600).unwrap();
+    assert_eq!(ext4::stat(&mounted, alias), ext4::stat(&mounted, actual));
+    assert_eq!(ext4::stat(&mounted, b"system/new"), Err(Status::NotFound));
+    ext4::transaction_probe(&mut mounted, alias, 0, b"walked").unwrap();
+    let mut bytes = [0; 6];
+    read_exact(&mounted, actual, &mut bytes);
+    assert_eq!(&bytes, b"walked");
+    assert_eq!(ext4::create_file_probe(&mut mounted, b"system/missing/../bad", 0o600), Err(Status::NotFound));
+    assert_eq!(ext4::create_file_probe(&mut mounted, b"system/walk-target/new/../bad", 0o600), Err(Status::NotDirectory));
+    assert_eq!(ext4::stat(&mounted, b"system/walk-target/new/."), Err(Status::NotDirectory));
+    ext4::link_file_probe(&mut mounted, alias, b"system/walk-copy").unwrap();
+    ext4::rename_probe(&mut mounted, alias, b"system/walk-link/../renamed").unwrap();
+    assert_eq!(ext4::stat(&mounted, actual), Err(Status::NotFound));
+    ext4::unlink_file_probe(&mut mounted, b"system/walk-link/../renamed").unwrap();
+    assert_eq!(ext4::stat(&mounted, b"system/walk-copy").unwrap().links, 1);
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-dot-components");
+}
+
+#[test]
 fn append_only_inodes_admit_appends_and_new_names_but_refuse_destructive_changes() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

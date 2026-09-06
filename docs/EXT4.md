@@ -452,6 +452,12 @@ the snapshot, and handle-allocation failure frees it before returning. Native
 DIRECTORY_READ_LONG and SDK readdir carry full 255-byte ext4 names while the
 existing pathname length limit still applies to operations on those names.
 
+The VFS preserves dot components for ext4 to resolve in traversal order,
+including symlink targets before `..` and lookup failures before later dots.
+It also passes non-ASCII filename bytes through unchanged for this backend.
+Root mode/time/xattr operations use the metadata path rather than namespace
+creation checks. Mount-relative syntax and existing path/depth bounds apply.
+
 VFS chmod replaces permission/special bits (0000–07777) through JBD2; immutable inodes and
 inodes with access ACLs are refused. The admitted xattr mutation namespace is
 `user.*`, with names up to 255 bytes. Set/replace/remove journal the inode and

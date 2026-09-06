@@ -214,12 +214,14 @@ static uint64_t next_generation(uint64_t *counter, uint64_t maximum)
 static enum phipfs_status canonicalize_path(
     const char *path,
     bool case_sensitive,
+    bool preserve_components,
     char canonical[PHIPFS_MAX_PATH]
 )
 {
     size_t component_starts[PHIPFS_MAX_DEPTH];
     const size_t length = text_length(path);
     size_t component_count = 0U;
+    size_t walked_components = 0U;
     size_t used = 0U;
     size_t index = 0U;
 
@@ -235,7 +237,7 @@ static enum phipfs_status canonicalize_path(
         while (index < length && path[index] != '/') {
             const uint8_t byte = (uint8_t)path[index];
 
-            if (byte > UINT8_C(0x7F) || path[index] == '\\' ||
+            if ((!preserve_components && byte > UINT8_C(0x7F)) || path[index] == '\\' ||
                 path[index] == ':') {
                 return PHIPFS_STATUS_PATH;
             }
@@ -243,6 +245,9 @@ static enum phipfs_status canonicalize_path(
         }
         component_length = index - start;
         if (component_length == 0U) {
+            return PHIPFS_STATUS_PATH;
+        }
+        if (preserve_components && ++walked_components > PHIPFS_MAX_DEPTH) {
             return PHIPFS_STATUS_PATH;
         }
         if (component_length == 1U && path[start] == '.') {
@@ -287,6 +292,15 @@ static enum phipfs_status canonicalize_path(
     if (used == 0U) {
         canonical[0] = '.';
         canonical[1] = '\0';
+    }
+    if (preserve_components) {
+        // Dot components must be walked by the filesystem: link/../file
+        // follows the link before '..', and missing/../file must fail lookup.
+        for (size_t byte = 0U; byte <= length; ++byte) {
+            char value = path[byte];
+            if (!case_sensitive && value >= 'a' && value <= 'z') value = (char)(value - 'a' + 'A');
+            canonical[byte] = value;
+        }
     }
     return PHIPFS_STATUS_OK;
 }
@@ -428,11 +442,12 @@ static enum phipfs_status resolve_path(
         return PHIPFS_STATUS_NOT_MOUNTED;
     }
     status = canonicalize_path(path, mounts[volume].backend->case_sensitive,
-        canonical);
+        mounts[volume].backend->validates_mutation_paths, canonical);
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    if (canonical[0] == '.' && canonical[1] == '\0') {
+    if (mounts[volume].backend->validates_mutation_paths ||
+        (canonical[0] == '.' && canonical[1] == '\0')) {
         status = mounts[volume].backend->stat_path(volume, canonical, &stat);
         return status == PHIPFS_STATUS_OK ?
             vnode_retain(volume, canonical, &stat, vnode_index) : status;
@@ -459,6 +474,14 @@ static enum phipfs_status resolve_path(
     return vnode_retain(volume, canonical, &stat, vnode_index);
 }
 
+static enum phipfs_status resolve_metadata_path(enum phipfs_volume volume,
+    const char *path, char canonical[PHIPFS_MAX_PATH])
+{
+    return valid_volume(volume) && mounts[volume].active ?
+        canonicalize_path(path, mounts[volume].backend->case_sensitive,
+            mounts[volume].backend->validates_mutation_paths, canonical) : PHIPFS_STATUS_NOT_MOUNTED;
+}
+
 static enum phipfs_status resolve_parent(
     enum phipfs_volume volume,
     const char *path,
@@ -469,9 +492,7 @@ static enum phipfs_status resolve_parent(
     char resolved_parent[PHIPFS_MAX_PATH];
     size_t vnode_index;
     size_t split = SIZE_MAX;
-    enum phipfs_status status = valid_volume(volume) && mounts[volume].active ?
-        canonicalize_path(path, mounts[volume].backend->case_sensitive,
-            canonical) : PHIPFS_STATUS_NOT_MOUNTED;
+    enum phipfs_status status = resolve_metadata_path(volume, path, canonical);
 
     if (status != PHIPFS_STATUS_OK) {
         return status;
@@ -1173,7 +1194,7 @@ enum phipfs_status phipfs_set_times(enum phipfs_volume volume, const char *path,
     const struct phipfs_times *times)
 {
     char canonical[PHIPFS_MAX_PATH];
-    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    enum phipfs_status status = resolve_metadata_path(volume, path, canonical);
     if (status != PHIPFS_STATUS_OK) return status;
     return mounts[volume].backend->set_times == NULL ? PHIPFS_STATUS_ACCESS :
         mounts[volume].backend->set_times(volume, canonical, times);
@@ -1182,7 +1203,7 @@ enum phipfs_status phipfs_set_times(enum phipfs_volume volume, const char *path,
 enum phipfs_status phipfs_chmod(enum phipfs_volume volume, const char *path, uint16_t mode)
 {
     char canonical[PHIPFS_MAX_PATH];
-    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    enum phipfs_status status = resolve_metadata_path(volume, path, canonical);
     if (status != PHIPFS_STATUS_OK) return status;
     return mounts[volume].backend->chmod == NULL ? PHIPFS_STATUS_ACCESS :
         mounts[volume].backend->chmod(volume, canonical, mode);
@@ -1192,7 +1213,7 @@ enum phipfs_status phipfs_set_xattr(enum phipfs_volume volume, const char *path,
     const char *name, const uint8_t *value, size_t length, bool remove)
 {
     char canonical[PHIPFS_MAX_PATH];
-    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    enum phipfs_status status = resolve_metadata_path(volume, path, canonical);
     if (status != PHIPFS_STATUS_OK) return status;
     return mounts[volume].backend->set_xattr == NULL ? PHIPFS_STATUS_ACCESS :
         mounts[volume].backend->set_xattr(volume, canonical, name, value, length, remove);
@@ -1202,7 +1223,7 @@ enum phipfs_status phipfs_get_xattr(enum phipfs_volume volume, const char *path,
     const char *name, uint8_t *output, size_t capacity, size_t *length)
 {
     char canonical[PHIPFS_MAX_PATH];
-    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    enum phipfs_status status = resolve_metadata_path(volume, path, canonical);
     if (status != PHIPFS_STATUS_OK) return status;
     return mounts[volume].backend->get_xattr == NULL ? PHIPFS_STATUS_ACCESS :
         mounts[volume].backend->get_xattr(volume, canonical, name, output, capacity, length);
