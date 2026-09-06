@@ -861,6 +861,32 @@ fn external_xattr_checksums_shared_release_and_final_free() {
 }
 
 #[test]
+fn legacy_orphan_chain_is_refused_without_clearing_recovery_state() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    ext4::create_file_probe(&mut mounted, b"system/orphan", 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, b"system/orphan", 0, b"unclosed").unwrap();
+    let inode = ext4::stat(&mounted, b"system/orphan").unwrap().inode;
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    drop(mounted);
+    let image = path.with_extension("coordinator-orphan-input.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    debugfs(&image, "set_inode_field /system/orphan links_count 0");
+    debugfs(&image, "unlink /system/orphan");
+    debugfs(&image, &format!("set_super_value last_orphan {inode}"));
+    debugfs(&image, "feature needs_recovery");
+    let bytes = std::fs::read(&image).unwrap();
+    let size = bytes.len() as u64;
+    DEVICE.with_borrow_mut(|device| *device = Device { bytes: bytes.clone(), ..Device::default() });
+    assert!(matches!(ext4::mount(1, size), Err(Status::ReadOnly)));
+    DEVICE.with_borrow(|device| {
+        assert!(device.events.is_empty());
+        assert!(device.bytes == bytes);
+    });
+}
+
+#[test]
 fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

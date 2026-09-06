@@ -349,6 +349,12 @@ fn validate_profile(context: usize, media_bytes: u64) -> Result<u64, Status> {
     {
         return Err(Status::Invalid);
     }
+    // Linux's legacy orphan chain requires inode deletion/truncate recovery in
+    // addition to JBD2 replay. Never clear needs_recovery on such media until
+    // that cleanup is implemented and tested (fs/ext4/orphan.c).
+    if read_u32(&superblock, 0xe8) != Some(0) {
+        return Err(Status::ReadOnly);
+    }
     Ok(image_bytes)
 }
 
