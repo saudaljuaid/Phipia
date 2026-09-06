@@ -83,7 +83,7 @@ impl Default for DirectoryEntry {
 /// A filesystem whose only upstream writer is an in-memory journal stage.
 /// C installs a short NVMe lease per operation.
 pub(crate) struct Mounted {
-    filesystem: Ext4,
+    filesystem: Option<Ext4>,
     journal: JournalRing,
     stage: Rc<JournalMutationStage>,
     pending_mutation: Option<PendingMutation>,
@@ -91,12 +91,27 @@ pub(crate) struct Mounted {
     image_bytes: u64,
 }
 
+impl Mounted {
+    fn filesystem(&self) -> Result<&Ext4, Status> {
+        self.filesystem.as_ref().ok_or(Status::Io)
+    }
+
+    fn readable_filesystem(&self) -> Result<&Ext4, Status> {
+        // A retained transaction may contain uncommitted namespace and allocator
+        // updates. Only the reloaded checkpointed view is public.
+        if self.pending_mutation.is_some() || !self.stage.is_empty() || self.stage.is_sealed() {
+            return Err(Status::Io);
+        }
+        self.filesystem()
+    }
+}
+
 /// Return the allocator's current capacity for the admitted 4 KiB profile.
 /// A committed mutation reloads the checked filesystem view, so callers never
 /// confuse unused NVMe namespace bytes with allocatable ext4 blocks.
 pub(crate) fn free_bytes(mounted: &Mounted) -> Result<u64, Status> {
     mounted
-        .filesystem
+        .readable_filesystem()?
         .superblock()
         .free_blocks_count()
         .checked_mul(BLOCK_BYTES)
@@ -243,16 +258,29 @@ fn load_staged_view(
 }
 
 fn replace_staged_view(mounted: &mut Mounted, needs_recovery: bool) -> Result<(), Status> {
+    // Drop the old allocator view before any fallible read. If reload fails,
+    // every public reader refuses the absent view and sync can retry the load.
+    mounted.filesystem = None;
     let (filesystem, stage) =
         load_staged_view(mounted.context, mounted.image_bytes, needs_recovery)?;
-    mounted.filesystem = filesystem;
+    mounted.filesystem = Some(filesystem);
     mounted.stage = stage;
     Ok(())
 }
 
 fn discard_uncommitted_stage(mounted: &mut Mounted, needs_recovery: bool) -> Result<(), Status> {
+    mounted.filesystem = None;
     mounted.stage.rollback();
     replace_staged_view(mounted, needs_recovery)
+}
+
+fn ensure_staged_view(mounted: &mut Mounted) -> Result<(), Status> {
+    if mounted.filesystem.is_none() {
+        let needs_recovery = mounted.journal.filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        replace_staged_view(mounted, needs_recovery)?;
+    }
+    Ok(())
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -590,7 +618,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
     };
     Ok((
         Box::new(Mounted {
-            filesystem,
+            filesystem: Some(filesystem),
             journal: clean_ring,
             stage,
             pending_mutation: None,
@@ -602,11 +630,12 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
 }
 
 fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
+    ensure_staged_view(mounted)?;
     let durable = mounted
         .journal
         .filesystem_recovery_marker_is_durable()
         .map_err(|_| Status::Invalid)?;
-    let view_needs_recovery = load_journal_inode_map(&mounted.filesystem)
+    let view_needs_recovery = load_journal_inode_map(mounted.filesystem()?)
         .map_err(map_journal_error)?
         .filesystem_needs_recovery();
     if durable {
@@ -859,7 +888,7 @@ pub(crate) fn transaction_probe(
     source_copy.extend_from_slice(source);
     arm_recovery_marker(mounted)?;
 
-    let mut file = match mounted.filesystem.open(absolute.as_slice()) {
+    let mut file = match mounted.filesystem()?.open(absolute.as_slice()) {
         Ok(file) => file,
         Err(error) => return Err(map_error(error)),
     };
@@ -980,8 +1009,9 @@ pub(crate) fn truncate_probe(
             .map_err(|_| Status::Invalid)?;
         discard_uncommitted_stage(mounted, recovery)?;
     }
+    ensure_staged_view(mounted)?;
     let file = mounted
-        .filesystem
+        .filesystem()?
         .open(absolute.as_slice())
         .map_err(map_error)?;
     let old_size = file.inode().size_in_bytes();
@@ -991,7 +1021,7 @@ pub(crate) fn truncate_probe(
     }
     arm_recovery_marker(mounted)?;
     let mut file = mounted
-        .filesystem
+        .filesystem()?
         .open(absolute.as_slice())
         .map_err(map_error)?;
     if let Err(error) = file.truncate(size) {
@@ -1090,12 +1120,12 @@ pub(crate) fn create_file_probe(
     }
     arm_recovery_marker(mounted)?;
     let (parent, name) = parent_and_name(&absolute)?;
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
-        let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
-        let mut inode = mounted.filesystem.create_inode(InodeCreationOptions {
+        let mut directory = Dir::open_inode(filesystem, parent_inode)?;
+        let mut inode = filesystem.create_inode(InodeCreationOptions {
             file_type: FileType::Regular,
             mode: InodeMode::S_IFREG | InodeMode::from_bits_retain(mode),
             uid: 0,
@@ -1148,19 +1178,18 @@ pub(crate) fn unlink_file_probe(
     }
     arm_recovery_marker(mounted)?;
     let (parent, name) = parent_and_name(&absolute)?;
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
         let path = Path::try_from(absolute.as_slice())
             .map_err(|_| Ext4Error::MalformedPath)?;
-        let inode = mounted
-            .filesystem
+        let inode = filesystem
             .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
         if !inode.file_type().is_regular_file() {
             return Err(Ext4Error::IsADirectory);
         }
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
-        let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        let mut directory = Dir::open_inode(filesystem, parent_inode)?;
         directory.unlink(name, inode).map(|_| ())
     })();
     if let Err(error) = mutation {
@@ -1208,17 +1237,16 @@ pub(crate) fn link_file_probe(
     let source_path = Path::try_from(source_absolute.as_slice())
         .map_err(|_| Status::Invalid)?;
     let (parent, name) = parent_and_name(&destination_absolute)?;
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
-        let mut inode = mounted
-            .filesystem
+        let mut inode = filesystem
             .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
         if !inode.file_type().is_regular_file() {
             return Err(Ext4Error::IsADirectory);
         }
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
-        let mut directory = Dir::open_inode(&mounted.filesystem, parent_inode)?;
+        let mut directory = Dir::open_inode(filesystem, parent_inode)?;
         directory.link(name, &mut inode)
     })();
     if let Err(error) = mutation {
@@ -1254,13 +1282,13 @@ pub(crate) fn create_directory_probe(
     }
     arm_recovery_marker(mounted)?;
     let (parent, name) = parent_and_name(&absolute)?;
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
         let mut parent_directory =
-            Dir::open_inode(&mounted.filesystem, parent_inode)?;
-        let inode = mounted.filesystem.create_inode(InodeCreationOptions {
+            Dir::open_inode(filesystem, parent_inode)?;
+        let inode = filesystem.create_inode(InodeCreationOptions {
             file_type: FileType::Directory,
             mode: InodeMode::S_IFDIR
                 | InodeMode::S_IRUSR
@@ -1276,7 +1304,7 @@ pub(crate) fn create_directory_probe(
             flags: InodeFlags::empty(),
         })?;
         let mut directory = Dir::init(
-            mounted.filesystem.clone(),
+            filesystem.clone(),
             inode,
             parent_directory.inode(),
         )?;
@@ -1319,20 +1347,19 @@ pub(crate) fn remove_directory_probe(
     }
     arm_recovery_marker(mounted)?;
     let (parent, name) = parent_and_name(&absolute)?;
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
         let path = Path::try_from(absolute.as_slice())
             .map_err(|_| Ext4Error::MalformedPath)?;
-        let inode = mounted
-            .filesystem
+        let inode = filesystem
             .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
         if !inode.file_type().is_dir() {
             return Err(Ext4Error::NotADirectory);
         }
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All)?;
         let mut parent_directory =
-            Dir::open_inode(&mounted.filesystem, parent_inode)?;
+            Dir::open_inode(filesystem, parent_inode)?;
         parent_directory.remove_empty_directory(name, inode)
     })();
     let revoked_block = match mutation {
@@ -1396,18 +1423,17 @@ pub(crate) fn rename_probe(
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }
+    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
-        let inode = mounted
-            .filesystem
+        let inode = filesystem
             .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
         if !inode.file_type().is_regular_file() && !inode.file_type().is_dir() {
             return Err(Ext4Error::IsASpecialFile);
         }
-        let parent_inode = mounted
-            .filesystem
+        let parent_inode = filesystem
             .path_to_inode(source_parent, FollowSymlinks::All)?;
         let mut parent_directory =
-            Dir::open_inode(&mounted.filesystem, parent_inode)?;
+            Dir::open_inode(filesystem, parent_inode)?;
         parent_directory.rename_entry(source_name, destination_name, inode)
     })();
     if let Err(error) = mutation {
@@ -1426,12 +1452,13 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     if mounted.pending_mutation.is_some() {
         let _ = resume_pending_mutation_inner(mounted)?;
     }
+    ensure_staged_view(mounted)?;
     if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         return Err(Status::Invalid);
     }
     match mounted.journal.filesystem_is_clean() {
         Ok(true) => {
-            let view_needs_recovery = load_journal_inode_map(&mounted.filesystem)
+            let view_needs_recovery = load_journal_inode_map(mounted.filesystem()?)
                 .map_err(map_journal_error)?
                 .filesystem_needs_recovery();
             if view_needs_recovery {
@@ -1466,7 +1493,8 @@ pub(crate) fn sync(mounted: &mut Mounted) -> Result<(), Status> {
 
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
-    if mounted.pending_mutation.is_some()
+    if mounted.filesystem.is_none()
+        || mounted.pending_mutation.is_some()
         || !mounted.stage.is_empty()
         || mounted.stage.is_sealed()
     {
@@ -1483,7 +1511,7 @@ pub(crate) fn stat(mounted: &Mounted, path: &[u8]) -> Result<Metadata, Status> {
     let absolute = absolute_path(path)?;
     let checked = Path::try_from(absolute.as_slice()).map_err(|_| Status::Invalid)?;
     let inode = mounted
-        .filesystem
+        .readable_filesystem()?
         .path_to_inode(checked, FollowSymlinks::All)
         .map_err(map_error)?;
     inode_metadata(&inode)
@@ -1498,7 +1526,7 @@ pub(crate) fn pread(
 ) -> Result<usize, Status> {
     let absolute = absolute_path(path)?;
     let mut file = mounted
-        .filesystem
+        .readable_filesystem()?
         .open(absolute.as_slice())
         .map_err(map_error)?;
     file.read_bytes_at(destination, offset).map_err(map_error)
@@ -1512,7 +1540,7 @@ pub(crate) fn directory_entry(
 ) -> Result<Option<DirectoryEntry>, Status> {
     let absolute = absolute_path(path)?;
     let mut directory = mounted
-        .filesystem
+        .readable_filesystem()?
         .read_dir(absolute.as_slice())
         .map_err(map_error)?;
     let mut visible = 0u64;
@@ -1524,7 +1552,7 @@ pub(crate) fn directory_entry(
         }
         if visible == wanted_index {
             let bytes = name.as_ref();
-            let inode = ext4plus::inode::Inode::read(&mounted.filesystem, entry.inode)
+            let inode = ext4plus::inode::Inode::read(mounted.readable_filesystem()?, entry.inode)
                 .map_err(map_error)?;
             let mut output = DirectoryEntry {
                 metadata: inode_metadata(&inode)?,

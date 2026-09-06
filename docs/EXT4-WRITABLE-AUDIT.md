@@ -126,10 +126,12 @@ are test locations, not a claim that this audit head has passed them.
   alongside mount/handle generations and path resolution state. The milestone's
   stronger exclusive VFS ownership rule is an implementation gap, not an
   already-established invariant. ext4plus still owns no global VFS policy.
-- `discard_uncommitted_stage` clears the overlay before a fallible replacement
-  load. If that load fails, assignment never happens and the old, mutated Ext4
-  object remains. Existing real-fixture rollback proves successful reload only;
-  failed reload needs a coordinator regression and fail-closed state fix.
+- Failed rollback/reload now drops the old Ext4 allocator view before a fallible
+  replacement load. Public reads refuse an absent view or a retained mutation;
+  sync and later mutations can retry loading the checkpointed state. The host
+  coordinator tests include the production Rust source and inject failed
+  rollback, commit reload, clean reload, and every create storage operation.
+  Their real-fixture/e2fsck results remain required before this gate passes.
 - Rename checks whether the source inode is open, not descendant path cookies.
   Renaming an ancestor of an open file needs an explicit test and VFS policy.
 - Ordered data can reach its home block before metadata commit. Existing journal
