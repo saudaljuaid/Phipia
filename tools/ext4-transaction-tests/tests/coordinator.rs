@@ -368,13 +368,18 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                let name: &[u8] = if case == 3 || case == 4 || case == 7 { b"data/user/retry-test" } else { b"system/retry-test" };
-                if case == 5 || case == 6 {
+                let name: &[u8] = if case == 18 { b"system/retained-alias" }
+                    else if case == 3 || case == 4 || case == 7 { b"data/user/retry-test" }
+                    else { b"system/retry-test" };
+                if case == 5 || case == 6 || case == 17 {
+                    let target = if case == 17 { b"missing".as_slice() } else { target.as_slice() };
                     let mut bytes = vec![0; target.len()];
                     assert_eq!(ext4::readlink(&mounted, name, &mut bytes), Ok(target.len()));
                     assert_eq!(bytes, target);
+                    assert_eq!(ext4::lstat(&mounted, name).unwrap().links, if case == 17 { 2 } else { 1 });
                 } else {
-                    assert_eq!(ext4::stat(&mounted, name).unwrap().links, if case == 4 { 2 } else { 1 });
+                    assert_eq!(ext4::stat(&mounted, name).unwrap().links,
+                        if case == 4 || case == 16 { 2 } else { 1 }, "case {case}, event {failed_at}");
                 }
                 ext4::sync(&mut mounted).unwrap();
                 ext4::unmount(&mounted).unwrap();
