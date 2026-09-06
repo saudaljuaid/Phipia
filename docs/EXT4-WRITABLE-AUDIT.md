@@ -92,7 +92,7 @@ are test locations, not a claim that this audit head has passed them.
 | access / permissions | Partial | handle access bits enforced; mode preserved on create/stat; backend open does not authorize credentials against inode mode |
 | timestamps | Partial | mount validates stored timestamps; public stat/set-time interface absent; mutation timestamp policy unproven |
 | xattrs | Refused for public access/mutation | mount validates names/values; admitted ext_attr bit is not a public xattr API |
-| ENOSPC / inode exhaustion | Partial | allocator errors/refusals exist; `map_error` lacks dedicated FULL mapping; exhaustion rollback matrix absent |
+| ENOSPC / inode exhaustion | Partial | block/inode ENOSPC and read-only refusals now retain dedicated Rust/C/VFS errors; real low-space rollback test added, full exhaustion matrix pending |
 | crash recovery | Implemented, bounded | checksum/sequence/revoke validation, wrap and marker-only state; ten bounded QEMU cuts are not the release matrix |
 | multiple handles / concurrency | Partial | bounded generation-authenticated handles; synchronous single-core path; no append race or parallel writer proof |
 

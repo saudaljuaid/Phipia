@@ -142,6 +142,10 @@ fn fsck(path: &std::path::Path, suffix: &str) {
         String::from_utf8_lossy(&result.stderr)
     );
     std::fs::write(output.with_extension("e2fsck.txt"), &log).unwrap();
+    println!("ext4 coordinator fsck {suffix}:\n{log}");
+    let hash = std::process::Command::new("sha256sum").arg(&output).output().unwrap();
+    assert!(hash.status.success(), "could not hash coordinator disk");
+    println!("ext4 coordinator disk {}", String::from_utf8_lossy(&hash.stdout));
     assert!(result.status.success(), "e2fsck rejected {suffix}: {log}");
 }
 
@@ -416,4 +420,50 @@ fn partial_truncate_replays_size_and_zeroed_tail_together_at_every_barrier() {
             }
         }
     }
+}
+
+fn debugfs(image: &std::path::Path, command: &str) {
+    let result = std::process::Command::new("debugfs")
+        .args(["-w", "-R", command]).arg(image).output().unwrap();
+    assert!(result.status.success(), "debugfs: {}", String::from_utf8_lossy(&result.stderr));
+}
+
+#[test]
+fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/full-test";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/immutable-test", 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, b"system/immutable-test", 0, b"protected").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let free_blocks = ext4::free_bytes(&mounted).unwrap() / 4096;
+    ext4::unmount(&mounted).unwrap();
+    drop(mounted);
+    let image = path.with_extension("coordinator-full-input.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    let filler = path.with_extension("coordinator-filler.bin");
+    // Leave a few blocks so the failing request allocates before ENOSPC. The
+    // reserve also covers debugfs's own extent metadata, checked after mounting.
+    std::fs::write(&filler, vec![0x5a; (free_blocks as usize - 16) * 4096]).unwrap();
+    debugfs(&image, &format!("write \"{}\" /system/filler", filler.display()));
+    debugfs(&image, "set_inode_field /system/immutable-test flags 0x80010");
+    let mut mounted = mount_fixture(&image);
+    let free = ext4::free_bytes(&mounted).unwrap();
+    assert!(free > 0 && free < 32 * 4096, "fixture did not reach low space: {free}");
+    let original = ext4::stat(&mounted, name).unwrap();
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, &vec![0x52; 32 * 4096]),
+        Err(Status::Full));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    assert_eq!(ext4::stat(&mounted, name), Ok(original));
+    assert_eq!(ext4::truncate_probe(&mut mounted, b"system/immutable-test", 2),
+        Err(Status::ReadOnly));
+    let mut content = [0; 9];
+    assert_eq!(ext4::pread(&mounted, b"system/immutable-test", 0, &mut content), Ok(9));
+    assert_eq!(&content, b"protected");
+    // A fresh, fitting allocation must still work after rolling back ENOSPC.
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, b"fits"), Ok(4));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-full");
 }

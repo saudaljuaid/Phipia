@@ -342,6 +342,10 @@ static enum phipfs_status map_status(int32_t status)
         return PHIPFS_STATUS_EXISTS;
     case PHIPIA_EXT4_STATUS_NOT_EMPTY:
         return PHIPFS_STATUS_NOT_EMPTY;
+    case PHIPIA_EXT4_STATUS_FULL:
+        return PHIPFS_STATUS_FULL;
+    case PHIPIA_EXT4_STATUS_READ_ONLY:
+        return PHIPFS_STATUS_READ_ONLY;
     default:
         return PHIPFS_STATUS_CORRUPT;
     }

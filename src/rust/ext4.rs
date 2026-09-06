@@ -417,6 +417,8 @@ fn inode_metadata(inode: &ext4plus::inode::Inode) -> Result<Metadata, Status> {
 fn map_error(error: Ext4Error) -> Status {
     match error {
         Ext4Error::Io(_) => Status::Io,
+        Ext4Error::NoSpace => Status::Full,
+        Ext4Error::Readonly => Status::ReadOnly,
         Ext4Error::NotFound => Status::NotFound,
         Ext4Error::AlreadyExists => Status::Exists,
         Ext4Error::DirectoryNotEmpty => Status::NotEmpty,
@@ -1595,6 +1597,10 @@ pub(crate) enum Status {
     Exists = 10,
     /// A directory removal targeted a directory with live children.
     NotEmpty = 11,
+    /// Filesystem blocks or inodes are exhausted.
+    Full = 12,
+    /// The filesystem or inode refuses mutation.
+    ReadOnly = 13,
 }
 
 const _: i32 = Status::Volume as i32;
