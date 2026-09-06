@@ -37,6 +37,7 @@ impl Extent {
         fs: &Ext4,
         clear: bool,
     ) -> Result<Self, Ext4Error> {
+        if amount == 0 { return Err(Ext4Error::NoSpace); }
         let mut tried_blocks = amount;
         let start_fs_block = loop {
             let result = if clear {
@@ -54,7 +55,7 @@ impl Extent {
             };
             match result {
                 Ok(start_fs) => break start_fs,
-                Err(_) => {
+                Err(Ext4Error::NoSpace) => {
                     if tried_blocks == 0 {
                         return Err(Ext4Error::NoSpace);
                     }
@@ -69,6 +70,7 @@ impl Extent {
                         return Err(Ext4Error::NoSpace);
                     }
                 }
+                Err(error) => return Err(error),
             }
         };
         // Insert extent: file-blocks [current_block, current_block + tried_blocks) -> FS blocks [start_fs_block, ...]

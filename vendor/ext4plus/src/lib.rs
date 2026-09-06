@@ -1024,12 +1024,12 @@ impl Ext4 {
         num_blocks: NonZeroU32,
     ) -> Result<(FsBlockIndex, NonZeroU32), Ext4Error> {
         // TODO: very inefficient on full disk
-        for i in (0..num_blocks.get()).rev() {
+        for i in (1..=num_blocks.get()).rev() {
             let i = NonZeroU32::new(i).ok_or(Ext4Error::NoSpace)?;
-            if let Ok(block_index) =
-                self.alloc_contiguous_blocks(inode_index, i).await
-            {
-                return Ok((block_index, i));
+            match self.alloc_contiguous_blocks(inode_index, i).await {
+                Ok(block_index) => return Ok((block_index, i)),
+                Err(Ext4Error::NoSpace) => {},
+                Err(error) => return Err(error),
             }
         }
         Err(Ext4Error::NoSpace)
