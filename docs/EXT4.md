@@ -27,7 +27,13 @@ The C backend currently requires no open handles on the volume for directory
 rename because handles still re-resolve paths; supporting rename while open
 requires further handle work. Hard-linked
 paths report the same inode identity to the vnode table. Symlinks are resolved
-by ext4plus for lookup and open.
+by ext4plus for lookup and open. VFS `phipfs_symlink` journals literal targets
+shorter than 128 bytes; `phipfs_readlink` copies the literal target without a
+trailing NUL and supports short output buffers. The Rust coordinator accepts
+targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
+unlink/rename inspect the final link itself. Those mutations require a
+quiescent volume for symlinks while open handles still re-resolve paths.
+These kernel VFS entry points do not yet add user-process syscall bindings.
 
 C never leaves an NVMe filesystem session open. Ordinary reads acquire a
 read-only session and each synchronous mutation acquires a writable session.

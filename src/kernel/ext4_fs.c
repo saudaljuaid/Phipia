@@ -72,6 +72,8 @@ extern int32_t phipia_ext4_free_bytes(uintptr_t mounted, uint64_t *free_bytes);
 extern int32_t phipia_ext4_unmount(uintptr_t mounted);
 extern int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     size_t path_length, struct phipia_ext4_metadata *metadata);
+extern int32_t phipia_ext4_lstat(uintptr_t mounted, const uint8_t *path,
+    size_t path_length, struct phipia_ext4_metadata *metadata);
 extern int32_t phipia_ext4_pread(uintptr_t mounted, const uint8_t *path,
     size_t path_length, uint64_t offset, uint8_t *destination,
     size_t capacity, size_t *read_out);
@@ -97,6 +99,10 @@ extern int32_t phipia_ext4_rename_probe(uintptr_t mounted,
 extern int32_t phipia_ext4_directory_entry(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint64_t index,
     struct phipia_ext4_directory_entry *entry, bool *present);
+extern int32_t phipia_ext4_symlink(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *target, size_t target_bytes);
+extern int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes);
 
 _Static_assert(sizeof(struct phipia_ext4_metadata) == 40U,
     "ext4 metadata C/Rust ABI drift");
@@ -547,10 +553,11 @@ int32_t phipia_ext4_block_flush(uintptr_t context, uint32_t boundary)
     return 0;
 }
 
-static enum phipfs_status checked_stat(
+static enum phipfs_status checked_metadata(
     struct ext4_mount_state *mount,
     const char *path,
-    struct phipia_ext4_metadata *metadata
+    struct phipia_ext4_metadata *metadata,
+    bool follow
 )
 {
     const size_t length = path_length(path);
@@ -565,10 +572,17 @@ static enum phipfs_status checked_stat(
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(phipia_ext4_stat(mount->rust_mount,
-        (const uint8_t *)path, length, metadata));
+    status = map_status(follow ? phipia_ext4_stat(mount->rust_mount,
+        (const uint8_t *)path, length, metadata) :
+        phipia_ext4_lstat(mount->rust_mount, (const uint8_t *)path, length, metadata));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
+}
+
+static enum phipfs_status checked_stat(struct ext4_mount_state *mount,
+    const char *path, struct phipia_ext4_metadata *metadata)
+{
+    return checked_metadata(mount, path, metadata, true);
 }
 
 static void fill_stat(
@@ -1491,7 +1505,7 @@ enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     if (!valid_volume(volume)) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
-    status = checked_stat(&ext4_mounts[volume], source, &metadata);
+    status = checked_metadata(&ext4_mounts[volume], source, &metadata, false);
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
@@ -1499,7 +1513,7 @@ enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
      * descendant reached through an alias, so require a quiescent volume until
      * handles retain inode identity independently of their original path. */
     if (inode_is_open(volume, metadata.inode) ||
-        (metadata.file_type == PHIPIA_EXT4_FILE_DIRECTORY &&
+        (metadata.file_type != PHIPIA_EXT4_FILE_REGULAR &&
             volume_has_open_handles(volume))) {
         return PHIPFS_STATUS_BUSY;
     }
@@ -1515,11 +1529,13 @@ enum phipfs_status ext4_backend_unlink(enum phipfs_volume volume,
     if (!valid_volume(volume)) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
-    status = checked_stat(&ext4_mounts[volume], path, &metadata);
+    status = checked_metadata(&ext4_mounts[volume], path, &metadata, false);
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    if (inode_is_open(volume, metadata.inode)) {
+    if (inode_is_open(volume, metadata.inode) ||
+        (metadata.file_type == PHIPIA_EXT4_FILE_SYMLINK &&
+            volume_has_open_handles(volume))) {
         return PHIPFS_STATUS_BUSY;
     }
     return ext4_backend_unlink_file_probe(volume, path);
@@ -1535,4 +1551,55 @@ enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
     return ext4_backend_link_file_probe(volume, source, destination);
+}
+
+enum phipfs_status ext4_backend_symlink(enum phipfs_volume volume,
+    const char *path, const char *target)
+{
+    const size_t length = path_length(path);
+    const size_t target_length = path_length(target);
+    struct ext4_mount_state *mount;
+    enum phipfs_status status;
+    enum phipfs_status close_status;
+
+    if (!valid_volume(volume) || length == 0U || length >= PHIPFS_MAX_PATH ||
+        target_length == 0U || target_length >= PHIPFS_MAX_PATH) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(phipia_ext4_symlink(mount->rust_mount,
+        (const uint8_t *)path, length, (const uint8_t *)target, target_length));
+    close_status = end_operation(mount, NULL);
+    return status != PHIPFS_STATUS_OK ? status : close_status;
+}
+
+enum phipfs_status ext4_backend_readlink(enum phipfs_volume volume,
+    const char *path, uint8_t *output, size_t capacity, size_t *read_bytes)
+{
+    const size_t length = path_length(path);
+    struct ext4_mount_state *mount;
+    enum phipfs_status status;
+    enum phipfs_status close_status;
+
+    if (read_bytes == NULL) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    *read_bytes = 0U;
+    if (!valid_volume(volume) || length == 0U || length >= PHIPFS_MAX_PATH ||
+        output == NULL || capacity == 0U) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, false);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(phipia_ext4_readlink(mount->rust_mount,
+        (const uint8_t *)path, length, output, capacity, read_bytes));
+    close_status = end_operation(mount, NULL);
+    return status != PHIPFS_STATUS_OK ? status : close_status;
 }

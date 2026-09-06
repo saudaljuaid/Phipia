@@ -122,6 +122,8 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .rmdir = ext4_backend_rmdir,
     .link = ext4_backend_link,
     .case_sensitive = true,
+    .symlink = ext4_backend_symlink,
+    .readlink = ext4_backend_readlink,
 };
 
 static const struct vfs_backend_ops *volume_backends[PHIPFS_VOLUME_COUNT];
@@ -1019,15 +1021,12 @@ enum phipfs_status phipfs_rename(
 {
     char source_canonical[PHIPFS_MAX_PATH];
     char destination_canonical[PHIPFS_MAX_PATH];
-    size_t vnode_index;
-    enum phipfs_status status = resolve_path(
-        volume, source, source_canonical, &vnode_index);
+    enum phipfs_status status = resolve_parent(volume, source, source_canonical);
 
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     status = resolve_parent(volume, destination, destination_canonical);
-    vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == PHIPFS_STATUS_OK ? mounts[volume].backend->rename(volume,
         source_canonical, destination_canonical) : status;
 }
@@ -1035,17 +1034,7 @@ enum phipfs_status phipfs_rename(
 enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
 {
     char canonical[PHIPFS_MAX_PATH];
-    size_t vnode_index;
-    enum phipfs_status status = resolve_path(
-        volume, path, canonical, &vnode_index);
-
-    if (status != PHIPFS_STATUS_OK) {
-        return status;
-    }
-    if (vnodes[vnode_index].stat.directory) {
-        status = PHIPFS_STATUS_IS_DIRECTORY;
-    }
-    vnode_release(vnode_index, vnodes[vnode_index].generation);
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
     return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->unlink(volume, canonical) : status;
 }
@@ -1089,4 +1078,36 @@ enum phipfs_status phipfs_link(
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == PHIPFS_STATUS_OK ? mounts[volume].backend->link(volume,
         source_canonical, destination_canonical) : status;
+}
+
+enum phipfs_status phipfs_symlink(enum phipfs_volume volume,
+    const char *path, const char *target)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    return mounts[volume].backend->symlink == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->symlink(volume, canonical, target);
+}
+
+enum phipfs_status phipfs_readlink(enum phipfs_volume volume,
+    const char *path, uint8_t *output, size_t capacity, size_t *read_bytes)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status;
+
+    if (read_bytes == NULL || output == NULL || capacity == 0U) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    *read_bytes = 0U;
+    /* Resolve only the parent so dangling and looping final links are readable. */
+    status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    return mounts[volume].backend->readlink == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->readlink(volume, canonical, output, capacity, read_bytes);
 }

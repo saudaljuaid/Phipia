@@ -94,6 +94,31 @@ int32_t phipia_ext4_sync(uintptr_t mounted)
     return PHIPIA_EXT4_STATUS_OK;
 }
 
+int32_t phipia_ext4_lstat(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, struct phipia_ext4_metadata *metadata)
+{
+    return phipia_ext4_stat(mounted, path, path_bytes, metadata);
+}
+
+int32_t phipia_ext4_symlink(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *target, size_t target_bytes)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(target_bytes == 10U && memcmp(target, "../missing", 10U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    return permanent_status;
+}
+
+int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    *read_bytes = capacity < 10U ? capacity : 10U;
+    memcpy(output, "../missing", *read_bytes);
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
 int32_t phipia_ext4_rename_probe(uintptr_t mounted, const uint8_t *source,
     size_t source_bytes, const uint8_t *destination, size_t destination_bytes)
 {
@@ -158,6 +183,17 @@ int main(void)
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
     assert(renames == 1U);
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_symlink(PHIPFS_VOLUME_DATA, "file", "../missing") == PHIPFS_STATUS_IO);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_symlink(PHIPFS_VOLUME_DATA, "file", "../missing") == PHIPFS_STATUS_OK);
+    uint8_t literal[12];
+    size_t read_bytes;
+    memset(literal, 0xa5, sizeof(literal));
+    assert(ext4_backend_readlink(PHIPFS_VOLUME_DATA, "file", literal, 4U, &read_bytes) == PHIPFS_STATUS_OK);
+    assert(read_bytes == 4U && memcmp(literal, "../m", 4U) == 0 && literal[4] == 0xa5);
+    assert(ext4_backend_readlink(PHIPFS_VOLUME_DATA, "file", literal, sizeof(literal), &read_bytes) == PHIPFS_STATUS_OK);
+    assert(read_bytes == 10U && memcmp(literal, "../missing", 10U) == 0 && literal[10] == 0xa5);
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
     puts("ext4 VFS truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;

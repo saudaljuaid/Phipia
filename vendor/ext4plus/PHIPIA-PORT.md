@@ -223,6 +223,14 @@ suite exercises every storage refusal and acknowledged durability prefix;
 Linux e2fsck is required to validate this path. The metadata set follows Linux
 v6.12 `fs/ext4/namei.c` directory rename; no JBD2 ordering changes are made.
 
+Symlink creation uses the same inline boundary as reading (targets shorter
+than 60 bytes), sets link permissions to 0777, and deletion avoids interpreting
+inline target bytes as block addresses. The coordinator journals long targets
+as metadata with their namespace publication. Mount admission validates each
+symlink inode's own xattrs without following its target, admitting dangling and
+looping links. Real-fixture tests cover 59/60/61-byte and 4,095-byte targets,
+remount, unlink, cross-parent rename, and byte-identical storage retries.
+
 Phipia-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.

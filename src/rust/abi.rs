@@ -401,6 +401,32 @@ pub(crate) unsafe extern "C" fn phipia_ext4_stat(
     }
 }
 
+/// Inspect an entry without following its final symlink.
+///
+/// # Safety
+/// Mount/path are readable and live; metadata is writable; ranges are disjoint.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_lstat(
+    mounted: usize, path: *const u8, path_length: usize,
+    metadata: *mut ext4::Metadata,
+) -> i32 {
+    if mounted == 0 || path.is_null() || metadata.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: complete non-overlapping ranges are the caller's contract.
+    let (mounted, path) = unsafe {
+        (&*(mounted as *const ext4::Mounted), core::slice::from_raw_parts(path, path_length))
+    };
+    match ext4::lstat(mounted, path) {
+        Ok(value) => {
+            // SAFETY: metadata is writable by contract.
+            unsafe { *metadata = value };
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
 /// Read a checked byte range without changing a file cursor.
 ///
 /// # Safety
@@ -589,6 +615,61 @@ pub(crate) unsafe extern "C" fn phipia_ext4_link_file_probe(
     };
     match ext4::link_file_probe(mounted, source, destination) {
         Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
+/// Create a symlink through the journal coordinator.
+///
+/// # Safety
+/// Input ranges must be readable, live and disjoint from the mount; C holds a
+/// writable storage lease and exclusive access to the mounted object.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_symlink(
+    mounted: usize, path: *const u8, path_length: usize,
+    target: *const u8, target_length: usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || target.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: complete non-overlapping ranges are the caller's contract.
+    let (mounted, path, target) = unsafe {
+        (&mut *(mounted as *mut ext4::Mounted),
+         core::slice::from_raw_parts(path, path_length),
+         core::slice::from_raw_parts(target, target_length))
+    };
+    match ext4::symlink_probe(mounted, path, target) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
+/// Read a symlink's literal target without a trailing NUL.
+///
+/// # Safety
+/// Mount/path are live and readable; output and count are writable and all
+/// ranges are disjoint. C holds a storage lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_readlink(
+    mounted: usize, path: *const u8, path_length: usize,
+    output: *mut u8, capacity: usize, count: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || output.is_null() || count.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: complete non-overlapping ranges are the caller's contract.
+    let (mounted, path, output) = unsafe {
+        *count = 0;
+        (&*(mounted as *const ext4::Mounted),
+         core::slice::from_raw_parts(path, path_length),
+         core::slice::from_raw_parts_mut(output, capacity))
+    };
+    match ext4::readlink(mounted, path, output) {
+        Ok(value) => {
+            // SAFETY: caller supplied a writable count.
+            unsafe { *count = value };
+            ext4::Status::Ok as i32
+        }
         Err(status) => status as i32,
     }
 }

@@ -177,5 +177,9 @@ enum phipfs_status ext4_backend_rmdir(enum phipfs_volume volume,
     const char *path);
 enum phipfs_status ext4_backend_link(enum phipfs_volume volume,
     const char *source, const char *destination);
+enum phipfs_status ext4_backend_symlink(enum phipfs_volume volume,
+    const char *path, const char *target);
+enum phipfs_status ext4_backend_readlink(enum phipfs_volume volume,
+    const char *path, uint8_t *output, size_t capacity, size_t *read_bytes);
 
 #endif

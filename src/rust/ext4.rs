@@ -12,7 +12,7 @@ use core::time::Duration;
 use ext4plus::dir::Dir;
 use ext4plus::error::Ext4Error;
 use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
-use ext4plus::path::Path;
+use ext4plus::path::{Path, PathBuf};
 use ext4plus::{
     DirEntryName, Ext4, Ext4Read, FileType, FilesystemSuperblockCheckpoint,
     FollowSymlinks, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
@@ -138,6 +138,7 @@ enum PendingMutationKind {
     CreateDirectory,
     RemoveDirectory,
     Rename,
+    Symlink,
 }
 
 struct PendingMutation {
@@ -520,10 +521,15 @@ fn recover_dirty_journal(
 }
 
 fn validate_xattrs(filesystem: &Ext4, path: &[u8]) -> Result<(), Status> {
-    let xattrs = filesystem.list_xattrs(path).map_err(map_error)?;
+    // Validate the entry itself: dangling/looping symlinks are valid namespace
+    // objects and their targets must not replace their own xattr validation.
+    let path = Path::try_from(path).map_err(|_| Status::Invalid)?;
+    let inode = filesystem.path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)
+        .map_err(map_error)?;
+    let xattrs = inode.list_xattrs(filesystem).map_err(map_error)?;
     for name in xattrs {
-        let _value = filesystem
-            .get_xattr(path, name.as_slice())
+        let _value = inode
+            .get_xattr(filesystem, name.as_slice())
             .map_err(map_error)?;
     }
     Ok(())
@@ -1235,7 +1241,64 @@ pub(crate) fn create_file_probe(
     }
 }
 
-/// Remove one regular-file link through the journaled mutation path.
+/// Create a symlink with its literal target journaled alongside its inode.
+pub(crate) fn symlink_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+    target: &[u8],
+) -> Result<(), Status> {
+    if target.is_empty() || target.len() >= 4096 {
+        return Err(Status::Range);
+    }
+    let target_path = PathBuf::try_from(target).map_err(|_| Status::Invalid)?;
+    let absolute = absolute_path(path)?;
+    let key = namespace_pair_key(&absolute, target)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(mounted, PendingMutationKind::Symlink, &key);
+    }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted.journal.filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let (parent, name) = parent_and_name(&absolute)?;
+    let filesystem = mounted.filesystem()?;
+    let mutation = (|| {
+        let parent_inode = filesystem.path_to_inode(parent, FollowSymlinks::All)?;
+        let mut directory = Dir::open_inode(filesystem, parent_inode)?;
+        filesystem.symlink(&mut directory, name, target_path, 0, 0,
+            Duration::from_secs(0)).map(|_| ())
+    })();
+    if let Err(error) = mutation {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    // Long-target data is metadata for this operation: journal the complete
+    // target with its namespace publication instead of using ordered data.
+    commit_namespace_mutation(mounted, PendingMutationKind::Symlink, key)
+}
+
+/// Copy a literal target without following the final component or adding NUL.
+pub(crate) fn readlink(
+    mounted: &Mounted,
+    path: &[u8],
+    output: &mut [u8],
+) -> Result<usize, Status> {
+    let absolute = absolute_path(path)?;
+    let target = mounted.readable_filesystem()?.read_link(absolute.as_slice())
+        .map_err(map_error)?;
+    let bytes = target.as_ref();
+    let count = output.len().min(bytes.len());
+    output[..count].copy_from_slice(&bytes[..count]);
+    Ok(count)
+}
+
+/// Remove one regular-file or symbolic link through the journaled mutation path.
 pub(crate) fn unlink_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1259,7 +1322,7 @@ pub(crate) fn unlink_file_probe(
             .map_err(|_| Ext4Error::MalformedPath)?;
         let inode = filesystem
             .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
-        if !inode.file_type().is_regular_file() {
+        if !inode.file_type().is_regular_file() && !inode.file_type().is_symlink() {
             return Err(Ext4Error::IsADirectory);
         }
         let parent_inode = filesystem
@@ -1502,7 +1565,8 @@ pub(crate) fn rename_probe(
     let mut inode = filesystem
         .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)
         .map_err(map_error)?;
-    if !inode.file_type().is_regular_file() && !inode.file_type().is_dir() {
+    if !inode.file_type().is_regular_file() && !inode.file_type().is_dir()
+        && !inode.file_type().is_symlink() {
         return Err(Status::Special);
     }
     let source_parent_inode = filesystem
@@ -1611,11 +1675,19 @@ pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
 
 /// Resolve a path and return inode-stable metadata.
 pub(crate) fn stat(mounted: &Mounted, path: &[u8]) -> Result<Metadata, Status> {
+    metadata_at(mounted, path, FollowSymlinks::All)
+}
+
+pub(crate) fn lstat(mounted: &Mounted, path: &[u8]) -> Result<Metadata, Status> {
+    metadata_at(mounted, path, FollowSymlinks::ExcludeFinalComponent)
+}
+
+fn metadata_at(mounted: &Mounted, path: &[u8], follow: FollowSymlinks) -> Result<Metadata, Status> {
     let absolute = absolute_path(path)?;
     let checked = Path::try_from(absolute.as_slice()).map_err(|_| Status::Invalid)?;
     let inode = mounted
         .readable_filesystem()?
-        .path_to_inode(checked, FollowSymlinks::All)
+        .path_to_inode(checked, follow)
         .map_err(map_error)?;
     inode_metadata(&inode)
 }

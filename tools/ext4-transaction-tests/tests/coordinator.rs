@@ -247,9 +247,9 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..5 {
+    for case in 0..7 {
         let mut mounted = mount_fixture(&path);
-        if case != 0 {
+        if case != 0 && case < 5 {
             if case == 4 {
                 ext4::create_directory_probe(&mut mounted, b"system/retry-test").unwrap();
             } else {
@@ -267,12 +267,14 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
         });
         drop(mounted);
         let mut mounted = mount_bytes(initial.clone());
+        let target = if case == 5 { b"README.TXT".to_vec() } else { vec![b'x'; 97] };
         let mutate = |mounted: &mut ext4::Mounted| match case {
             0 => ext4::create_file_probe(mounted, b"system/retry-test", 0o600),
             1 => ext4::transaction_probe(mounted, b"system/retry-test", 4095, b"cross-block")
                 .map(|_| ()),
             2 => ext4::truncate_probe(mounted, b"system/retry-test", 101),
-            _ => ext4::rename_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
+            3 | 4 => ext4::rename_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
+            _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
         let expected = DEVICE.with_borrow(|device| device.events.clone());
@@ -322,8 +324,14 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                let name: &[u8] = if case >= 3 { b"data/user/retry-test" } else { b"system/retry-test" };
-                assert_eq!(ext4::stat(&mounted, name).unwrap().links, if case == 4 { 2 } else { 1 });
+                let name: &[u8] = if case == 3 || case == 4 { b"data/user/retry-test" } else { b"system/retry-test" };
+                if case >= 5 {
+                    let mut bytes = vec![0; target.len()];
+                    assert_eq!(ext4::readlink(&mounted, name, &mut bytes), Ok(target.len()));
+                    assert_eq!(bytes, target);
+                } else {
+                    assert_eq!(ext4::stat(&mounted, name).unwrap().links, if case == 4 { 2 } else { 1 });
+                }
                 ext4::sync(&mut mounted).unwrap();
                 ext4::unmount(&mounted).unwrap();
                 DEVICE.with_borrow(|device| {
@@ -570,6 +578,52 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-move-alias");
+}
+
+#[test]
+fn symlinks_roundtrip_inline_boundary_dangling_and_looping_targets() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let free = ext4::free_bytes(&mounted).unwrap();
+    for length in [1, 59, 60, 61, 127, 4095] {
+        let name = format!("system/link-{length}");
+        // Avoid oversized individual components while preserving literal bytes.
+        let mut target = vec![b'x'; length];
+        for index in (1..length).step_by(2) { target[index] = b'/'; }
+        ext4::symlink_probe(&mut mounted, name.as_bytes(), &target).unwrap();
+        let metadata = ext4::lstat(&mounted, name.as_bytes()).unwrap();
+        assert_eq!(metadata.file_type, 3);
+        assert_eq!(metadata.mode & 0o777, 0o777);
+        assert_eq!(metadata.links, 1);
+        let mut bytes = vec![0xa5; length + 1];
+        assert_eq!(ext4::readlink(&mounted, name.as_bytes(), &mut bytes), Ok(length));
+        assert_eq!(&bytes[..length], &target);
+        assert_eq!(bytes[length], 0xa5);
+        assert_eq!(ext4::readlink(&mounted, name.as_bytes(), &mut bytes[..1]), Ok(1));
+        assert_eq!(ext4::symlink_probe(&mut mounted, name.as_bytes(), b"other"), Err(Status::Exists));
+    }
+    ext4::symlink_probe(&mut mounted, b"system/link-loop", b"link-loop").unwrap();
+    ext4::symlink_probe(&mut mounted, b"system/link-real", b"README.TXT").unwrap();
+    assert_eq!(ext4::stat(&mounted, b"system/link-real"), ext4::stat(&mounted, b"system/README.TXT"));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-symlinks-live");
+    let disk = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let mut mounted = mount_bytes(disk);
+    let mut target = [0; 16];
+    assert_eq!(ext4::readlink(&mounted, b"system/link-loop", &mut target), Ok(9));
+    for length in [1, 59, 60, 61, 127, 4095] {
+        let name = format!("system/link-{length}");
+        ext4::rename_probe(&mut mounted, name.as_bytes(), b"data/user/moved-link").unwrap();
+        ext4::unlink_file_probe(&mut mounted, b"data/user/moved-link").unwrap();
+    }
+    ext4::unlink_file_probe(&mut mounted, b"system/link-loop").unwrap();
+    ext4::unlink_file_probe(&mut mounted, b"system/link-real").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-symlinks-removed");
 }
 
 #[test]
