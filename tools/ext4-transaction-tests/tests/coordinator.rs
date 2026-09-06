@@ -871,6 +871,50 @@ fn external_xattr_checksums_shared_release_and_final_free() {
 }
 
 #[test]
+fn real_inode_exhaustion_rolls_back_namespace_and_reuses_a_freed_inode() {
+    let Some(path) = fixture() else { return };
+    let original = std::fs::read(&path).unwrap();
+    let free = u32::from_le_bytes(original[1040..1044].try_into().unwrap());
+    assert!(free > 2 && free < 8192);
+    let image = path.with_extension("coordinator-inode-full-input.img");
+    std::fs::write(&image, original).unwrap();
+    let empty = path.with_extension("coordinator-inode-empty.bin");
+    std::fs::write(&empty, []).unwrap();
+    let commands = path.with_extension("coordinator-inode-fill.commands");
+    let mut script = String::from("mkdir /inode-full\n");
+    for index in 0..free - 1 {
+        script.push_str(&format!("write \"{}\" /inode-full/entry-{index}\n", empty.display()));
+    }
+    std::fs::write(&commands, script).unwrap();
+    let result = std::process::Command::new("debugfs").args(["-w", "-f"])
+        .arg(&commands).arg(&image).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let mut mounted = mount_fixture(&image);
+    fsck(&path, "coordinator-inode-full-input");
+    let before = DEVICE.with_borrow(|device| device.bytes.clone());
+    assert_eq!(u32::from_le_bytes(before[1040..1044].try_into().unwrap()), 0);
+    for case in 0..3 {
+        let result = match case {
+            0 => ext4::create_file_probe(&mut mounted, b"system/no-inode", 0o600),
+            1 => ext4::create_directory_probe(&mut mounted, b"system/no-inode"),
+            _ => ext4::symlink_probe(&mut mounted, b"system/no-inode", b"missing"),
+        };
+        assert_eq!(result, Err(Status::Full));
+        assert_eq!(ext4::lstat(&mounted, b"system/no-inode"), Err(Status::NotFound));
+        ext4::sync(&mut mounted).unwrap();
+        DEVICE.with_borrow(|device| assert!(device.bytes == before));
+    }
+    let recycled = ext4::stat(&mounted, b"inode-full/entry-0").unwrap().inode;
+    ext4::unlink_file_probe(&mut mounted, b"inode-full/entry-0").unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/reused-inode", 0o640).unwrap();
+    assert_eq!(ext4::stat(&mounted, b"system/reused-inode").unwrap().inode, recycled);
+    ext4::transaction_probe(&mut mounted, b"system/reused-inode", 0, b"reused").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-inode-reused");
+}
+
+#[test]
 fn allocation_bitmap_corruption_is_not_rechecksummed_into_a_transaction() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
