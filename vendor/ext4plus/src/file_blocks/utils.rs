@@ -53,16 +53,21 @@ pub(super) async fn free_freed_ranges(
             continue;
         }
 
-        if let Some(nz) = NonZeroU32::new(len) {
-            if ext4.free_blocks(start, nz).await.is_err() {
-                for i in 0..len {
-                    ext4.free_block(
-                        start
-                            .checked_add(u64::from(i))
-                            .ok_or(CorruptKind::ExtentBlock(inode))?,
-                    )
-                    .await?;
-                }
+        if NonZeroU32::new(len).is_some() {
+            // Split at group boundaries before mutating any bitmap. An I/O or
+            // corruption error must propagate; retrying individual blocks can
+            // conceal the error or free part of a range a second time.
+            let mut block = start;
+            let mut remaining = len;
+            while remaining != 0 {
+                let (group, offset) = ext4.block_block_group_location(block)?;
+                let count = remaining.min(ext4.blocks_in_group(group)? - offset);
+                let count = NonZeroU32::new(count)
+                    .ok_or(CorruptKind::ExtentBlock(inode))?;
+                ext4.free_blocks(block, count).await?;
+                remaining -= count.get();
+                block = block.checked_add(u64::from(count.get()))
+                    .ok_or(CorruptKind::ExtentBlock(inode))?;
             }
 
             freed_data_blocks = freed_data_blocks

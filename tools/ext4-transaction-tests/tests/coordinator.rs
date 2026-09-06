@@ -1054,6 +1054,61 @@ fn allocation_bitmap_corruption_is_not_rechecksummed_into_a_transaction() {
 }
 
 #[test]
+fn duplicate_extent_release_refuses_and_rolls_back_bitmap_and_namespace() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/duplicate-extents";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, name, 0, b"first").unwrap();
+    ext4::transaction_probe(&mut mounted, name, 8192, b"second").unwrap();
+    let inode = ext4::stat(&mounted, name).unwrap().inode as u32;
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-duplicate-before");
+    drop(mounted);
+    let pristine = DEVICE.with_borrow(|device| device.bytes.clone());
+    let mut corrupt = pristine.clone();
+    let ipg = u32::from_le_bytes(corrupt[1064..1068].try_into().unwrap());
+    let group = (inode - 1) / ipg;
+    let descriptor = 4096 + group as usize * 64;
+    let table = u32::from_le_bytes(corrupt[descriptor + 8..descriptor + 12].try_into().unwrap());
+    let start = table as usize * 4096 + ((inode - 1) % ipg) as usize * 256;
+    assert_eq!(u16::from_le_bytes(corrupt[start + 0x2a..start + 0x2c].try_into().unwrap()), 2);
+    assert_eq!(u16::from_le_bytes(corrupt[start + 0x2e..start + 0x30].try_into().unwrap()), 0);
+    // Two different logical extents now reference the same physical block.
+    // Keep the inode CRC valid to exercise release validation, not CRC refusal.
+    corrupt.copy_within(start + 0x3a..start + 0x40, start + 0x46);
+    corrupt[start + 0x7c..start + 0x7e].fill(0);
+    corrupt[start + 0x82..start + 0x84].fill(0);
+    let mut crc = u32::from_le_bytes(corrupt[1648..1652].try_into().unwrap());
+    for byte in inode.to_le_bytes().iter()
+        .chain(&corrupt[start + 0x64..start + 0x68])
+        .chain(&corrupt[start..start + 256]) {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 { crc = (crc >> 1) ^ (0x82f6_3b78u32 & 0u32.wrapping_sub(crc & 1)); }
+    }
+    corrupt[start + 0x7c..start + 0x7e].copy_from_slice(&crc.to_le_bytes()[..2]);
+    corrupt[start + 0x82..start + 0x84].copy_from_slice(&crc.to_le_bytes()[2..]);
+    for unlink in [false, true] {
+        let mut mounted = mount_bytes(corrupt.clone());
+        let before = ext4::stat(&mounted, name).unwrap();
+        let result = if unlink { ext4::unlink_file_probe(&mut mounted, name) }
+            else { ext4::truncate_probe(&mut mounted, name, 0) };
+        assert_eq!(result, Err(Status::Invalid), "unlink: {unlink}");
+        assert_eq!(ext4::stat(&mounted, name), Ok(before));
+        ext4::sync(&mut mounted).unwrap();
+        DEVICE.with_borrow(|device| assert!(device.bytes == corrupt, "partial free escaped rollback"));
+        ext4::unmount(&mounted).unwrap();
+    }
+    // Valid allocation/free still restores a Linux-clean image.
+    let mut mounted = mount_bytes(pristine);
+    ext4::unlink_file_probe(&mut mounted, name).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-duplicate-valid-free");
+}
+
+#[test]
 fn legacy_orphan_chain_is_refused_without_clearing_recovery_state() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

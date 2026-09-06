@@ -612,6 +612,15 @@ impl Ext4 {
         &self.0.block_group_descriptors[usize_from_u32(block_group_index)]
     }
 
+    fn blocks_in_group(&self, group: u32) -> Result<u32, Ext4Error> {
+        let size = self.0.superblock.blocks_per_group().get();
+        let start = u64::from(group) * u64::from(size) + u64::from(self.0.superblock.first_data_block());
+        let count = self.0.superblock.blocks_count().checked_sub(start)
+            .ok_or(CorruptKind::BlockGroupDescriptor(group))?.min(u64::from(size));
+        u32::try_from(count).ok().filter(|count| *count != 0)
+            .ok_or_else(|| CorruptKind::BlockGroupDescriptor(group).into())
+    }
+
     #[maybe_async::maybe_async]
     async fn get_block_bitmap_handle(
         &self,
@@ -702,6 +711,10 @@ impl Ext4 {
             let used_dirs = bg.used_dirs_count();
 
             if free_inodes > 0 {
+                if self.0.superblock.free_inodes_count() == 0
+                    || free_inodes > self.0.superblock.inodes_per_block_group().get() {
+                    return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
+                }
                 let inode_bitmap_handle = self.get_inode_bitmap_handle(bg_id).await?;
                 let Some(inode_num) = inode_bitmap_handle
                     .find_first(
@@ -744,7 +757,7 @@ impl Ext4 {
                 }
 
                 if matches!(inode_type, FileType::Directory) {
-                    bg.set_used_dirs_count(used_dirs.saturating_add(1));
+                    bg.set_used_dirs_count(used_dirs.checked_add(1).ok_or(CorruptKind::BlockGroupDescriptor(bg_id))?);
                 }
                 bg.write(self).await?;
                 let total_free_inodes = self.0.superblock.free_inodes_count();
@@ -785,6 +798,9 @@ impl Ext4 {
             get_inode_block_group_location(&self.0.superblock, inode.index)?;
         let inode_bitmap_handle =
             self.get_inode_bitmap_handle(block_group_index).await?;
+        if !inode_bitmap_handle.query(inode_offset, self).await? {
+            return Err(CorruptKind::BlockGroupDescriptor(block_group_index).into());
+        }
         inode_bitmap_handle.set(inode_offset, false, self).await?;
         self.update_inode_bitmap_checksum(
             block_group_index,
@@ -794,17 +810,19 @@ impl Ext4 {
         // Set number of free inodes in block group
         let bg = self.get_block_group_descriptor(block_group_index);
         let free_inodes = bg.free_inodes_count();
-        bg.set_free_inodes_count(free_inodes.saturating_add(1));
+        bg.set_free_inodes_count(free_inodes.checked_add(1)
+            .filter(|count| *count <= self.0.superblock.inodes_per_block_group().get())
+            .ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?);
         if inode.file_type().is_dir() {
             let used_dirs = bg.used_dirs_count();
-            bg.set_used_dirs_count(used_dirs.saturating_sub(1));
+            bg.set_used_dirs_count(used_dirs.checked_sub(1).ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?);
         }
         bg.write(self).await?;
         // Set number of free inodes in superblock
         let total_free_inodes = self.0.superblock.free_inodes_count();
         self.0
             .superblock
-            .set_free_inodes_count(total_free_inodes.saturating_add(1));
+            .set_free_inodes_count(total_free_inodes.checked_add(1).ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?);
         self.0.superblock.write(self).await?;
         Ok(())
     }
@@ -813,6 +831,9 @@ impl Ext4 {
         &self,
         block_index: FsBlockIndex,
     ) -> Result<(BlockGroupIndex, u32), Ext4Error> {
+        if block_index >= self.0.superblock.blocks_count() {
+            return Err(CorruptKind::TooManyBlockGroups.into());
+        }
         let blocks_per_group =
             NonZeroU64::from(self.0.superblock.blocks_per_group());
         let relative_block_index = block_index
@@ -902,9 +923,13 @@ impl Ext4 {
             // idiomatically: if free_blocks > 0
             // Done with guard to remove unwrap
             if let Some(free_blocks) = NonZeroU32::new(free_blocks) {
+                let group_blocks = self.blocks_in_group(bg_id)?;
+                if free_blocks.get() > group_blocks || self.0.superblock.free_blocks_count() == 0 {
+                    return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
+                }
                 let block_bitmap_handle = self.get_block_bitmap_handle(bg_id).await?;
                 let Some(block_num) =
-                    block_bitmap_handle.find_first(false, .., self).await?
+                    block_bitmap_handle.find_first(false, ..group_blocks, self).await?
                 else {
                     return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
                 };
@@ -955,9 +980,13 @@ impl Ext4 {
             let free_blocks = bg.free_blocks_count();
 
             if free_blocks >= num_blocks.get() {
+                let group_blocks = self.blocks_in_group(bg_id)?;
+                if free_blocks > group_blocks || self.0.superblock.free_blocks_count() < u64::from(num_blocks.get()) {
+                    return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
+                }
                 let block_bitmap_handle = self.get_block_bitmap_handle(bg_id).await?;
                 let Some(block_num) = block_bitmap_handle
-                    .find_first_n(num_blocks.into(), false, .., self)
+                    .find_first_n(num_blocks.into(), false, ..group_blocks, self)
                     .await?
                 else {
                     // Fragmented free space need not contain a long enough
@@ -1084,27 +1113,7 @@ impl Ext4 {
         &self,
         block_index: FsBlockIndex,
     ) -> Result<(), Ext4Error> {
-        assert_ne!(block_index, 0);
-        self.revoke_blocks(block_index, NonZeroU32::new(1).unwrap())
-            .await?;
-        let (block_group_index, block_offset) =
-            self.block_block_group_location(block_index)?;
-        let block_bitmap_handle =
-            self.get_block_bitmap_handle(block_group_index).await?;
-        block_bitmap_handle.set(block_offset, false, self).await?;
-        self.update_block_bitmap_checksum(
-            block_group_index,
-            block_bitmap_handle,
-        )
-        .await?;
-        // Set number of free blocks in block group
-        let bg = self.get_block_group_descriptor(block_group_index);
-        let free_blocks = bg.free_blocks_count();
-        bg.set_free_blocks_count(free_blocks.saturating_add(1));
-        bg.write(self).await?;
-        self.0.superblock.inc_free_blocks_count(1);
-        self.0.superblock.write(self).await?;
-        Ok(())
+        self.free_blocks(block_index, NonZeroU32::new(1).unwrap()).await
     }
 
     /// Frees `num_blocks` contiguous blocks starting at `block_index`.
@@ -1114,12 +1123,31 @@ impl Ext4 {
         block_index: FsBlockIndex,
         num_blocks: NonZeroU32,
     ) -> Result<(), Ext4Error> {
-        assert_ne!(block_index, 0);
-        self.revoke_blocks(block_index, num_blocks).await?;
+        if block_index == 0 {
+            return Err(CorruptKind::FirstDataBlock(0).into());
+        }
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
+        let group_blocks = self.blocks_in_group(block_group_index)?;
+        let end = block_offset.checked_add(num_blocks.get())
+            .filter(|end| *end <= group_blocks)
+            .ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?;
+        let bg = self.get_block_group_descriptor(block_group_index);
+        let free_blocks = bg.free_blocks_count().checked_add(num_blocks.get())
+            .filter(|count| *count <= group_blocks)
+            .ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?;
+        if self.0.superblock.free_blocks_count().checked_add(u64::from(num_blocks.get()))
+            .is_none_or(|count| count > self.0.superblock.blocks_count()) {
+            return Err(CorruptKind::BlockGroupDescriptor(block_group_index).into());
+        }
         let block_bitmap_handle =
             self.get_block_bitmap_handle(block_group_index).await?;
+        for bit in block_offset..end {
+            if !block_bitmap_handle.query(bit, self).await? {
+                return Err(CorruptKind::BlockGroupDescriptor(block_group_index).into());
+            }
+        }
+        self.revoke_blocks(block_index, num_blocks).await?;
         for i in 0..num_blocks.get() {
             block_bitmap_handle
                 .set(block_offset.checked_add(i).unwrap(), false, self)
@@ -1131,13 +1159,7 @@ impl Ext4 {
         )
         .await?;
         // Set number of free blocks in block group
-        let bg = self.get_block_group_descriptor(block_group_index);
-        let free_blocks = bg.free_blocks_count();
-        bg.set_free_blocks_count(
-            free_blocks
-                .checked_add(num_blocks.get())
-                .ok_or(Ext4Error::NoSpace)?,
-        );
+        bg.set_free_blocks_count(free_blocks);
         bg.write(self).await?;
         self.0
             .superblock
