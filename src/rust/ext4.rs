@@ -1529,8 +1529,8 @@ pub(crate) fn unlink_file_probe(
     unlink_file_guarded(mounted, path, &[])
 }
 
-/// Until durable orphan handling is admitted, retain an open inode's final
-/// namespace link. Non-final links and symlinks do not invalidate file handles.
+/// Retain an open regular inode on the journaled orphan chain after its final
+/// namespace link is removed. C supplies every live inode under the lease.
 pub(crate) fn unlink_file_guarded(
     mounted: &mut Mounted,
     path: &[u8],
@@ -1558,13 +1558,13 @@ pub(crate) fn unlink_file_guarded(
         if !inode.file_type().is_regular_file() && !inode.file_type().is_symlink() {
             return Err(Status::IsDirectory);
         }
-        if inode.links_count() == 1 && open_inodes.contains(&u64::from(inode.index.get())) {
-            return Err(Status::Busy);
-        }
+        let retain = inode.file_type().is_regular_file()
+            && open_inodes.contains(&u64::from(inode.index.get()));
         let parent_inode = filesystem
             .path_to_inode(parent, FollowSymlinks::All).map_err(map_error)?;
         let mut directory = Dir::open_inode(filesystem, parent_inode).map_err(map_error)?;
-        directory.unlink(name, inode).map(|_| ()).map_err(map_error)
+        if retain { directory.unlink_open(name, inode) } else { directory.unlink(name, inode) }
+            .map(|_| ()).map_err(map_error)
     })();
     if let Err(error) = mutation {
         discard_uncommitted_stage(mounted, true)?;
@@ -1921,6 +1921,13 @@ fn rename_transaction(
 
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
+    sync_with_open_inodes(mounted, &[])?;
+    unmount(mounted)
+}
+
+/// Drain durable mutations and reclaim only orphans with no live C handle.
+/// Live orphans keep the recovery marker set even after a successful sync.
+pub(crate) fn sync_with_open_inodes(mounted: &mut Mounted, open_inodes: &[u64]) -> Result<(), Status> {
     if mounted.pending_write.is_some() {
         let _ = resume_write_request(mounted)?;
     } else if mounted.pending_mutation.is_some() {
@@ -1930,6 +1937,13 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
         return Err(Status::Invalid);
     }
+    let orphans = mounted.filesystem()?.orphan_inodes().map_err(map_error)?;
+    for inode in orphans {
+        if !open_inodes.contains(&u64::from(inode.get())) {
+            finalize_orphan(mounted, u64::from(inode.get()))?;
+        }
+    }
+    if mounted.filesystem()?.superblock().last_orphan() != 0 { return Ok(()); }
     match mounted.journal.filesystem_is_clean() {
         Ok(true) => {
             let view_needs_recovery = load_journal_inode_map(mounted.filesystem()?)
@@ -1964,13 +1978,13 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
     unmount(mounted)
 }
 
-/// Force all retained journal state clean without releasing the live mount.
+/// Synchronize a caller with no live inode handles without releasing the mount.
 ///
 /// Every mutation commit is already synchronous through checkpoint. Sync adds
 /// the retry-stable final marker clear; a later mutation must durably re-arm
 /// recovery before it can start another journal transaction.
 pub(crate) fn sync(mounted: &mut Mounted) -> Result<(), Status> {
-    prepare_unmount(mounted)
+    sync_with_open_inodes(mounted, &[])
 }
 
 /// Refuse to release a mount unless its retained journal state is idle and clean.

@@ -255,7 +255,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..21 {
+    for case in 0..22 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -291,7 +291,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             if case == 11 {
                 ext4::set_xattr(&mut mounted, b"system/retry-test", b"user.note", Some(b"old")).unwrap();
             }
-            if case == 14 {
+            if case == 14 || case == 21 {
                 ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x37; 8192]).unwrap();
             }
             if case == 18 {
@@ -332,6 +332,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             16 | 17 => ext4::link_file_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             18 => ext4::unlink_file_guarded(mounted, b"system/retry-test", &[inode]),
             19 | 20 => ext4::remove_entry_guarded(mounted, b"system/retry-test", &[]),
+            21 => ext4::unlink_file_guarded(mounted, b"system/retry-test", &[inode, inode]),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -389,7 +390,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                 let name: &[u8] = if case == 18 { b"system/retained-alias" }
                     else if case == 3 || case == 4 || case == 7 { b"data/user/retry-test" }
                     else { b"system/retry-test" };
-                if case == 19 || case == 20 {
+                if case == 19 || case == 20 || case == 21 {
                     assert_eq!(ext4::lstat(&mounted, name), Err(Status::NotFound));
                 } else if case == 5 || case == 6 || case == 17 {
                     let target = if case == 17 { b"missing".as_slice() } else { target.as_slice() };
@@ -1178,7 +1179,7 @@ fn legacy_zero_link_orphan_recovery_retries_every_storage_failure() {
 }
 
 #[test]
-fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
+fn unlink_open_preserves_inode_io_until_sync_observes_final_close() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
     let name = b"system/unlink-handle";
@@ -1186,7 +1187,6 @@ fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
     ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
     let inode = ext4::stat(&mounted, name).unwrap().inode;
     ext4::write_inode(&mut mounted, inode, 0, b"original").unwrap();
-    assert_eq!(ext4::unlink_file_guarded(&mut mounted, name, &[inode]), Err(Status::Busy));
     ext4::link_file_probe(&mut mounted, name, alias).unwrap();
     ext4::unlink_file_guarded(&mut mounted, name, &[inode, inode]).unwrap();
     assert_eq!(ext4::stat(&mounted, name), Err(Status::NotFound));
@@ -1197,11 +1197,69 @@ fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
     assert_eq!(&bytes, b"original-open");
     ext4::symlink_probe(&mut mounted, b"system/open-symlink", b"../data/user/retained-link").unwrap();
     ext4::unlink_file_guarded(&mut mounted, b"system/open-symlink", &[inode]).unwrap();
-    assert_eq!(ext4::unlink_file_guarded(&mut mounted, alias, &[inode]), Err(Status::Busy));
-    ext4::unlink_file_guarded(&mut mounted, alias, &[]).unwrap();
+    ext4::unlink_file_guarded(&mut mounted, alias, &[inode, inode]).unwrap();
+    assert_eq!(ext4::stat(&mounted, alias), Err(Status::NotFound));
+    assert_eq!(ext4::stat_inode(&mounted, inode).unwrap().links, 0);
+    ext4::sync_with_open_inodes(&mut mounted, &[inode, inode]).unwrap();
+    assert!(ext4::unmount(&mounted).is_err());
+    ext4::append_inode(&mut mounted, inode, b"-orphan", 16384).unwrap();
+    ext4::sync_with_open_inodes(&mut mounted, &[inode]).unwrap();
+    assert_eq!(ext4::stat_inode(&mounted, inode).unwrap().size, 20);
+    let mut held = [0; 20];
+    assert_eq!(ext4::pread_inode(&mounted, inode, 0, &mut held).unwrap(), 20);
+    assert_eq!(&held, b"original-open-orphan");
     ext4::sync(&mut mounted).unwrap();
+    assert!(ext4::stat_inode(&mounted, inode).is_err());
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-unlink-open-alias");
+}
+
+#[test]
+fn final_orphan_release_retries_identical_bytes_without_a_live_handle() {
+    let Some(path) = fixture() else { return };
+    let mut baseline = mount_fixture(&path);
+    let name = b"system/close-retry";
+    ext4::create_file_probe(&mut baseline, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut baseline, name, 0, &vec![0x53; 8192]).unwrap();
+    let inode = ext4::stat(&baseline, name).unwrap().inode;
+    ext4::sync(&mut baseline).unwrap();
+    let initial = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(baseline);
+    let prepare = || {
+        let mut mounted = mount_bytes(initial.clone());
+        ext4::unlink_file_guarded(&mut mounted, name, &[inode]).unwrap();
+        DEVICE.with_borrow_mut(|device| device.events.clear());
+        mounted
+    };
+    let mut reference = prepare();
+    ext4::finalize_orphan(&mut reference, inode).unwrap();
+    let expected = DEVICE.with_borrow(|device| device.events.clone());
+    ext4::sync(&mut reference).unwrap();
+    let final_bytes = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(reference);
+    for accept in [false, true] {
+        for fail in 0..expected.len() {
+            let mut mounted = prepare();
+            DEVICE.with_borrow_mut(|device| {
+                device.fail_event = Some(fail);
+                device.accept_failed_write = accept;
+            });
+            assert_eq!(ext4::finalize_orphan(&mut mounted, inode), Err(Status::Io));
+            assert_public_reads_refused(&mounted);
+            DEVICE.with_borrow_mut(|device| {
+                assert_eq!(device.events, expected[..=fail]);
+                device.events.clear();
+                device.fail_event = None;
+            });
+            ext4::finalize_orphan(&mut mounted, inode).unwrap();
+            let start = if fail >= expected.len() - 2 { expected.len() - 2 } else { 0 };
+            DEVICE.with_borrow(|device| assert_eq!(device.events, expected[start..]));
+            ext4::sync(&mut mounted).unwrap();
+            ext4::unmount(&mounted).unwrap();
+            DEVICE.with_borrow(|device| assert!(device.bytes == final_bytes));
+        }
+    }
+    fsck(&path, "coordinator-orphan-close-retry");
 }
 
 #[test]

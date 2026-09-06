@@ -23,6 +23,7 @@ static uint16_t changed_mode;
 static unsigned live_snapshots;
 static unsigned freed_snapshots;
 static size_t expected_open_inodes;
+static size_t last_sync_open_count;
 static bool expected_remove_directory;
 static bool expect_registered_before_close;
 static bool close_reports_failure;
@@ -256,9 +257,12 @@ int32_t phipia_ext4_write_inode(uintptr_t mounted, uint64_t inode, uint64_t offs
     return PHIPIA_EXT4_STATUS_OK;
 }
 
-int32_t phipia_ext4_sync(uintptr_t mounted)
+int32_t phipia_ext4_sync(uintptr_t mounted, const uint64_t *open_inodes, size_t open_count)
 {
     assert(mounted == 1U && ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    assert(open_inodes != NULL && open_count <= EXT4_MAX_HANDLES);
+    last_sync_open_count = open_count;
+    for (size_t index = 0U; index < open_count; ++index) assert(open_inodes[index] != 0U);
     if (sync_refusals != 0U) {
         --sync_refusals;
         return PHIPIA_EXT4_STATUS_IO;
@@ -415,7 +419,14 @@ int main(void)
     assert(ext4_backend_ftruncate(second, 5U) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 5U && state->offset == 1U);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
+    assert(last_sync_open_count == 1U);
+    sync_refusals = 1U;
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
+    assert(sync_refusals == 0U && ext4_mounts[PHIPFS_VOLUME_DATA].orphan_cleanup_pending);
+    assert(last_sync_open_count == 0U);
+    assert(!volume_has_open_handles(PHIPFS_VOLUME_DATA));
+    assert(ext4_backend_sync(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].orphan_cleanup_pending);
     expected_open_inodes = 0U;
     assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);

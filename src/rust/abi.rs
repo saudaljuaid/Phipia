@@ -318,13 +318,18 @@ pub(crate) unsafe extern "C" fn phipia_ext4_prepare_unmount(mounted: usize) -> i
 /// mount call, and C must keep its storage context valid with a write lease for
 /// this call. The mount remains live regardless of the result.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn phipia_ext4_sync(mounted: usize) -> i32 {
-    if mounted == 0 {
+pub(crate) unsafe extern "C" fn phipia_ext4_sync(mounted: usize, open_inodes: *const u64, open_count: usize) -> i32 {
+    if mounted == 0 || open_inodes.is_null() {
         return ext4::Status::NullArgument as i32;
     }
+    if open_count > 128 { return ext4::Status::Range as i32; }
     // SAFETY: unique access and provenance are the function contract.
     let mounted = unsafe { &mut *(mounted as *mut ext4::Mounted) };
-    match ext4::sync(mounted) {
+    // SAFETY: C supplies the complete live inode array under the write lease.
+    let open_inodes = unsafe { core::slice::from_raw_parts(open_inodes, open_count) };
+    let result = if open_inodes.is_empty() { ext4::sync(mounted) }
+        else { ext4::sync_with_open_inodes(mounted, open_inodes) };
+    match result {
         Ok(()) => ext4::Status::Ok as i32,
         Err(status) => status as i32,
     }

@@ -33,6 +33,7 @@ struct ext4_mount_state {
     bool mounting;
     bool operation_active;
     bool close_failed;
+    bool orphan_cleanup_pending;
     bool healthy;
 };
 
@@ -70,7 +71,7 @@ static enum phipia_ext4_test_storage_kind ext4_test_storage_failure_kind =
 extern int32_t phipia_ext4_mount(uintptr_t context, uint64_t media_bytes,
     struct phipia_ext4_identity *identity, uintptr_t *mounted_out);
 extern int32_t phipia_ext4_prepare_unmount(uintptr_t mounted);
-extern int32_t phipia_ext4_sync(uintptr_t mounted);
+extern int32_t phipia_ext4_sync(uintptr_t mounted, const uint64_t *open_inodes, size_t open_count);
 extern int32_t phipia_ext4_free_bytes(uintptr_t mounted, uint64_t *free_bytes);
 extern int32_t phipia_ext4_unmount(uintptr_t mounted);
 extern int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
@@ -951,7 +952,10 @@ enum phipfs_status ext4_backend_sync(enum phipfs_volume volume)
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(phipia_ext4_sync(mount->rust_mount));
+    uint64_t open_inodes[EXT4_MAX_HANDLES];
+    const size_t open_count = collect_open_inodes(volume, open_inodes);
+    status = map_status(phipia_ext4_sync(mount->rust_mount, open_inodes, open_count));
+    if (status == PHIPFS_STATUS_OK && open_count == 0U) mount->orphan_cleanup_pending = false;
     if (status == PHIPFS_STATUS_OK) {
         /* Sync may finish a previously refused write or truncate. Refresh
          * cached EOFs while the same lease excludes another mutation; keep
@@ -1074,8 +1078,15 @@ enum phipfs_status ext4_backend_close(phipfs_handle handle)
     enum phipfs_status status = handle_state(handle, &state);
 
     if (status == PHIPFS_STATUS_OK) {
+        const enum phipfs_volume volume = state->volume;
+        const bool cleanup = !state->directory && ext4_mounts[volume].orphan_cleanup_pending;
         if (state->directory_snapshot != 0U) phipia_ext4_snapshot_free(state->directory_snapshot);
         zero_bytes(state, sizeof(*state));
+        /* Close releases the descriptor; it is not a durability barrier.
+         * Writes have already reported their commit result. Try reclaiming
+         * unreferenced orphans now; a refused plan remains mount-owned and
+         * retryable through sync/unmount, including forced process teardown. */
+        if (cleanup) (void)ext4_backend_sync(volume);
     }
     return status;
 }
@@ -1227,6 +1238,7 @@ static enum phipfs_status remove_path(enum phipfs_volume volume,
     }
     uint64_t open_inodes[EXT4_MAX_HANDLES];
     const size_t open_count = collect_open_inodes(volume, open_inodes);
+    if (open_count != 0U) mount->orphan_cleanup_pending = true;
     status = map_status(phipia_ext4_unlink_file_probe(mount->rust_mount,
         (const uint8_t *)path, length, open_inodes, open_count, remove_directory));
     close_status = end_operation(mount, NULL);

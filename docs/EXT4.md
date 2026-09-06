@@ -32,8 +32,9 @@ shorter than 128 bytes; `phipfs_readlink` copies the literal target without a
 trailing NUL and supports short output buffers. The Rust coordinator accepts
 targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
 unlink/rename and hard-link creation inspect the final link itself. Unlinking
-a non-final hard link preserves open inode handles. Deleting an open inode's
-final link remains refused until orphan tracking is implemented. Native
+a non-final hard link preserves open inode handles. Removing an open regular
+inode's final link journals it onto the legacy orphan chain; inode-based I/O
+continues until its final handle is released. Native
 FILE_TRUNCATE and SDK ftruncate also use the
 handle's inode identity, preserve the cursor, and refresh all matching handles'
 sizes after a successful checkpoint.
@@ -71,8 +72,12 @@ descriptors, a zero first-data-block field, `has_journal`,
 `metadata_csum` plus its seed, sparse/large/huge files, `dir_nlink`, and
 `extra_isize`, with no additional feature bits other than the transient ext4
 incompat-recovery marker. The declared block count must
-fit the NVMe namespace and all free/total geometry is checked. A nonempty legacy
-orphan chain is refused before any storage write; replay alone cannot clean it.
+fit the NVMe namespace and all free/total geometry is checked. Legacy orphan
+cleanup is bounded to 128 allocated, zero-link regular inodes. Linked Linux
+truncation orphans, cycles, invalid allocation/checksum state, and reachable
+zero-link inodes are refused before recovery home writes. Recovery validates
+the post-replay view, checkpoints the journal while retaining the marker,
+then journals each orphan deletion before clearing recovery state.
 Ext4plus then
 validates the superblock, group descriptors, and existing journal. Phipia walks
 the reachable namespace (at most 8,192 entries and 512 queued directories),
@@ -426,6 +431,16 @@ journal before releasing the mount. Failed mount attempts likewise retain
 their owners until a mount retry or explicit unmount cleans them up. Host
 fault tests cover repeated DMA-release and lease-close failures; bare-metal
 teardown failure injection remains a separate required gate.
+
+Close releases a descriptor and tries to reclaim unreferenced orphans. It is
+not a durability barrier: refused cleanup remains owned by the mount, with its
+exact pending transaction available to sync or unmount. Sync reports cleanup
+errors and receives the complete live inode list under the volume lease; it
+preserves orphan data held by other handles and keeps the recovery marker set
+while those orphans exist. Unmount requires all handles closed, completes any
+remaining cleanup, and only then clears the marker. The new orphan coordinator,
+repeated-recovery, and final-close fault fixtures are pending Linux gate evidence;
+they do not establish the full Milestone 2 crash/concurrency profile.
 
 The append backend selects the live inode's EOF under the exclusive writable
 volume lease, ignoring the handle's seek position. Retained journal retries
