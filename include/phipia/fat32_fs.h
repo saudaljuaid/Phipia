@@ -186,6 +186,7 @@ enum phipfs_status phipfs_link(
 const char *phipfs_status_string(enum phipfs_status status);
 enum phipfs_status phipfs_rename_replace(enum phipfs_volume volume,
     const char *source, const char *destination);
+bool phipfs_has_atomic_replace(enum phipfs_volume volume);
 enum phipfs_status phipfs_symlink(enum phipfs_volume volume,
     const char *path, const char *target);
 /* Copies at most capacity literal target bytes, without adding a NUL. */

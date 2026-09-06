@@ -1058,6 +1058,12 @@ enum phipfs_status phipfs_rename_replace(enum phipfs_volume volume,
         mounts[volume].backend->rename_replace(volume, from, to);
 }
 
+bool phipfs_has_atomic_replace(enum phipfs_volume volume)
+{
+    return valid_volume(volume) && mounts[volume].active &&
+        mounts[volume].backend->rename_replace != NULL;
+}
+
 enum phipfs_status phipfs_rmdir(enum phipfs_volume volume, const char *path)
 {
     char canonical[PHIPFS_MAX_PATH];

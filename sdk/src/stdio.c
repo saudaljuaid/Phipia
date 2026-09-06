@@ -625,7 +625,7 @@ int rename(const char *source, const char *destination)
     request.destination = (struct phipia_path){(uint64_t)(uintptr_t)to.text,
         (uint32_t)to.length, to.volume, 0U};
     request.flags = 0U; request.reserved = 0U;
-    return phipia_result(phipia_syscall1(PHIPIA_SYS_PATH_RENAME,
+    return phipia_result(phipia_syscall1(PHIPIA_SYS_PATH_REPLACE,
         (uint64_t)(uintptr_t)&request));
 }
 int setvbuf(FILE *stream, char *buffer, int mode, size_t size)

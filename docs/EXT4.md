@@ -39,7 +39,10 @@ replacement in one transaction, preserving same-inode no-ops and refusing
 nonempty directory destinations or incompatible file/directory types. The
 destination's freed blocks are revoked with the namespace change. Replacement
 currently requires no open handles on the volume and fits the existing image
-and revoke limits; it has no new syscall binding yet.
+and revoke limits. The existing native `PATH_REPLACE` syscall selects this
+operation when ext4 is admitted, and SDK `rename()` uses that syscall. Errors
+from the ext4 transaction return directly; they never trigger the multi-step
+backup-name replacement used by backends without atomic replacement.
 
 C never leaves an NVMe filesystem session open. Ordinary reads acquire a
 read-only session and each synchronous mutation acquires a writable session.

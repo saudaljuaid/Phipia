@@ -3652,6 +3652,11 @@ static int64_t syscall_rename(
         return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
+    if (replace && phipfs_has_atomic_replace(PHIPFS_VOLUME_DATA)) {
+        status = phipfs_rename_replace(PHIPFS_VOLUME_DATA, source, destination);
+        cpu_interrupt_disable();
+        return filesystem_error(status);
+    }
     status = phipfs_rename(PHIPFS_VOLUME_DATA, source, destination);
     if (status == PHIPFS_STATUS_EXISTS && replace &&
         replacement_backup_path(destination, backup) &&
