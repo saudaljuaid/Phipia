@@ -1471,6 +1471,14 @@ pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
         Ok(false) => {}
         Err(_) => return Err(Status::Invalid),
     }
+    if !mounted.journal.filesystem_recovery_marker_is_durable()
+        .map_err(|_| Status::Invalid)?
+    {
+        // A failed activation write/flush owns a retryable marker plan even
+        // though no upstream mutation has started. Finish that exact plan
+        // before attempting the final clear; otherwise sync cannot release it.
+        arm_recovery_marker(mounted)?;
+    }
     let operations = mounted
         .journal
         .prepare_filesystem_clean_plan()

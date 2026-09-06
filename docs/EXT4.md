@@ -355,7 +355,10 @@ checksums, link counts, and their primary-superblock counters through platform
 storage using the public create/link/unlink table entries.
 The recovery-marker activation plan is equally retry-stable: its exact
 checksummed write and filesystem-state flush are re-emitted after an I/O refusal
-and acknowledged only after the flush completes. Started commit plans and
+and acknowledged only after the flush completes. Sync and unmount preparation
+also finish a refused activation before preparing the final marker clear, even
+when the upstream mutation never started. This prevents a marker-only failure
+from stranding a mount until the original request is retried. Started commit plans and
 pending journal-tail writes likewise re-emit byte-identical operations until
 their final flushes are acknowledged; slots remain reserved throughout. The
 lease is closed before the separate Rust release, and either failure leaves the

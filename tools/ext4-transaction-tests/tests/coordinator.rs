@@ -149,6 +149,15 @@ fn fsck(path: &std::path::Path, suffix: &str) {
     assert!(result.status.success(), "e2fsck rejected {suffix}: {log}");
 }
 
+fn read_exact(mounted: &ext4::Mounted, path: &[u8], output: &mut [u8]) {
+    let mut read = 0;
+    while read < output.len() {
+        let count = ext4::pread(mounted, path, read as u64, &mut output[read..]).unwrap();
+        assert!(count > 0, "unexpected EOF at {read}");
+        read += count;
+    }
+}
+
 #[test]
 fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
     let Some(path) = fixture() else { return };
@@ -348,7 +357,7 @@ fn partial_truncate_zeroes_retained_tail_and_keeps_holes_sparse() {
         ext4::truncate_probe(&mut mounted, name, 8192).unwrap();
         assert_eq!(ext4::free_bytes(&mounted), Ok(free_after_shrink));
         let mut result = vec![0xa5; 8192];
-        assert_eq!(ext4::pread(&mounted, name, 0, &mut result), Ok(8192));
+        read_exact(&mounted, name, &mut result);
         assert!(result[..size as usize].iter().all(|byte| *byte == 0x5a));
         assert!(result[size as usize..].iter().all(|byte| *byte == 0));
     }
@@ -360,7 +369,7 @@ fn partial_truncate_zeroes_retained_tail_and_keeps_holes_sparse() {
     assert_eq!(ext4::free_bytes(&mounted), Ok(free_empty));
     ext4::transaction_probe(&mut mounted, name, 8000, b"end").unwrap();
     let mut result = vec![0xa5; 8003];
-    assert_eq!(ext4::pread(&mounted, name, 0, &mut result), Ok(8003));
+    read_exact(&mounted, name, &mut result);
     assert!(result[..8000].iter().all(|byte| *byte == 0));
     assert_eq!(&result[8000..], b"end");
     ext4::sync(&mut mounted).unwrap();
@@ -410,7 +419,7 @@ fn partial_truncate_replays_size_and_zeroed_tail_together_at_every_barrier() {
                 assert_eq!(ext4::stat(&recovered, name).unwrap().size, expected_size);
                 ext4::truncate_probe(&mut recovered, name, 8192).unwrap();
                 let mut result = vec![0xa5; 8192];
-                assert_eq!(ext4::pread(&recovered, name, 0, &mut result), Ok(8192));
+                read_exact(&recovered, name, &mut result);
                 assert!(result[..101].iter().all(|byte| *byte == 0x5a));
                 let expected_tail = if committed { 0 } else { 0x5a };
                 assert!(result[101..].iter().all(|byte| *byte == expected_tail));
@@ -466,4 +475,42 @@ fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-full");
+}
+
+#[test]
+fn sync_finishes_failed_marker_activation_without_starting_the_mutation() {
+    let Some(path) = fixture() else { return };
+    for fail_at in [0, 1] {
+        for accept in [false, true] {
+            let mut mounted = mount_fixture(&path);
+            let initial = DEVICE.with_borrow(|device| device.bytes.clone());
+            DEVICE.with_borrow_mut(|device| {
+                device.fail_event = Some(fail_at);
+                device.accept_failed_write = accept;
+            });
+            assert_eq!(ext4::create_file_probe(&mut mounted, b"system/never-created", 0o600),
+                Err(Status::Io));
+            let first_attempt = DEVICE.with_borrow_mut(|device| {
+                let events = device.events.clone();
+                device.events.clear();
+                events
+            });
+            // A second refusal through sync must keep the activation retryable.
+            assert_eq!(ext4::sync(&mut mounted), Err(Status::Io));
+            DEVICE.with_borrow_mut(|device| {
+                assert_eq!(device.events, first_attempt);
+                device.events.clear();
+                device.fail_event = None;
+            });
+            ext4::sync(&mut mounted).unwrap();
+            DEVICE.with_borrow(|device| {
+                assert_eq!(&device.events[..first_attempt.len()], &first_attempt);
+                assert_eq!(device.events.len(), 4, "only activation and clearing are needed");
+                assert_eq!(device.bytes, initial, "sync published the failed create");
+            });
+            assert_eq!(ext4::stat(&mounted, b"system/never-created"), Err(Status::NotFound));
+            ext4::unmount(&mounted).unwrap();
+        }
+    }
+    fsck(&path, "coordinator-marker-sync");
 }
