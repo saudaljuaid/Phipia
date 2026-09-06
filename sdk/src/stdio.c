@@ -110,7 +110,7 @@ static int mode_flags(const char *mode, uint32_t *open_flags)
             PHIPIA_OPEN_TRUNCATE | (update ? PHIPIA_OPEN_READ : 0U);
     } else if (mode[0] == 'a') {
         flags = FILE_WRITE | FILE_APPEND | (update ? FILE_READ : 0);
-        *open_flags = PHIPIA_OPEN_WRITE | PHIPIA_OPEN_CREATE |
+        *open_flags = PHIPIA_OPEN_WRITE | PHIPIA_OPEN_CREATE | PHIPIA_OPEN_APPEND |
             (update ? PHIPIA_OPEN_READ : 0U);
     }
     return flags;

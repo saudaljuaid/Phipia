@@ -403,3 +403,12 @@ lease is closed before the separate Rust release, and either failure leaves the
 mount live. The QEMU proof arms the marker, syncs it clean, and then unmounts
 without another write. Its public truncate and namespace round trip are removed
 before unmount, and the clean remount revalidates both bytes and resources.
+
+The append backend selects the live inode's EOF under the exclusive writable
+volume lease, ignoring the handle's seek position. Retained journal retries
+reuse the original append offset and payload. Native `PHIPIA_OPEN_APPEND`,
+POSIX `O_APPEND`, and stdio append modes use this operation. Native append
+syscalls return at most one 4096-byte copied chunk; callers must handle short
+writes. Direct backend requests remain bounded to 256 KiB and can checkpoint
+multiple transactions, so crash atomicity for the entire request is not claimed.
+The current C file-size cap remains 16 MiB.

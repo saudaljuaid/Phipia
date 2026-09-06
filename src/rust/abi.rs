@@ -619,6 +619,38 @@ pub(crate) unsafe extern "C" fn phipia_ext4_link_file_probe(
     }
 }
 
+/// Append under an exclusive volume lease and return its chosen offset.
+///
+/// # Safety
+/// Mount and readable path/source ranges are live and disjoint; start and
+/// written are writable disjoint outputs. C owns a writable storage lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_append(
+    mounted: usize, path: *const u8, path_length: usize,
+    source: *const u8, source_length: usize, maximum_size: u64,
+    start: *mut u64, written: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || source.is_null() || start.is_null() || written.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: complete disjoint input/output ranges are the caller's contract.
+    let (mounted, path, source) = unsafe {
+        *start = 0;
+        *written = 0;
+        (&mut *(mounted as *mut ext4::Mounted),
+         core::slice::from_raw_parts(path, path_length),
+         core::slice::from_raw_parts(source, source_length))
+    };
+    match ext4::append_probe(mounted, path, source, maximum_size) {
+        Ok((offset, count)) => {
+            // SAFETY: the caller supplied disjoint writable outputs.
+            unsafe { *start = offset; *written = count; }
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
 /// Create a symlink through the journal coordinator.
 ///
 /// # Safety

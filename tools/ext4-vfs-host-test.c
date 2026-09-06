@@ -18,6 +18,22 @@ static unsigned renames;
 static uint64_t pending_size;
 static unsigned sync_refusals;
 static unsigned stat_refusals;
+static unsigned appends;
+
+int32_t phipia_ext4_append(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *source, size_t source_bytes,
+    uint64_t maximum_size, uint64_t *start, size_t *written)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(source != NULL && ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    assert(maximum_size == PHIPFS_MAX_FILE_BYTES);
+    ++appends;
+    if (permanent_status != PHIPIA_EXT4_STATUS_OK) return permanent_status;
+    *start = disk_size;
+    *written = source_bytes;
+    disk_size += source_bytes;
+    return PHIPIA_EXT4_STATUS_OK;
+}
 
 enum nvme_status nvme_volume_open(struct nvme_volume_session *session,
     uint32_t controller_index, bool writable)
@@ -177,6 +193,21 @@ int main(void)
     assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 65537U);
     assert(handle_state(second, &state) == PHIPFS_STATUS_OK && state->size == 65537U);
     assert(state->offset == 0U);
+    size_t written;
+    uint64_t position;
+    assert(ext4_backend_append(first, (const uint8_t *)"a", 1U, &written) == PHIPFS_STATUS_ACCESS);
+    assert(appends == 0U && written == 0U);
+    assert(ext4_backend_append(second, (const uint8_t *)"abc", 3U, &written) == PHIPFS_STATUS_OK);
+    assert(written == 3U && state->offset == 65540U);
+    assert(ext4_backend_seek(second, 0, PHIPFS_SEEK_START, &position) == PHIPFS_STATUS_OK);
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_append(second, (const uint8_t *)"de", 2U, &written) == PHIPFS_STATUS_IO);
+    assert(written == 0U && state->offset == 0U && state->size == 65540U);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_append(second, (const uint8_t *)"de", 2U, &written) == PHIPFS_STATUS_OK);
+    assert(written == 2U && state->offset == 65542U);
+    assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 65542U);
+    assert(state->offset == 0U);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);
@@ -204,6 +235,6 @@ int main(void)
     assert(ext4_backend_readlink(PHIPFS_VOLUME_DATA, "file", literal, sizeof(literal), &read_bytes) == PHIPFS_STATUS_OK);
     assert(read_bytes == 10U && memcmp(literal, "../missing", 10U) == 0 && literal[10] == 0xa5);
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
-    puts("ext4 VFS truncate retries, shared sizes, rename guards, errors and leases: PASS");
+    puts("ext4 VFS append, truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;
 }

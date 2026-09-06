@@ -937,6 +937,25 @@ fn resume_write_request(mounted: &mut Mounted) -> Result<usize, Status> {
     Ok(request.completed)
 }
 
+/// Choose EOF under the caller's exclusive volume lease. A refused append
+/// retains its original start through the same bounded write request retry.
+pub(crate) fn append_probe(
+    mounted: &mut Mounted, path: &[u8], source: &[u8], maximum_size: u64,
+) -> Result<(u64, usize), Status> {
+    let offset = if let Some(pending) = &mounted.pending_write {
+        if pending.path != absolute_path(path)? || pending.source != source {
+            return Err(Status::Invalid);
+        }
+        pending.offset
+    } else {
+        stat(mounted, path)?.size
+    };
+    if offset.checked_add(source.len() as u64).is_none_or(|end| end > maximum_size) {
+        return Err(Status::Range);
+    }
+    transaction_probe(mounted, path, offset, source).map(|written| (offset, written))
+}
+
 fn write_transaction(
     mounted: &mut Mounted,
     path: &[u8],

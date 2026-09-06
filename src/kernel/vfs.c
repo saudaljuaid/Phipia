@@ -45,6 +45,7 @@ struct vfs_open_file_state {
     phipfs_handle backend_handle;
     uint16_t vnode_index;
     bool active;
+    bool append;
 };
 
 struct vfs_directory_state {
@@ -122,6 +123,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .rmdir = ext4_backend_rmdir,
     .link = ext4_backend_link,
     .case_sensitive = true,
+    .append = ext4_backend_append,
     .rename_replace = ext4_backend_rename_replace,
     .symlink = ext4_backend_symlink,
     .readlink = ext4_backend_readlink,
@@ -785,8 +787,29 @@ enum phipfs_status phipfs_write(
     struct vfs_open_file_state *state;
     enum phipfs_status status = open_file_state(handle, &state);
 
+    if (status == PHIPFS_STATUS_OK && state->append) {
+        if (written_bytes == NULL || (source_bytes != 0U && source == NULL)) {
+            return PHIPFS_STATUS_INVALID_ARGUMENT;
+        }
+        *written_bytes = 0U;
+        if (source_bytes == 0U) return PHIPFS_STATUS_OK;
+        if (state->backend->append != NULL) {
+            return state->backend->append(state->backend_handle, source, source_bytes, written_bytes);
+        }
+        uint64_t position;
+        status = state->backend->seek(state->backend_handle, 0, PHIPFS_SEEK_END, &position);
+    }
     return status == PHIPFS_STATUS_OK ? state->backend->write(
         state->backend_handle, source, source_bytes, written_bytes) : status;
+}
+
+enum phipfs_status phipfs_set_append(phipfs_handle handle, bool append)
+{
+    struct vfs_open_file_state *state;
+    enum phipfs_status status = open_file_state(handle, &state);
+
+    if (status == PHIPFS_STATUS_OK) state->append = append;
+    return status;
 }
 
 enum phipfs_status phipfs_seek(

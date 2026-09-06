@@ -106,6 +106,9 @@ extern int32_t phipia_ext4_rename_replace(uintptr_t mounted,
     const uint8_t *destination, size_t destination_bytes);
 extern int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes);
+extern int32_t phipia_ext4_append(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *source, size_t source_bytes,
+    uint64_t maximum_size, uint64_t *start, size_t *written_bytes);
 
 _Static_assert(sizeof(struct phipia_ext4_metadata) == 40U,
     "ext4 metadata C/Rust ABI drift");
@@ -1270,6 +1273,41 @@ enum phipfs_status ext4_backend_write(phipfs_handle handle,
     if (end > state->size) {
         update_open_sizes(state->volume, state->inode, end);
     }
+    return PHIPFS_STATUS_OK;
+}
+
+enum phipfs_status ext4_backend_append(phipfs_handle handle,
+    const uint8_t *source, size_t source_bytes, size_t *written_bytes)
+{
+    struct ext4_handle_state *state;
+    struct ext4_mount_state *mount;
+    uint64_t start = 0U;
+    enum phipfs_status status;
+    enum phipfs_status close_status;
+
+    if (written_bytes == NULL || (source_bytes != 0U && source == NULL)) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    *written_bytes = 0U;
+    status = handle_state(handle, &state);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (state->directory) return PHIPFS_STATUS_IS_DIRECTORY;
+    if ((state->access & PHIPFS_ACCESS_WRITE) == 0U) return PHIPFS_STATUS_ACCESS;
+    if (source_bytes == 0U) return PHIPFS_STATUS_OK;
+    if (source_bytes > EXT4_TRANSACTION_PROBE_MAX_BYTES) return PHIPFS_STATUS_RANGE;
+    mount = &ext4_mounts[state->volume];
+    status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) return status;
+    status = map_status(phipia_ext4_append(mount->rust_mount,
+        (const uint8_t *)state->path, path_length(state->path), source,
+        source_bytes, PHIPFS_MAX_FILE_BYTES, &start, written_bytes));
+    close_status = end_operation(mount, NULL);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (close_status != PHIPFS_STATUS_OK) return close_status;
+    if (*written_bytes > source_bytes || start > PHIPFS_MAX_FILE_BYTES ||
+        *written_bytes > PHIPFS_MAX_FILE_BYTES - start) return PHIPFS_STATUS_CORRUPT;
+    state->offset = start + *written_bytes;
+    update_open_sizes(state->volume, state->inode, state->offset);
     return PHIPFS_STATUS_OK;
 }
 

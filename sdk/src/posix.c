@@ -44,6 +44,7 @@ int open(const char *path, int flags, ...)
     else native |= PHIPIA_OPEN_READ;
     if ((flags & O_CREAT) != 0) native |= PHIPIA_OPEN_CREATE;
     if ((flags & O_TRUNC) != 0) native |= PHIPIA_OPEN_TRUNCATE;
+    if ((flags & O_APPEND) != 0) native |= PHIPIA_OPEN_APPEND;
     handle = phipia_file_open(parsed.volume, parsed.text, native);
     if (handle < 0) { errno = (int)-handle; return -1; }
     phipia_runtime_lock(&descriptor_lock);

@@ -151,6 +151,8 @@ bool ext4_backend_test_storage_failure_observed(
     enum phipia_ext4_test_storage_kind expected_kind);
 enum phipfs_status ext4_backend_write(phipfs_handle handle,
     const uint8_t *source, size_t source_bytes, size_t *written_bytes);
+enum phipfs_status ext4_backend_append(phipfs_handle handle,
+    const uint8_t *source, size_t source_bytes, size_t *written_bytes);
 enum phipfs_status ext4_backend_seek(phipfs_handle handle, int64_t offset,
     enum phipfs_seek_origin origin, uint64_t *position);
 enum phipfs_status ext4_backend_stat_path(enum phipfs_volume volume,

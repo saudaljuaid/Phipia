@@ -3250,11 +3250,16 @@ static int64_t syscall_file_open(
     if (status == PHIPFS_STATUS_OK) {
         status = phipfs_open(volume, path, access, &file);
     }
+    if (status == PHIPFS_STATUS_OK && (request.flags & PHIPIA_OPEN_APPEND) != 0U) {
+        status = phipfs_set_append(file, true);
+        if (status != PHIPFS_STATUS_OK) (void)phipfs_close(file);
+    }
     cpu_interrupt_disable();
     if (status != PHIPFS_STATUS_OK) {
         return filesystem_error(status);
     }
     resource.words[0] = file;
+    resource.words[1] = (request.flags & PHIPIA_OPEN_APPEND) != 0U ? 1U : 0U;
     {
         const enum native_handle_status handle_status = native_handle_install(
             &process->handles, PHIPIA_HANDLE_FILE, &resource, &handle);
@@ -3356,7 +3361,9 @@ static int64_t syscall_file_io(
             return completed == 0U ? -PHIPIA_EFAULT : (int64_t)completed;
         }
         completed += transferred;
-        if (transferred < chunk) {
+        // Append one copied chunk per syscall. Returning a short write avoids
+        // claiming one atomic append across separately leased chunks.
+        if (transferred < chunk || (write && resource->words[1] != 0U)) {
             break;
         }
     }

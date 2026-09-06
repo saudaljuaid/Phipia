@@ -247,7 +247,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..8 {
+    for case in 0..9 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -267,6 +267,11 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             ext4::transaction_probe(&mut mounted, b"data/user/retry-test", 0, &vec![0x33; 8192]).unwrap();
             ext4::sync(&mut mounted).unwrap();
         }
+        if case == 8 {
+            ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x71; 4093]).unwrap();
+            ext4::sync(&mut mounted).unwrap();
+        }
         let initial = DEVICE.with_borrow_mut(|device| {
             device.events.clear();
             device.bytes.clone()
@@ -281,6 +286,8 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             2 => ext4::truncate_probe(mounted, b"system/retry-test", 101),
             3 | 4 => ext4::rename_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             7 => ext4::rename_replace_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
+            8 => ext4::append_probe(mounted, b"system/retry-test", b"append-retry", 16384)
+                .map(|result| assert_eq!(result, (4093, 12))),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -353,6 +360,34 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
         // counters, journal sequence and bitmap/metadata checksums.
         fsck(&path, &format!("coordinator-retry-case-{case}"));
     }
+}
+
+#[test]
+fn append_uses_live_eof_through_aliases_and_refuses_overflow_without_writes() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/append-file";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::symlink_probe(&mut mounted, b"system/append-alias", b"append-file").unwrap();
+    let first = vec![0x63; 4093];
+    assert_eq!(ext4::append_probe(&mut mounted, name, &first, 16384), Ok((0, 4093)));
+    assert_eq!(ext4::append_probe(&mut mounted, b"system/append-alias", b"second", 16384), Ok((4093, 6)));
+    assert_eq!(ext4::append_probe(&mut mounted, name, b"third", 16384), Ok((4099, 5)));
+    DEVICE.with_borrow_mut(|device| device.events.clear());
+    assert_eq!(ext4::append_probe(&mut mounted, name, b"overflow", 4104), Err(Status::Range));
+    DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
+    ext4::sync(&mut mounted).unwrap();
+    let bytes = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let mut mounted = mount_bytes(bytes);
+    let mut actual = vec![0; 4104];
+    read_exact(&mounted, name, &mut actual);
+    let mut expected = first;
+    expected.extend_from_slice(b"secondthird");
+    assert_eq!(actual, expected);
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-append");
 }
 
 #[test]
