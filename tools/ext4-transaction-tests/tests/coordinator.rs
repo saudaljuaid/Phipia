@@ -41,9 +41,15 @@ mod abi {
                 device.failed_reads += 1;
                 return false;
             }
-            let Ok(start) = usize::try_from(start) else { return false };
-            let Some(end) = start.checked_add(output.len()) else { return false };
-            let Some(bytes) = device.bytes.get(start..end) else { return false };
+            let Ok(start) = usize::try_from(start) else {
+                return false;
+            };
+            let Some(end) = start.checked_add(output.len()) else {
+                return false;
+            };
+            let Some(bytes) = device.bytes.get(start..end) else {
+                return false;
+            };
             output.copy_from_slice(bytes);
             true
         })
@@ -55,9 +61,15 @@ mod abi {
             let failed = device.fail_event == Some(device.events.len());
             device.events.push(Event::Write(start, input.to_vec()));
             if !failed || device.accept_failed_write {
-                let Ok(start) = usize::try_from(start) else { return false };
-                let Some(end) = start.checked_add(input.len()) else { return false };
-                let Some(bytes) = device.bytes.get_mut(start..end) else { return false };
+                let Ok(start) = usize::try_from(start) else {
+                    return false;
+                };
+                let Some(end) = start.checked_add(input.len()) else {
+                    return false;
+                };
+                let Some(bytes) = device.bytes.get_mut(start..end) else {
+                    return false;
+                };
                 bytes.copy_from_slice(input);
             }
             !failed
@@ -86,8 +98,17 @@ fn fixture() -> Option<PathBuf> {
 
 fn mount_fixture(path: &std::path::Path) -> Box<ext4::Mounted> {
     let bytes = std::fs::read(path).unwrap();
+    mount_bytes(bytes)
+}
+
+fn mount_bytes(bytes: Vec<u8>) -> Box<ext4::Mounted> {
     let length = bytes.len() as u64;
-    DEVICE.with_borrow_mut(|device| *device = Device { bytes, ..Device::default() });
+    DEVICE.with_borrow_mut(|device| {
+        *device = Device {
+            bytes,
+            ..Device::default()
+        }
+    });
     ext4::mount(1, length).unwrap().0
 }
 
@@ -95,9 +116,15 @@ fn assert_public_reads_refused(mounted: &ext4::Mounted) {
     assert_eq!(ext4::free_bytes(mounted), Err(Status::Io));
     assert_eq!(ext4::stat(mounted, b"system/README.TXT"), Err(Status::Io));
     let mut bytes = [0xa5; 16];
-    assert_eq!(ext4::pread(mounted, b"system/README.TXT", 0, &mut bytes), Err(Status::Io));
+    assert_eq!(
+        ext4::pread(mounted, b"system/README.TXT", 0, &mut bytes),
+        Err(Status::Io)
+    );
     assert_eq!(bytes, [0xa5; 16]);
-    assert!(matches!(ext4::directory_entry(mounted, b"system", 0), Err(Status::Io)));
+    assert!(matches!(
+        ext4::directory_entry(mounted, b"system", 0),
+        Err(Status::Io)
+    ));
     assert!(ext4::unmount(mounted).is_err());
 }
 
@@ -105,9 +132,15 @@ fn fsck(path: &std::path::Path, suffix: &str) {
     let output = path.with_extension(format!("{suffix}.img"));
     DEVICE.with_borrow(|device| std::fs::write(&output, &device.bytes).unwrap());
     let result = std::process::Command::new("e2fsck")
-        .args(["-f", "-n"]).arg(&output).output().unwrap();
-    let log = format!("{}\n{}", String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr));
+        .args(["-f", "-n"])
+        .arg(&output)
+        .output()
+        .unwrap();
+    let log = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
     std::fs::write(output.with_extension("e2fsck.txt"), &log).unwrap();
     assert!(result.status.success(), "e2fsck rejected {suffix}: {log}");
 }
@@ -128,11 +161,21 @@ fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
     // 64 data blocks plus allocation metadata cannot fit the 64-image stage.
     // The write allocates in memory, then fails and attempts rollback/reload.
     let offset = original.size.div_ceil(4096) * 4096;
-    assert_eq!(ext4::transaction_probe(&mut mounted, b"system/README.TXT",
-        offset, &vec![0x52; 64 * 4096]), Err(Status::Io));
+    assert_eq!(
+        ext4::transaction_probe(
+            &mut mounted,
+            b"system/README.TXT",
+            offset,
+            &vec![0x52; 64 * 4096]
+        ),
+        Err(Status::Io)
+    );
     DEVICE.with_borrow(|device| {
         assert!(device.failed_reads > 0, "rollback reload was not injected");
-        assert!(device.events.is_empty(), "upstream mutation wrote to the device");
+        assert!(
+            device.events.is_empty(),
+            "upstream mutation wrote to the device"
+        );
         assert_eq!(device.bytes, before);
     });
     assert_public_reads_refused(&mounted);
@@ -157,8 +200,10 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
         device.events.clear();
         device.fail_superblock_read = true;
     });
-    assert_eq!(ext4::transaction_probe(&mut mounted, b"system/reload-test", 0, b"saved"),
-        Err(Status::Io));
+    assert_eq!(
+        ext4::transaction_probe(&mut mounted, b"system/reload-test", 0, b"saved"),
+        Err(Status::Io)
+    );
     DEVICE.with_borrow(|device| {
         assert_eq!(device.events.last(), Some(&Event::Flush(5)));
         assert!(device.failed_reads > 0);
@@ -168,10 +213,16 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
         device.events.clear();
         device.fail_superblock_read = false;
     });
-    assert_eq!(ext4::transaction_probe(&mut mounted, b"system/reload-test", 0, b"saved"), Ok(5));
+    assert_eq!(
+        ext4::transaction_probe(&mut mounted, b"system/reload-test", 0, b"saved"),
+        Ok(5)
+    );
     DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
     let mut bytes = [0; 5];
-    assert_eq!(ext4::pread(&mounted, b"system/reload-test", 0, &mut bytes), Ok(5));
+    assert_eq!(
+        ext4::pread(&mounted, b"system/reload-test", 0, &mut bytes),
+        Ok(5)
+    );
     assert_eq!(&bytes, b"saved");
     DEVICE.with_borrow_mut(|device| device.fail_superblock_read = true);
     assert_eq!(ext4::sync(&mut mounted), Err(Status::Io));
@@ -190,43 +241,90 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    let mut mounted = mount_fixture(&path);
-    ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
-    let expected = DEVICE.with_borrow(|device| device.events.clone());
-    drop(mounted);
-    // Both a write rejected before acceptance and a write accepted with a lost
-    // completion must retain the same plan. Flush errors never imply durability.
-    for accept in [false, true] {
-        for failed_at in 0..expected.len() {
-            let mut mounted = mount_fixture(&path);
-            DEVICE.with_borrow_mut(|device| {
-                device.fail_event = Some(failed_at);
-                device.accept_failed_write = accept;
-            });
-            assert_eq!(ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600),
-                Err(Status::Io), "event {failed_at}, accepted {accept}");
-            let failed_prefix = DEVICE.with_borrow(|device| device.events.clone());
-            assert_eq!(failed_prefix, expected[..=failed_at]);
-            if failed_at >= 2 {
-                assert_public_reads_refused(&mounted);
-                assert_eq!(ext4::create_file_probe(&mut mounted, b"system/other", 0o600),
-                    Err(Status::Invalid));
-            }
-            DEVICE.with_borrow_mut(|device| {
-                device.events.clear();
-                device.fail_event = None;
-            });
+    for case in 0..3 {
+        let mut mounted = mount_fixture(&path);
+        if case != 0 {
             ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
-            let retry = DEVICE.with_borrow(|device| device.events.clone());
-            let phase_start = if failed_at < 2 { 0 }
-                else if failed_at >= expected.len() - 2 { expected.len() - 2 }
-                else { 2 };
-            assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-            assert_eq!(ext4::stat(&mounted, b"system/retry-test").unwrap().links, 1);
+            if case == 2 {
+                ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x5a; 8192])
+                    .unwrap();
+            }
             ext4::sync(&mut mounted).unwrap();
-            ext4::unmount(&mounted).unwrap();
-            fsck(&path, &format!("coordinator-retry-{accept}-{failed_at}"));
         }
+        let initial = DEVICE.with_borrow_mut(|device| {
+            device.events.clear();
+            device.bytes.clone()
+        });
+        drop(mounted);
+        let mut mounted = mount_bytes(initial.clone());
+        let mutate = |mounted: &mut ext4::Mounted| match case {
+            0 => ext4::create_file_probe(mounted, b"system/retry-test", 0o600),
+            1 => ext4::transaction_probe(mounted, b"system/retry-test", 4095, b"cross-block")
+                .map(|_| ()),
+            _ => ext4::truncate_probe(mounted, b"system/retry-test", 101),
+        };
+        mutate(&mut mounted).unwrap();
+        let expected = DEVICE.with_borrow(|device| device.events.clone());
+        if case == 1 {
+            assert!(
+                expected.contains(&Event::Flush(1)),
+                "ordered data not exercised"
+            );
+        }
+        ext4::sync(&mut mounted).unwrap();
+        let expected_disk = DEVICE.with_borrow(|device| device.bytes.clone());
+        drop(mounted);
+        // Both a write rejected before acceptance and a write accepted with a lost
+        // completion must retain the same plan. Flush errors never imply durability.
+        for accept in [false, true] {
+            for failed_at in 0..expected.len() {
+                let mut mounted = mount_bytes(initial.clone());
+                DEVICE.with_borrow_mut(|device| {
+                    device.fail_event = Some(failed_at);
+                    device.accept_failed_write = accept;
+                });
+                assert_eq!(
+                    mutate(&mut mounted),
+                    Err(Status::Io),
+                    "event {failed_at}, accepted {accept}"
+                );
+                let failed_prefix = DEVICE.with_borrow(|device| device.events.clone());
+                assert_eq!(failed_prefix, expected[..=failed_at]);
+                if failed_at >= 2 {
+                    assert_public_reads_refused(&mounted);
+                    assert_eq!(
+                        ext4::create_file_probe(&mut mounted, b"system/other", 0o600),
+                        Err(Status::Invalid)
+                    );
+                }
+                DEVICE.with_borrow_mut(|device| {
+                    device.events.clear();
+                    device.fail_event = None;
+                });
+                mutate(&mut mounted).unwrap();
+                let retry = DEVICE.with_borrow(|device| device.events.clone());
+                let phase_start = if failed_at < 2 {
+                    0
+                } else if failed_at >= expected.len() - 2 {
+                    expected.len() - 2
+                } else {
+                    2
+                };
+                assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
+                assert_eq!(ext4::stat(&mounted, b"system/retry-test").unwrap().links, 1);
+                ext4::sync(&mut mounted).unwrap();
+                ext4::unmount(&mounted).unwrap();
+                DEVICE.with_borrow(|device| {
+                    assert_eq!(
+                        device.bytes, expected_disk,
+                        "case {case}, event {failed_at}, accepted {accept}"
+                    )
+                });
+            }
+        }
+        // Every refusal converged byte-for-byte to this same image, including
+        // counters, journal sequence and bitmap/metadata checksums.
+        fsck(&path, &format!("coordinator-retry-case-{case}"));
     }
 }
 
@@ -237,7 +335,10 @@ fn partial_truncate_zeroes_retained_tail_and_keeps_holes_sparse() {
     let name = b"system/truncate-test";
     ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
     for size in [1, 4095, 4096, 4097] {
-        assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, &vec![0x5a; 8192]), Ok(8192));
+        assert_eq!(
+            ext4::transaction_probe(&mut mounted, name, 0, &vec![0x5a; 8192]),
+            Ok(8192)
+        );
         ext4::truncate_probe(&mut mounted, name, size).unwrap();
         let free_after_shrink = ext4::free_bytes(&mounted).unwrap();
         ext4::truncate_probe(&mut mounted, name, 8192).unwrap();
@@ -277,7 +378,10 @@ fn partial_truncate_replays_size_and_zeroed_tail_together_at_every_barrier() {
     });
     ext4::truncate_probe(&mut mounted, name, 101).unwrap();
     let events = DEVICE.with_borrow(|device| device.events.clone());
-    assert!(events.contains(&Event::Flush(3)), "truncate never committed");
+    assert!(
+        events.contains(&Event::Flush(3)),
+        "truncate never committed"
+    );
     drop(mounted);
     let mut prefix = initial;
     let mut committed = false;
@@ -291,8 +395,11 @@ fn partial_truncate_replays_size_and_zeroed_tail_together_at_every_barrier() {
                 committed |= *boundary == 3;
                 // A durable prefix ending at this acknowledged flush is the
                 // backing of a new mount; no original stage or ring survives.
-                DEVICE.with_borrow_mut(|device| *device = Device {
-                    bytes: prefix.clone(), ..Device::default()
+                DEVICE.with_borrow_mut(|device| {
+                    *device = Device {
+                        bytes: prefix.clone(),
+                        ..Device::default()
+                    }
                 });
                 let mut recovered = ext4::mount(1, prefix.len() as u64).unwrap().0;
                 let expected_size = if committed { 101 } else { 8192 };
