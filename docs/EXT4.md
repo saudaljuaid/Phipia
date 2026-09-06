@@ -123,13 +123,17 @@ from the pinned upstream commit.
 The vendored crate contains a lower-level `no_std` transaction primitive.
 `JournalTransaction`
 accepts only complete 4 KiB block images, rejects duplicate or out-of-range
-home blocks, bounds ordered-data, metadata, and revocation sets to 64 blocks
-each, and
+home blocks, bounds ordered-data and metadata images to 64 blocks each and
+revocations to 8192 block numbers, and
 refuses metadata that would require the unsupported JBD2 magic-escape rule. A
 transaction serializes one checksum-v3/64-bit descriptor, its checksummed
-metadata images, an optional checksummed 64-bit revoke record, and one
+metadata images, up to 17 checksummed 64-bit revoke records (509 entries per
+full record), and one
 checksummed commit block. The serializer feeds the same descriptor-tag,
 revocation, and commit validators used by the existing replay reader.
+Independent e2fsprogs journal-only replay on disposable cut images additionally
+checks interoperability before read-only full fsck. Large truncate/unlink can
+now exceed the former 64-revoke limit while retaining the 64-image stage bound.
 
 `JournalRing` admits a distinct, bounded physical data-slot map for a clean
 journal and assigns those records without collision across wrap. It refuses

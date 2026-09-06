@@ -273,3 +273,9 @@ as required by Linux v6.12 revoke.c/recovery.c. The inherited parser and initial
 serializer both incorrectly treated it as payload length; both are corrected.
 Independent e2fsprogs journal-only replay on disposable durability-cut images,
 followed by read-only full fsck, now supplements the Phipia replay tests.
+
+The current revoke bound is 8192 block numbers, serialized in up to 17 checksum-v3
+records with 509 64-bit entries per full block. Slot reservation, execution,
+transaction replay and ring scanning account for every record. The metadata
+image bound remains 64. Multi-record tests cover exact counts, corrupt records,
+and large truncate/unlink with Phipia and independent e2fsprogs replay.

@@ -167,11 +167,9 @@ fn read_exact(mounted: &ext4::Mounted, path: &[u8], output: &mut [u8]) {
 fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
-    // Allocate 65 blocks using split writes, then exceed the still-bounded
-    // single-transaction revoke capacity to force truncate rollback.
-    let size = ext4::stat(&mounted, b"system/README.TXT").unwrap().size;
-    ext4::transaction_probe(&mut mounted, b"system/README.TXT",
-        size.div_ceil(4096) * 4096, &vec![0x52; 64 * 4096]).unwrap();
+    // Arm the journal, then force inline-xattr ENOSPC and refuse the rollback
+    // reload. Allocation rollback is independently covered by the full fixture.
+    ext4::transaction_probe(&mut mounted, b"system/README.TXT", 0, b"R").unwrap();
     let free = ext4::free_bytes(&mounted).unwrap();
     let original = ext4::stat(&mounted, b"system/README.TXT").unwrap();
     let before = DEVICE.with_borrow(|device| device.bytes.clone());
@@ -180,7 +178,7 @@ fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
         device.fail_superblock_read = true;
     });
     assert_eq!(
-        ext4::truncate_probe(&mut mounted, b"system/README.TXT", 0),
+        ext4::set_xattr(&mut mounted, b"system/README.TXT", b"user.too-large", Some(&[0x52; 4096])),
         Err(Status::Io)
     );
     DEVICE.with_borrow(|device| {
@@ -633,6 +631,61 @@ fn e2fsprogs_independently_replays_phipia_truncate_at_every_barrier() {
             }
         }
     }
+}
+
+#[test]
+fn large_truncate_and_unlink_revoke_multiple_records_and_recover() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/large-free";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    let initial_free = ext4::free_bytes(&mounted).unwrap();
+    let chunk = vec![0x45; 64 * 4096];
+    for index in 0..9 {
+        assert_eq!(ext4::transaction_probe(&mut mounted, name, index * chunk.len() as u64, &chunk), Ok(chunk.len()));
+    }
+    ext4::sync(&mut mounted).unwrap();
+    let initial = DEVICE.with_borrow_mut(|device| { device.events.clear(); device.bytes.clone() });
+    ext4::truncate_probe(&mut mounted, name, 101).unwrap();
+    let events = DEVICE.with_borrow(|device| device.events.clone());
+    let records = events.iter().filter(|event| matches!(event, Event::Write(_, bytes)
+        if bytes.len() == 4096 && bytes[..8] == [0xc0, 0x3b, 0x39, 0x98, 0, 0, 0, 5])).count();
+    assert_eq!(records, 2);
+    assert_eq!(ext4::free_bytes(&mounted), Ok(initial_free - 4096));
+    drop(mounted);
+    let mut cut = initial;
+    for event in events {
+        match event {
+            Event::Write(start, bytes) => {
+                let start = start as usize;
+                cut[start..start + bytes.len()].copy_from_slice(&bytes);
+            }
+            Event::Flush(3) => break,
+            Event::Flush(_) => {}
+        }
+    }
+    let mut recovered = mount_bytes(cut.clone());
+    assert_eq!(ext4::stat(&recovered, name).unwrap().size, 101);
+    ext4::sync(&mut recovered).unwrap();
+    fsck(&path, "coordinator-large-truncate-recovery");
+    drop(recovered);
+    let image = path.with_extension("coordinator-large-linux-replay.img");
+    std::fs::write(&image, cut).unwrap();
+    let result = std::process::Command::new("e2fsck").args(["-E", "journal_only", "-p"])
+        .arg(&image).output().unwrap();
+    let log = format!("{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    println!("large truncate independent replay:\n{log}");
+    assert!(matches!(result.status.code(), Some(0 | 1)), "{log}");
+    let mut mounted = mount_fixture(&image);
+    assert_eq!(ext4::stat(&mounted, name).unwrap().size, 101);
+    for index in 0..9 {
+        ext4::transaction_probe(&mut mounted, name, index * chunk.len() as u64, &chunk).unwrap();
+    }
+    ext4::unlink_file_probe(&mut mounted, name).unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(initial_free));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-large-unlink");
 }
 
 #[test]

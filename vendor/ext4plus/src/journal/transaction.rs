@@ -45,7 +45,9 @@ pub const JOURNAL_BLOCK_BYTES: usize = 4096;
 pub const JOURNAL_TRANSACTION_MAX_METADATA_BLOCKS: usize = 64;
 
 /// The maximum number of block revocations represented by one transaction.
-pub const JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS: usize = 64;
+pub const JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS: usize = 8192;
+const REVOKES_PER_RECORD: usize = (JOURNAL_BLOCK_BYTES - 16 - 4) / 8;
+const MAX_REVOKE_RECORDS: usize = JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS.div_ceil(REVOKES_PER_RECORD);
 
 /// The maximum clean-journal data slots admitted by the bounded ring planner.
 pub const JOURNAL_RING_MAX_SLOTS: usize = 8192;
@@ -1081,7 +1083,7 @@ impl JournalTransaction {
         self.metadata
             .len()
             .checked_add(2)
-            .and_then(|count| count.checked_add(usize::from(!self.revoked_blocks.is_empty())))
+            .and_then(|count| count.checked_add(self.revoked_blocks.len().div_ceil(REVOKES_PER_RECORD)))
             .ok_or(JournalTransactionError::TooManyBlocks)
     }
 
@@ -1181,7 +1183,7 @@ impl JournalTransaction {
             .try_reserve_exact(
                 self.ordered_data.len()
                     + self.metadata.len() * 2
-                    + usize::from(!self.revoked_blocks.is_empty())
+                    + self.revoked_blocks.len().div_ceil(REVOKES_PER_RECORD)
                     + 7,
             )
             .map_err(|_| JournalTransactionError::TooManyBlocks)?;
@@ -1207,11 +1209,11 @@ impl JournalTransaction {
             });
         }
         let mut commit_slot = self.metadata.len() + 1;
-        if !self.revoked_blocks.is_empty() {
+        for revoked in self.revoked_blocks.chunks(REVOKES_PER_RECORD) {
             operations.push(JournalCommitOperation::WriteJournal {
                 journal_block: journal_blocks[commit_slot],
                 kind: JournalRecordKind::Revocation,
-                bytes: self.revocation_block(),
+                bytes: self.revocation_block(revoked),
             });
             commit_slot += 1;
         }
@@ -1292,7 +1294,7 @@ impl JournalTransaction {
         block
     }
 
-    fn revocation_block(&self) -> Vec<u8> {
+    fn revocation_block(&self, revoked_blocks: &[u64]) -> Vec<u8> {
         const TABLE_BYTES_OFFSET: usize = JournalBlockHeader::SIZE;
         const TABLE_OFFSET: usize = TABLE_BYTES_OFFSET + 4;
 
@@ -1300,15 +1302,14 @@ impl JournalTransaction {
         write_u32be(&mut block, 0, JournalBlockHeader::MAGIC);
         write_u32be(&mut block, 4, JournalBlockType::REVOCATION.0);
         write_u32be(&mut block, 8, self.sequence);
-        let table_bytes = self
-            .revoked_blocks
+        let table_bytes = revoked_blocks
             .len()
             .checked_mul(8)
             .and_then(|bytes| bytes.checked_add(TABLE_OFFSET))
             .and_then(|bytes| u32::try_from(bytes).ok())
             .expect("bounded revocation table fits u32");
         write_u32be(&mut block, TABLE_BYTES_OFFSET, table_bytes);
-        for (index, revoked) in self.revoked_blocks.iter().enumerate() {
+        for (index, revoked) in revoked_blocks.iter().enumerate() {
             let offset = TABLE_OFFSET + index * 8;
             block[offset..offset + 8].copy_from_slice(&revoked.to_be_bytes());
         }
@@ -2209,15 +2210,18 @@ pub fn recover_committed_ring(
         if minimum_slots > journal_blocks.len() - consumed_slots {
             break;
         }
-        let record_index = (cursor + record_offset) % journal_blocks.len();
-        let record_header = JournalBlockHeader::read_bytes(journal_blocks[record_index]);
-        let has_revocation = record_header.is_some_and(|header| {
-            header.block_type == JournalBlockType::REVOCATION && header.sequence == sequence
-        });
-        if has_revocation && !superblock.block_revocations {
-            return Err(JournalTransactionError::RevocationsUnsupported);
+        let mut commit_offset = record_offset;
+        while commit_offset < journal_blocks.len() - consumed_slots {
+            let index = (cursor + commit_offset) % journal_blocks.len();
+            let header = JournalBlockHeader::read_bytes(journal_blocks[index]);
+            if !header.is_some_and(|header| header.block_type == JournalBlockType::REVOCATION
+                && header.sequence == sequence) { break; }
+            if !superblock.block_revocations { return Err(JournalTransactionError::RevocationsUnsupported); }
+            if commit_offset - record_offset >= MAX_REVOKE_RECORDS {
+                return Err(JournalTransactionError::TooManyBlocks);
+            }
+            commit_offset += 1;
         }
-        let commit_offset = record_offset + usize::from(has_revocation);
         let transaction_slots = commit_offset
             .checked_add(1)
             .ok_or(JournalTransactionError::TooManyBlocks)?;
@@ -2230,8 +2234,10 @@ pub fn recover_committed_ring(
             header.block_type == JournalBlockType::COMMIT && header.sequence == sequence
         });
         if !commit_present {
-            if !has_revocation {
-                let possible_commit_index = (commit_index + 1) % journal_blocks.len();
+            let lookahead = (MAX_REVOKE_RECORDS - (commit_offset - record_offset))
+                .min(journal_blocks.len() - consumed_slots - transaction_slots);
+            for ahead in 1..=lookahead {
+                let possible_commit_index = (commit_index + ahead) % journal_blocks.len();
                 let possible_commit =
                     JournalBlockHeader::read_bytes(journal_blocks[possible_commit_index]);
                 if possible_commit.is_some_and(|header| {
@@ -2256,10 +2262,12 @@ pub fn recover_committed_ring(
             maximum_block,
             &transaction,
         )?;
-        if has_revocation {
+        if commit_offset != record_offset {
             let mut revoked_blocks = Vec::new();
-            read_revocation_block_table(transaction[record_offset], &mut revoked_blocks)
-                .map_err(|_| JournalTransactionError::CorruptRevocation)?;
+            for record in &transaction[record_offset..commit_offset] {
+                read_revocation_block_table(record, &mut revoked_blocks)
+                    .map_err(|_| JournalTransactionError::CorruptRevocation)?;
+            }
             for revoked in revoked_blocks {
                 let _ = replay.remove(&revoked);
             }
@@ -2337,10 +2345,10 @@ pub fn replay_committed_transaction(
         .checked_add(2)
         .ok_or(JournalTransactionError::TooManyBlocks)?;
     let with_revocation = without_revocation
-        .checked_add(1)
+        .checked_add(MAX_REVOKE_RECORDS)
         .ok_or(JournalTransactionError::TooManyBlocks)?;
     if tags.is_empty()
-        || (journal_blocks.len() != without_revocation && journal_blocks.len() != with_revocation)
+        || journal_blocks.len() < without_revocation || journal_blocks.len() > with_revocation
     {
         return Err(JournalTransactionError::JournalSlotCount);
     }
@@ -2376,8 +2384,8 @@ pub fn replay_committed_transaction(
         });
     }
 
-    if journal_blocks.len() == with_revocation {
-        let revocation = journal_blocks[tags.len() + 1];
+    let mut revoked_blocks = Vec::new();
+    for revocation in &journal_blocks[tags.len() + 1..journal_blocks.len() - 1] {
         let header = JournalBlockHeader::read_bytes(revocation)
             .ok_or(JournalTransactionError::CorruptRevocation)?;
         if header.block_type != JournalBlockType::REVOCATION
@@ -2386,19 +2394,18 @@ pub fn replay_committed_transaction(
         {
             return Err(JournalTransactionError::CorruptRevocation);
         }
-        let mut revoked_blocks = Vec::new();
         read_revocation_block_table(revocation, &mut revoked_blocks)
             .map_err(|_| JournalTransactionError::CorruptRevocation)?;
         if revoked_blocks.len() > JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS {
             return Err(JournalTransactionError::TooManyBlocks);
         }
-        for (index, revoked) in revoked_blocks.iter().enumerate() {
-            if *revoked > maximum_block || revoked_blocks[..index].contains(revoked) {
-                return Err(JournalTransactionError::CorruptRevocation);
-            }
-        }
-        replay.retain(|image| !revoked_blocks.contains(&image.block_index));
     }
+    for (index, revoked) in revoked_blocks.iter().enumerate() {
+        if *revoked > maximum_block || revoked_blocks[..index].contains(revoked) {
+            return Err(JournalTransactionError::CorruptRevocation);
+        }
+    }
+    replay.retain(|image| !revoked_blocks.contains(&image.block_index));
 
     let commit = journal_blocks[journal_blocks.len() - 1];
     let commit_header =

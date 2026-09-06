@@ -9,6 +9,7 @@ use ext4plus::{
     JournalRecordKind, JournalRing, JournalStorage, JournalSuperblockImage, JournalTransaction,
     JournalTransactionError, execute_commit_operations, load_journal_inode_map,
     recover_committed_ring, replay_committed_transaction,
+    JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS,
 };
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -359,10 +360,11 @@ fn mutation_stage_coalesces_partial_blocks_without_writing_through() {
 
 #[test]
 fn mutation_stage_derives_bounded_revocations_from_freed_blocks() {
-    let backing = Rc::new(vec![0u8; JOURNAL_BLOCK_BYTES * 70]);
+    let limit = JOURNAL_TRANSACTION_MAX_REVOKED_BLOCKS;
+    let backing = Rc::new(vec![0u8; JOURNAL_BLOCK_BYTES * (limit + 2)]);
     let stage = JournalMutationStage::new(
         Box::new(backing),
-        u64::try_from(JOURNAL_BLOCK_BYTES * 70).unwrap(),
+        u64::try_from(JOURNAL_BLOCK_BYTES * (limit + 2)).unwrap(),
     )
     .unwrap();
     Ext4Write::write(&stage, JOURNAL_BLOCK_BYTES as u64, &[0x11]).unwrap();
@@ -388,15 +390,15 @@ fn mutation_stage_derives_bounded_revocations_from_freed_blocks() {
     )));
 
     stage.rollback();
-    Ext4Write::revoke_blocks(&stage, 1, 64).unwrap();
-    assert_eq!(stage.revoked_block_count(), 64);
+    Ext4Write::revoke_blocks(&stage, 1, limit as u32).unwrap();
+    assert_eq!(stage.revoked_block_count(), limit);
     assert_eq!(
-        Ext4Write::revoke_blocks(&stage, 65, 1)
+        Ext4Write::revoke_blocks(&stage, limit as u64 + 1, 1)
             .unwrap_err()
             .to_string(),
         JournalMutationStageError::TooManyRevocations.to_string()
     );
-    assert_eq!(stage.revoked_block_count(), 64);
+    assert_eq!(stage.revoked_block_count(), limit);
     assert_eq!(
         Ext4Write::revoke_blocks(&stage, 0, 1)
             .unwrap_err()
@@ -725,6 +727,26 @@ fn revocation_records_are_checksummed_and_suppress_stale_images() {
         replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references),
         Err(JournalTransactionError::CorruptRevocation)
     );
+}
+
+#[test]
+fn multiple_revoke_records_have_exact_slot_counts_and_replay() {
+    let mut transaction = transaction();
+    for block in 1000..2200 { transaction.stage_revocation(block).unwrap(); }
+    assert_eq!(transaction.required_journal_slots().unwrap(), 7);
+    let operations = transaction.commit_plan(&[3000, 3001, 3002, 3003, 3004, 3005, 3006]).unwrap();
+    let journal = journal_images(&operations);
+    assert_eq!(journal.len(), 7);
+    assert_eq!(u32::from_be_bytes(journal[3][12..16].try_into().unwrap()), 4088);
+    assert_eq!(u32::from_be_bytes(journal[4][12..16].try_into().unwrap()), 4088);
+    assert_eq!(u32::from_be_bytes(journal[5][12..16].try_into().unwrap()), 1472);
+    let references: Vec<&[u8]> = journal.iter().map(Vec::as_slice).collect();
+    assert_eq!(replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references).unwrap().len(), 2);
+    let mut corrupt = journal;
+    corrupt[4][0] ^= 1;
+    let references: Vec<&[u8]> = corrupt.iter().map(Vec::as_slice).collect();
+    assert_eq!(replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references),
+        Err(JournalTransactionError::CorruptRevocation));
 }
 
 #[test]
