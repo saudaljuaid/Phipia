@@ -71,6 +71,8 @@ struct vfs_backend_ops {
     /* Metadata and handle must come from the same protected inode lookup. */
     enum phipfs_status (*open_with_stat)(enum phipfs_volume volume, const char *path,
         enum phipfs_access access, phipfs_handle *handle, struct phipfs_stat *stat);
+    enum phipfs_status (*directory_open_with_stat)(enum phipfs_volume volume,
+        const char *path, phipfs_handle *handle, struct phipfs_stat *stat);
 };
 
 #endif

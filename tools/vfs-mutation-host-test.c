@@ -11,6 +11,7 @@ static enum phipfs_status mutation_result = PHIPFS_STATUS_IO;
 static const char *expected_path = "parent/file";
 static bool stat_succeeds;
 static unsigned live_backend_handles;
+static bool directory_metadata;
 
 static enum phipfs_status replaced_open(enum phipfs_volume volume, const char *path,
     enum phipfs_access access, phipfs_handle *handle, struct phipfs_stat *stat)
@@ -31,6 +32,22 @@ static enum phipfs_status replaced_close(phipfs_handle handle)
     return PHIPFS_STATUS_OK;
 }
 
+static enum phipfs_status replaced_directory_open(enum phipfs_volume volume, const char *path,
+    phipfs_handle *handle, struct phipfs_stat *stat)
+{
+    const enum phipfs_status status = replaced_open(volume, path, PHIPFS_ACCESS_READ, handle, stat);
+    stat->directory = true;
+    return status;
+}
+
+static enum phipfs_status replaced_directory_read(phipfs_handle handle,
+    struct phipfs_list_entry *entry, bool *present)
+{
+    assert(handle == 77U && live_backend_handles == 1U && entry != NULL);
+    *present = false;
+    return PHIPFS_STATUS_OK;
+}
+
 static enum phipfs_status hidden_stat(enum phipfs_volume volume,
     const char *path, struct phipfs_stat *result)
 {
@@ -40,6 +57,7 @@ static enum phipfs_status hidden_stat(enum phipfs_volume volume,
         assert(strcmp(path, expected_path) == 0);
         memset(result, 0, sizeof(*result));
         result->object_id = 101U;
+        result->directory = directory_metadata;
         return PHIPFS_STATUS_OK;
     }
     return PHIPFS_STATUS_IO;
@@ -145,11 +163,30 @@ int main(void)
         metadata.object_id = 1000U + index;
         assert(vnode_retain(PHIPFS_VOLUME_DATA, "unrelated", &metadata, &retained[index]) == PHIPFS_STATUS_OK);
     }
-    assert(phipfs_open(PHIPFS_VOLUME_DATA, expected_path, PHIPFS_ACCESS_READ, &opened) == PHIPFS_STATUS_BUSY);
+    assert(phipfs_open(PHIPFS_VOLUME_DATA, expected_path, PHIPFS_ACCESS_READ, &opened) == PHIPFS_STATUS_NO_HANDLES);
     assert(opened == 0U && live_backend_handles == 0U);
     assert(vnodes[old_vnode].references == 1U);
     for (size_t index = 0U; index < VFS_MAX_VNODES - 1U; ++index)
         vnode_release(retained[index], vnodes[retained[index]].generation);
+    vnode_release(old_vnode, vnodes[old_vnode].generation);
+    directory_metadata = true;
+    backend.directory_open_with_stat = replaced_directory_open;
+    backend.directory_read = replaced_directory_read;
+    backend.directory_close = replaced_close;
+    metadata.object_id = 101U;
+    metadata.directory = true;
+    assert(vnode_retain(PHIPFS_VOLUME_DATA, expected_path, &metadata, &old_vnode) == PHIPFS_STATUS_OK);
+    phipfs_directory_handle directory;
+    assert(phipfs_directory_open(PHIPFS_VOLUME_DATA, expected_path, &directory) == PHIPFS_STATUS_OK);
+    struct vfs_directory_state *snapshot;
+    assert(directory_state(directory, &snapshot) == PHIPFS_STATUS_OK);
+    assert(vnodes[snapshot->vnode_index].stat.object_id == 500U);
+    assert(vnodes[old_vnode].references == 1U);
+    struct phipfs_list_entry entry;
+    bool present;
+    stat_succeeds = false; /* The old name can disappear without affecting iteration. */
+    assert(phipfs_directory_read(directory, &entry, &present) == PHIPFS_STATUS_OK && !present);
+    assert(phipfs_directory_close(directory) == PHIPFS_STATUS_OK && live_backend_handles == 0U);
     vnode_release(old_vnode, vnodes[old_vnode].generation);
     assert(mounts[PHIPFS_VOLUME_DATA].references == 0U);
     for (size_t index = 0U; index < VFS_MAX_VNODES; ++index) assert(!vnodes[index].active);

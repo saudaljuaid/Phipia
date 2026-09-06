@@ -1540,13 +1540,20 @@ static enum phipfs_status indexed_entry(struct ext4_handle_state *state,
 enum phipfs_status ext4_backend_directory_open(enum phipfs_volume volume,
     const char *path, phipfs_handle *handle)
 {
+    struct phipfs_stat stat;
+    return ext4_backend_directory_open_with_stat(volume, path, handle, &stat);
+}
+
+enum phipfs_status ext4_backend_directory_open_with_stat(enum phipfs_volume volume,
+    const char *path, phipfs_handle *handle, struct phipfs_stat *stat)
+{
     struct phipia_ext4_metadata metadata;
     uintptr_t snapshot = 0U;
     phipfs_handle opened = 0U;
     const size_t length = path_length(path);
     enum phipfs_status status;
 
-    if (!valid_volume(volume) || handle == NULL || length == 0U || length >= PHIPFS_MAX_PATH) {
+    if (!valid_volume(volume) || handle == NULL || stat == NULL || length == 0U || length >= PHIPFS_MAX_PATH) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
@@ -1573,6 +1580,7 @@ enum phipfs_status ext4_backend_directory_open(enum phipfs_volume volume,
         }
     }
     *handle = opened;
+    if (status == PHIPFS_STATUS_OK) fill_stat(&metadata, stat);
     return status;
 }
 

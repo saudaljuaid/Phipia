@@ -114,6 +114,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .stat_path = ext4_backend_stat_path,
     .list = ext4_backend_list,
     .directory_open = ext4_backend_directory_open,
+    .directory_open_with_stat = ext4_backend_directory_open_with_stat,
     .directory_read = ext4_backend_directory_read,
     .directory_close = ext4_backend_directory_close,
     .create = ext4_backend_create,
@@ -957,13 +958,20 @@ enum phipfs_status phipfs_directory_open(
     }
     zero_bytes(&directories[slot], sizeof(directories[slot]));
     directories[slot].backend = mounts[volume].backend;
+    struct phipfs_stat opened_stat;
+    const struct vfs_backend_ops *backend = mounts[volume].backend;
     directories[slot].streaming =
-        mounts[volume].backend->directory_open != NULL &&
+        (backend->directory_open != NULL || backend->directory_open_with_stat != NULL) &&
         mounts[volume].backend->directory_read != NULL &&
         mounts[volume].backend->directory_close != NULL;
     if (directories[slot].streaming) {
-        status = mounts[volume].backend->directory_open(volume, canonical,
-            &directories[slot].backend_handle);
+        if (backend->directory_open_with_stat != NULL) {
+            status = backend->directory_open_with_stat(volume, canonical,
+                &directories[slot].backend_handle, &opened_stat);
+        } else {
+            status = backend->directory_open(volume, canonical,
+                &directories[slot].backend_handle);
+        }
     } else {
         status = mounts[volume].backend->list(volume, canonical,
             directories[slot].entries, PHIPFS_MAX_LIST_ENTRIES,
@@ -972,6 +980,15 @@ enum phipfs_status phipfs_directory_open(
     if (status != PHIPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
+    }
+    if (directories[slot].streaming && backend->directory_open_with_stat != NULL) {
+        vnode_release(vnode_index, vnodes[vnode_index].generation);
+        status = vnode_retain(volume, canonical, &opened_stat, &vnode_index);
+        if (status != PHIPFS_STATUS_OK) {
+            (void)backend->directory_close(directories[slot].backend_handle);
+            zero_bytes(&directories[slot], sizeof(directories[slot]));
+            return status;
+        }
     }
     directories[slot].generation = next_generation(
         &next_directory_generation, UINT64_MAX >> 8U);
