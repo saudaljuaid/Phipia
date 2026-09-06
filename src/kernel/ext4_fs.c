@@ -101,6 +101,9 @@ extern int32_t phipia_ext4_directory_entry(uintptr_t mounted,
     struct phipia_ext4_directory_entry *entry, bool *present);
 extern int32_t phipia_ext4_symlink(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, const uint8_t *target, size_t target_bytes);
+extern int32_t phipia_ext4_rename_replace(uintptr_t mounted,
+    const uint8_t *source, size_t source_bytes,
+    const uint8_t *destination, size_t destination_bytes);
 extern int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes);
 
@@ -1573,6 +1576,35 @@ enum phipfs_status ext4_backend_symlink(enum phipfs_volume volume,
     }
     status = map_status(phipia_ext4_symlink(mount->rust_mount,
         (const uint8_t *)path, length, (const uint8_t *)target, target_length));
+    close_status = end_operation(mount, NULL);
+    return status != PHIPFS_STATUS_OK ? status : close_status;
+}
+
+enum phipfs_status ext4_backend_rename_replace(enum phipfs_volume volume,
+    const char *source, const char *destination)
+{
+    const size_t source_length = path_length(source);
+    const size_t destination_length = path_length(destination);
+    struct ext4_mount_state *mount;
+    enum phipfs_status status;
+    enum phipfs_status close_status;
+
+    if (!valid_volume(volume) || source_length == 0U || source_length >= PHIPFS_MAX_PATH ||
+        destination_length == 0U || destination_length >= PHIPFS_MAX_PATH) {
+        return PHIPFS_STATUS_INVALID_ARGUMENT;
+    }
+    /* Replacement can remove the inode an existing path-based handle names. */
+    if (volume_has_open_handles(volume)) {
+        return PHIPFS_STATUS_BUSY;
+    }
+    mount = &ext4_mounts[volume];
+    status = begin_operation(mount, true);
+    if (status != PHIPFS_STATUS_OK) {
+        return status;
+    }
+    status = map_status(phipia_ext4_rename_replace(mount->rust_mount,
+        (const uint8_t *)source, source_length,
+        (const uint8_t *)destination, destination_length));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
 }

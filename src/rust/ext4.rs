@@ -138,6 +138,7 @@ enum PendingMutationKind {
     CreateDirectory,
     RemoveDirectory,
     Rename,
+    RenameReplace,
     Symlink,
 }
 
@@ -1538,13 +1539,60 @@ pub(crate) fn rename_probe(
     source: &[u8],
     destination: &[u8],
 ) -> Result<(), Status> {
+    rename_transaction(mounted, source, destination, false)
+}
+
+pub(crate) fn rename_replace_probe(
+    mounted: &mut Mounted,
+    source: &[u8],
+    destination: &[u8],
+) -> Result<(), Status> {
+    rename_transaction(mounted, source, destination, true)
+}
+
+fn remove_rename_destination(
+    directory: &mut Dir,
+    name: DirEntryName<'_>,
+    source: &ext4plus::inode::Inode,
+) -> Result<bool, Ext4Error> {
+    let target = match directory.get_entry(name) {
+        Ok(target) => target,
+        Err(Ext4Error::NotFound) => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    if target.index == source.index {
+        return Ok(false); // POSIX same-inode replacement is a no-op.
+    }
+    if target.flags().contains(InodeFlags::IMMUTABLE) {
+        return Err(Ext4Error::Readonly);
+    }
+    if target.file_type().is_dir() {
+        if !source.file_type().is_dir() { return Err(Ext4Error::IsADirectory); }
+        directory.remove_empty_directory(name, target)?;
+    } else {
+        if source.file_type().is_dir() { return Err(Ext4Error::NotADirectory); }
+        if !target.file_type().is_regular_file() && !target.file_type().is_symlink() {
+            return Err(Ext4Error::IsASpecialFile);
+        }
+        directory.unlink(name, target)?;
+    }
+    Ok(true)
+}
+
+fn rename_transaction(
+    mounted: &mut Mounted,
+    source: &[u8],
+    destination: &[u8],
+    replace: bool,
+) -> Result<(), Status> {
+    let kind = if replace { PendingMutationKind::RenameReplace } else { PendingMutationKind::Rename };
     let source_absolute = absolute_path(source)?;
     let destination_absolute = absolute_path(destination)?;
     let pending_key = namespace_pair_key(&source_absolute, &destination_absolute)?;
     if mounted.pending_mutation.is_some() {
         return resume_namespace_mutation(
             mounted,
-            PendingMutationKind::Rename,
+            kind,
             &pending_key,
         );
     }
@@ -1565,6 +1613,9 @@ pub(crate) fn rename_probe(
     let mut inode = filesystem
         .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)
         .map_err(map_error)?;
+    if inode.flags().contains(InodeFlags::IMMUTABLE) {
+        return Err(Status::ReadOnly);
+    }
     if !inode.file_type().is_regular_file() && !inode.file_type().is_dir()
         && !inode.file_type().is_symlink() {
         return Err(Status::Special);
@@ -1573,6 +1624,10 @@ pub(crate) fn rename_probe(
         .path_to_inode(source_parent, FollowSymlinks::All).map_err(map_error)?;
     let destination_parent_inode = filesystem
         .path_to_inode(destination_parent, FollowSymlinks::All).map_err(map_error)?;
+    if source_parent_inode.flags().contains(InodeFlags::IMMUTABLE)
+        || destination_parent_inode.flags().contains(InodeFlags::IMMUTABLE) {
+        return Err(Status::ReadOnly);
+    }
     // Different path strings can resolve to the same directory through a
     // symlink. Use one directory object in that case so inode size updates
     // cannot be lost between two independently cached parent inodes.
@@ -1580,9 +1635,15 @@ pub(crate) fn rename_probe(
     let mutation = (|| {
         let mut source_directory = Dir::open_inode(filesystem, source_parent_inode)?;
         if same_parent {
+            if replace && !remove_rename_destination(&mut source_directory, destination_name, &inode)? {
+                return Ok(());
+            }
             return source_directory.rename_entry(source_name, destination_name, inode);
         }
         let mut destination_directory = Dir::open_inode(filesystem, destination_parent_inode)?;
+        if replace && !remove_rename_destination(&mut destination_directory, destination_name, &inode)? {
+            return Ok(());
+        }
         if inode.file_type().is_dir() {
             return source_directory.move_directory(source_name,
                 &mut destination_directory, destination_name, inode);
@@ -1598,9 +1659,9 @@ pub(crate) fn rename_probe(
     }
     if mounted.stage.is_empty() {
         discard_uncommitted_stage(mounted, true)?;
-        return Err(Status::Invalid);
+        return if replace { Ok(()) } else { Err(Status::Invalid) };
     }
-    commit_namespace_mutation(mounted, PendingMutationKind::Rename, pending_key)
+    commit_namespace_mutation(mounted, kind, pending_key)
 }
 
 /// Retry and durably execute the final clean plan while C holds a write lease.

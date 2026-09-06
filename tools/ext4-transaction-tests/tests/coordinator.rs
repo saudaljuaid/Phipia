@@ -247,7 +247,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..7 {
+    for case in 0..8 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -259,6 +259,12 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                 ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x5a; 8192])
                     .unwrap();
             }
+            ext4::sync(&mut mounted).unwrap();
+        }
+        if case == 7 {
+            ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            ext4::create_file_probe(&mut mounted, b"data/user/retry-test", 0o600).unwrap();
+            ext4::transaction_probe(&mut mounted, b"data/user/retry-test", 0, &vec![0x33; 8192]).unwrap();
             ext4::sync(&mut mounted).unwrap();
         }
         let initial = DEVICE.with_borrow_mut(|device| {
@@ -274,6 +280,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                 .map(|_| ()),
             2 => ext4::truncate_probe(mounted, b"system/retry-test", 101),
             3 | 4 => ext4::rename_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
+            7 => ext4::rename_replace_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -324,8 +331,8 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                let name: &[u8] = if case == 3 || case == 4 { b"data/user/retry-test" } else { b"system/retry-test" };
-                if case >= 5 {
+                let name: &[u8] = if case == 3 || case == 4 || case == 7 { b"data/user/retry-test" } else { b"system/retry-test" };
+                if case == 5 || case == 6 {
                     let mut bytes = vec![0; target.len()];
                     assert_eq!(ext4::readlink(&mounted, name, &mut bytes), Ok(target.len()));
                     assert_eq!(bytes, target);
@@ -578,6 +585,59 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-move-alias");
+}
+
+#[test]
+fn replacement_rename_preserves_hardlinks_and_directory_parent_counts() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    for parent in ["system", "data/user"] {
+        let source = b"system/replace-source";
+        let target = format!("{parent}/replace-target");
+        ext4::create_file_probe(&mut mounted, source, 0o640).unwrap();
+        ext4::transaction_probe(&mut mounted, source, 0, b"new value").unwrap();
+        ext4::link_file_probe(&mut mounted, source, b"system/source-alias").unwrap();
+        let source_inode = ext4::lstat(&mounted, source).unwrap();
+        ext4::rename_replace_probe(&mut mounted, source, b"system/source-alias").unwrap();
+        assert_eq!(ext4::lstat(&mounted, source), Ok(source_inode));
+        assert_eq!(ext4::lstat(&mounted, b"system/source-alias"), Ok(source_inode));
+        ext4::unlink_file_probe(&mut mounted, b"system/source-alias").unwrap();
+        ext4::create_file_probe(&mut mounted, target.as_bytes(), 0o600).unwrap();
+        ext4::transaction_probe(&mut mounted, target.as_bytes(), 0, b"old value").unwrap();
+        ext4::link_file_probe(&mut mounted, target.as_bytes(), b"system/old-alias").unwrap();
+        let old_inode = ext4::lstat(&mounted, target.as_bytes()).unwrap().inode;
+        ext4::rename_replace_probe(&mut mounted, source, target.as_bytes()).unwrap();
+        assert_eq!(ext4::lstat(&mounted, source), Err(Status::NotFound));
+        assert_eq!(ext4::lstat(&mounted, target.as_bytes()).unwrap().inode, source_inode.inode);
+        assert_eq!(ext4::lstat(&mounted, b"system/old-alias").unwrap().inode, old_inode);
+        let mut data = [0; 9];
+        read_exact(&mounted, target.as_bytes(), &mut data);
+        assert_eq!(&data, b"new value");
+        read_exact(&mounted, b"system/old-alias", &mut data);
+        assert_eq!(&data, b"old value");
+        ext4::unlink_file_probe(&mut mounted, target.as_bytes()).unwrap();
+        ext4::unlink_file_probe(&mut mounted, b"system/old-alias").unwrap();
+    }
+    ext4::create_directory_probe(&mut mounted, b"system/source-dir").unwrap();
+    ext4::create_directory_probe(&mut mounted, b"data/user/target-dir").unwrap();
+    ext4::create_file_probe(&mut mounted, b"data/user/target-dir/child", 0o600).unwrap();
+    let free = ext4::free_bytes(&mounted).unwrap();
+    assert_eq!(ext4::rename_replace_probe(&mut mounted, b"system/source-dir",
+        b"data/user/target-dir"), Err(Status::NotEmpty));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    assert_eq!(ext4::rename_replace_probe(&mut mounted, b"system/source-dir",
+        b"data/user/target-dir/child"), Err(Status::NotDirectory));
+    assert_eq!(ext4::rename_replace_probe(&mut mounted, b"data/user/target-dir/child",
+        b"system/source-dir"), Err(Status::IsDirectory));
+    ext4::unlink_file_probe(&mut mounted, b"data/user/target-dir/child").unwrap();
+    let system_links = ext4::stat(&mounted, b"system").unwrap().links;
+    let user_links = ext4::stat(&mounted, b"data/user").unwrap().links;
+    ext4::rename_replace_probe(&mut mounted, b"system/source-dir", b"data/user/target-dir").unwrap();
+    assert_eq!(ext4::stat(&mounted, b"system").unwrap().links, system_links - 1);
+    assert_eq!(ext4::stat(&mounted, b"data/user").unwrap().links, user_links);
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-rename-replace");
 }
 
 #[test]

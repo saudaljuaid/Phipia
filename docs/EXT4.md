@@ -34,6 +34,12 @@ targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
 unlink/rename inspect the final link itself. Those mutations require a
 quiescent volume for symlinks while open handles still re-resolve paths.
 These kernel VFS entry points do not yet add user-process syscall bindings.
+`phipfs_rename` retains no-replace behavior; `phipfs_rename_replace` publishes
+replacement in one transaction, preserving same-inode no-ops and refusing
+nonempty directory destinations or incompatible file/directory types. The
+destination's freed blocks are revoked with the namespace change. Replacement
+currently requires no open handles on the volume and fits the existing image
+and revoke limits; it has no new syscall binding yet.
 
 C never leaves an NVMe filesystem session open. Ordinary reads acquire a
 read-only session and each synchronous mutation acquires a writable session.

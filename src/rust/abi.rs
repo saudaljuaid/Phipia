@@ -758,6 +758,31 @@ pub(crate) unsafe extern "C" fn phipia_ext4_rename_probe(
     }
 }
 
+/// Rename with replacement through the same journal coordinator.
+///
+/// # Safety
+/// Mount and readable input ranges are live and disjoint. C holds exclusive
+/// mount access and a writable lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_rename_replace(
+    mounted: usize, source: *const u8, source_length: usize,
+    destination: *const u8, destination_length: usize,
+) -> i32 {
+    if mounted == 0 || source.is_null() || destination.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: complete non-overlapping input ranges are the caller's contract.
+    let (mounted, source, destination) = unsafe {
+        (&mut *(mounted as *mut ext4::Mounted),
+         core::slice::from_raw_parts(source, source_length),
+         core::slice::from_raw_parts(destination, destination_length))
+    };
+    match ext4::rename_replace_probe(mounted, source, destination) {
+        Ok(()) => ext4::Status::Ok as i32,
+        Err(status) => status as i32,
+    }
+}
+
 /// Return one directory entry by stable enumeration index.
 ///
 /// # Safety

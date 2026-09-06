@@ -48,6 +48,8 @@ struct vfs_backend_ops {
     enum phipfs_status (*link)(enum phipfs_volume volume, const char *source,
         const char *destination);
     bool case_sensitive;
+    enum phipfs_status (*rename_replace)(enum phipfs_volume volume,
+        const char *source, const char *destination);
     enum phipfs_status (*symlink)(enum phipfs_volume volume, const char *path,
         const char *target);
     enum phipfs_status (*readlink)(enum phipfs_volume volume, const char *path,
