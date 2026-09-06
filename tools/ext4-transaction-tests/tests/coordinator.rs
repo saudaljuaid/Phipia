@@ -275,7 +275,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             1 => ext4::transaction_probe(mounted, b"system/retry-test", 4095, b"cross-block")
                 .map(|_| ()),
             2 => ext4::truncate_probe(mounted, b"system/retry-test", 101),
-            _ => ext4::rename_probe(mounted, b"system/retry-test", b"user/retry-test"),
+            _ => ext4::rename_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
         };
         mutate(&mut mounted).unwrap();
         let expected = DEVICE.with_borrow(|device| device.events.clone());
@@ -325,7 +325,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                let name: &[u8] = if case == 3 { b"user/retry-test" } else { b"system/retry-test" };
+                let name: &[u8] = if case == 3 { b"data/user/retry-test" } else { b"system/retry-test" };
                 assert_eq!(ext4::stat(&mounted, name).unwrap().links, 1);
                 ext4::sync(&mut mounted).unwrap();
                 ext4::unmount(&mounted).unwrap();
@@ -547,4 +547,14 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-move");
+    drop(mounted);
+    let image = path.with_extension("coordinator-move.img");
+    debugfs(&image, "symlink /system/move-alias /system/move-from");
+    let mut mounted = mount_fixture(&image);
+    ext4::rename_probe(&mut mounted, source, b"system/move-alias/renamed").unwrap();
+    assert_eq!(ext4::stat(&mounted, source), Err(Status::NotFound));
+    assert_eq!(ext4::stat(&mounted, b"system/move-from/renamed"), Ok(other));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-move-alias");
 }
