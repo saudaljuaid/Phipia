@@ -711,6 +711,8 @@ fn revocation_records_are_checksummed_and_suppress_stale_images() {
         )
     }));
     let journal = journal_images(&operations);
+    // Linux JBD2 r_count is an end offset, including its 16-byte header.
+    assert_eq!(u32::from_be_bytes(journal[3][12..16].try_into().unwrap()), 24);
     let references: Vec<&[u8]> = journal.iter().map(Vec::as_slice).collect();
     let replay = replay_committed_transaction(UUID, 17, MAXIMUM_BLOCK, &references).unwrap();
     assert_eq!(replay.len(), 1);

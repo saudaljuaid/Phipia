@@ -267,3 +267,9 @@ The epoch codec follows Linux v6.12 ext4_encode_extra_time, including the signed
 32-bit base around 2038. Generic ext4plus callers without a transaction time
 retain their explicit timestamp behavior. The Duration API has no negative
 dates; pre-epoch read values are reported as zero, without rewriting raw fields.
+
+JBD2 revoke r_count is the used-byte end offset including the 16-byte header,
+as required by Linux v6.12 revoke.c/recovery.c. The inherited parser and initial
+serializer both incorrectly treated it as payload length; both are corrected.
+Independent e2fsprogs journal-only replay on disposable durability-cut images,
+followed by read-only full fsck, now supplements the Phipia replay tests.

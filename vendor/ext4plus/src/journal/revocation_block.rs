@@ -48,29 +48,26 @@ pub(super) fn read_revocation_block_table(
     // size will need to be conditionally set to either 4 or 8.
     const BLOCK_INDEX_SIZE_IN_BYTES: usize = 8;
 
-    // Skip past the block header bytes, and remove the trailing
-    // checksum bytes.
-    let data = &block[JournalBlockHeader::SIZE..
-               // OK to unwrap: minimum block length is 1024.
-               block.len().checked_sub(4).unwrap()];
-
-    // Get the size (in bytes) of the block-index array.
-    let num_bytes = usize_from_u32(read_u32be(data, 0));
+    const TABLE_OFFSET: usize = JournalBlockHeader::SIZE + size_of::<u32>();
+    if block.len() < TABLE_OFFSET + 4 {
+        return Err(CorruptKind::JournalRevocationBlockInvalidTableSize(block.len()).into());
+    }
+    // JBD2 r_count is the used byte length INCLUDING the 16-byte header.
+    let count = usize_from_u32(read_u32be(block, JournalBlockHeader::SIZE));
+    let num_bytes = count.checked_sub(TABLE_OFFSET).ok_or(
+        CorruptKind::JournalRevocationBlockInvalidTableSize(count))?;
 
     // Ensure that the table size is an even multiple of the index size.
     if num_bytes % BLOCK_INDEX_SIZE_IN_BYTES != 0 {
         return Err(CorruptKind::JournalRevocationBlockInvalidTableSize(
-            num_bytes,
+            count,
         )
         .into());
     }
 
-    // Skip past the size field.
-    let data = &data[size_of::<u32>()..];
-
     // Ensure that the table size fits within the block.
-    let mut data = data.get(..num_bytes).ok_or(
-        CorruptKind::JournalRevocationBlockInvalidTableSize(num_bytes),
+    let mut data = block[..block.len() - 4].get(TABLE_OFFSET..count).ok_or(
+        CorruptKind::JournalRevocationBlockInvalidTableSize(count),
     )?;
 
     // Read each entry and append to `table`.
@@ -122,8 +119,8 @@ mod tests {
         // Add header data (all zeros since only the length matters for this test).
         block.extend([0; JournalBlockHeader::SIZE]);
 
-        // Add size field (three 8-byte entries).
-        block.extend(24u32.to_be_bytes());
+        // Used bytes: 16-byte header plus three 8-byte entries.
+        block.extend(40u32.to_be_bytes());
 
         // Add three entries.
         block.extend(100u64.to_be_bytes());
@@ -170,11 +167,11 @@ mod tests {
         let mut block = create_test_revocation_block();
         block[JournalBlockHeader::SIZE
             ..JournalBlockHeader::SIZE + size_of::<u32>()]
-            .copy_from_slice(&1008u32.to_be_bytes());
+            .copy_from_slice(&1024u32.to_be_bytes());
         let mut table = Vec::new();
         assert_eq!(
             read_revocation_block_table(&block, &mut table).unwrap_err(),
-            CorruptKind::JournalRevocationBlockInvalidTableSize(1008)
+            CorruptKind::JournalRevocationBlockInvalidTableSize(1024)
         );
     }
 }

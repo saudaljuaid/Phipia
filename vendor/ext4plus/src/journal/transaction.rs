@@ -1304,6 +1304,7 @@ impl JournalTransaction {
             .revoked_blocks
             .len()
             .checked_mul(8)
+            .and_then(|bytes| bytes.checked_add(TABLE_OFFSET))
             .and_then(|bytes| u32::try_from(bytes).ok())
             .expect("bounded revocation table fits u32");
         write_u32be(&mut block, TABLE_BYTES_OFFSET, table_bytes);

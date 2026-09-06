@@ -588,6 +588,54 @@ fn debugfs(image: &std::path::Path, command: &str) {
 }
 
 #[test]
+fn e2fsprogs_independently_replays_phipia_truncate_at_every_barrier() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/linux-replay";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, name, 0, &vec![0x69; 12288]).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let mut prefix = DEVICE.with_borrow_mut(|device| {
+        device.events.clear();
+        device.bytes.clone()
+    });
+    ext4::truncate_probe(&mut mounted, name, 101).unwrap();
+    let events = DEVICE.with_borrow(|device| device.events.clone());
+    drop(mounted);
+    let mut committed = false;
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            Event::Write(start, bytes) => {
+                let start = *start as usize;
+                prefix[start..start + bytes.len()].copy_from_slice(bytes);
+            }
+            Event::Flush(boundary) => {
+                committed |= *boundary == 3;
+                let image = path.with_extension(format!("coordinator-linux-replay-{index}.img"));
+                std::fs::write(&image, &prefix).unwrap();
+                // Replay only on a disposable cut image. No filesystem repair:
+                // the independent read-only full fsck below must pass afterward.
+                let result = std::process::Command::new("e2fsck")
+                    .args(["-E", "journal_only", "-p"]).arg(&image).output().unwrap();
+                let log = format!("{}\n{}", String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr));
+                println!("e2fsprogs journal-only replay boundary {index}:\n{log}");
+                std::fs::write(image.with_extension("replay.txt"), &log).unwrap();
+                assert!(matches!(result.status.code(), Some(0 | 1)), "{log}");
+                let mut recovered = mount_fixture(&image);
+                assert_eq!(ext4::stat(&recovered, name).unwrap().size, if committed { 101 } else { 12288 });
+                let mut bytes = vec![0; if committed { 101 } else { 12288 }];
+                read_exact(&recovered, name, &mut bytes);
+                assert!(bytes.iter().all(|byte| *byte == 0x69));
+                ext4::sync(&mut recovered).unwrap();
+                ext4::unmount(&recovered).unwrap();
+                fsck(&path, &format!("coordinator-linux-replayed-{index}"));
+            }
+        }
+    }
+}
+
+#[test]
 fn external_xattr_checksums_shared_release_and_final_free() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
