@@ -10,6 +10,26 @@ static unsigned int stats;
 static enum phipfs_status mutation_result = PHIPFS_STATUS_IO;
 static const char *expected_path = "parent/file";
 static bool stat_succeeds;
+static unsigned live_backend_handles;
+
+static enum phipfs_status replaced_open(enum phipfs_volume volume, const char *path,
+    enum phipfs_access access, phipfs_handle *handle, struct phipfs_stat *stat)
+{
+    assert(volume == PHIPFS_VOLUME_DATA && strcmp(path, expected_path) == 0);
+    assert(access == PHIPFS_ACCESS_READ);
+    *handle = 77U;
+    memset(stat, 0, sizeof(*stat));
+    stat->object_id = 500U; /* The name was replaced after the preliminary stat. */
+    ++live_backend_handles;
+    return PHIPFS_STATUS_OK;
+}
+
+static enum phipfs_status replaced_close(phipfs_handle handle)
+{
+    assert(handle == 77U && live_backend_handles == 1U);
+    --live_backend_handles;
+    return PHIPFS_STATUS_OK;
+}
 
 static enum phipfs_status hidden_stat(enum phipfs_volume volume,
     const char *path, struct phipfs_stat *result)
@@ -104,6 +124,33 @@ int main(void)
     assert(phipfs_create(PHIPFS_VOLUME_DATA, expected_path) == PHIPFS_STATUS_ACCESS);
     expected_path = "parent/caf\xc3\xa9";
     assert(phipfs_create(PHIPFS_VOLUME_DATA, expected_path) == PHIPFS_STATUS_OK);
+    backend.open_with_stat = replaced_open;
+    backend.close = replaced_close;
+    expected_path = "parent/file";
+    size_t old_vnode;
+    memset(&metadata, 0, sizeof(metadata));
+    metadata.object_id = 101U;
+    assert(vnode_retain(PHIPFS_VOLUME_DATA, expected_path, &metadata, &old_vnode) == PHIPFS_STATUS_OK);
+    phipfs_handle opened;
+    assert(phipfs_open(PHIPFS_VOLUME_DATA, expected_path, PHIPFS_ACCESS_READ, &opened) == PHIPFS_STATUS_OK);
+    struct vfs_open_file_state *file;
+    assert(open_file_state(opened, &file) == PHIPFS_STATUS_OK);
+    assert(vnodes[file->vnode_index].stat.object_id == 500U);
+    assert(vnodes[old_vnode].stat.object_id == 101U && vnodes[old_vnode].references == 1U);
+    assert(phipfs_close(opened) == PHIPFS_STATUS_OK && live_backend_handles == 0U);
+    /* Exhaustion after backend open must release that handle, preserving the
+     * already-held old inode and every unrelated vnode reference. */
+    size_t retained[VFS_MAX_VNODES - 1U];
+    for (size_t index = 0U; index < VFS_MAX_VNODES - 1U; ++index) {
+        metadata.object_id = 1000U + index;
+        assert(vnode_retain(PHIPFS_VOLUME_DATA, "unrelated", &metadata, &retained[index]) == PHIPFS_STATUS_OK);
+    }
+    assert(phipfs_open(PHIPFS_VOLUME_DATA, expected_path, PHIPFS_ACCESS_READ, &opened) == PHIPFS_STATUS_BUSY);
+    assert(opened == 0U && live_backend_handles == 0U);
+    assert(vnodes[old_vnode].references == 1U);
+    for (size_t index = 0U; index < VFS_MAX_VNODES - 1U; ++index)
+        vnode_release(retained[index], vnodes[retained[index]].generation);
+    vnode_release(old_vnode, vnodes[old_vnode].generation);
     assert(mounts[PHIPFS_VOLUME_DATA].references == 0U);
     for (size_t index = 0U; index < VFS_MAX_VNODES; ++index) assert(!vnodes[index].active);
     puts("VFS journal mutation retries, backend errors, path bounds and vnode census: PASS");

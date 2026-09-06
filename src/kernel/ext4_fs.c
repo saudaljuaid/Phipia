@@ -1037,12 +1037,19 @@ bool ext4_backend_recovery_report(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
     const char *path, enum phipfs_access access, phipfs_handle *handle)
 {
+    struct phipfs_stat stat;
+    return ext4_backend_open_with_stat(volume, path, access, handle, &stat);
+}
+
+enum phipfs_status ext4_backend_open_with_stat(enum phipfs_volume volume,
+    const char *path, enum phipfs_access access, phipfs_handle *handle, struct phipfs_stat *stat)
+{
     struct phipia_ext4_metadata metadata;
     const size_t length = path_length(path);
     phipfs_handle opened = 0U;
     enum phipfs_status status;
 
-    if (handle == NULL || !valid_volume(volume) || length == 0U || length >= PHIPFS_MAX_PATH ||
+    if (handle == NULL || stat == NULL || !valid_volume(volume) || length == 0U || length >= PHIPFS_MAX_PATH ||
         (access != PHIPFS_ACCESS_READ && access != PHIPFS_ACCESS_WRITE &&
             access != PHIPFS_ACCESS_READ_WRITE)) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
@@ -1069,6 +1076,7 @@ enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
         opened = 0U;
     }
     *handle = opened;
+    if (status == PHIPFS_STATUS_OK) fill_stat(&metadata, stat);
     return status;
 }
 

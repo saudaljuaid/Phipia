@@ -159,6 +159,9 @@ enum phipfs_status ext4_backend_seek(phipfs_handle handle, int64_t offset,
     enum phipfs_seek_origin origin, uint64_t *position);
 enum phipfs_status ext4_backend_stat_path(enum phipfs_volume volume,
     const char *path, struct phipfs_stat *stat);
+enum phipfs_status ext4_backend_open_with_stat(enum phipfs_volume volume,
+    const char *path, enum phipfs_access access, phipfs_handle *handle,
+    struct phipfs_stat *stat);
 enum phipfs_status ext4_backend_list(enum phipfs_volume volume,
     const char *path, struct phipfs_list_entry *entries, size_t capacity,
     size_t *entry_count);

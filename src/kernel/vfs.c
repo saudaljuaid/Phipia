@@ -105,6 +105,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .drive = ext4_backend_drive,
     .completion_count = ext4_backend_completion_count,
     .open = ext4_backend_open,
+    .open_with_stat = ext4_backend_open_with_stat,
     .close = ext4_backend_close,
     .read = ext4_backend_read,
     .pread = ext4_backend_pread,
@@ -737,11 +738,26 @@ enum phipfs_status phipfs_open(
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return PHIPFS_STATUS_NO_HANDLES;
     }
-    status = mounts[volume].backend->open(
-        volume, canonical, access, &backend_handle);
+    struct phipfs_stat opened_stat;
+    const struct vfs_backend_ops *backend = mounts[volume].backend;
+    if (backend->open_with_stat != NULL) {
+        status = backend->open_with_stat(volume, canonical, access, &backend_handle, &opened_stat);
+    } else {
+        status = backend->open(volume, canonical, access, &backend_handle);
+    }
     if (status != PHIPFS_STATUS_OK) {
         vnode_release(vnode_index, vnodes[vnode_index].generation);
         return status;
+    }
+    if (backend->open_with_stat != NULL) {
+        /* A rename/unlink/recreate may occur between resolve_path and open.
+         * Bind the VFS description to the inode actually held by the backend. */
+        vnode_release(vnode_index, vnodes[vnode_index].generation);
+        status = vnode_retain(volume, canonical, &opened_stat, &vnode_index);
+        if (status != PHIPFS_STATUS_OK) {
+            (void)backend->close(backend_handle);
+            return status;
+        }
     }
     zero_bytes(&open_files[slot], sizeof(open_files[slot]));
     open_files[slot].generation = next_generation(

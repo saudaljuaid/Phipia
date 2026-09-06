@@ -68,6 +68,9 @@ struct vfs_backend_ops {
         const char *name, const uint8_t *value, size_t length, bool remove);
     enum phipfs_status (*get_xattr)(enum phipfs_volume volume, const char *path,
         const char *name, uint8_t *output, size_t capacity, size_t *length);
+    /* Metadata and handle must come from the same protected inode lookup. */
+    enum phipfs_status (*open_with_stat)(enum phipfs_volume volume, const char *path,
+        enum phipfs_access access, phipfs_handle *handle, struct phipfs_stat *stat);
 };
 
 #endif
