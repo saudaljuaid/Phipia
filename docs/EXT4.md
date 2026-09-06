@@ -18,7 +18,8 @@ The ext4 backend owns one opaque Rust `Ext4` object per admitted volume and
 generation-authenticated C file/directory cookies. It implements root and nested
 lookup, open, read, offset-preserving pread, 64-bit seek/stat, and directory
 enumeration, journaled regular-file writes and truncation, file and directory
-creation/removal, hard links, and same-parent no-overwrite rename. Hard-linked
+creation/removal, hard links, regular-file no-overwrite rename across parents,
+and same-parent directory rename. Hard-linked
 paths report the same inode identity to the vnode table. Symlinks are resolved
 by ext4plus for lookup and open.
 

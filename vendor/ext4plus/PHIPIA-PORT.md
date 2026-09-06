@@ -130,8 +130,13 @@ Removal validates the complete single-block directory before changing the
 stage, updates the parent link count, frees the inode and data block, and
 returns that physical block so the platform adapter can require its exact JBD2
 revocation. A same-parent rename primitive adds the destination and removes the
-source without changing inode or parent link counts; it refuses replacement
-and leaves cross-parent moves to a future, separately proven adapter.
+source without changing inode or parent link counts; it refuses replacement.
+The Rust coordinator also stages cross-parent regular-file moves by linking
+the destination before unlinking the source in the same transaction. Parent
+inode identity selects the same-parent primitive even when path strings differ
+through symlinks. Directory moves across parents remain refused. Real-fixture
+tests exercise identity, hard-link counts, destination refusal rollback, and
+every storage-operation retry before admitting this extension as proven.
 The stage can also clone an input transaction into one atomic classified
 snapshot: each explicitly named ordered-data block must be staged exactly once,
 derived revocations are added, every remaining image becomes journaled

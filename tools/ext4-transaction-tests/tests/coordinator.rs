@@ -254,7 +254,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..3 {
+    for case in 0..4 {
         let mut mounted = mount_fixture(&path);
         if case != 0 {
             ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
@@ -274,7 +274,8 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             0 => ext4::create_file_probe(mounted, b"system/retry-test", 0o600),
             1 => ext4::transaction_probe(mounted, b"system/retry-test", 4095, b"cross-block")
                 .map(|_| ()),
-            _ => ext4::truncate_probe(mounted, b"system/retry-test", 101),
+            2 => ext4::truncate_probe(mounted, b"system/retry-test", 101),
+            _ => ext4::rename_probe(mounted, b"system/retry-test", b"user/retry-test"),
         };
         mutate(&mut mounted).unwrap();
         let expected = DEVICE.with_borrow(|device| device.events.clone());
@@ -324,7 +325,8 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                assert_eq!(ext4::stat(&mounted, b"system/retry-test").unwrap().links, 1);
+                let name: &[u8] = if case == 3 { b"user/retry-test" } else { b"system/retry-test" };
+                assert_eq!(ext4::stat(&mounted, name).unwrap().links, 1);
                 ext4::sync(&mut mounted).unwrap();
                 ext4::unmount(&mounted).unwrap();
                 DEVICE.with_borrow(|device| {
@@ -513,4 +515,36 @@ fn sync_finishes_failed_marker_activation_without_starting_the_mutation() {
         }
     }
     fsck(&path, "coordinator-marker-sync");
+}
+
+#[test]
+fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    ext4::create_directory_probe(&mut mounted, b"system/move-from").unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/move-to").unwrap();
+    let source = b"system/move-from/source";
+    let target = b"system/move-to/target";
+    ext4::create_file_probe(&mut mounted, source, 0o640).unwrap();
+    ext4::transaction_probe(&mut mounted, source, 4095, b"across").unwrap();
+    ext4::link_file_probe(&mut mounted, source, b"system/move-from/alias").unwrap();
+    let identity = ext4::stat(&mounted, source).unwrap();
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::rename_probe(&mut mounted, source, target).unwrap();
+    assert_eq!(ext4::stat(&mounted, source), Err(Status::NotFound));
+    assert_eq!(ext4::stat(&mounted, target), Ok(identity));
+    assert_eq!(ext4::stat(&mounted, b"system/move-from/alias"), Ok(identity));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    let mut content = vec![0xa5; 4101];
+    read_exact(&mounted, target, &mut content);
+    assert!(content[..4095].iter().all(|byte| *byte == 0));
+    assert_eq!(&content[4095..], b"across");
+    ext4::create_file_probe(&mut mounted, source, 0o600).unwrap();
+    let other = ext4::stat(&mounted, source).unwrap();
+    assert_eq!(ext4::rename_probe(&mut mounted, source, target), Err(Status::Exists));
+    assert_eq!(ext4::stat(&mounted, source), Ok(other));
+    assert_eq!(ext4::stat(&mounted, target), Ok(identity));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-move");
 }

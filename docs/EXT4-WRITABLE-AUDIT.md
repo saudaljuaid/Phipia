@@ -30,7 +30,7 @@ is `include/phipia/vfs_backend.h`. For ext4, its table selects
 | rmdir | `ext4_backend_rmdir` / `remove_directory_probe` | `Dir::remove_empty_directory`, required freed-block revoke |
 | link | `ext4_backend_link` / `link_file_probe` | `Dir::link`, regular inode link count |
 | unlink | `ext4_backend_unlink` / `unlink_file_probe` | `Dir::unlink`, delete inode at last link |
-| rename | `ext4_backend_rename` / `rename_probe` | `Dir::rename_entry`, same parent, destination must be absent |
+| rename | `ext4_backend_rename` / `rename_probe` | same-parent `Dir::rename_entry`; cross-parent files use staged link/unlink; destination must be absent |
 | sync | `ext4_backend_sync` / `sync`, `prepare_unmount` | resume pending mutation, retained clean-marker plan, clean reload |
 | close | `ext4_backend_close` | clear C cookie; no storage sync |
 | unmount | `ext4_backend_unmount` / `prepare_unmount`, `unmount` | finish pending plan, clean-state census, release Rust mount after lease close |
@@ -82,7 +82,7 @@ are test locations, not a claim that this audit head has passed them.
 | hard link | Implemented, bounded | regular-file path; same inode identity; bounded u16 links and transaction size |
 | symlink / readlink | Refused through VFS | existing symlinks followed and mount-validated; no creation/readlink method in backend contract |
 | unlink | Partial | live inode handles return BUSY; no deferred last-close deletion/orphan lifecycle |
-| rename | Partial | same-parent no-overwrite only; open source inode BUSY; cross-parent/replace absent |
+| rename | Partial | no-overwrite files cross parents; directories same-parent; open source inode BUSY; replacement and cross-parent directories absent |
 | stat | Partial | size, identity, uid/gid/mode/links; no timestamps/xattrs/sparse map in public structure |
 | directory iteration | Partial | bounded ordinal rescan; quadratic; no stable mutation cookies or snapshot semantics |
 | sync | Implemented, bounded | finish retained plan and durably clean marker; clean view reload required |

@@ -1392,7 +1392,8 @@ pub(crate) fn remove_directory_probe(
     }
 }
 
-/// Rename one regular file or directory within its parent through JBD2.
+/// Rename without replacement through JBD2. Regular files may cross parents;
+/// directory moves retain the same-parent restriction until `..` is coordinated.
 pub(crate) fn rename_probe(
     mounted: &mut Mounted,
     source: &[u8],
@@ -1421,28 +1422,40 @@ pub(crate) fn rename_probe(
     let (source_parent, source_name) = parent_and_name(&source_absolute)?;
     let (destination_parent, destination_name) =
         parent_and_name(&destination_absolute)?;
-    if source_parent != destination_parent {
-        discard_uncommitted_stage(mounted, true)?;
+    let filesystem = mounted.filesystem()?;
+    let mut inode = filesystem
+        .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)
+        .map_err(map_error)?;
+    if !inode.file_type().is_regular_file() && !inode.file_type().is_dir() {
+        return Err(Status::Special);
+    }
+    let source_parent_inode = filesystem
+        .path_to_inode(source_parent, FollowSymlinks::All).map_err(map_error)?;
+    let destination_parent_inode = filesystem
+        .path_to_inode(destination_parent, FollowSymlinks::All).map_err(map_error)?;
+    // Different path strings can resolve to the same directory through a
+    // symlink. Use one directory object in that case so inode size updates
+    // cannot be lost between two independently cached parent inodes.
+    let same_parent = source_parent_inode.index == destination_parent_inode.index;
+    if !same_parent && inode.file_type().is_dir() {
         return Err(Status::Invalid);
     }
-    let filesystem = mounted.filesystem()?;
     let mutation = (|| {
-        let inode = filesystem
-            .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
-        if !inode.file_type().is_regular_file() && !inode.file_type().is_dir() {
-            return Err(Ext4Error::IsASpecialFile);
+        let mut source_directory = Dir::open_inode(filesystem, source_parent_inode)?;
+        if same_parent {
+            return source_directory.rename_entry(source_name, destination_name, inode);
         }
-        let parent_inode = filesystem
-            .path_to_inode(source_parent, FollowSymlinks::All)?;
-        let mut parent_directory =
-            Dir::open_inode(filesystem, parent_inode)?;
-        parent_directory.rename_entry(source_name, destination_name, inode)
+        let mut destination_directory = Dir::open_inode(filesystem, destination_parent_inode)?;
+        // Both changes remain in one stage. Link-before-unlink keeps the inode
+        // allocated; its temporary extra link never reaches home metadata.
+        destination_directory.link(destination_name, &mut inode)?;
+        source_directory.unlink(source_name, inode).map(|_| ())
     })();
     if let Err(error) = mutation {
         discard_uncommitted_stage(mounted, true)?;
         return Err(map_error(error));
     }
-    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 0 {
+    if mounted.stage.is_empty() {
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }
