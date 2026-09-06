@@ -19,7 +19,13 @@ generation-authenticated C file/directory cookies. It implements root and nested
 lookup, open, read, offset-preserving pread, 64-bit seek/stat, and directory
 enumeration, journaled regular-file writes and truncation, file and directory
 creation/removal, hard links, regular-file no-overwrite rename across parents,
-and same-parent directory rename. Hard-linked
+and non-indexed directory rename across parents. Directory moves journal the
+`..` entry and both parent link counts with the namespace changes; ancestry is
+checked by inode identity, including symlink aliases, with a 1,024-ancestor
+refusal bound. Moving an indexed directory across parents remains refused.
+The C backend currently requires no open handles on the volume for directory
+rename because handles still re-resolve paths; supporting rename while open
+requires further handle work. Hard-linked
 paths report the same inode identity to the vnode table. Symlinks are resolved
 by ext4plus for lookup and open.
 

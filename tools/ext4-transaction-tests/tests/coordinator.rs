@@ -247,10 +247,14 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..4 {
+    for case in 0..5 {
         let mut mounted = mount_fixture(&path);
         if case != 0 {
-            ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            if case == 4 {
+                ext4::create_directory_probe(&mut mounted, b"system/retry-test").unwrap();
+            } else {
+                ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            }
             if case == 2 {
                 ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x5a; 8192])
                     .unwrap();
@@ -318,8 +322,8 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                     2
                 };
                 assert_eq!(retry, expected[phase_start..], "retry event {failed_at}");
-                let name: &[u8] = if case == 3 { b"data/user/retry-test" } else { b"system/retry-test" };
-                assert_eq!(ext4::stat(&mounted, name).unwrap().links, 1);
+                let name: &[u8] = if case >= 3 { b"data/user/retry-test" } else { b"system/retry-test" };
+                assert_eq!(ext4::stat(&mounted, name).unwrap().links, if case == 4 { 2 } else { 1 });
                 ext4::sync(&mut mounted).unwrap();
                 ext4::unmount(&mounted).unwrap();
                 DEVICE.with_borrow(|device| {
@@ -566,6 +570,81 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-move-alias");
+}
+
+#[test]
+fn directory_move_updates_parents_and_rejects_descendant_cycles() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let source = b"system/tree";
+    let destination = b"data/user/tree";
+    ext4::create_directory_probe(&mut mounted, source).unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/tree/child").unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/tree/child/file", 0o640).unwrap();
+    ext4::transaction_probe(&mut mounted, b"system/tree/child/file", 0, b"preserved").unwrap();
+    let identity = ext4::stat(&mounted, source).unwrap();
+    let old_parent = ext4::stat(&mounted, b"system").unwrap();
+    let new_parent = ext4::stat(&mounted, b"data/user").unwrap();
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let initial = DEVICE.with_borrow_mut(|device| {
+        device.events.clear();
+        device.bytes.clone()
+    });
+    assert_eq!(ext4::rename_probe(&mut mounted, source,
+        b"system/tree/child/cycle"), Err(Status::Invalid));
+    assert_eq!(ext4::stat(&mounted, source), Ok(identity));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    // Remount so the successful trace includes marker activation from clean.
+    drop(mounted);
+    let mut mounted = mount_bytes(initial.clone());
+    ext4::rename_probe(&mut mounted, source, destination).unwrap();
+    let trace = DEVICE.with_borrow(|device| device.events.clone());
+    assert_eq!(ext4::stat(&mounted, source), Err(Status::NotFound));
+    assert_eq!(ext4::stat(&mounted, destination), Ok(identity));
+    assert_eq!(ext4::stat(&mounted, b"system").unwrap().links, old_parent.links - 1);
+    assert_eq!(ext4::stat(&mounted, b"data/user").unwrap().links, new_parent.links + 1);
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    drop(mounted);
+    // Recover each acknowledged durable prefix. Before commit only the old
+    // tree exists; after commit the new tree includes coherent parent links.
+    let mut prefix = initial;
+    let mut committed = false;
+    for (index, event) in trace.iter().enumerate() {
+        match event {
+            Event::Write(start, bytes) => {
+                let start = *start as usize;
+                prefix[start..start + bytes.len()].copy_from_slice(bytes);
+                continue;
+            }
+            Event::Flush(3) => committed = true,
+            Event::Flush(_) => {}
+        }
+        let mounted = mount_bytes(prefix.clone());
+        let (present, absent, content): (&[u8], &[u8], &[u8]) = if committed {
+            (destination, source, b"data/user/tree/child/file")
+        } else {
+            (source, destination, b"system/tree/child/file")
+        };
+        assert_eq!(ext4::stat(&mounted, present), Ok(identity));
+        assert_eq!(ext4::stat(&mounted, absent), Err(Status::NotFound));
+        let mut bytes = [0; 9];
+        read_exact(&mounted, content, &mut bytes);
+        assert_eq!(&bytes, b"preserved");
+        ext4::unmount(&mounted).unwrap();
+        fsck(&path, &format!("coordinator-directory-move-cut-{index}"));
+    }
+    let image = path.with_extension("coordinator-directory-alias.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    debugfs(&image, "symlink /system/tree-alias /data/user/tree/child");
+    let mut mounted = mount_fixture(&image);
+    assert_eq!(ext4::rename_probe(&mut mounted, destination,
+        b"system/tree-alias/cycle"), Err(Status::Invalid));
+    assert_eq!(ext4::rename_probe(&mut mounted, destination,
+        b"data/user/tree/child/existing"), Err(Status::Invalid));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-directory-cycle");
 }
 
 #[test]

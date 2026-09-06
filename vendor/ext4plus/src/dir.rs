@@ -762,6 +762,109 @@ impl Dir {
         remove_dir_entry(&self.fs, &mut self.inode, source).await
     }
 
+    /// Move a non-indexed directory to a different parent in the same filesystem.
+    /// The caller must stage all writes atomically and discard the stage on error.
+    #[maybe_async::maybe_async]
+    pub async fn move_directory(
+        &mut self,
+        source: DirEntryName<'_>,
+        destination_parent: &mut Self,
+        destination: DirEntryName<'_>,
+        inode: Inode,
+    ) -> Result<(), Ext4Error> {
+        if source.0 == b"." || source.0 == b".."
+            || destination.0 == b"." || destination.0 == b".." {
+            return Err(Ext4Error::DotEntry);
+        }
+        if !inode.file_type().is_dir() {
+            return Err(Ext4Error::NotADirectory);
+        }
+        if self.inode.index == destination_parent.inode.index {
+            return self.rename_entry(source, destination, inode).await;
+        }
+        // Indexed-root checksum layout needs separate admission and fixtures.
+        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || destination_parent.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || inode.flags().intersects(InodeFlags::DIRECTORY_HTREE
+            | InodeFlags::DIRECTORY_ENCRYPTED | InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
+        if self.get_entry(source).await?.index != inode.index {
+            return Err(dir_entry_error(self.inode.index));
+        }
+        match destination_parent.get_entry(destination).await {
+            Ok(_) => return Err(Ext4Error::AlreadyExists),
+            Err(Ext4Error::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+        let dotdot = DirEntryName::try_from("..")
+            .map_err(|_| Ext4Error::MalformedPath)?;
+        // Follow inode identities, including destination paths reached through
+        // symlinks. Bound hostile ancestry and reject cycles before staging.
+        let mut ancestor = destination_parent.inode.clone();
+        let mut seen = Vec::new();
+        loop {
+            if ancestor.index == inode.index || seen.contains(&ancestor.index)
+                || seen.len() == 1024 {
+                return Err(Ext4Error::MalformedPath);
+            }
+            seen.push(ancestor.index);
+            let parent = get_dir_entry_inode_by_name(&self.fs, &ancestor, dotdot).await?;
+            if parent.index == ancestor.index {
+                if ancestor.index.get() != 2 {
+                    return Err(dir_entry_error(ancestor.index));
+                }
+                break;
+            }
+            if !parent.file_type().is_dir() {
+                return Err(dir_entry_error(parent.index));
+            }
+            ancestor = parent;
+        }
+        let source_links = self.inode.links_count().checked_sub(1)
+            .filter(|links| *links >= 2)
+            .ok_or_else(|| dir_entry_error(self.inode.index))?;
+        let destination_links = destination_parent.inode.links_count()
+            .checked_add(1).ok_or(Ext4Error::Readonly)?;
+        let mut blocks = FileBlocks::new(self.fs.clone(), &inode)?;
+        let block_index = blocks.next().await
+            .ok_or_else(|| dir_entry_error(inode.index))??;
+        if block_index == 0 {
+            return Err(dir_entry_error(inode.index));
+        }
+        let descriptor = DirBlock {
+            fs: &self.fs,
+            block_index,
+            is_first: true,
+            dir_inode: inode.index,
+            has_htree: false,
+            checksum_base: inode.checksum_base().clone(),
+        };
+        let mut block = vec![0; self.fs.0.superblock.block_size().to_usize()];
+        descriptor.read(&mut block).await?;
+        // Linux's dot and dotdot records start at 0 and 12 in a leaf root.
+        if read_u32le(&block, 0) != inode.index.get()
+            || read_u16le(&block, 4) != 12 || block[6] != 1 || block[7] != 2 || block[8] != b'.'
+            || read_u32le(&block, 12) != self.inode.index.get()
+            || read_u16le(&block, 16) < 12
+            || usize::from(read_u16le(&block, 16)) > block.len() - 12
+            || block[18] != 2 || block[19] != 2 || &block[20..22] != b".." {
+            return Err(dir_entry_error(inode.index));
+        }
+        write_u32le(&mut block, 12, destination_parent.inode.index.get());
+        descriptor.update_checksum(&mut block)?;
+
+        add_dir_entry(&self.fs, &mut destination_parent.inode, destination,
+            inode.index, inode.file_type()).await?;
+        remove_dir_entry(&self.fs, &mut self.inode, source).await?;
+        self.fs.write_to_block(block_index, 0, &block).await?;
+        self.inode.set_links_count(source_links);
+        self.inode.write(&self.fs).await?;
+        destination_parent.inode.set_links_count(destination_links);
+        destination_parent.inode.write(&self.fs).await?;
+        Ok(())
+    }
+
     /// Remove a directory entry at `path`.
     ///
     /// This is similar to `unlink(2)` for non-directories.

@@ -13,6 +13,8 @@ static unsigned refusals;
 static bool pending;
 static uint64_t disk_size = 8192U;
 static int32_t permanent_status = PHIPIA_EXT4_STATUS_OK;
+static uint8_t file_type = PHIPIA_EXT4_FILE_REGULAR;
+static unsigned renames;
 
 enum nvme_status nvme_volume_open(struct nvme_volume_session *session,
     uint32_t controller_index, bool writable)
@@ -67,7 +69,17 @@ int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     memset(metadata, 0, sizeof(*metadata));
     metadata->inode = 42U;
     metadata->size = disk_size;
-    metadata->file_type = PHIPIA_EXT4_FILE_REGULAR;
+    metadata->file_type = file_type;
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_rename_probe(uintptr_t mounted, const uint8_t *source,
+    size_t source_bytes, const uint8_t *destination, size_t destination_bytes)
+{
+    assert(mounted == 1U && source_bytes == 4U && memcmp(source, "file", 4U) == 0);
+    assert(destination_bytes == 5U && memcmp(destination, "moved", 5U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    ++renames;
     return PHIPIA_EXT4_STATUS_OK;
 }
 
@@ -103,7 +115,16 @@ int main(void)
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);
+    file_type = PHIPIA_EXT4_FILE_DIRECTORY;
+    /* An unrelated spelling can alias a descendant of the directory. */
+    assert(allocate_handle(PHIPFS_VOLUME_DATA, "alias/child", 43U, 9U,
+        PHIPFS_ACCESS_READ, false, &first) == PHIPFS_STATUS_OK);
+    assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_BUSY);
+    assert(renames == 0U);
+    assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
+    assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
+    assert(renames == 1U);
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
-    puts("ext4 VFS truncate retries, shared handle sizes, errors and leases: PASS");
+    puts("ext4 VFS truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;
 }

@@ -212,6 +212,15 @@ fixture/e2fsck execution is required evidence for these additions. This follows
 Linux v6.12 `fs/ext4/inode.c:ext4_block_truncate_page()`; it does not establish
 atomicity for general ordered-data overwrites.
 
+`Dir::move_directory` stages cross-parent non-indexed directory moves with
+validated dot/dotdot records, recomputed directory checksum, and both parent
+link counts. The moved inode's identity and link count remain unchanged.
+Descendant cycles are checked by inode ancestry, including aliased destination
+paths. Indexed moved directories remain refused. The coordinator's real-fixture
+suite exercises every storage refusal and acknowledged durability prefix;
+Linux e2fsck is required to validate this path. The metadata set follows Linux
+v6.12 `fs/ext4/namei.c` directory rename; no JBD2 ordering changes are made.
+
 Phipia-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.

@@ -1465,8 +1465,8 @@ pub(crate) fn remove_directory_probe(
     }
 }
 
-/// Rename without replacement through JBD2. Regular files may cross parents;
-/// directory moves retain the same-parent restriction until `..` is coordinated.
+/// Rename without replacement through JBD2, including non-indexed directories
+/// across parents with their dotdot entry and parent link counts in one stage.
 pub(crate) fn rename_probe(
     mounted: &mut Mounted,
     source: &[u8],
@@ -1510,15 +1510,16 @@ pub(crate) fn rename_probe(
     // symlink. Use one directory object in that case so inode size updates
     // cannot be lost between two independently cached parent inodes.
     let same_parent = source_parent_inode.index == destination_parent_inode.index;
-    if !same_parent && inode.file_type().is_dir() {
-        return Err(Status::Invalid);
-    }
     let mutation = (|| {
         let mut source_directory = Dir::open_inode(filesystem, source_parent_inode)?;
         if same_parent {
             return source_directory.rename_entry(source_name, destination_name, inode);
         }
         let mut destination_directory = Dir::open_inode(filesystem, destination_parent_inode)?;
+        if inode.file_type().is_dir() {
+            return source_directory.move_directory(source_name,
+                &mut destination_directory, destination_name, inode);
+        }
         // Both changes remain in one stage. Link-before-unlink keeps the inode
         // allocated; its temporary extra link never reaches home metadata.
         destination_directory.link(destination_name, &mut inode)?;

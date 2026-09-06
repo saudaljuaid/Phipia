@@ -674,6 +674,17 @@ static bool inode_is_open(enum phipfs_volume volume, uint64_t inode)
     return false;
 }
 
+static bool volume_has_open_handles(enum phipfs_volume volume)
+{
+    for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+        if (ext4_handles[index].active && ext4_handles[index].volume == volume &&
+            ext4_handles[index].mount_generation == ext4_mounts[volume].generation) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ext4_backend_initialize(void)
 {
     zero_bytes(ext4_mounts, sizeof(ext4_mounts));
@@ -1459,7 +1470,12 @@ enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    if (inode_is_open(volume, metadata.inode)) {
+    /* Handles currently re-resolve paths. A directory move can invalidate a
+     * descendant reached through an alias, so require a quiescent volume until
+     * handles retain inode identity independently of their original path. */
+    if (inode_is_open(volume, metadata.inode) ||
+        (metadata.file_type == PHIPIA_EXT4_FILE_DIRECTORY &&
+            volume_has_open_handles(volume))) {
         return PHIPFS_STATUS_BUSY;
     }
     return ext4_backend_rename_probe(volume, source, destination);
