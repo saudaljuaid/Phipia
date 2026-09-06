@@ -14,9 +14,9 @@ use ext4plus::error::Ext4Error;
 use ext4plus::inode::{Inode, InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::{Path, PathBuf};
 use ext4plus::{
-    DirEntryName, Ext4, Ext4Read, FileType, FilesystemSuperblockCheckpoint,
+    DirEntryName, Ext4, Ext4Read, FileType, FilesystemSuperblockCheckpoint, FilesystemSuperblockImage,
     FollowSymlinks, JOURNAL_BLOCK_BYTES, JournalCommitOperation,
-    JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
+    JournalBlockImage, JournalExecutionError, JournalFlush, JournalInodeMap, JournalInodeMapError,
     JournalMutationStage, JournalPreparedTransaction, JournalRing, JournalStorage,
     execute_commit_operations, load_journal_inode_map, recover_committed_ring,
 };
@@ -134,6 +134,7 @@ enum PendingMutationKind {
     Truncate,
     CreateFile,
     UnlinkFile,
+    FinalizeOrphan,
     LinkFile,
     CreateDirectory,
     RemoveDirectory,
@@ -206,6 +207,35 @@ impl Ext4Read for PhipiaReader {
 
 struct PhipiaJournalStorage {
     context: usize,
+}
+
+/// Read-only post-replay view used to validate orphan cleanup before any home
+/// write. Clearing recovery here only disables upstream's second replay; this
+/// image is never sent to the platform executor.
+struct RecoveryValidationReader {
+    context: usize,
+    images: Vec<JournalBlockImage>,
+    superblock: FilesystemSuperblockImage,
+}
+
+impl Ext4Read for RecoveryValidationReader {
+    fn read(&self, start: u64, destination: &mut [u8])
+        -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        PhipiaReader { context: self.context }.read(start, destination)?;
+        let end = start.checked_add(destination.len() as u64)
+            .ok_or_else(|| Box::new(BlockReadError) as Box<dyn Error + Send + Sync>)?;
+        let mut overlay = |offset: u64, bytes: &[u8]| {
+            let first = start.max(offset);
+            let last = end.min(offset + bytes.len() as u64);
+            if first < last {
+                destination[(first - start) as usize..(last - start) as usize]
+                    .copy_from_slice(&bytes[(first - offset) as usize..(last - offset) as usize]);
+            }
+        };
+        for image in &self.images { overlay(image.block_index() * BLOCK_BYTES, image.bytes()); }
+        overlay(SUPERBLOCK_START, self.superblock.bytes());
+        Ok(())
+    }
 }
 
 impl JournalStorage for PhipiaJournalStorage {
@@ -350,11 +380,9 @@ fn validate_profile(context: usize, media_bytes: u64) -> Result<u64, Status> {
     {
         return Err(Status::Invalid);
     }
-    // Linux's legacy orphan chain requires inode deletion/truncate recovery in
-    // addition to JBD2 replay. Never clear needs_recovery on such media until
-    // that cleanup is implemented and tested (fs/ext4/orphan.c).
-    if read_u32(&superblock, 0xe8) != Some(0) {
-        return Err(Status::ReadOnly);
+    let orphan = read_u32(&superblock, 0xe8).ok_or(Status::Invalid)?;
+    if orphan != 0 && (orphan < 11 || orphan > inodes || incompat & INCOMPAT_RECOVERY_FEATURE == 0) {
+        return Err(Status::Invalid);
     }
     Ok(image_bytes)
 }
@@ -528,6 +556,18 @@ fn recover_dirty_journal(
     let operations = recovery
         .checkpoint_plan(journal_superblock_block, journal.filesystem_superblock())
         .map_err(|_| Status::Invalid)?;
+    let checkpointed = operations.iter().find_map(|operation| match operation {
+        JournalCommitOperation::WriteFilesystemSuperblock { image, .. } => Some(image),
+        _ => None,
+    }).ok_or(Status::Invalid)?;
+    if journal.filesystem_superblock().last_orphan() != 0 || checkpointed.last_orphan() != 0 {
+        let projected = Ext4::load(Box::new(RecoveryValidationReader {
+            context, images: recovery.replay_images().to_vec(),
+            superblock: checkpointed.with_recovery_state(false),
+        })).map_err(map_error)?;
+        projected.orphan_inodes().map_err(map_error)?;
+        validate_namespace(&projected)?;
+    }
     execute_storage_plan(context, &operations)?;
     Ok(report)
 }
@@ -570,6 +610,8 @@ fn validate_namespace(filesystem: &Ext4) -> Result<(), Status> {
             }
             let entry_path = entry.path();
             let metadata = entry.metadata().map_err(map_error)?;
+            // A zero-link orphan must never remain reachable by a directory.
+            if metadata.links_count == 0 { return Err(Status::Invalid); }
             validate_xattrs(filesystem, entry_path.as_ref())?;
             let kind = classify(metadata.file_type())?;
             if kind == 2 {
@@ -619,24 +661,18 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         image_bytes = validate_profile(context, media_bytes)?;
         filesystem = Ext4::load(Box::new(PhipiaReader { context })).map_err(map_error)?;
         journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
-        if journal.filesystem_needs_recovery() {
+        if journal.filesystem_needs_recovery() && journal.filesystem_superblock().last_orphan() == 0 {
             return Err(Status::Invalid);
         }
     }
+    let needs_orphan_cleanup = journal.filesystem_needs_recovery();
     drop(journal);
     drop(filesystem);
-    let stage = Rc::new(
-        JournalMutationStage::new(Box::new(PhipiaReader { context }), image_bytes)
-            .map_err(|_| Status::Invalid)?,
-    );
-    let filesystem = Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone())))
-        .map_err(map_error)?;
+    let (filesystem, stage) = load_staged_view(context, image_bytes, needs_orphan_cleanup)?;
     let journal = load_journal_inode_map(&filesystem).map_err(map_journal_error)?;
-    if journal.filesystem_needs_recovery() || !stage.is_empty() {
-        return Err(Status::Invalid);
-    }
-    let clean_ring = journal.into_clean_ring().map_err(|_| Status::Invalid)?;
-    validate_namespace(&filesystem)?;
+    let orphans = filesystem.orphan_inodes().map_err(map_error)?;
+    let ring = if needs_orphan_cleanup { journal.into_orphan_cleanup_ring() }
+        else { journal.into_clean_ring() }.map_err(|_| Status::Invalid)?;
     let identity = Identity {
         label: *filesystem.label().as_bytes(),
         uuid: *filesystem.uuid().as_bytes(),
@@ -646,18 +682,18 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
         recovery_performed,
         reserved: [0; 3],
     };
-    Ok((
-        Box::new(Mounted {
+    let mut mounted = Box::new(Mounted {
             filesystem: Some(filesystem),
-            journal: clean_ring,
+            journal: ring,
             stage,
             pending_mutation: None,
             pending_write: None,
             context,
             image_bytes,
-        }),
-        identity,
-    ))
+        });
+    for inode in orphans { finalize_orphan(&mut mounted, u64::from(inode.get()))?; }
+    if needs_orphan_cleanup { prepare_unmount(&mut mounted)?; }
+    Ok((mounted, identity))
 }
 
 fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
@@ -1546,6 +1582,26 @@ pub(crate) fn unlink_file_guarded(
         return Err(Status::Invalid);
     }
     commit_namespace_mutation(mounted, PendingMutationKind::UnlinkFile, absolute)
+}
+
+/// Finalize one orphan through the same retryable coordinator used by unlink.
+pub(crate) fn finalize_orphan(mounted: &mut Mounted, inode: u64) -> Result<(), Status> {
+    let key = inode_key(inode)?;
+    if mounted.pending_write.is_some() { return Err(Status::Busy); }
+    if mounted.pending_mutation.is_some() {
+        return resume_namespace_mutation(mounted, PendingMutationKind::FinalizeOrphan, &key);
+    }
+    ensure_staged_view(mounted)?;
+    let index = inode_index(inode)?;
+    if !mounted.readable_filesystem()?.orphan_inodes().map_err(map_error)?.contains(&index) {
+        return Ok(());
+    }
+    arm_recovery_marker(mounted)?;
+    if let Err(error) = mounted.filesystem()?.release_orphan(index) {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    commit_namespace_mutation(mounted, PendingMutationKind::FinalizeOrphan, key)
 }
 
 /// Hard-link a regular file or the final symbolic link without following it.

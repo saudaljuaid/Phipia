@@ -1119,7 +1119,7 @@ fn duplicate_extent_release_refuses_and_rolls_back_bitmap_and_namespace() {
 }
 
 #[test]
-fn legacy_orphan_chain_is_refused_without_clearing_recovery_state() {
+fn legacy_zero_link_orphan_recovery_retries_every_storage_failure() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
     ext4::create_file_probe(&mut mounted, b"system/orphan", 0o600).unwrap();
@@ -1136,12 +1136,45 @@ fn legacy_orphan_chain_is_refused_without_clearing_recovery_state() {
     debugfs(&image, "feature needs_recovery");
     let bytes = std::fs::read(&image).unwrap();
     let size = bytes.len() as u64;
-    DEVICE.with_borrow_mut(|device| *device = Device { bytes: bytes.clone(), ..Device::default() });
-    assert!(matches!(ext4::mount(1, size), Err(Status::ReadOnly)));
-    DEVICE.with_borrow(|device| {
-        assert!(device.events.is_empty());
-        assert!(device.bytes == bytes);
-    });
+    let mounted = mount_bytes(bytes.clone());
+    assert_eq!(ext4::stat(&mounted, b"system/orphan"), Err(Status::NotFound));
+    ext4::unmount(&mounted).unwrap();
+    let events = DEVICE.with_borrow(|device| device.events.len());
+    drop(mounted);
+    fsck(&path, "coordinator-orphan-cleanup");
+    for fail in 0..events {
+        DEVICE.with_borrow_mut(|device| *device = Device {
+            bytes: bytes.clone(), fail_event: Some(fail), ..Device::default()
+        });
+        assert!(matches!(ext4::mount(1, size), Err(Status::Io)), "orphan cleanup failure {fail}");
+        DEVICE.with_borrow_mut(|device| { device.fail_event = Some(0); device.events.clear(); });
+        // A repeated crash/refusal during replay must retain the cleanup work.
+        let result = ext4::mount(1, size);
+        if let Ok((mounted, _)) = result { ext4::unmount(&mounted).unwrap(); }
+        else { assert!(matches!(result, Err(Status::Io))); }
+        DEVICE.with_borrow_mut(|device| { device.fail_event = None; device.events.clear(); });
+        let (mounted, _) = ext4::mount(1, size).unwrap();
+        ext4::unmount(&mounted).unwrap();
+        drop(mounted);
+        fsck(&path, &format!("coordinator-orphan-failure-{fail}"));
+    }
+    // Invalid chain nodes must be rejected before replay checkpoints or clears
+    // anything, even when debugfs has recomputed their inode checksums.
+    for (case, command) in [
+        ("linked", format!("set_inode_field <{inode}> links_count 1")),
+        ("cycle", format!("set_inode_field <{inode}> dtime {inode}")),
+        ("reachable", "link <INODE> /system/bad-orphan".replace("<INODE>", &format!("<{inode}>"))),
+    ] {
+        std::fs::write(&image, &bytes).unwrap();
+        debugfs(&image, &command);
+        let hostile = std::fs::read(&image).unwrap();
+        DEVICE.with_borrow_mut(|device| *device = Device { bytes: hostile.clone(), ..Device::default() });
+        assert!(ext4::mount(1, size).is_err(), "admitted {case} orphan");
+        DEVICE.with_borrow(|device| {
+            assert!(device.events.is_empty(), "wrote before refusing {case} orphan");
+            assert!(device.bytes == hostile);
+        });
+    }
 }
 
 #[test]
