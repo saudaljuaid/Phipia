@@ -133,6 +133,7 @@ impl File {
         buf: &[u8],
         pos: u64,
     ) -> Result<usize, Ext4Error> {
+        if let Some(time) = self.fs.mutation_time() { self.inode.set_mtime(time); }
         self.file_blocks.write_at(&mut self.inode, buf, pos).await
     }
 
@@ -157,6 +158,7 @@ impl File {
     /// Truncate the file to `new_size` bytes.
     #[maybe_async::maybe_async]
     pub async fn truncate(&mut self, new_size: u64) -> Result<(), Ext4Error> {
+        if let Some(time) = self.fs.mutation_time() { self.inode.set_mtime(time); }
         self.file_blocks.truncate(&self.fs, &mut self.inode, new_size).await
     }
 

@@ -206,6 +206,7 @@ pub use uuid::Uuid;
 pub use writer::Ext4Write;
 
 struct Ext4Inner {
+    mutation_seconds: core::sync::atomic::AtomicU64,
     superblock: Superblock,
     block_group_descriptors: Vec<BlockGroupDescriptor>,
     journal: Journal,
@@ -226,6 +227,20 @@ struct Ext4Inner {
 pub struct Ext4(PtrPrimitive<Ext4Inner>);
 
 impl Ext4 {
+    /// Set the transaction's non-negative Unix time. Call only while mutation
+    /// access is exclusive; None preserves timestamps for generic callers.
+    pub fn set_mutation_time(&self, seconds: Option<u64>) -> Result<(), Ext4Error> {
+        if seconds.is_some_and(|value| value > 0x3_7fff_ffff) {
+            return Err(Ext4Error::InvalidTimestamp);
+        }
+        self.0.mutation_seconds.store(seconds.unwrap_or(u64::MAX), core::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub(crate) fn mutation_time(&self) -> Option<Duration> {
+        let seconds = self.0.mutation_seconds.load(core::sync::atomic::Ordering::Relaxed);
+        (seconds != u64::MAX).then(|| Duration::from_secs(seconds))
+    }
     /// Load an `Ext4` instance from the given `reader`.
     ///
     /// This reads and validates the superblock, block group
@@ -286,6 +301,7 @@ impl Ext4 {
             writer = None;
         }
         let mut fs = Self(PtrPrimitive::new(Ext4Inner {
+            mutation_seconds: core::sync::atomic::AtomicU64::new(u64::MAX),
             block_group_descriptors: BlockGroupDescriptor::read_all(
                 &superblock,
                 &mut *reader,
@@ -1153,8 +1169,9 @@ impl Ext4 {
     #[maybe_async::maybe_async]
     pub async fn create_inode(
         &self,
-        options: InodeCreationOptions,
+        mut options: InodeCreationOptions,
     ) -> Result<Inode, Ext4Error> {
+        if let Some(time) = self.mutation_time() { options.time = time; }
         // TODO: for the purposes of fscking during recovery, it is proper to write inode data, then mark as used
         let inode_index = self.alloc_inode(options.file_type).await?;
         Inode::create(inode_index, options, self).await

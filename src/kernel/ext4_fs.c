@@ -8,6 +8,7 @@
 #include <phipia/cpu.h>
 #include <phipia/ext4_fs.h>
 #include <phipia/nvme.h>
+#include <phipia/wall_clock.h>
 
 #define EXT4_MAX_HANDLES PHIPFS_MAX_HANDLES
 #define EXT4_CONTROLLER_SYSTEM 0U
@@ -539,6 +540,17 @@ int32_t phipia_ext4_block_write(
         remaining -= chunk;
     }
     return 0;
+}
+
+/* A transaction timestamp is sampled once and retained in its staged images. */
+uint64_t phipia_ext4_current_time(uintptr_t context)
+{
+    struct ext4_mount_state *mount = (struct ext4_mount_state *)context;
+    int64_t seconds;
+    if (mount == NULL || !mount->operation_active || !mount->session.active ||
+        !mount->session.writable || wall_clock_read_unix_seconds(&seconds) != WALL_CLOCK_STATUS_OK ||
+        seconds < 0) return UINT64_MAX;
+    return (uint64_t)seconds;
 }
 
 /* Establish one real NVMe durability boundary for the Rust journal executor. */

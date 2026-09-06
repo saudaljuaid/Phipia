@@ -104,6 +104,7 @@ int32_t phipia_ext4_block_write(
     size_t length
 );
 int32_t phipia_ext4_block_flush(uintptr_t context, uint32_t boundary);
+uint64_t phipia_ext4_current_time(uintptr_t context);
 
 void ext4_backend_initialize(void);
 enum phipfs_status ext4_backend_mount(enum phipfs_volume volume);

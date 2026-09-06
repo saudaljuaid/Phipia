@@ -62,6 +62,8 @@ pub enum Ext4Error {
 
     /// Data cannot be converted into a valid extended attribute name.
     InvalidXattrName,
+    /// A timestamp is outside the admitted non-negative ext4 epoch range.
+    InvalidTimestamp,
 
     /// Path is too long.
     ///
@@ -144,6 +146,7 @@ impl Display for Ext4Error {
             Self::InvalidXattrName => {
                 write!(f, "data is not a valid extended attribute name")
             }
+            Self::InvalidTimestamp => write!(f, "timestamp is outside the supported range"),
             Self::PathTooLong => write!(f, "path is too long"),
             Self::TooManySymlinks => {
                 write!(f, "too many levels of symbolic links")
@@ -180,6 +183,7 @@ impl From<Ext4Error> for std::io::Error {
             Ext4Error::IsASpecialFile
             | Ext4Error::MalformedPath
             | Ext4Error::InvalidXattrName
+            | Ext4Error::InvalidTimestamp
             | Ext4Error::NotASymlink
             | Ext4Error::NotAbsolute => InvalidInput.into(),
 

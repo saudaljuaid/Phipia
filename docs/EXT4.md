@@ -421,4 +421,11 @@ must fit in the inode body; larger sets return FULL with the old attributes
 and allocation counters preserved. Reads support size queries and refuse
 undersized buffers. Native PATH_CHMOD/PATH_XATTR and SDK wrappers expose these
 operations with Data write capability checks; POSIX chmod uses PATH_CHMOD.
-Automatic timestamp updates remain incomplete.
+Mutations sample validated RTC seconds before staging; inode changes record
+ctime, file write/truncate records mtime, and directory inode changes record
+mtime. New inodes receive atime/mtime/ctime/crtime. Reads use noatime behavior.
+Retries retain the staged timestamp bytes. Invalid RTC readings refuse a new
+mutation before storage writes. The admitted write-time range is Unix epoch
+through 2446-05-10 (0x37fffffff seconds); explicit time-setting APIs remain
+incomplete. The upstream Duration metadata API reports pre-epoch dates as zero
+while preserving their raw fields unless the timestamp is changed.

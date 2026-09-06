@@ -135,26 +135,23 @@ bitflags! {
 }
 
 fn timestamp_to_duration(timestamp: u32, high: Option<u32>) -> Duration {
-    if let Some(high) = high {
-        // Low 2 bits of `high` are the high 2 bits of the timestamp, and the rest of `high` is for nanosecond precision
-        let timestamp_high = high & 0b11;
-        let timestamp =
-            ((u64::from(timestamp_high)) << 32) | u64::from(timestamp);
-        Duration::new(timestamp, high >> 2)
-    } else {
-        Duration::from_secs(u64::from(timestamp))
-    }
+    let extra = high.unwrap_or(0);
+    let base = i64::from(i32::from_le_bytes(timestamp.to_le_bytes()));
+    let seconds = base + (i64::from(extra & 3) << 32);
+    // The upstream Duration API cannot represent pre-epoch dates. Preserve
+    // their raw inode fields unless explicitly changed; report zero here.
+    Duration::new(u64::try_from(seconds).unwrap_or(0), (extra >> 2).min(999_999_999))
 }
 
 fn duration_to_timestamp(duration: Duration) -> (u32, Option<u32>) {
-    let timestamp = duration.as_secs();
+    let timestamp = duration.as_secs().min(0x3_7fff_ffff);
     // ext4 encodes nanoseconds in the upper 30 bits of the "extra" field.
     // Duration guarantees subsec_nanos < 1e9, but clamp defensively anyway.
     let nanos = duration.subsec_nanos().min(999_999_999);
 
-    if timestamp > u64::from(u32::MAX) || nanos != 0 {
+    if timestamp > 0x7fff_ffff || nanos != 0 {
         #[expect(clippy::as_conversions)]
-        let timestamp_high = (timestamp >> 32) as u32;
+        let timestamp_high = ((timestamp + 0x8000_0000) >> 32) as u32;
         #[expect(clippy::as_conversions)]
         let timestamp_low = timestamp as u32;
         let high = (timestamp_high & 0b11) | (nanos << 2);
@@ -276,15 +273,17 @@ impl Inode {
         inode.set_uid(inode_creation_data.uid);
         inode.set_gid(inode_creation_data.gid);
         inode.set_size_in_bytes(0);
+        // Set field availability before writing timestamps, including crtime
+        // and the epoch/nanosecond extension fields.
+        inode.set_extra_size(
+            (0x9C + 4 - 128).min(ext4.0.superblock.min_extra_isize()),
+        );
         inode.set_atime(inode_creation_data.time);
         inode.set_ctime(inode_creation_data.time);
         inode.set_mtime(inode_creation_data.time);
         inode.set_dtime(Duration::from_secs(0));
         inode.set_crtime(inode_creation_data.time);
         inode.set_links_count(0);
-        inode.set_extra_size(
-            (0x9C + 4 - 128).min(ext4.0.superblock.min_extra_isize()),
-        ); // All fields up to and including i_projid
         let mut flags = inode_creation_data.flags;
         if ext4
             .0
@@ -383,6 +382,10 @@ impl Inode {
     /// Write the inode back to disk.
     #[maybe_async::maybe_async]
     pub async fn write(&mut self, ext4: &Ext4) -> Result<(), Ext4Error> {
+        if let Some(time) = ext4.mutation_time() {
+            self.set_ctime(time);
+            if self.file_type().is_dir() { self.set_mtime(time); }
+        }
         let (block_index, offset_within_block) =
             get_inode_location(ext4, self.index)?;
         let block_size = ext4.0.superblock.block_size().to_u64();

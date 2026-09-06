@@ -123,6 +123,13 @@ pub(crate) fn ext4_block_write(context: usize, start_byte: u64, source: &[u8]) -
     }
 }
 
+/// Sample UTC once before staging a new transaction; invalid clocks return MAX.
+pub(crate) fn ext4_current_time(context: usize) -> u64 {
+    unsafe extern "C" { fn phipia_ext4_current_time(context: usize) -> u64; }
+    // SAFETY: C owns and validates the mount/session; no pointer is retained.
+    unsafe { phipia_ext4_current_time(context) }
+}
+
 /// Flush every preceding write through the active C-owned ext4 session.
 pub(crate) fn ext4_block_flush(context: usize, boundary: u32) -> bool {
     unsafe extern "C" {

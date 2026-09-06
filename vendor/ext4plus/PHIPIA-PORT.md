@@ -259,3 +259,11 @@ the same path. The checksum covers the filesystem seed, little-endian 64-bit
 block number, and complete block with h_checksum zeroed, following Linux
 v6.12 fs/ext4/xattr.c and e2fsprogs v1.47.2 lib/ext2fs/csum.c. The Linux fixture
 test checks shared release, final free, clean fsck, and corrupt-block refusal.
+
+The journal coordinator sets an exclusive transaction time on its staged view.
+Inode writes update ctime (and directory mtime); file write/truncate updates
+mtime; creation sets all initial times after reserving the extra inode fields.
+The epoch codec follows Linux v6.12 ext4_encode_extra_time, including the signed
+32-bit base around 2038. Generic ext4plus callers without a transaction time
+retain their explicit timestamp behavior. The Duration API has no negative
+dates; pre-epoch read values are reported as zero, without rewriting raw fields.

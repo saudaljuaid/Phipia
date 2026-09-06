@@ -653,6 +653,13 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
 }
 
 fn arm_recovery_marker(mounted: &mut Mounted) -> Result<(), Status> {
+    let seconds = crate::abi::ext4_current_time(mounted.context);
+    if seconds > 0x3_7fff_ffff { return Err(Status::Io); }
+    arm_recovery_marker_inner(mounted)?;
+    mounted.filesystem()?.set_mutation_time(Some(seconds)).map_err(map_error)
+}
+
+fn arm_recovery_marker_inner(mounted: &mut Mounted) -> Result<(), Status> {
     ensure_staged_view(mounted)?;
     let durable = mounted
         .journal

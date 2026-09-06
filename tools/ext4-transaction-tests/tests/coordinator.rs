@@ -27,12 +27,17 @@ struct Device {
 
 thread_local! {
     static DEVICE: RefCell<Device> = RefCell::new(Device::default());
+    static MUTATION_TIME: std::cell::Cell<u64> = const { std::cell::Cell::new(1_780_000_000) };
 }
 
 // These are the production adapter's three native I/O callbacks. No upstream
 // Ext4 writer receives the device; only the coordinator's executor calls write.
 mod abi {
     use super::{DEVICE, Event};
+    pub fn ext4_current_time(context: usize) -> u64 {
+        assert_eq!(context, 1);
+        super::MUTATION_TIME.with(std::cell::Cell::get)
+    }
 
     pub fn ext4_block_read(context: usize, start: u64, output: &mut [u8]) -> bool {
         assert_eq!(context, 1);
@@ -398,6 +403,53 @@ fn append_uses_live_eof_through_aliases_and_refuses_overflow_without_writes() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-append");
+}
+
+#[test]
+fn mutation_timestamps_are_journaled_and_linux_epoch_encoding_matches() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/time-test";
+    let create_time = 1_780_000_100;
+    MUTATION_TIME.with(|time| time.set(create_time));
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    let snapshot = || {
+        let bytes = DEVICE.with_borrow(|device| device.bytes.clone());
+        let raw = ext4plus::Ext4::load(Box::new(bytes)).unwrap();
+        raw.metadata(b"/system/time-test").unwrap()
+    };
+    assert_eq!(snapshot().crtime.unwrap().as_secs(), create_time);
+    assert_eq!(snapshot().atime.as_secs(), create_time);
+    MUTATION_TIME.with(|time| time.set(create_time + 1));
+    ext4::transaction_probe(&mut mounted, name, 0, b"timestamp").unwrap();
+    assert_eq!(snapshot().mtime.as_secs(), create_time + 1);
+    MUTATION_TIME.with(|time| time.set(create_time + 2));
+    ext4::chmod(&mut mounted, name, 0o640).unwrap();
+    assert_eq!(snapshot().ctime.as_secs(), create_time + 2);
+    assert_eq!(snapshot().mtime.as_secs(), create_time + 1);
+    assert_eq!(snapshot().atime.as_secs(), create_time);
+    for seconds in [0x7fff_ffff, 0x8000_0000, 0xffff_ffff, 0x1_8000_0000, 0x3_7fff_ffff] {
+        MUTATION_TIME.with(|time| time.set(seconds));
+        ext4::transaction_probe(&mut mounted, name, 0, b"time").unwrap();
+        assert_eq!(snapshot().mtime.as_secs(), seconds);
+        ext4::sync(&mut mounted).unwrap();
+        let image = path.with_extension("coordinator-time-check.img");
+        DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+        let report = std::process::Command::new("debugfs").args(["-R", "stat /system/time-test"])
+            .arg(&image).output().unwrap();
+        assert!(report.status.success());
+        let report = String::from_utf8(report.stdout).unwrap();
+        let epoch = (seconds + 0x8000_0000) >> 32;
+        assert!(report.contains(&format!("mtime: 0x{:08x}:{epoch:08x}", seconds as u32)), "{report}");
+    }
+    MUTATION_TIME.with(|time| time.set(u64::MAX));
+    DEVICE.with_borrow_mut(|device| device.events.clear());
+    assert_eq!(ext4::chmod(&mut mounted, name, 0o600), Err(Status::Io));
+    DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
+    MUTATION_TIME.with(|time| time.set(create_time));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-timestamps");
 }
 
 #[test]
