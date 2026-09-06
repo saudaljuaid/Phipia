@@ -23,6 +23,8 @@ struct Device {
     accept_failed_write: bool,
     fail_superblock_read: bool,
     failed_reads: usize,
+    watched_read_block: Option<u64>,
+    watched_reads: usize,
 }
 
 thread_local! {
@@ -42,6 +44,9 @@ mod abi {
     pub fn ext4_block_read(context: usize, start: u64, output: &mut [u8]) -> bool {
         assert_eq!(context, 1);
         DEVICE.with_borrow_mut(|device| {
+            if device.watched_read_block.is_some_and(|block| start / 4096 == block) {
+                device.watched_reads += 1;
+            }
             if device.fail_superblock_read && start == 1024 && output.len() == 1024 {
                 device.failed_reads += 1;
                 return false;
@@ -987,7 +992,15 @@ fn real_inode_exhaustion_rolls_back_namespace_and_reuses_a_freed_inode() {
 fn allocation_bitmap_corruption_is_not_rechecksummed_into_a_transaction() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
+    DEVICE.with_borrow_mut(|device| {
+        let block = u32::from_le_bytes(device.bytes[4100..4104].try_into().unwrap());
+        device.watched_read_block = Some(u64::from(block));
+    });
     ext4::create_file_probe(&mut mounted, b"system/bitmap-write", 0o600).unwrap();
+    DEVICE.with_borrow_mut(|device| {
+        assert!(device.watched_reads < 16, "inode bitmap scan issued {} storage reads", device.watched_reads);
+        device.watched_read_block = None;
+    });
     ext4::sync(&mut mounted).unwrap();
     let initial = DEVICE.with_borrow(|device| device.bytes.clone());
     for inode_bitmap in [false, true] {

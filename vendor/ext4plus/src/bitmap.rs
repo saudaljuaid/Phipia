@@ -160,15 +160,15 @@ impl BitmapHandle {
         range: impl RangeBounds<u32>,
         ext4: &Ext4,
     ) -> Result<Option<u32>, Ext4Error> {
-        let mut dst = [0; 1];
-        for byte_index in 0..ext4.0.superblock.block_size().to_u32() {
-            ext4.read_from_block(self.block, byte_index, &mut dst)
-                .await?;
+        let mut bytes = vec![0; ext4.0.superblock.block_size().to_usize()];
+        ext4.read_from_block(self.block, 0, &mut bytes).await?;
+        for (byte_index, byte) in bytes.into_iter().enumerate() {
+            let byte_index = u32::try_from(byte_index).unwrap();
             if value {
                 // Look for a bit with value 1.
-                if dst[0] != 0 {
+                if byte != 0 {
                     for bit_index in 0..8 {
-                        if (dst[0] & (1 << bit_index)) != 0 {
+                        if (byte & (1 << bit_index)) != 0 {
                             let index = calc_index(byte_index, bit_index);
                             if !range.contains(&(index)) {
                                 continue;
@@ -179,9 +179,9 @@ impl BitmapHandle {
                 }
             } else {
                 // Look for a bit with value 0.
-                if dst[0] != 0xFF {
+                if byte != 0xFF {
                     for bit_index in 0..8 {
-                        if (dst[0] & (1 << bit_index)) == 0 {
+                        if (byte & (1 << bit_index)) == 0 {
                             let index = calc_index(byte_index, bit_index);
                             if !range.contains(&(index)) {
                                 continue;
@@ -205,13 +205,13 @@ impl BitmapHandle {
         range: impl RangeBounds<u32>,
         ext4: &Ext4,
     ) -> Result<Option<u32>, Ext4Error> {
-        let mut dst = [0; 1];
+        let mut bytes = vec![0; ext4.0.superblock.block_size().to_usize()];
+        ext4.read_from_block(self.block, 0, &mut bytes).await?;
         let mut count: u32 = 0;
-        for byte_index in 0..ext4.0.superblock.block_size().to_u32() {
-            ext4.read_from_block(self.block, byte_index, &mut dst)
-                .await?;
+        for (byte_index, byte) in bytes.into_iter().enumerate() {
+            let byte_index = u32::try_from(byte_index).unwrap();
             for bit_index in 0..8 {
-                if ((dst[0] & (1 << bit_index)) != 0) == value {
+                if ((byte & (1 << bit_index)) != 0) == value {
                     let index = calc_index(byte_index, bit_index);
 
                     if !range.contains(&(index)) {
