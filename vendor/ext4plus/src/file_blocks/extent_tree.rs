@@ -146,6 +146,9 @@ impl NodeHeader {
         if eh_depth > 5 {
             return Err(CorruptKind::ExtentDepth(inode).into());
         }
+        if eh_max == 0 || eh_entries > eh_max {
+            return Err(CorruptKind::ExtentNodeSize(inode).into());
+        }
 
         Ok(Self {
             depth: eh_depth,
@@ -338,6 +341,10 @@ impl ExtentNode {
             }
         }
         if let Some(checksum_base) = checksum_base {
+            // The tail follows eh_max slots, not eh_entries. Zero unused
+            // slots when shrinking so old entries cannot survive after the
+            // new checksum or change the checksum on the next staged read.
+            bytes.resize(self.header.checksum_offset(), 0);
             let mut checksum = checksum_base.clone();
             checksum.update(&bytes);
             bytes.extend_from_slice(&checksum.finalize().to_le_bytes());

@@ -231,6 +231,14 @@ symlink inode's own xattrs without following its target, admitting dangling and
 looping links. Real-fixture tests cover 59/60/61-byte and 4,095-byte targets,
 remount, unlink, cross-parent rename, and byte-identical storage retries.
 
+Sparse writes limit newly allocated extents to the next existing logical
+extent. Extent-node serialization pads unused slots and writes the checksum
+after `eh_max` entries, matching Linux v6.12 `ext4_extent_block_csum` and
+e2fsprogs v1.47.2 `ext2fs_extent_block_csum`. Previously shrinking a node left
+stale entries beyond a checksum written after `eh_entries`, causing immediate
+checksum refusal. Host fixtures exercise 60 separate extents, hole-filling
+overwrites, shrink/grow and read-only fsck before and after truncation.
+
 Phipia-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.
