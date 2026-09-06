@@ -118,6 +118,9 @@ pub(crate) async fn add_dir_entry(
     inode: InodeIndex,
     file_type: FileType,
 ) -> Result<(), Ext4Error> {
+    if dir_inode.flags().contains(InodeFlags::IMMUTABLE) {
+        return Err(Ext4Error::Readonly);
+    }
     add_dir_entry_inner(fs, dir_inode, name, inode, file_type).await?;
     if let Some(time) = fs.mutation_time() {
         dir_inode.set_mtime(time);
@@ -313,6 +316,9 @@ pub(crate) async fn remove_dir_entry(
     dir_inode: &mut Inode,
     name: DirEntryName<'_>,
 ) -> Result<(), Ext4Error> {
+    if dir_inode.flags().contains(InodeFlags::IMMUTABLE) {
+        return Err(Ext4Error::Readonly);
+    }
     remove_dir_entry_inner(fs, dir_inode, name).await?;
     if let Some(time) = fs.mutation_time() {
         dir_inode.set_mtime(time);
@@ -713,6 +719,10 @@ impl Dir {
         name: DirEntryName<'_>,
         target_inode: &mut Inode,
     ) -> Result<(), Ext4Error> {
+        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || target_inode.flags().contains(InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
         let old = target_inode.links_count();
         let new = old.checked_add(1).ok_or(Ext4Error::Readonly)?;
         target_inode.set_links_count(new);
@@ -748,6 +758,10 @@ impl Dir {
         destination: DirEntryName<'_>,
         mut inode: Inode,
     ) -> Result<(), Ext4Error> {
+        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
         if source.0 == b"."
             || source.0 == b".."
             || destination.0 == b"."
@@ -909,6 +923,10 @@ impl Dir {
         name: DirEntryName<'_>,
         mut inode: Inode,
     ) -> Result<Option<Inode>, Ext4Error> {
+        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
         if name.0 == b"." || name.0 == b".." {
             return Err(Ext4Error::DotEntry);
         }
@@ -944,6 +962,10 @@ impl Dir {
         name: DirEntryName<'_>,
         inode: Inode,
     ) -> Result<u64, Ext4Error> {
+        if self.inode.flags().contains(InodeFlags::IMMUTABLE)
+            || inode.flags().contains(InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
         if name.0 == b"." || name.0 == b".." {
             return Err(Ext4Error::DotEntry);
         }

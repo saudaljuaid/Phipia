@@ -852,6 +852,59 @@ fn external_xattr_checksums_shared_release_and_final_free() {
 }
 
 #[test]
+fn immutable_namespace_refusals_discard_allocations_and_link_counts() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    for name in [b"system/protected".as_slice(), b"system/ordinary"] {
+        ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    }
+    ext4::transaction_probe(&mut mounted, b"system/protected", 0, b"protected").unwrap();
+    for name in [b"system/frozen".as_slice(), b"system/frozen-empty"] {
+        ext4::create_directory_probe(&mut mounted, name).unwrap();
+    }
+    ext4::create_file_probe(&mut mounted, b"system/frozen/child", 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    drop(mounted);
+    let image = path.with_extension("coordinator-immutable-input.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    for name in ["protected", "frozen", "frozen-empty"] {
+        debugfs(&image, &format!("set_inode_field /system/{name} flags 0x80010"));
+    }
+    let mut mounted = mount_fixture(&image);
+    ext4::sync(&mut mounted).unwrap();
+    let baseline = DEVICE.with_borrow(|device| device.bytes.clone());
+    let free = ext4::free_bytes(&mounted).unwrap();
+    for case in 0..13 {
+        let result = match case {
+            0 => ext4::link_file_probe(&mut mounted, b"system/protected", b"system/alias"),
+            1 => ext4::unlink_file_probe(&mut mounted, b"system/protected"),
+            2 => ext4::create_file_probe(&mut mounted, b"system/frozen/new", 0o600),
+            3 => ext4::create_directory_probe(&mut mounted, b"system/frozen/new-dir"),
+            4 => ext4::symlink_probe(&mut mounted, b"system/frozen/new-link", b"missing"),
+            5 => ext4::link_file_probe(&mut mounted, b"system/ordinary", b"system/frozen/new"),
+            6 => ext4::unlink_file_probe(&mut mounted, b"system/frozen/child"),
+            7 => ext4::remove_directory_probe(&mut mounted, b"system/frozen-empty"),
+            8 => ext4::rename_probe(&mut mounted, b"system/protected", b"system/moved"),
+            9 => ext4::rename_probe(&mut mounted, b"system/frozen/child", b"system/moved"),
+            10 => ext4::rename_probe(&mut mounted, b"system/ordinary", b"system/frozen/new"),
+            11 => ext4::rename_replace_probe(&mut mounted, b"system/ordinary", b"system/protected"),
+            _ => ext4::chmod(&mut mounted, b"system/protected", 0o777),
+        };
+        assert_eq!(result, Err(Status::ReadOnly), "immutable case {case}");
+        assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+        ext4::sync(&mut mounted).unwrap();
+        // Also proves rollback of inode reservations, parent times, and source
+        // link counts: only the temporary recovery marker may have been written.
+        DEVICE.with_borrow(|device| assert!(device.bytes == baseline, "immutable case {case} changed disk"));
+    }
+    ext4::create_file_probe(&mut mounted, b"system/after-refusal", 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-immutable-namespace");
+}
+
+#[test]
 fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
