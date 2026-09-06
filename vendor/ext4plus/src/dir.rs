@@ -904,7 +904,7 @@ impl Dir {
         }
     }
 
-    /// Remove an empty, single-block directory entry and return its freed block.
+    /// Remove an empty directory entry and return its first freed block.
     ///
     /// Phipia uses the returned physical block to require the matching JBD2
     /// revocation before checkpointing the inode, bitmap, counter, and parent
@@ -966,8 +966,8 @@ impl Dir {
         }
 
         let block_size = self.fs.0.superblock.block_size().to_u64();
-        if inode.size_in_bytes() != block_size {
-            return Err(Ext4Error::Readonly);
+        if inode.size_in_bytes() == 0 || inode.size_in_bytes() % block_size != 0 {
+            return Err(dir_entry_error(inode.index));
         }
         let mut file_blocks = FileBlocks::new(self.fs.clone(), &inode)?;
         let revoked_block = file_blocks

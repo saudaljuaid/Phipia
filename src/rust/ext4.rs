@@ -1444,7 +1444,10 @@ pub(crate) fn remove_directory_probe(
             return Err(map_error(error));
         }
     };
-    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() != 1 {
+    // Removing the child can also shrink its parent; an empty grown child may
+    // itself own several blocks. Keep every stage revoke, requiring at least
+    // the child's validated first block in the committed transaction below.
+    if mounted.stage.is_empty() || mounted.stage.revoked_block_count() == 0 {
         discard_uncommitted_stage(mounted, true)?;
         return Err(Status::Invalid);
     }

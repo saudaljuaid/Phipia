@@ -573,6 +573,84 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
 }
 
 #[test]
+fn sparse_fragmented_extent_tree_grows_overwrites_and_shrinks() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/fragmented";
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    // Separate logical blocks cannot merge even if physical allocation happens
+    // contiguously. Sixty extents force allocation beyond the inode root.
+    let mut expected = vec![0; 59 * 8192 + 4096];
+    for index in 0..60usize {
+        let start = index * 8192;
+        let bytes = vec![(index + 1) as u8; 4096];
+        assert_eq!(ext4::transaction_probe(&mut mounted, name, start as u64, &bytes), Ok(bytes.len()));
+        expected[start..start + bytes.len()].copy_from_slice(&bytes);
+    }
+    let mut actual = vec![0xa5; expected.len()];
+    read_exact(&mounted, name, &mut actual);
+    assert_eq!(actual, expected);
+    // Coalesce an unaligned overwrite across existing extents and holes.
+    let replacement = vec![0xbc; 32 * 4096 + 11];
+    ext4::transaction_probe(&mut mounted, name, 4093, &replacement).unwrap();
+    expected[4093..4093 + replacement.len()].copy_from_slice(&replacement);
+    read_exact(&mounted, name, &mut actual);
+    assert_eq!(actual, expected);
+    let shortened = 40 * 8192 + 103;
+    ext4::truncate_probe(&mut mounted, name, shortened as u64).unwrap();
+    ext4::truncate_probe(&mut mounted, name, expected.len() as u64).unwrap();
+    expected[shortened..].fill(0);
+    read_exact(&mounted, name, &mut actual);
+    assert_eq!(actual, expected);
+    // At most 58 live data blocks and one extent leaf remain after shrink.
+    ext4::sync(&mut mounted).unwrap();
+    fsck(&path, "coordinator-fragmented-live");
+    ext4::unlink_file_probe(&mut mounted, name).unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-fragmented-extents");
+}
+
+#[test]
+fn directory_growth_shrink_and_multiblock_rmdir_preserve_counters() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let free = ext4::free_bytes(&mounted).unwrap();
+    ext4::create_directory_probe(&mut mounted, b"system/growing").unwrap();
+    let mut names = Vec::new();
+    for index in 0..55 {
+        let name = format!("system/growing/{index:03}-{}", "x".repeat(80));
+        ext4::create_directory_probe(&mut mounted, name.as_bytes()).unwrap();
+        names.push(name);
+    }
+    assert!(ext4::stat(&mounted, b"system/growing").unwrap().size > 4096);
+    // Reverse removal empties the tail block, requiring both the last child
+    // block and the parent block to be revoked in the same rmdir transaction.
+    for name in names.iter().rev() {
+        ext4::remove_directory_probe(&mut mounted, name.as_bytes()).unwrap();
+    }
+    assert_eq!(ext4::stat(&mounted, b"system/growing").unwrap().size, 4096);
+    ext4::remove_directory_probe(&mut mounted, b"system/growing").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::create_directory_probe(&mut mounted, b"system/empty-grown").unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    let image = path.with_extension("coordinator-grown-dir.img");
+    DEVICE.with_borrow(|device| std::fs::write(&image, &device.bytes).unwrap());
+    drop(mounted);
+    for _ in 0..3 { debugfs(&image, "expand_dir /system/empty-grown"); }
+    let mut mounted = mount_fixture(&image);
+    assert_eq!(ext4::stat(&mounted, b"system/empty-grown").unwrap().size, 4 * 4096);
+    ext4::remove_directory_probe(&mut mounted, b"system/empty-grown").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-directory-shrink");
+}
+
+#[test]
 fn directory_move_updates_parents_and_rejects_descendant_cycles() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

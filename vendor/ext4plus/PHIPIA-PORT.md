@@ -126,15 +126,17 @@ change. The Linux fixture additionally runs a real upstream file write through
 the stage and observes the overlay while the source image remains unchanged.
 Phipia's directory delta initializes new directory inodes with checksummed
 `.`/`..` entries and supplies a bounded empty-directory removal primitive.
-Removal validates the complete single-block directory before changing the
-stage, updates the parent link count, frees the inode and data block, and
-returns that physical block so the platform adapter can require its exact JBD2
-revocation. A same-parent rename primitive adds the destination and removes the
+Removal validates the complete empty directory before changing the stage,
+updates the parent link count, frees the inode and all its blocks, and returns
+its first physical block so the platform adapter can require that exact JBD2
+revocation alongside every other staged revoke. Shrinking the parent directory
+may add another revoke. The transaction's existing 64-revoke bound still
+applies. A same-parent rename primitive adds the destination and removes the
 source without changing inode or parent link counts; it refuses replacement.
 The Rust coordinator also stages cross-parent regular-file moves by linking
 the destination before unlinking the source in the same transaction. Parent
 inode identity selects the same-parent primitive even when path strings differ
-through symlinks. Directory moves across parents remain refused. Real-fixture
+through symlinks. Non-indexed directory moves are described below. Real-fixture
 tests exercise identity, hard-link counts, destination refusal rollback, and
 every storage-operation retry before admitting this extension as proven.
 The stage can also clone an input transaction into one atomic classified
