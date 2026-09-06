@@ -1197,7 +1197,16 @@ wall-clock-tests: $(WALL_CLOCK_HOST_TEST) $(SDK_TIME_HOST_TEST)
 	$(WALL_CLOCK_HOST_TEST)
 	$(SDK_TIME_HOST_TEST)
 
-ext4-tests: tools/ext4_image.py tools/ext4_host_test.py
+$(BUILD_DIR)/ext4-vfs-host-test: tools/ext4-vfs-host-test.c \
+		src/kernel/ext4_fs.c include/phipia/ext4_fs.h include/phipia/nvme.h \
+		include/phipia/fat32_fs.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -flto -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion -Iinclude \
+		tools/ext4-vfs-host-test.c -Wl,--gc-sections -o $@
+
+ext4-tests: tools/ext4_image.py tools/ext4_host_test.py $(BUILD_DIR)/ext4-vfs-host-test
+	$(BUILD_DIR)/ext4-vfs-host-test
 	PHIPIA_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \
 		$(PYTHON) -u tools/ext4_host_test.py
 	PHIPIA_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \

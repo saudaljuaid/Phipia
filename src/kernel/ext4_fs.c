@@ -1427,13 +1427,15 @@ enum phipfs_status ext4_backend_truncate(enum phipfs_volume volume,
     if (size > PHIPFS_MAX_FILE_BYTES) {
         return PHIPFS_STATUS_RANGE;
     }
-    status = checked_stat(&ext4_mounts[volume], path, &metadata);
+    /* A failed transaction hides its staged view from stat. Retry the exact
+     * mutation first, then refresh handle sizes from checkpointed metadata. */
+    status = ext4_backend_truncate_probe(volume, path, size);
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    status = ext4_backend_truncate_probe(volume, path, size);
+    status = checked_stat(&ext4_mounts[volume], path, &metadata);
     if (status == PHIPFS_STATUS_OK) {
-        update_open_sizes(volume, metadata.inode, size);
+        update_open_sizes(volume, metadata.inode, metadata.size);
     }
     return status;
 }

@@ -256,6 +256,12 @@ image. They also corrupt descriptor, data, and commit bytes independently.
 `tools/ext4-transaction-tests` with
 `--no-default-features --features sync`, followed by the hostile-image suite.
 
+The C backend host test also exercises repeated public truncate refusals while
+Rust hides its pending view. Truncate retries reach the coordinator before
+stat, then refresh all matching open-handle sizes from checkpointed metadata.
+The test checks read/write lease balance, shared-handle sizes, stale cookies,
+and preservation of FULL and READ_ONLY errors across the C boundary.
+
 The ring planner validates the journal map and produces recovery-marker, live,
 checkpoint, recovery-cleanup, and tail-state operations. A shared executor maps
 every operation to checked absolute byte writes and preserves every flush. The
