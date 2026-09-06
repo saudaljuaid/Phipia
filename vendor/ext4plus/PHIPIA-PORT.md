@@ -196,6 +196,17 @@ that the ordinary loader still refuses a recovery-marked writer before using
 the explicit coordinator loader. Writable admission is therefore limited to
 the exact supported profile and never weakens those refusal cases.
 
+Partial-block file truncation zeros the discarded tail of an initialized
+retained block before shrinking the inode, without allocating holes or
+initializing unwritten extents. The coordinator journals that tail image with
+the inode and allocation metadata, so replay restores both the size and the
+discarded bytes together. The public truncate wrapper also refuses immutable
+inodes. The production-coordinator host tests cover shrink/grow at block edges,
+sparse tails, and recovery from every acknowledged truncate flush. Linux
+fixture/e2fsck execution is required evidence for these additions. This follows
+Linux v6.12 `fs/ext4/inode.c:ext4_block_truncate_page()`; it does not establish
+atomicity for general ordered-data overwrites.
+
 Phipia-specific changes stay in reviewable commits and are summarized here as
 they land. The intended port configuration is `--no-default-features
 --features sync`; the asynchronous and hosted `std` surfaces are out of scope.

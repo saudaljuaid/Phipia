@@ -157,7 +157,7 @@ impl File {
     /// Truncate the file to `new_size` bytes.
     #[maybe_async::maybe_async]
     pub async fn truncate(&mut self, new_size: u64) -> Result<(), Ext4Error> {
-        self.file_blocks.truncate(&mut self.inode, new_size).await
+        self.file_blocks.truncate(&self.fs, &mut self.inode, new_size).await
     }
 
     /// Claim `num_blocks` filesystem blocks for this file as uninitialized extents.
@@ -384,5 +384,5 @@ pub async fn truncate(
     new_size: u64,
 ) -> Result<(), Ext4Error> {
     let mut file_blocks = FileBlocks::from_inode(inode, ext4.clone())?;
-    file_blocks.truncate(inode, new_size).await
+    file_blocks.truncate(ext4, inode, new_size).await
 }

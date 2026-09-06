@@ -229,3 +229,84 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
         }
     }
 }
+
+#[test]
+fn partial_truncate_zeroes_retained_tail_and_keeps_holes_sparse() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/truncate-test";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    for size in [1, 4095, 4096, 4097] {
+        assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, &vec![0x5a; 8192]), Ok(8192));
+        ext4::truncate_probe(&mut mounted, name, size).unwrap();
+        let free_after_shrink = ext4::free_bytes(&mounted).unwrap();
+        ext4::truncate_probe(&mut mounted, name, 8192).unwrap();
+        assert_eq!(ext4::free_bytes(&mounted), Ok(free_after_shrink));
+        let mut result = vec![0xa5; 8192];
+        assert_eq!(ext4::pread(&mounted, name, 0, &mut result), Ok(8192));
+        assert!(result[..size as usize].iter().all(|byte| *byte == 0x5a));
+        assert!(result[size as usize..].iter().all(|byte| *byte == 0));
+    }
+    // Shortening a sparse file in a hole must neither allocate nor initialize it.
+    ext4::truncate_probe(&mut mounted, name, 0).unwrap();
+    let free_empty = ext4::free_bytes(&mounted).unwrap();
+    ext4::truncate_probe(&mut mounted, name, 16384).unwrap();
+    ext4::truncate_probe(&mut mounted, name, 7001).unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free_empty));
+    ext4::transaction_probe(&mut mounted, name, 8000, b"end").unwrap();
+    let mut result = vec![0xa5; 8003];
+    assert_eq!(ext4::pread(&mounted, name, 0, &mut result), Ok(8003));
+    assert!(result[..8000].iter().all(|byte| *byte == 0));
+    assert_eq!(&result[8000..], b"end");
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-truncate");
+}
+
+#[test]
+fn partial_truncate_replays_size_and_zeroed_tail_together_at_every_barrier() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/truncate-cut";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, name, 0, &vec![0x5a; 8192]).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let initial = DEVICE.with_borrow_mut(|device| {
+        device.events.clear();
+        device.bytes.clone()
+    });
+    ext4::truncate_probe(&mut mounted, name, 101).unwrap();
+    let events = DEVICE.with_borrow(|device| device.events.clone());
+    assert!(events.contains(&Event::Flush(3)), "truncate never committed");
+    drop(mounted);
+    let mut prefix = initial;
+    let mut committed = false;
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            Event::Write(start, bytes) => {
+                let start = *start as usize;
+                prefix[start..start + bytes.len()].copy_from_slice(bytes);
+            }
+            Event::Flush(boundary) => {
+                committed |= *boundary == 3;
+                // A durable prefix ending at this acknowledged flush is the
+                // backing of a new mount; no original stage or ring survives.
+                DEVICE.with_borrow_mut(|device| *device = Device {
+                    bytes: prefix.clone(), ..Device::default()
+                });
+                let mut recovered = ext4::mount(1, prefix.len() as u64).unwrap().0;
+                let expected_size = if committed { 101 } else { 8192 };
+                assert_eq!(ext4::stat(&recovered, name).unwrap().size, expected_size);
+                ext4::truncate_probe(&mut recovered, name, 8192).unwrap();
+                let mut result = vec![0xa5; 8192];
+                assert_eq!(ext4::pread(&recovered, name, 0, &mut result), Ok(8192));
+                assert!(result[..101].iter().all(|byte| *byte == 0x5a));
+                let expected_tail = if committed { 0 } else { 0x5a };
+                assert!(result[101..].iter().all(|byte| *byte == expected_tail));
+                ext4::sync(&mut recovered).unwrap();
+                ext4::unmount(&recovered).unwrap();
+                fsck(&path, &format!("coordinator-truncate-cut-{index}"));
+            }
+        }
+    }
+}

@@ -97,9 +97,32 @@ impl FileBlocks {
     #[maybe_async::maybe_async]
     pub(crate) async fn truncate(
         &mut self,
+        ext4: &Ext4,
         inode: &mut Inode,
         new_size: u64,
     ) -> Result<(), Ext4Error> {
+        if inode.flags().contains(InodeFlags::IMMUTABLE) {
+            return Err(Ext4Error::Readonly);
+        }
+        // Like Linux ext4_block_truncate_page(), discard the retained block's
+        // tail so a later grow or sparse write cannot expose the removed bytes.
+        // A hole or uninitialized extent already reads as zero; do not allocate
+        // it just to shorten the file. Phipia stages this image as metadata in
+        // the truncate transaction, making its zeroing atomic with the new size.
+        let block_size = ext4.0.superblock.block_size().to_u64();
+        let within = new_size % block_size;
+        if new_size < inode.size_in_bytes() && within != 0 {
+            let block_index = FileBlockIndex::try_from(new_size / block_size)
+                .map_err(|_| Ext4Error::FileTooLarge)?;
+            let block = self.get_block(block_index).await?;
+            if block != 0 {
+                let length = usize::try_from(block_size - within)
+                    .map_err(|_| Ext4Error::FileTooLarge)?;
+                let offset = u32::try_from(within)
+                    .map_err(|_| Ext4Error::FileTooLarge)?;
+                ext4.write_to_block(block, offset, &alloc::vec![0; length]).await?;
+            }
+        }
         match self {
             Self::ExtentTree(extent_tree) => {
                 extent_tree.truncate(inode, new_size).await
