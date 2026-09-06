@@ -363,6 +363,10 @@ impl BlockGroupDescriptor {
         self.flags.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn set_flags(&self, flags: u16) {
+        self.flags.store(flags, Ordering::Relaxed);
+    }
+
     pub(crate) fn set_block_bitmap_checksum(&self, checksum: u32) {
         self.block_bitmap_checksum.update(checksum);
     }

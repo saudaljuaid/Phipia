@@ -619,6 +619,7 @@ impl Ext4 {
     ) -> Result<BitmapHandle, Ext4Error> {
         let block_group = self.get_block_group_descriptor(block_group_index);
         let bitmap = BitmapHandle::new(block_group.block_bitmap_block(), false);
+        bitmap.initialize(self, block_group_index).await?;
         bitmap.validate(self, block_group_index).await?;
         Ok(bitmap)
     }
@@ -630,6 +631,7 @@ impl Ext4 {
     ) -> Result<BitmapHandle, Ext4Error> {
         let block_group = self.get_block_group_descriptor(block_group_index);
         let bitmap = BitmapHandle::new(block_group.inode_bitmap_block(), true);
+        bitmap.initialize(self, block_group_index).await?;
         bitmap.validate(self, block_group_index).await?;
         Ok(bitmap)
     }
@@ -721,13 +723,6 @@ impl Ext4 {
                     .inodes_per_block_group()
                     .get()
                     .checked_sub(bg.unused_inodes_count())
-                    .ok_or(
-                        CorruptKind::BlockGroupDescriptorTooManyUnusedInodes {
-                            block_group_num: bg_id,
-                            num_unused_inodes: bg.unused_inodes_count(),
-                        },
-                    )?
-                    .checked_sub(1)
                     .ok_or(
                         CorruptKind::BlockGroupDescriptorTooManyUnusedInodes {
                             block_group_num: bg_id,

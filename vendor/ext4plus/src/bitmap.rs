@@ -2,7 +2,7 @@ use crate::block_index::FsBlockIndex;
 use crate::checksum::Checksum;
 use crate::block_group::TruncatedChecksum;
 use crate::error::CorruptKind;
-use crate::features::ReadOnlyCompatibleFeatures;
+use crate::features::{CompatibleFeatures, IncompatibleFeatures, ReadOnlyCompatibleFeatures};
 use crate::{Ext4, Ext4Error};
 
 use crate::util::usize_from_u32;
@@ -24,6 +24,68 @@ pub(crate) struct BitmapHandle {
 
 #[expect(unused)]
 impl BitmapHandle {
+    /// Materialize the admitted non-flex, non-resize group's lazy bitmap in
+    /// the configured writer. Phipia's writer stages this with the allocation.
+    #[maybe_async::maybe_async]
+    pub(crate) async fn initialize(&self, ext4: &Ext4, group: u32) -> Result<(), Ext4Error> {
+        let descriptor = ext4.get_block_group_descriptor(group);
+        let flag = if self.is_inode_bitmap { 1 } else { 2 };
+        if descriptor.flags() & flag == 0 { return Ok(()); }
+        let sb = &ext4.0.superblock;
+        if ext4.0.writer.is_none() || group == 0 || sb.block_size().to_u32() != 4096
+            || sb.incompatible_features().intersects(IncompatibleFeatures::META_BLOCK_GROUPS | IncompatibleFeatures::FLEXIBLE_BLOCK_GROUPS)
+            || sb.compatible_features().contains(CompatibleFeatures::RESIZE_INODE)
+            || sb.compatible_features().bits() & 0x200 != 0 {
+            return Err(Ext4Error::Readonly);
+        }
+        let bad = || Ext4Error::from(CorruptKind::BlockGroupDescriptor(group));
+        let mut bytes = vec![0xff; sb.block_size().to_usize()];
+        let bits = if self.is_inode_bitmap {
+            sb.inodes_per_block_group().get()
+        } else {
+            let start = u64::from(group) * u64::from(sb.blocks_per_group().get()) + u64::from(sb.first_data_block());
+            u32::try_from(sb.blocks_count().checked_sub(start).ok_or_else(bad)?
+                .min(u64::from(sb.blocks_per_group().get()))).map_err(|_| bad())?
+        };
+        if bits == 0 || u64::from(bits) > bytes.len() as u64 * 8 { return Err(bad()); }
+        for bit in 0..bits { bytes[(bit / 8) as usize] &= !(1 << (bit % 8)); }
+        if self.is_inode_bitmap {
+            if descriptor.free_inodes_count() != bits || descriptor.used_dirs_count() != 0
+                || descriptor.unused_inodes_count() != bits { return Err(bad()); }
+        } else {
+            let start = u64::from(group) * u64::from(sb.blocks_per_group().get()) + u64::from(sb.first_data_block());
+            let mut mark = |block: u64| -> Result<(), Ext4Error> {
+                let bit = block.checked_sub(start).filter(|bit| *bit < u64::from(bits)).ok_or_else(bad)?;
+                bytes[(bit / 8) as usize] |= 1 << (bit % 8);
+                Ok(())
+            };
+            let power = |mut value: u32, base: u32| {
+                while value > 1 && value % base == 0 { value /= base; }
+                value == 1
+            };
+            let has_super = !sb.read_only_compatible_features().contains(ReadOnlyCompatibleFeatures::SPARSE_SUPERBLOCKS)
+                || group == 1 || power(group, 3) || power(group, 5) || power(group, 7);
+            if has_super {
+                let descriptors = (u64::from(sb.num_block_groups()) * u64::from(sb.block_group_descriptor_size()))
+                    .div_ceil(sb.block_size().to_u64());
+                for block in 0..=descriptors { mark(start + block)?; }
+            }
+            mark(descriptor.block_bitmap_block())?;
+            mark(descriptor.inode_bitmap_block())?;
+            let table_blocks = (u64::from(sb.inodes_per_block_group().get()) * u64::from(sb.inode_size()))
+                .div_ceil(sb.block_size().to_u64());
+            for index in 0..table_blocks { mark(descriptor.inode_table_first_block().checked_add(index).ok_or_else(bad)?)?; }
+            let free = (0..bits).filter(|bit| bytes[(*bit / 8) as usize] & (1 << (*bit % 8)) == 0).count();
+            if free as u64 != u64::from(descriptor.free_blocks_count()) { return Err(bad()); }
+        }
+        ext4.write_to_block(self.block, 0, &bytes).await?;
+        let checksum = self.calc_checksum(ext4, group).await?;
+        if self.is_inode_bitmap { descriptor.set_inode_bitmap_checksum(checksum); }
+        else { descriptor.set_block_bitmap_checksum(checksum); }
+        descriptor.set_flags(descriptor.flags() & !flag);
+        descriptor.write(ext4).await
+    }
+
     #[maybe_async::maybe_async]
     pub(crate) async fn validate(&self, ext4: &Ext4, group: u32) -> Result<(), Ext4Error> {
         let descriptor = ext4.get_block_group_descriptor(group);

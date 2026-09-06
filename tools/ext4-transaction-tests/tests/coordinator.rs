@@ -871,6 +871,75 @@ fn external_xattr_checksums_shared_release_and_final_free() {
 }
 
 #[test]
+fn lazy_group_bitmaps_initialize_in_the_allocation_transaction_and_roll_back() {
+    let Some(path) = fixture() else { return };
+    let bytes = std::fs::read(&path).unwrap();
+    let free = u16::from_le_bytes(bytes[4096 + 0x0e..4096 + 0x10].try_into().unwrap());
+    assert!(free > 1);
+    let image = path.with_extension("coordinator-lazy-input.img");
+    std::fs::write(&image, bytes).unwrap();
+    let empty = path.with_extension("coordinator-lazy-empty.bin");
+    std::fs::write(&empty, []).unwrap();
+    let commands = path.with_extension("coordinator-lazy-fill.commands");
+    let mut script = String::from("mkdir /lazy-fill\n");
+    for index in 0..free - 1 {
+        script.push_str(&format!("write \"{}\" /lazy-fill/entry-{index}\n", empty.display()));
+    }
+    std::fs::write(&commands, script).unwrap();
+    let result = std::process::Command::new("debugfs").args(["-w", "-f"])
+        .arg(&commands).arg(&image).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    // e2fsprogs may materialize empty bitmaps while writing another group.
+    // Recreate Linux's lazy state for this entirely unused group, including
+    // arbitrary backing bytes which must never be interpreted as allocation.
+    let mut bytes = std::fs::read(&image).unwrap();
+    assert_eq!(u16::from_le_bytes(bytes[4174..4176].try_into().unwrap()), 1024);
+    let flags = u16::from_le_bytes(bytes[4178..4180].try_into().unwrap()) | 3;
+    bytes[4178..4180].copy_from_slice(&flags.to_le_bytes());
+    for offset in [0, 4] {
+        let block = u32::from_le_bytes(bytes[4160 + offset..4164 + offset].try_into().unwrap()) as usize;
+        bytes[block * 4096..(block + 1) * 4096].fill(0xa5);
+    }
+    bytes[4190..4192].fill(0);
+    let mut crc = u32::from_le_bytes(bytes[1024 + 0x270..1024 + 0x274].try_into().unwrap());
+    for byte in 1u32.to_le_bytes().iter().chain(&bytes[4160..4224]) {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 { crc = (crc >> 1) ^ (0x82f6_3b78u32 & 0u32.wrapping_sub(crc & 1)); }
+    }
+    bytes[4190..4192].copy_from_slice(&crc.to_le_bytes()[..2]);
+    std::fs::write(&image, bytes).unwrap();
+    let mut mounted = mount_fixture(&image);
+    let before = DEVICE.with_borrow(|device| device.bytes.clone());
+    assert_eq!(u16::from_le_bytes(before[4110..4112].try_into().unwrap()), 0);
+    assert_eq!(u16::from_le_bytes(before[4178..4180].try_into().unwrap()) & 3, 3);
+    fsck(&path, "coordinator-lazy-initial");
+    assert_eq!(ext4::create_file_probe(&mut mounted, b"system/README.TXT", 0o600), Err(Status::Exists));
+    ext4::sync(&mut mounted).unwrap();
+    DEVICE.with_borrow(|device| assert!(device.bytes == before, "failed create retained lazy allocation"));
+    let free_blocks = ext4::free_bytes(&mounted).unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/lazy-allocated", 0o600).unwrap();
+    let inode = ext4::stat(&mounted, b"system/lazy-allocated").unwrap().inode;
+    assert_eq!(inode, 1025);
+    DEVICE.with_borrow(|device| assert_eq!(u16::from_le_bytes(device.bytes[4178..4180].try_into().unwrap()) & 3, 2));
+    ext4::transaction_probe(&mut mounted, b"system/lazy-allocated", 0, b"initialized").unwrap();
+    DEVICE.with_borrow(|device| assert_eq!(u16::from_le_bytes(device.bytes[4178..4180].try_into().unwrap()) & 3, 0));
+    let mut content = [0; 11];
+    read_exact(&mounted, b"system/lazy-allocated", &mut content);
+    assert_eq!(&content, b"initialized");
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-lazy-allocated");
+    drop(mounted);
+    let disk = DEVICE.with_borrow(|device| device.bytes.clone());
+    let mut mounted = mount_bytes(disk);
+    ext4::unlink_file_probe(&mut mounted, b"system/lazy-allocated").unwrap();
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free_blocks));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-lazy-freed");
+}
+
+#[test]
 fn real_inode_exhaustion_rolls_back_namespace_and_reuses_a_freed_inode() {
     let Some(path) = fixture() else { return };
     let original = std::fs::read(&path).unwrap();
