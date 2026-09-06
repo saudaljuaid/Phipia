@@ -155,6 +155,7 @@ struct nvme_filesystem_runtime {
     struct msix_state msix_before;
     struct frame_allocator_stats frames_before;
     struct frame_allocator_stats frames_ready;
+    size_t frames_released;
     uint64_t generation;
     bool active;
 };
@@ -1999,9 +2000,18 @@ static uint32_t volume_resource_state_mismatches(
         runtime->dma_before, runtime->vectors_before, runtime->msix_before,
         runtime->frames_before);
 
-    if (volume_frames_released(runtime->frames_before, runtime->frames_ready,
+    struct frame_allocator_stats remaining = runtime->frames_ready;
+    if (remaining.allocated_frames < runtime->frames_released ||
+        remaining.free_frames > SIZE_MAX - runtime->frames_released) {
+        return mismatches | NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
+    }
+    remaining.allocated_frames -= runtime->frames_released;
+    remaining.free_frames += runtime->frames_released;
+    if (volume_frames_released(runtime->frames_before, remaining,
             frames_before_teardown, frame_allocator_get_stats())) {
-        mismatches &= ~NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
+        mismatches &= ~(uint32_t)NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
+    } else {
+        mismatches |= NVME_VOLUME_RESOURCE_MISMATCH_FRAMES;
     }
     return mismatches;
 }
@@ -3273,7 +3283,7 @@ enum nvme_status nvme_volume_flush(struct nvme_volume_session *session)
     return result;
 }
 
-enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
+static enum nvme_status volume_close_interrupts_disabled(struct nvme_volume_session *session)
 {
     const struct frame_allocator_stats frames_before_teardown =
         frame_allocator_get_stats();
@@ -3296,6 +3306,18 @@ enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
         result = NVME_STATUS_TEARDOWN_FAILURE;
     }
     if (result != NVME_STATUS_OK) {
+        // A failed teardown may already have released some owned allocations.
+        // Account only this attempt's balanced frame delta; unrelated clients
+        // may allocate or free their own frames before the next close retry.
+        const struct frame_allocator_stats after = frame_allocator_get_stats();
+        if (after.allocated_frames <= frames_before_teardown.allocated_frames &&
+            after.free_frames >= frames_before_teardown.free_frames) {
+            const size_t released = frames_before_teardown.allocated_frames - after.allocated_frames;
+            if (released == after.free_frames - frames_before_teardown.free_frames &&
+                filesystem_runtime.frames_released <= SIZE_MAX - released) {
+                filesystem_runtime.frames_released += released;
+            }
+        }
         return result;
     }
     filesystem_runtime.active = false;
@@ -3305,6 +3327,15 @@ enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
     session->state = NVME_FILESYSTEM_SESSION_RELEASED;
     zero_bytes(&filesystem_runtime, sizeof(filesystem_runtime));
     return NVME_STATUS_OK;
+}
+
+enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
+{
+    const bool interrupts_were_enabled = cpu_interrupts_enabled();
+    if (interrupts_were_enabled) cpu_interrupt_disable();
+    const enum nvme_status result = volume_close_interrupts_disabled(session);
+    if (interrupts_were_enabled) cpu_interrupt_enable();
+    return result;
 }
 
 const char *nvme_status_string(enum nvme_status status)
