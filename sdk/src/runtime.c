@@ -249,6 +249,11 @@ long phipia_path_rename(uint16_t volume, const char *source,
     return rename_path(PHIPIA_SYS_PATH_RENAME, volume, source, destination);
 }
 
+long phipia_path_link(uint16_t volume, const char *source, const char *destination)
+{
+    return rename_path(PHIPIA_SYS_PATH_LINK, volume, source, destination);
+}
+
 long phipia_path_replace(uint16_t volume, const char *source,
     const char *destination)
 {

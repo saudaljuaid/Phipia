@@ -242,6 +242,15 @@ int32_t phipia_ext4_symlink(uintptr_t mounted, const uint8_t *path,
     return permanent_status;
 }
 
+int32_t phipia_ext4_link_file_probe(uintptr_t mounted, const uint8_t *source,
+    size_t source_bytes, const uint8_t *destination, size_t destination_bytes)
+{
+    assert(mounted == 1U && source_bytes == 4U && memcmp(source, "file", 4U) == 0);
+    assert(destination_bytes == 5U && memcmp(destination, "alias", 5U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    return permanent_status;
+}
+
 int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes)
 {
@@ -359,6 +368,13 @@ int main(void)
     assert(ext4_backend_symlink(PHIPFS_VOLUME_DATA, "file", "../missing") == PHIPFS_STATUS_IO);
     permanent_status = PHIPIA_EXT4_STATUS_OK;
     assert(ext4_backend_symlink(PHIPFS_VOLUME_DATA, "file", "../missing") == PHIPFS_STATUS_OK);
+    stat_refusals = 1U;
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_link(PHIPFS_VOLUME_DATA, "file", "alias") == PHIPFS_STATUS_IO);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_link(PHIPFS_VOLUME_DATA, "file", "alias") == PHIPFS_STATUS_OK);
+    assert(stat_refusals == 1U); /* A dangling final symlink must not be followed. */
+    stat_refusals = 0U;
     uint8_t literal[12];
     size_t read_bytes;
     memset(literal, 0xa5, sizeof(literal));

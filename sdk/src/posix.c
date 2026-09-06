@@ -154,6 +154,15 @@ int symlink(const char *target, const char *path)
     if (phipia_runtime_path(path, &parsed) != 0) return -1;
     return phipia_result(phipia_path_symlink(parsed.volume, parsed.text, target));
 }
+int link(const char *source, const char *destination)
+{
+    struct phipia_runtime_path from;
+    struct phipia_runtime_path to;
+    if (phipia_runtime_path(source, &from) != 0 ||
+        phipia_runtime_path(destination, &to) != 0) return -1;
+    if (from.volume != to.volume) { errno = EXDEV; return -1; }
+    return phipia_result(phipia_path_link(from.volume, from.text, to.text));
+}
 ssize_t readlink(const char *path, char *output, size_t capacity)
 {
     struct phipia_runtime_path parsed;

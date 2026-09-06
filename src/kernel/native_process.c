@@ -3764,7 +3764,8 @@ static bool replacement_backup_path(
 static int64_t syscall_rename(
     struct native_process *process,
     uint64_t request_address,
-    bool replace
+    bool replace,
+    bool hard_link
 )
 {
     struct phipia_rename_request request;
@@ -3795,6 +3796,11 @@ static int64_t syscall_rename(
         return -PHIPIA_EACCES;
     }
     cpu_interrupt_enable();
+    if (hard_link) {
+        status = phipfs_link(PHIPFS_VOLUME_DATA, source, destination);
+        cpu_interrupt_disable();
+        return filesystem_error(status);
+    }
     if (replace && phipfs_has_atomic_replace(PHIPFS_VOLUME_DATA)) {
         status = phipfs_rename_replace(PHIPFS_VOLUME_DATA, source, destination);
         cpu_interrupt_disable();
@@ -5907,9 +5913,11 @@ static int64_t dispatch_syscall(
         return syscall_single_path_mutation(process, frame->rdi, frame->rsi,
             frame->rax);
     case PHIPIA_SYS_PATH_RENAME:
-        return syscall_rename(process, frame->rdi, false);
+        return syscall_rename(process, frame->rdi, false, false);
     case PHIPIA_SYS_PATH_REPLACE:
-        return syscall_rename(process, frame->rdi, true);
+        return syscall_rename(process, frame->rdi, true, false);
+    case PHIPIA_SYS_PATH_LINK:
+        return syscall_rename(process, frame->rdi, false, true);
     case PHIPIA_SYS_VOLUME_SYNC:
         return syscall_volume_sync(process, frame->rdi);
     case PHIPIA_SYS_VOLUME_SPACE:

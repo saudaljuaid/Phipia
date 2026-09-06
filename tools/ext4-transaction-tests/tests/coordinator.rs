@@ -250,7 +250,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..16 {
+    for case in 0..18 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -276,7 +276,11 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             ext4::sync(&mut mounted).unwrap();
         }
         if case >= 9 {
-            ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            if case == 17 {
+                ext4::symlink_probe(&mut mounted, b"system/retry-test", b"missing").unwrap();
+            } else {
+                ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            }
             if case == 11 {
                 ext4::set_xattr(&mut mounted, b"system/retry-test", b"user.note", Some(b"old")).unwrap();
             }
@@ -309,6 +313,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             13 => ext4::write_inode(mounted, inode, 4095, b"stable").map(|count| assert_eq!(count, 6)),
             14 => ext4::truncate_inode(mounted, inode, 101),
             15 => ext4::set_times(mounted, b"system/retry-test", 2_200_000_000, 123, 2_300_000_000, 456),
+            16 | 17 => ext4::link_file_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -1114,6 +1119,12 @@ fn symlinks_roundtrip_inline_boundary_dangling_and_looping_targets() {
         assert_eq!(bytes[length], 0xa5);
         assert_eq!(ext4::readlink(&mounted, name.as_bytes(), &mut bytes[..1]), Ok(1));
         assert_eq!(ext4::symlink_probe(&mut mounted, name.as_bytes(), b"other"), Err(Status::Exists));
+        let alias = format!("data/user/link-alias-{length}");
+        ext4::link_file_probe(&mut mounted, name.as_bytes(), alias.as_bytes()).unwrap();
+        assert_eq!(ext4::lstat(&mounted, alias.as_bytes()).unwrap().inode, metadata.inode);
+        assert_eq!(ext4::lstat(&mounted, name.as_bytes()).unwrap().links, 2);
+        assert_eq!(ext4::readlink(&mounted, alias.as_bytes(), &mut bytes), Ok(length));
+        assert_eq!(&bytes[..length], &target);
     }
     ext4::symlink_probe(&mut mounted, b"system/link-loop", b"link-loop").unwrap();
     ext4::symlink_probe(&mut mounted, b"system/link-real", b"README.TXT").unwrap();
@@ -1130,6 +1141,11 @@ fn symlinks_roundtrip_inline_boundary_dangling_and_looping_targets() {
         let name = format!("system/link-{length}");
         ext4::rename_probe(&mut mounted, name.as_bytes(), b"data/user/moved-link").unwrap();
         ext4::unlink_file_probe(&mut mounted, b"data/user/moved-link").unwrap();
+        let alias = format!("data/user/link-alias-{length}");
+        assert_eq!(ext4::lstat(&mounted, alias.as_bytes()).unwrap().links, 1);
+        let mut literal = vec![0; length];
+        assert_eq!(ext4::readlink(&mounted, alias.as_bytes(), &mut literal), Ok(length));
+        ext4::unlink_file_probe(&mut mounted, alias.as_bytes()).unwrap();
     }
     ext4::unlink_file_probe(&mut mounted, b"system/link-loop").unwrap();
     ext4::unlink_file_probe(&mut mounted, b"system/link-real").unwrap();

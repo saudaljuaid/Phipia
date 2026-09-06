@@ -22,6 +22,7 @@ int close(int descriptor);
 int access(const char *path, int mode);
 int unlink(const char *path);
 int symlink(const char *target, const char *path);
+int link(const char *source, const char *destination);
 ssize_t readlink(const char *path, char *output, size_t capacity);
 int rmdir(const char *path);
 int fsync(int descriptor);

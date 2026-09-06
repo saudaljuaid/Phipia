@@ -1130,15 +1130,12 @@ enum phipfs_status phipfs_link(
 {
     char source_canonical[PHIPFS_MAX_PATH];
     char destination_canonical[PHIPFS_MAX_PATH];
-    size_t vnode_index;
-    enum phipfs_status status = resolve_path(
-        volume, source, source_canonical, &vnode_index);
+    enum phipfs_status status = resolve_parent(volume, source, source_canonical);
 
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
     status = resolve_parent(volume, destination, destination_canonical);
-    vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == PHIPFS_STATUS_OK ? mounts[volume].backend->link(volume,
         source_canonical, destination_canonical) : status;
 }

@@ -1510,7 +1510,7 @@ pub(crate) fn unlink_file_probe(
     commit_namespace_mutation(mounted, PendingMutationKind::UnlinkFile, absolute)
 }
 
-/// Create one regular-file hard link through the journaled mutation path.
+/// Hard-link a regular file or the final symbolic link without following it.
 pub(crate) fn link_file_probe(
     mounted: &mut Mounted,
     source: &[u8],
@@ -1541,7 +1541,7 @@ pub(crate) fn link_file_probe(
     let mutation = (|| {
         let mut inode = filesystem
             .path_to_inode(source_path, FollowSymlinks::ExcludeFinalComponent)?;
-        if !inode.file_type().is_regular_file() {
+        if !inode.file_type().is_regular_file() && !inode.file_type().is_symlink() {
             return Err(Ext4Error::IsADirectory);
         }
         let parent_inode = filesystem
