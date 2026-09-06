@@ -96,6 +96,19 @@ struct phipia_rename_request {
     uint32_t reserved;
 } __attribute__((packed));
 
+struct phipia_directory_entry_long {
+    uint32_t size;
+    uint32_t version;
+    uint64_t byte_length;
+    uint32_t attributes;
+    uint16_t name_length;
+    uint16_t reserved;
+    uint8_t name[255];
+    uint8_t reserved_tail;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct phipia_directory_entry_long) == 280U, "Phipia long directory ABI changed");
+
 struct phipia_volume_space {
     uint32_t size;
     uint32_t version;

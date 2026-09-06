@@ -203,11 +203,12 @@ DIR *opendir(const char *path)
 }
 struct dirent *readdir(DIR *directory)
 {
-    struct phipia_directory_entry native;
+    struct phipia_directory_entry_long native;
     long result;
     if (directory == NULL) { errno = EBADF; return NULL; }
-    result = phipia_directory_read(directory->handle, &native);
+    result = phipia_directory_read_long(directory->handle, &native);
     if (result <= 0) { if (result < 0) errno = (int)-result; return NULL; }
+    if (native.name_length >= sizeof(directory->entry.d_name)) { errno = EIO; return NULL; }
     (void)memcpy(directory->entry.d_name, native.name, native.name_length);
     directory->entry.d_name[native.name_length] = '\0';
     directory->entry.d_type = (native.attributes & PHIPIA_PATH_DIRECTORY) != 0U ? DT_DIR : DT_REG;

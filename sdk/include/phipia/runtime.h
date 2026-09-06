@@ -53,6 +53,8 @@ long phipia_path_stat(uint16_t volume, const char *path,
 long phipia_directory_open(uint16_t volume, const char *path);
 long phipia_directory_read(phipia_handle_t handle,
     struct phipia_directory_entry *entry);
+long phipia_directory_read_long(phipia_handle_t handle,
+    struct phipia_directory_entry_long *entry);
 long phipia_path_mkdir(uint16_t volume, const char *path);
 long phipia_path_rename(uint16_t volume, const char *source,
     const char *destination);

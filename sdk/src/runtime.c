@@ -207,6 +207,11 @@ long phipia_directory_open(uint16_t volume, const char *path)
         (uint64_t)(uintptr_t)&input);
 }
 
+long phipia_directory_read_long(phipia_handle_t handle, struct phipia_directory_entry_long *entry)
+{
+    return phipia_syscall2(PHIPIA_SYS_DIRECTORY_READ_LONG, handle, (uint64_t)(uintptr_t)entry);
+}
+
 long phipia_directory_read(
     phipia_handle_t handle,
     struct phipia_directory_entry *entry

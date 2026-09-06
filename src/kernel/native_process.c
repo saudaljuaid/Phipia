@@ -3500,17 +3500,20 @@ static int64_t syscall_directory_open(
 static int64_t syscall_directory_read(
     struct native_process *process,
     phipia_handle_t handle,
-    uint64_t output_address
+    uint64_t output_address,
+    bool long_names
 )
 {
     struct native_resource *resource;
     struct phipfs_list_entry entry;
-    struct phipia_directory_entry output;
+    struct phipia_directory_entry_long output;
+    const size_t output_bytes = long_names ? sizeof(output) : sizeof(struct phipia_directory_entry);
+    const size_t name_capacity = long_names ? sizeof(output.name) : PHIPIA_DIRECTORY_NAME_MAX;
     struct native_directory_resource *directory;
     bool present = false;
     enum phipfs_status status;
 
-    if (!validate_user_range(process, output_address, sizeof(output), true)) {
+    if (!validate_user_range(process, output_address, output_bytes, true)) {
         return -PHIPIA_EFAULT;
     }
     {
@@ -3538,18 +3541,18 @@ static int64_t syscall_directory_read(
         return 0;
     }
     zero_bytes(&output, sizeof(output));
-    output.size = sizeof(output);
+    output.size = (uint32_t)output_bytes;
     output.version = PHIPIA_ABI_VERSION;
     output.byte_length = entry.size;
     output.attributes = entry.directory ?
         PHIPIA_PATH_DIRECTORY : 0U;
     output.name_length = (uint16_t)bounded_length(
         (const uint8_t *)entry.name, sizeof(entry.name));
-    if (output.name_length > sizeof(output.name)) {
+    if (output.name_length > name_capacity) {
         return -PHIPIA_EIO;
     }
     copy_bytes(output.name, entry.name, output.name_length);
-    if (!copy_to_user(process, output_address, &output, sizeof(output))) {
+    if (!copy_to_user(process, output_address, &output, output_bytes)) {
         return -PHIPIA_EFAULT;
     }
     return 1;
@@ -5865,7 +5868,9 @@ static int64_t dispatch_syscall(
     case PHIPIA_SYS_DIRECTORY_OPEN:
         return syscall_directory_open(process, frame->rdi);
     case PHIPIA_SYS_DIRECTORY_READ:
-        return syscall_directory_read(process, frame->rdi, frame->rsi);
+        return syscall_directory_read(process, frame->rdi, frame->rsi, false);
+    case PHIPIA_SYS_DIRECTORY_READ_LONG:
+        return syscall_directory_read(process, frame->rdi, frame->rsi, true);
     case PHIPIA_SYS_PATH_MKDIR:
     case PHIPIA_SYS_PATH_UNLINK:
     case PHIPIA_SYS_PATH_TRUNCATE:
