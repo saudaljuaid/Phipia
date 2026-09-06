@@ -676,6 +676,67 @@ pub(crate) unsafe extern "C" fn phipia_ext4_symlink(
     }
 }
 
+/// Change ordinary permission bits through the journal coordinator.
+///
+/// # Safety
+/// C holds the writable lease; the live mount and readable path are disjoint.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_chmod(
+    mounted: usize, path: *const u8, path_length: usize, mode: u16,
+) -> i32 {
+    if mounted == 0 || path.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: pointers and exclusion are guaranteed by the caller.
+    let (mounted, path) = unsafe { (&mut *(mounted as *mut ext4::Mounted),
+        core::slice::from_raw_parts(path, path_length)) };
+    match ext4::chmod(mounted, path, mode) {
+        Ok(()) => ext4::Status::Ok as i32, Err(status) => status as i32,
+    }
+}
+
+/// Mutate an admitted user xattr; remove=1 deletes, remove=0 sets even an empty value.
+///
+/// # Safety
+/// C holds an exclusive writable lease and supplies disjoint live input ranges.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_set_xattr(
+    mounted: usize, path: *const u8, path_length: usize,
+    name: *const u8, name_length: usize, value: *const u8, value_length: usize, remove: u8,
+) -> i32 {
+    if mounted == 0 || path.is_null() || name.is_null() || value.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    if remove > 1 { return ext4::Status::Invalid as i32; }
+    // SAFETY: pointers and exclusion are guaranteed by the caller.
+    let (mounted, path, name, value) = unsafe { (&mut *(mounted as *mut ext4::Mounted),
+        core::slice::from_raw_parts(path, path_length), core::slice::from_raw_parts(name, name_length),
+        core::slice::from_raw_parts(value, value_length)) };
+    match ext4::set_xattr(mounted, path, name, if remove == 1 { None } else { Some(value) }) {
+        Ok(()) => ext4::Status::Ok as i32, Err(status) => status as i32,
+    }
+}
+
+/// Query an admitted user xattr; capacity zero queries its required size.
+///
+/// # Safety
+/// C holds a lease; mount/inputs and writable output/count ranges are live and disjoint.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_get_xattr(
+    mounted: usize, path: *const u8, path_length: usize,
+    name: *const u8, name_length: usize, output: *mut u8, capacity: usize, count: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || name.is_null() || output.is_null() || count.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: pointers and exclusion are guaranteed by the caller.
+    let (mounted, path, name, output, count) = unsafe { (&*(mounted as *const ext4::Mounted),
+        core::slice::from_raw_parts(path, path_length), core::slice::from_raw_parts(name, name_length),
+        core::slice::from_raw_parts_mut(output, capacity), &mut *count) };
+    *count = 0;
+    match ext4::get_xattr(mounted, path, name, output) {
+        Ok(length) => { *count = length; ext4::Status::Ok as i32 }, Err(status) => status as i32,
+    }
+}
+
 /// Read a symlink's literal target without a trailing NUL.
 ///
 /// # Safety

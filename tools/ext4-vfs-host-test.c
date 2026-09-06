@@ -19,6 +19,39 @@ static uint64_t pending_size;
 static unsigned sync_refusals;
 static unsigned stat_refusals;
 static unsigned appends;
+static uint16_t changed_mode;
+
+int32_t phipia_ext4_chmod(uintptr_t mounted, const uint8_t *path, size_t path_bytes, uint16_t mode)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    if (permanent_status == PHIPIA_EXT4_STATUS_OK) changed_mode = mode;
+    return permanent_status;
+}
+
+int32_t phipia_ext4_set_xattr(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *name, size_t name_bytes,
+    const uint8_t *value, size_t value_bytes, uint8_t remove)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(name_bytes == 9U && memcmp(name, "user.note", 9U) == 0);
+    assert(value != NULL && value_bytes == 0U && remove <= 1U);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    return permanent_status;
+}
+
+int32_t phipia_ext4_get_xattr(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint8_t *name, size_t name_bytes,
+    uint8_t *output, size_t capacity, size_t *length)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(name_bytes == 9U && memcmp(name, "user.note", 9U) == 0);
+    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].session.writable && output != NULL);
+    if (capacity != 0U && capacity < 5U) return PHIPIA_EXT4_STATUS_RANGE;
+    *length = 5U;
+    if (capacity != 0U) memcpy(output, "value", 5U);
+    return PHIPIA_EXT4_STATUS_OK;
+}
 
 int32_t phipia_ext4_append(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, const uint8_t *source, size_t source_bytes,
@@ -234,6 +267,20 @@ int main(void)
     assert(read_bytes == 4U && memcmp(literal, "../m", 4U) == 0 && literal[4] == 0xa5);
     assert(ext4_backend_readlink(PHIPFS_VOLUME_DATA, "file", literal, sizeof(literal), &read_bytes) == PHIPFS_STATUS_OK);
     assert(read_bytes == 10U && memcmp(literal, "../missing", 10U) == 0 && literal[10] == 0xa5);
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_chmod(PHIPFS_VOLUME_DATA, "file", 0640U) == PHIPFS_STATUS_IO);
+    assert(changed_mode == 0U);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_chmod(PHIPFS_VOLUME_DATA, "file", 0640U) == PHIPFS_STATUS_OK);
+    assert(changed_mode == 0640U);
+    assert(ext4_backend_set_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, false) == PHIPFS_STATUS_OK);
+    assert(ext4_backend_set_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, true) == PHIPFS_STATUS_OK);
+    assert(ext4_backend_get_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", NULL, 0U, &read_bytes) == PHIPFS_STATUS_OK);
+    assert(read_bytes == 5U);
+    assert(ext4_backend_get_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", literal, 4U, &read_bytes) == PHIPFS_STATUS_RANGE);
+    assert(read_bytes == 0U);
+    assert(ext4_backend_get_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", literal, sizeof(literal), &read_bytes) == PHIPFS_STATUS_OK);
+    assert(read_bytes == 5U && memcmp(literal, "value", 5U) == 0);
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
     puts("ext4 VFS append, truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;

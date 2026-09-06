@@ -186,4 +186,11 @@ enum phipfs_status ext4_backend_rename_replace(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_readlink(enum phipfs_volume volume,
     const char *path, uint8_t *output, size_t capacity, size_t *read_bytes);
 
+enum phipfs_status ext4_backend_chmod(enum phipfs_volume volume,
+    const char *path, uint16_t mode);
+enum phipfs_status ext4_backend_set_xattr(enum phipfs_volume volume,
+    const char *path, const char *name, const uint8_t *value, size_t length, bool remove);
+enum phipfs_status ext4_backend_get_xattr(enum phipfs_volume volume,
+    const char *path, const char *name, uint8_t *output, size_t capacity, size_t *length);
+
 #endif

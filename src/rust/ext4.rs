@@ -11,7 +11,7 @@ use core::fmt::{self, Display, Formatter};
 use core::time::Duration;
 use ext4plus::dir::Dir;
 use ext4plus::error::Ext4Error;
-use ext4plus::inode::{InodeCreationOptions, InodeFlags, InodeMode};
+use ext4plus::inode::{Inode, InodeCreationOptions, InodeFlags, InodeMode};
 use ext4plus::path::{Path, PathBuf};
 use ext4plus::{
     DirEntryName, Ext4, Ext4Read, FileType, FilesystemSuperblockCheckpoint,
@@ -140,6 +140,9 @@ enum PendingMutationKind {
     Rename,
     RenameReplace,
     Symlink,
+    Chmod,
+    SetXattr,
+    RemoveXattr,
 }
 
 struct PendingMutation {
@@ -1185,6 +1188,87 @@ fn commit_namespace_mutation(
     } else {
         Err(Status::Invalid)
     }
+}
+
+/// Apply one inode mutation with an exact-input retry key and staged rollback.
+fn mutate_inode<F>(mounted: &mut Mounted, path: &[u8], kind: PendingMutationKind,
+    input: Vec<u8>, mutation: F) -> Result<(), Status>
+where F: FnOnce(&Ext4, &mut Inode) -> Result<(), Ext4Error> {
+    let absolute = absolute_path(path)?;
+    if mounted.pending_mutation.is_some() {
+        return resume_pending_mutation(mounted, kind, &absolute, 0, &input).map(|_| ());
+    }
+    if mounted.pending_write.is_some() { return Err(Status::Invalid); }
+    if !mounted.stage.is_empty() || mounted.stage.is_sealed() {
+        let recovery = mounted.journal.filesystem_recovery_marker_is_durable()
+            .map_err(|_| Status::Invalid)?;
+        discard_uncommitted_stage(mounted, recovery)?;
+    }
+    arm_recovery_marker(mounted)?;
+    let filesystem = mounted.filesystem()?;
+    let result = (|| {
+        let path = Path::try_from(absolute.as_slice()).map_err(|_| Ext4Error::MalformedPath)?;
+        let mut inode = filesystem.path_to_inode(path, FollowSymlinks::All)?;
+        if inode.flags().contains(InodeFlags::IMMUTABLE) { return Err(Ext4Error::Readonly); }
+        mutation(filesystem, &mut inode)
+    })();
+    if let Err(error) = result {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(map_error(error));
+    }
+    if mounted.stage.is_empty() {
+        discard_uncommitted_stage(mounted, true)?;
+        return Err(Status::Invalid);
+    }
+    commit_staged_mutation(mounted, kind, absolute, input, 0, 0, &[], None).map(|_| ())
+}
+
+pub(crate) fn chmod(mounted: &mut Mounted, path: &[u8], mode: u16) -> Result<(), Status> {
+    if mode & !0o777 != 0 { return Err(Status::Invalid); }
+    mutate_inode(mounted, path, PendingMutationKind::Chmod, Vec::from(mode.to_le_bytes()),
+        |filesystem, inode| {
+            // Updating mode alone would leave an access ACL inconsistent.
+            if inode.get_xattr(filesystem, b"system.posix_acl_access")?.is_some() {
+                return Err(Ext4Error::Readonly);
+            }
+            inode.set_mode(InodeMode::from_bits_retain((inode.mode().bits() & !0o777) | mode))?;
+            inode.write(filesystem)
+        })
+}
+
+fn validate_user_xattr(name: &[u8]) -> Result<(), Status> {
+    if !name.starts_with(b"user.") || name.len() <= 5 || name.len() > 255 || name.contains(&0) {
+        return Err(Status::Invalid);
+    }
+    Ok(())
+}
+
+pub(crate) fn set_xattr(mounted: &mut Mounted, path: &[u8], name: &[u8],
+    value: Option<&[u8]>) -> Result<(), Status> {
+    validate_user_xattr(name)?;
+    if value.is_some_and(|bytes| bytes.len() > 4096) { return Err(Status::Range); }
+    let mut input = Vec::from(name);
+    input.push(0);
+    if let Some(value) = value { input.extend_from_slice(value); }
+    let kind = if value.is_some() { PendingMutationKind::SetXattr } else { PendingMutationKind::RemoveXattr };
+    mutate_inode(mounted, path, kind, input, |filesystem, inode| {
+        if let Some(value) = value { inode.set_xattr(filesystem, name, value) }
+        else { inode.remove_xattr(filesystem, name) }
+    })
+}
+
+pub(crate) fn get_xattr(mounted: &Mounted, path: &[u8], name: &[u8],
+    output: &mut [u8]) -> Result<usize, Status> {
+    validate_user_xattr(name)?;
+    let filesystem = mounted.readable_filesystem()?;
+    let absolute = absolute_path(path)?;
+    let path = Path::try_from(absolute.as_slice()).map_err(|_| Status::Invalid)?;
+    let inode = filesystem.path_to_inode(path, FollowSymlinks::All).map_err(map_error)?;
+    let value = inode.get_xattr(filesystem, name).map_err(map_error)?.ok_or(Status::NotFound)?;
+    if output.is_empty() { return Ok(value.len()); }
+    if output.len() < value.len() { return Err(Status::Range); }
+    output[..value.len()].copy_from_slice(&value);
+    Ok(value.len())
 }
 
 /// Create one empty regular file through the journaled mutation path.

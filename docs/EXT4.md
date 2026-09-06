@@ -412,3 +412,12 @@ syscalls return at most one 4096-byte copied chunk; callers must handle short
 writes. Direct backend requests remain bounded to 256 KiB and can checkpoint
 multiple transactions, so crash atomicity for the entire request is not claimed.
 The current C file-size cap remains 16 MiB.
+
+VFS chmod changes ordinary permission bits through JBD2; immutable inodes and
+inodes with access ACLs are refused. The admitted xattr mutation namespace is
+`user.*`, with names up to 255 bytes. Set/replace/remove journal the inode and
+any released external attribute block. The complete resulting attribute set
+must fit in the inode body; larger sets return FULL with the old attributes
+and allocation counters preserved. Reads support size queries and refuse
+undersized buffers. These VFS operations do not yet have native syscall/SDK
+bindings, and automatic timestamp updates remain incomplete.

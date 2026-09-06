@@ -124,6 +124,9 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .link = ext4_backend_link,
     .case_sensitive = true,
     .append = ext4_backend_append,
+    .chmod = ext4_backend_chmod,
+    .set_xattr = ext4_backend_set_xattr,
+    .get_xattr = ext4_backend_get_xattr,
     .rename_replace = ext4_backend_rename_replace,
     .symlink = ext4_backend_symlink,
     .readlink = ext4_backend_readlink,
@@ -1126,6 +1129,35 @@ enum phipfs_status phipfs_link(
     vnode_release(vnode_index, vnodes[vnode_index].generation);
     return status == PHIPFS_STATUS_OK ? mounts[volume].backend->link(volume,
         source_canonical, destination_canonical) : status;
+}
+
+enum phipfs_status phipfs_chmod(enum phipfs_volume volume, const char *path, uint16_t mode)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) return status;
+    return mounts[volume].backend->chmod == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->chmod(volume, canonical, mode);
+}
+
+enum phipfs_status phipfs_set_xattr(enum phipfs_volume volume, const char *path,
+    const char *name, const uint8_t *value, size_t length, bool remove)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) return status;
+    return mounts[volume].backend->set_xattr == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->set_xattr(volume, canonical, name, value, length, remove);
+}
+
+enum phipfs_status phipfs_get_xattr(enum phipfs_volume volume, const char *path,
+    const char *name, uint8_t *output, size_t capacity, size_t *length)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) return status;
+    return mounts[volume].backend->get_xattr == NULL ? PHIPFS_STATUS_ACCESS :
+        mounts[volume].backend->get_xattr(volume, canonical, name, output, capacity, length);
 }
 
 enum phipfs_status phipfs_symlink(enum phipfs_volume volume,

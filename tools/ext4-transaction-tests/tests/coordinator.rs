@@ -247,7 +247,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..9 {
+    for case in 0..12 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -272,6 +272,13 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x71; 4093]).unwrap();
             ext4::sync(&mut mounted).unwrap();
         }
+        if case >= 9 {
+            ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
+            if case == 11 {
+                ext4::set_xattr(&mut mounted, b"system/retry-test", b"user.note", Some(b"old")).unwrap();
+            }
+            ext4::sync(&mut mounted).unwrap();
+        }
         let initial = DEVICE.with_borrow_mut(|device| {
             device.events.clear();
             device.bytes.clone()
@@ -288,6 +295,9 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             7 => ext4::rename_replace_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             8 => ext4::append_probe(mounted, b"system/retry-test", b"append-retry", 16384)
                 .map(|result| assert_eq!(result, (4093, 12))),
+            9 => ext4::chmod(mounted, b"system/retry-test", 0o640),
+            10 => ext4::set_xattr(mounted, b"system/retry-test", b"user.note", Some(b"journaled")),
+            11 => ext4::set_xattr(mounted, b"system/retry-test", b"user.note", None),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -388,6 +398,45 @@ fn append_uses_live_eof_through_aliases_and_refuses_overflow_without_writes() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-append");
+}
+
+#[test]
+fn mode_and_inline_xattrs_survive_remount_and_rollback_enospc() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/metadata-test";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::chmod(&mut mounted, name, 0o751).unwrap();
+    assert_eq!(ext4::stat(&mounted, name).unwrap().mode & 0o777, 0o751);
+    ext4::set_xattr(&mut mounted, name, b"user.note", Some(b"first")).unwrap();
+    let mut output = [0xa5; 12];
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut []), Ok(5));
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut output[..4]), Err(Status::Range));
+    assert_eq!(output, [0xa5; 12]);
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut output), Ok(5));
+    assert_eq!(&output[..5], b"first");
+    let free = ext4::free_bytes(&mounted).unwrap();
+    assert_eq!(ext4::set_xattr(&mut mounted, name, b"user.note", Some(&[0x52; 4096])), Err(Status::Full));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut output), Ok(5));
+    assert_eq!(&output[..5], b"first");
+    assert_eq!(ext4::set_xattr(&mut mounted, name, b"security.capability", Some(b"x")), Err(Status::Invalid));
+    ext4::set_xattr(&mut mounted, name, b"user.note", Some(b"changed")).unwrap();
+    ext4::set_xattr(&mut mounted, name, b"user.empty", Some(b"")).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let bytes = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let mut mounted = mount_bytes(bytes);
+    assert_eq!(ext4::stat(&mounted, name).unwrap().mode & 0o777, 0o751);
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut output), Ok(7));
+    assert_eq!(&output[..7], b"changed");
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.empty", &mut output), Ok(0));
+    ext4::set_xattr(&mut mounted, name, b"user.note", None).unwrap();
+    assert_eq!(ext4::get_xattr(&mounted, name, b"user.note", &mut output), Err(Status::NotFound));
+    assert_eq!(ext4::set_xattr(&mut mounted, name, b"user.note", None), Err(Status::NotFound));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-mode-xattrs");
 }
 
 #[test]
