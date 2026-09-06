@@ -75,6 +75,10 @@
 #define NVME_COMPLETION_ENTRY_BYTES UINT64_C(16)
 #define NVME_SENTINEL UINT8_C(0xA5)
 #define NVME_COMMAND_TIMEOUT_NS UINT64_C(2000000000)
+/* Flush may wait for backing-store durability. Linux v6.12 NVMe uses a
+ * thirty-second I/O timeout (drivers/nvme/host/core.c: nvme_io_timeout).
+ * Keep ordinary command refusals prompt while allowing that bounded fence. */
+#define NVME_FLUSH_TIMEOUT_NS UINT64_C(30000000000)
 #define NVME_TIMEOUT_UNIT_NS UINT64_C(500000000)
 #define NVME_MAX_COMMAND_IDENTIFIER UINT16_C(0xFFFE)
 #define NVME_READ_ALLOCATION_PAGES 3U
@@ -1151,15 +1155,22 @@ static void set_prp1(
     entry->dword[7] = (uint32_t)(address >> 32U);
 }
 
+static uint64_t command_timeout_ns(enum nvme_queue_kind kind, uint8_t opcode)
+{
+    return kind == NVME_QUEUE_IO && opcode == NVME_NVM_FLUSH ?
+        NVME_FLUSH_TIMEOUT_NS : NVME_COMMAND_TIMEOUT_NS;
+}
+
 static enum nvme_status wait_for_completion(
     struct nvme_runtime *controller,
-    struct nvme_queue_pair *queue
+    struct nvme_queue_pair *queue,
+    uint64_t timeout_ns
 )
 {
     uint64_t deadline;
     enum nvme_status status;
 
-    if (!add_checked(clock_monotonic_ns(), NVME_COMMAND_TIMEOUT_NS,
+    if (!add_checked(clock_monotonic_ns(), timeout_ns,
             &deadline)) {
         return NVME_STATUS_COMMAND_TIMEOUT;
     }
@@ -1209,12 +1220,17 @@ static enum nvme_status submit_entry(
 )
 {
     uint64_t doorbell;
+    uint64_t timeout_ns;
     enum nvme_status status;
 
     if (queue->submission_state != NVME_DMA_CPU_OWNED ||
         queue->submission.owner != DMA_OWNER_CPU) {
         return NVME_STATUS_QUEUE_OWNERSHIP;
     }
+    /* Read the opcode while the submission ring is still CPU-owned. */
+    timeout_ns = command_timeout_ns(queue->kind, (uint8_t)
+        ((const struct nvme_submission_entry *)queue->submission.cpu_address)
+            [queue->submission_tail].dword[0]);
     status = allocate_command_identifier(queue, command_identifier);
     if (status != NVME_STATUS_OK) {
         return status;
@@ -1251,7 +1267,7 @@ static enum nvme_status submit_entry(
         controller->registers.io_submission_doorbell.offset;
     cpu_store_fence();
     mmio_write32(controller->mmio, doorbell, queue->submission_tail);
-    status = wait_for_completion(controller, queue);
+    status = wait_for_completion(controller, queue, timeout_ns);
     controller->expectation.kind = NVME_EXPECT_NONE;
     controller->expectation.queue = NULL;
     controller->expectation.data = NULL;
@@ -2320,11 +2336,21 @@ bool nvme_foundation_self_test(size_t *completed_tests)
             NVME_STATUS_UNSUPPORTED_PAGE_SIZE, &completed)) {
         return false;
     }
-    /* 4: controller enable and disable expiries remain distinct and finite. */
+    /* 4: expiries stay finite; only I/O Flush can outlive two seconds. */
     if (!test_record(NVME_STATUS_DISABLE_TIMEOUT !=
             NVME_STATUS_ENABLE_TIMEOUT &&
         deadline_reached(NVME_TIMEOUT_UNIT_NS, NVME_TIMEOUT_UNIT_NS) &&
-        NVME_COMMAND_TIMEOUT_NS != 0U, &completed)) {
+        NVME_COMMAND_TIMEOUT_NS != 0U &&
+        !deadline_reached(NVME_COMMAND_TIMEOUT_NS + 1U,
+            command_timeout_ns(NVME_QUEUE_IO, NVME_NVM_FLUSH)) &&
+        deadline_reached(NVME_FLUSH_TIMEOUT_NS,
+            command_timeout_ns(NVME_QUEUE_IO, NVME_NVM_FLUSH)) &&
+        command_timeout_ns(NVME_QUEUE_ADMIN, NVME_NVM_FLUSH) ==
+            NVME_COMMAND_TIMEOUT_NS &&
+        command_timeout_ns(NVME_QUEUE_IO, NVME_NVM_READ) ==
+            NVME_COMMAND_TIMEOUT_NS &&
+        command_timeout_ns(NVME_QUEUE_IO, NVME_NVM_WRITE) ==
+            NVME_COMMAND_TIMEOUT_NS, &completed)) {
         return false;
     }
     /* 5: malformed, misaligned and overflowing Admin queues reject. */
