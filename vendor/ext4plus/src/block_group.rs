@@ -359,6 +359,10 @@ impl BlockGroupDescriptor {
         (&self.block_bitmap_checksum).into()
     }
 
+    pub(crate) fn flags(&self) -> u16 {
+        self.flags.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn set_block_bitmap_checksum(&self, checksum: u32) {
         self.block_bitmap_checksum.update(checksum);
     }

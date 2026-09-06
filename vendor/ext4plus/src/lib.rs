@@ -612,20 +612,26 @@ impl Ext4 {
         &self.0.block_group_descriptors[usize_from_u32(block_group_index)]
     }
 
-    fn get_block_bitmap_handle(
+    #[maybe_async::maybe_async]
+    async fn get_block_bitmap_handle(
         &self,
         block_group_index: BlockGroupIndex,
-    ) -> BitmapHandle {
+    ) -> Result<BitmapHandle, Ext4Error> {
         let block_group = self.get_block_group_descriptor(block_group_index);
-        BitmapHandle::new(block_group.block_bitmap_block(), false)
+        let bitmap = BitmapHandle::new(block_group.block_bitmap_block(), false);
+        bitmap.validate(self, block_group_index).await?;
+        Ok(bitmap)
     }
 
-    fn get_inode_bitmap_handle(
+    #[maybe_async::maybe_async]
+    async fn get_inode_bitmap_handle(
         &self,
         block_group_index: BlockGroupIndex,
-    ) -> BitmapHandle {
+    ) -> Result<BitmapHandle, Ext4Error> {
         let block_group = self.get_block_group_descriptor(block_group_index);
-        BitmapHandle::new(block_group.inode_bitmap_block(), true)
+        let bitmap = BitmapHandle::new(block_group.inode_bitmap_block(), true);
+        bitmap.validate(self, block_group_index).await?;
+        Ok(bitmap)
     }
 
     #[maybe_async::maybe_async]
@@ -665,7 +671,7 @@ impl Ext4 {
     ) -> Result<bool, Ext4Error> {
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
-        let bitmap_handle = self.get_block_bitmap_handle(block_group_index);
+        let bitmap_handle = self.get_block_bitmap_handle(block_group_index).await?;
         bitmap_handle.query(block_offset, self).await
     }
 
@@ -694,7 +700,7 @@ impl Ext4 {
             let used_dirs = bg.used_dirs_count();
 
             if free_inodes > 0 {
-                let inode_bitmap_handle = self.get_inode_bitmap_handle(bg_id);
+                let inode_bitmap_handle = self.get_inode_bitmap_handle(bg_id).await?;
                 let Some(inode_num) = inode_bitmap_handle
                     .find_first(
                         false,
@@ -703,7 +709,7 @@ impl Ext4 {
                     )
                     .await?
                 else {
-                    continue;
+                    return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
                 };
                 inode_bitmap_handle.set(inode_num, true, self).await?;
                 self.update_inode_bitmap_checksum(bg_id, inode_bitmap_handle)
@@ -783,7 +789,7 @@ impl Ext4 {
         let (block_group_index, inode_offset) =
             get_inode_block_group_location(&self.0.superblock, inode.index)?;
         let inode_bitmap_handle =
-            self.get_inode_bitmap_handle(block_group_index);
+            self.get_inode_bitmap_handle(block_group_index).await?;
         inode_bitmap_handle.set(inode_offset, false, self).await?;
         self.update_inode_bitmap_checksum(
             block_group_index,
@@ -854,7 +860,7 @@ impl Ext4 {
         let (block_group_index, block_offset) =
             self.block_block_group_location(block)?;
         let block_bitmap_handle =
-            self.get_block_bitmap_handle(block_group_index);
+            self.get_block_bitmap_handle(block_group_index).await?;
         if block_bitmap_handle.query(block_offset, self).await? {
             return Err(Ext4Error::AlreadyExists);
         }
@@ -901,11 +907,11 @@ impl Ext4 {
             // idiomatically: if free_blocks > 0
             // Done with guard to remove unwrap
             if let Some(free_blocks) = NonZeroU32::new(free_blocks) {
-                let block_bitmap_handle = self.get_block_bitmap_handle(bg_id);
+                let block_bitmap_handle = self.get_block_bitmap_handle(bg_id).await?;
                 let Some(block_num) =
                     block_bitmap_handle.find_first(false, .., self).await?
                 else {
-                    continue;
+                    return Err(CorruptKind::BlockGroupDescriptor(bg_id).into());
                 };
                 block_bitmap_handle.set(block_num, true, self).await?;
                 self.update_block_bitmap_checksum(bg_id, block_bitmap_handle)
@@ -954,11 +960,14 @@ impl Ext4 {
             let free_blocks = bg.free_blocks_count();
 
             if free_blocks >= num_blocks.get() {
-                let block_bitmap_handle = self.get_block_bitmap_handle(bg_id);
+                let block_bitmap_handle = self.get_block_bitmap_handle(bg_id).await?;
                 let Some(block_num) = block_bitmap_handle
                     .find_first_n(num_blocks.into(), false, .., self)
                     .await?
                 else {
+                    // Fragmented free space need not contain a long enough
+                    // run. Advance instead of retrying this group forever.
+                    bg_id = bg_id.saturating_add(1);
                     continue;
                 };
                 for i in 0..num_blocks.get() {
@@ -1086,7 +1095,7 @@ impl Ext4 {
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
         let block_bitmap_handle =
-            self.get_block_bitmap_handle(block_group_index);
+            self.get_block_bitmap_handle(block_group_index).await?;
         block_bitmap_handle.set(block_offset, false, self).await?;
         self.update_block_bitmap_checksum(
             block_group_index,
@@ -1115,7 +1124,7 @@ impl Ext4 {
         let (block_group_index, block_offset) =
             self.block_block_group_location(block_index)?;
         let block_bitmap_handle =
-            self.get_block_bitmap_handle(block_group_index);
+            self.get_block_bitmap_handle(block_group_index).await?;
         for i in 0..num_blocks.get() {
             block_bitmap_handle
                 .set(block_offset.checked_add(i).unwrap(), false, self)

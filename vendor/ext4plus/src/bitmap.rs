@@ -1,5 +1,8 @@
 use crate::block_index::FsBlockIndex;
 use crate::checksum::Checksum;
+use crate::block_group::TruncatedChecksum;
+use crate::error::CorruptKind;
+use crate::features::ReadOnlyCompatibleFeatures;
 use crate::{Ext4, Ext4Error};
 
 use crate::util::usize_from_u32;
@@ -21,6 +24,26 @@ pub(crate) struct BitmapHandle {
 
 #[expect(unused)]
 impl BitmapHandle {
+    #[maybe_async::maybe_async]
+    pub(crate) async fn validate(&self, ext4: &Ext4, group: u32) -> Result<(), Ext4Error> {
+        let descriptor = ext4.get_block_group_descriptor(group);
+        // Lazy bitmap initialization is a separate mutation: never interpret
+        // uninitialized bytes as allocation state or repair their checksum.
+        let uninitialized = if self.is_inode_bitmap { 1 } else { 2 };
+        if descriptor.flags() & uninitialized != 0 { return Err(Ext4Error::Readonly); }
+        if !ext4.0.superblock.read_only_compatible_features()
+            .contains(ReadOnlyCompatibleFeatures::METADATA_CHECKSUMS) { return Ok(()); }
+        let actual = self.calc_checksum(ext4, group).await?;
+        let expected = if self.is_inode_bitmap { descriptor.inode_bitmap_checksum() }
+            else { descriptor.block_bitmap_checksum() };
+        let matches = match expected {
+            TruncatedChecksum::Full(value) => actual == value,
+            TruncatedChecksum::Truncated(value) => actual & 0xffff == u32::from(value),
+        };
+        if !matches { return Err(CorruptKind::BlockGroupDescriptorChecksum(group).into()); }
+        Ok(())
+    }
+
     pub(crate) fn new(block: FsBlockIndex, is_inode_bitmap: bool) -> Self {
         Self {
             block,
@@ -155,7 +178,7 @@ impl BitmapHandle {
     pub(crate) async fn calc_checksum(
         &self,
         ext4: &Ext4,
-        _block_group_index: u32,
+        block_group_index: u32,
     ) -> Result<u32, Ext4Error> {
         let mut dst = vec![0; ext4.0.superblock.block_size().to_usize()];
         ext4.read_from_block(self.block, 0, &mut dst).await?;
@@ -174,7 +197,7 @@ impl BitmapHandle {
             usize_from_u32(ext4.0.superblock.blocks_per_group().get()) / 8
         };
 
-        checksum.update(&dst[..bytes_to_hash]);
+        checksum.update(dst.get(..bytes_to_hash).ok_or(CorruptKind::BlockGroupDescriptor(block_group_index))?);
         Ok(checksum.finalize())
     }
 }

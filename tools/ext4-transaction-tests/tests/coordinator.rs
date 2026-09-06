@@ -871,6 +871,63 @@ fn external_xattr_checksums_shared_release_and_final_free() {
 }
 
 #[test]
+fn allocation_bitmap_corruption_is_not_rechecksummed_into_a_transaction() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    ext4::create_file_probe(&mut mounted, b"system/bitmap-write", 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let initial = DEVICE.with_borrow(|device| device.bytes.clone());
+    for inode_bitmap in [false, true] {
+        let offset = if inode_bitmap { 4 } else { 0 };
+        let low = u32::from_le_bytes(initial[4096 + offset..4100 + offset].try_into().unwrap());
+        let high = u32::from_le_bytes(initial[4096 + 0x20 + offset..4100 + 0x20 + offset].try_into().unwrap());
+        let start = ((u64::from(high) << 32) | u64::from(low)) as usize * 4096;
+        DEVICE.with_borrow_mut(|device| device.bytes[start] ^= 1);
+        let result = if inode_bitmap {
+            ext4::create_file_probe(&mut mounted, b"system/bitmap-new", 0o600)
+        } else {
+            ext4::transaction_probe(&mut mounted, b"system/bitmap-write", 0, b"new").map(|_| ())
+        };
+        assert_eq!(result, Err(Status::Invalid), "inode bitmap: {inode_bitmap}");
+        assert_eq!(ext4::stat(&mounted, b"system/bitmap-new"), Err(Status::NotFound));
+        assert_eq!(ext4::stat(&mounted, b"system/bitmap-write").unwrap().size, 0);
+        DEVICE.with_borrow_mut(|device| device.bytes[start] ^= 1);
+        ext4::sync(&mut mounted).unwrap();
+        DEVICE.with_borrow(|device| assert!(device.bytes == initial));
+    }
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-bitmap-refusal");
+    drop(mounted);
+
+    // A valid bitmap CRC does not make a contradictory free-inode count safe.
+    // This full bitmap used to keep alloc_inode retrying the same group forever.
+    let crc32c = |seed: u32, bytes: &[u8]| {
+        let mut crc = seed;
+        for byte in bytes {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 { crc = (crc >> 1) ^ (0x82f6_3b78u32 & 0u32.wrapping_sub(crc & 1)); }
+        }
+        crc
+    };
+    let mut full = initial;
+    let start = u32::from_le_bytes(full[4100..4104].try_into().unwrap()) as usize * 4096;
+    let ipg = u32::from_le_bytes(full[1024 + 0x28..1024 + 0x2c].try_into().unwrap()) as usize;
+    full[start..start + ipg / 8].fill(0xff);
+    let seed = u32::from_le_bytes(full[1024 + 0x270..1024 + 0x274].try_into().unwrap());
+    let checksum = crc32c(seed, &full[start..start + ipg / 8]).to_le_bytes();
+    full[4096 + 0x1a..4096 + 0x1c].copy_from_slice(&checksum[..2]);
+    full[4096 + 0x3a..4096 + 0x3c].copy_from_slice(&checksum[2..]);
+    full[4096 + 0x1e..4096 + 0x20].fill(0);
+    let group_seed = crc32c(seed, &0u32.to_le_bytes());
+    let checksum = crc32c(group_seed, &full[4096..4160]).to_le_bytes();
+    full[4096 + 0x1e..4096 + 0x20].copy_from_slice(&checksum[..2]);
+    let mut mounted = mount_bytes(full.clone());
+    assert_eq!(ext4::create_file_probe(&mut mounted, b"system/count-mismatch", 0o600), Err(Status::Invalid));
+    ext4::sync(&mut mounted).unwrap();
+    DEVICE.with_borrow(|device| assert!(device.bytes == full));
+}
+
+#[test]
 fn legacy_orphan_chain_is_refused_without_clearing_recovery_state() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
