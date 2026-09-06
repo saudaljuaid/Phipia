@@ -1466,6 +1466,17 @@ pub(crate) fn readlink(
     Ok(count)
 }
 
+/// Remove an entry of either kind, resuming the original journal operation.
+pub(crate) fn remove_entry_guarded(mounted: &mut Mounted, path: &[u8], open_inodes: &[u64]) -> Result<(), Status> {
+    if mounted.pending_mutation.as_ref().is_some_and(|pending| pending.kind == PendingMutationKind::RemoveDirectory) {
+        return remove_directory_probe(mounted, path);
+    }
+    match unlink_file_guarded(mounted, path, open_inodes) {
+        Err(Status::IsDirectory) => remove_directory_probe(mounted, path),
+        result => result,
+    }
+}
+
 /// Remove one regular-file or symbolic link through the journaled mutation path.
 pub(crate) fn unlink_file_probe(
     mounted: &mut Mounted,

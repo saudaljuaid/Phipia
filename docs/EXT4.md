@@ -31,14 +31,19 @@ by ext4plus for lookup and open. VFS `phipfs_symlink` journals literal targets
 shorter than 128 bytes; `phipfs_readlink` copies the literal target without a
 trailing NUL and supports short output buffers. The Rust coordinator accepts
 targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
-unlink/rename inspect the final link itself. Symlink unlink still requires a
-quiescent volume; unlinking an open regular file remains refused until orphan
-tracking is implemented. Native FILE_TRUNCATE and SDK ftruncate also use the
+unlink/rename and hard-link creation inspect the final link itself. Unlinking
+a non-final hard link preserves open inode handles. Deleting an open inode's
+final link remains refused until orphan tracking is implemented. Native
+FILE_TRUNCATE and SDK ftruncate also use the
 handle's inode identity, preserve the cursor, and refresh all matching handles'
 sizes after a successful checkpoint.
 Native `PATH_SYMLINK`/`PATH_READLINK` and SDK `symlink()`/`readlink()` expose
 these operations to applications. Native unlink examines the entry itself
 before trying empty-directory removal, so dangling links can be removed.
+The remove-any API resumes the retained file or directory transaction directly;
+SDK unlink and rmdir select file-only and directory-only semantics. VFS mutations
+defer component validation to the journal coordinator, allowing retries while
+the staged view is hidden. Native PATH_LINK and SDK link expose hard links.
 `phipfs_rename` retains no-replace behavior; `phipfs_rename_replace` publishes
 replacement in one transaction, preserving same-inode no-ops and refusing
 nonempty directory destinations or incompatible file/directory types. The
@@ -66,7 +71,9 @@ descriptors, a zero first-data-block field, `has_journal`,
 `metadata_csum` plus its seed, sparse/large/huge files, `dir_nlink`, and
 `extra_isize`, with no additional feature bits other than the transient ext4
 incompat-recovery marker. The declared block count must
-fit the NVMe namespace and all free/total geometry is checked. Ext4plus then
+fit the NVMe namespace and all free/total geometry is checked. A nonempty legacy
+orphan chain is refused before any storage write; replay alone cannot clean it.
+Ext4plus then
 validates the superblock, group descriptors, and existing journal. Phipia walks
 the reachable namespace (at most 8,192 entries and 512 queued directories),
 validating directory blocks,

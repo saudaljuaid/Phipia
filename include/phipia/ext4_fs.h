@@ -177,6 +177,7 @@ enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     const char *source, const char *destination);
 enum phipfs_status ext4_backend_unlink(enum phipfs_volume volume,
     const char *path);
+enum phipfs_status ext4_backend_remove(enum phipfs_volume volume, const char *path);
 enum phipfs_status ext4_backend_rmdir(enum phipfs_volume volume,
     const char *path);
 enum phipfs_status ext4_backend_link(enum phipfs_volume volume,

@@ -51,6 +51,7 @@ struct vfs_backend_ops {
     /* Mutations validate all path components under their transaction lock.
      * A retained transaction must be retried without pre-reading its hidden view. */
     bool validates_mutation_paths;
+    enum phipfs_status (*remove)(enum phipfs_volume volume, const char *path);
     enum phipfs_status (*append)(phipfs_handle handle, const uint8_t *source,
         size_t source_bytes, size_t *written_bytes);
     enum phipfs_status (*rename_replace)(enum phipfs_volume volume,

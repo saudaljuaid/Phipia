@@ -12,6 +12,13 @@ enum phipia_volume {
     PHIPIA_VOLUME_DATA = 2
 };
 
+/* PATH_UNLINK's second argument. Zero preserves the original remove-any API. */
+enum phipia_unlink_kind {
+    PHIPIA_UNLINK_ANY = 0,
+    PHIPIA_UNLINK_FILE = 1,
+    PHIPIA_UNLINK_DIRECTORY = 2,
+};
+
 enum phipia_open_flags {
     PHIPIA_OPEN_READ = UINT32_C(1) << 0,
     PHIPIA_OPEN_WRITE = UINT32_C(1) << 1,

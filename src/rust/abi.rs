@@ -581,6 +581,7 @@ pub(crate) unsafe extern "C" fn phipia_ext4_unlink_file_probe(
     path_length: usize,
     open_inodes: *const u64,
     open_count: usize,
+    remove_directory: bool,
 ) -> i32 {
     if mounted == 0 || path.is_null() || open_inodes.is_null() {
         return ext4::Status::NullArgument as i32;
@@ -595,7 +596,9 @@ pub(crate) unsafe extern "C" fn phipia_ext4_unlink_file_probe(
     };
     // SAFETY: C supplies a live, aligned inode array under the volume lease.
     let open_inodes = unsafe { core::slice::from_raw_parts(open_inodes, open_count) };
-    let result = if open_inodes.is_empty() {
+    let result = if remove_directory {
+        ext4::remove_entry_guarded(mounted, path, open_inodes)
+    } else if open_inodes.is_empty() {
         ext4::unlink_file_probe(mounted, path)
     } else {
         ext4::unlink_file_guarded(mounted, path, open_inodes)

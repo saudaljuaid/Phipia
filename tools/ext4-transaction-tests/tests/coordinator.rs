@@ -250,7 +250,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..19 {
+    for case in 0..21 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -276,7 +276,9 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             ext4::sync(&mut mounted).unwrap();
         }
         if case >= 9 {
-            if case == 17 {
+            if case == 19 {
+                ext4::create_directory_probe(&mut mounted, b"system/retry-test").unwrap();
+            } else if case == 17 {
                 ext4::symlink_probe(&mut mounted, b"system/retry-test", b"missing").unwrap();
             } else {
                 ext4::create_file_probe(&mut mounted, b"system/retry-test", 0o600).unwrap();
@@ -318,6 +320,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             15 => ext4::set_times(mounted, b"system/retry-test", 2_200_000_000, 123, 2_300_000_000, 456),
             16 | 17 => ext4::link_file_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
             18 => ext4::unlink_file_guarded(mounted, b"system/retry-test", &[inode]),
+            19 | 20 => ext4::remove_entry_guarded(mounted, b"system/retry-test", &[]),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -371,7 +374,9 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
                 let name: &[u8] = if case == 18 { b"system/retained-alias" }
                     else if case == 3 || case == 4 || case == 7 { b"data/user/retry-test" }
                     else { b"system/retry-test" };
-                if case == 5 || case == 6 || case == 17 {
+                if case == 19 || case == 20 {
+                    assert_eq!(ext4::lstat(&mounted, name), Err(Status::NotFound));
+                } else if case == 5 || case == 6 || case == 17 {
                     let target = if case == 17 { b"missing".as_slice() } else { target.as_slice() };
                     let mut bytes = vec![0; target.len()];
                     assert_eq!(ext4::readlink(&mounted, name, &mut bytes), Ok(target.len()));

@@ -124,6 +124,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .link = ext4_backend_link,
     .case_sensitive = true,
     .validates_mutation_paths = true,
+    .remove = ext4_backend_remove,
     .append = ext4_backend_append,
     .chmod = ext4_backend_chmod,
     .ftruncate = ext4_backend_ftruncate,
@@ -1086,6 +1087,18 @@ enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path)
     enum phipfs_status status = resolve_parent(volume, path, canonical);
     return status == PHIPFS_STATUS_OK ?
         mounts[volume].backend->unlink(volume, canonical) : status;
+}
+
+enum phipfs_status phipfs_remove(enum phipfs_volume volume, const char *path)
+{
+    char canonical[PHIPFS_MAX_PATH];
+    enum phipfs_status status = resolve_parent(volume, path, canonical);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (mounts[volume].backend->remove != NULL) {
+        return mounts[volume].backend->remove(volume, canonical);
+    }
+    status = phipfs_unlink(volume, canonical);
+    return status == PHIPFS_STATUS_IS_DIRECTORY ? phipfs_rmdir(volume, canonical) : status;
 }
 
 enum phipfs_status phipfs_rename_replace(enum phipfs_volume volume,

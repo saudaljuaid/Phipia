@@ -87,7 +87,8 @@ extern int32_t phipia_ext4_truncate_probe(uintptr_t mounted,
 extern int32_t phipia_ext4_create_file_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint16_t mode);
 extern int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted,
-    const uint8_t *path, size_t path_length, const uint64_t *open_inodes, size_t open_count);
+    const uint8_t *path, size_t path_length, const uint64_t *open_inodes, size_t open_count,
+    bool remove_directory);
 extern int32_t phipia_ext4_link_file_probe(uintptr_t mounted,
     const uint8_t *source, size_t source_length, const uint8_t *destination,
     size_t destination_length);
@@ -1139,8 +1140,8 @@ enum phipfs_status ext4_backend_create_file_probe(enum phipfs_volume volume,
     return status != PHIPFS_STATUS_OK ? status : close_status;
 }
 
-enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume,
-    const char *path)
+static enum phipfs_status remove_path(enum phipfs_volume volume,
+    const char *path, bool remove_directory)
 {
     struct ext4_mount_state *mount;
     const size_t length = path_length(path);
@@ -1158,9 +1159,19 @@ enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume,
     uint64_t open_inodes[EXT4_MAX_HANDLES];
     const size_t open_count = collect_open_inodes(volume, open_inodes);
     status = map_status(phipia_ext4_unlink_file_probe(mount->rust_mount,
-        (const uint8_t *)path, length, open_inodes, open_count));
+        (const uint8_t *)path, length, open_inodes, open_count, remove_directory));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
+}
+
+enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume, const char *path)
+{
+    return remove_path(volume, path, false);
+}
+
+enum phipfs_status ext4_backend_remove(enum phipfs_volume volume, const char *path)
+{
+    return remove_path(volume, path, true);
 }
 
 enum phipfs_status ext4_backend_link_file_probe(enum phipfs_volume volume,

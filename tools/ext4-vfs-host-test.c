@@ -23,6 +23,7 @@ static uint16_t changed_mode;
 static unsigned live_snapshots;
 static unsigned freed_snapshots;
 static size_t expected_open_inodes;
+static bool expected_remove_directory;
 
 int32_t phipia_ext4_set_times(uintptr_t mounted, const uint8_t *path, size_t path_bytes,
     uint64_t atime_seconds, uint32_t atime_nanos, uint64_t mtime_seconds, uint32_t mtime_nanos)
@@ -253,11 +254,12 @@ int32_t phipia_ext4_link_file_probe(uintptr_t mounted, const uint8_t *source,
 }
 
 int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted, const uint8_t *path,
-    size_t path_bytes, const uint64_t *open_inodes, size_t open_count)
+    size_t path_bytes, const uint64_t *open_inodes, size_t open_count, bool remove_directory)
 {
     assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
     assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
     assert(open_count == expected_open_inodes);
+    assert(remove_directory == expected_remove_directory);
     for (size_t index = 0U; index < open_count; ++index) assert(open_inodes[index] == 42U);
     return permanent_status;
 }
@@ -361,6 +363,9 @@ int main(void)
     permanent_status = PHIPIA_EXT4_STATUS_OK;
     assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_OK);
     assert(stat_refusals == 1U);
+    expected_remove_directory = true;
+    assert(ext4_backend_remove(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_OK);
+    expected_remove_directory = false;
     stat_refusals = 0U;
     renames = 0U;
     assert(ext4_backend_ftruncate(first, 5U) == PHIPFS_STATUS_ACCESS);

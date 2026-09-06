@@ -3570,6 +3570,10 @@ static int64_t syscall_single_path_mutation(
     enum phipfs_volume volume;
     enum phipfs_status status;
 
+    if (number == PHIPIA_SYS_PATH_UNLINK && value > PHIPIA_UNLINK_DIRECTORY) {
+        return -PHIPIA_EINVAL;
+    }
+
     if (!copy_from_user(process, &path_request, path_address,
             sizeof(path_request))) {
         return -PHIPIA_EFAULT;
@@ -3586,11 +3590,12 @@ static int64_t syscall_single_path_mutation(
         status = phipfs_mkdir(volume, path);
     } else if (number == PHIPIA_SYS_PATH_TRUNCATE) {
         status = phipfs_truncate(volume, path, value);
-    } else {
+    } else if (value == PHIPIA_UNLINK_FILE) {
         status = phipfs_unlink(volume, path);
-        if (status == PHIPFS_STATUS_IS_DIRECTORY) {
-            status = phipfs_rmdir(volume, path);
-        }
+    } else if (value == PHIPIA_UNLINK_DIRECTORY) {
+        status = phipfs_rmdir(volume, path);
+    } else {
+        status = phipfs_remove(volume, path);
     }
     cpu_interrupt_disable();
     return filesystem_error(status);

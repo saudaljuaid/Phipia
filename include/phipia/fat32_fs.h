@@ -184,6 +184,7 @@ enum phipfs_status phipfs_rename(
     const char *destination
 );
 enum phipfs_status phipfs_unlink(enum phipfs_volume volume, const char *path);
+enum phipfs_status phipfs_remove(enum phipfs_volume volume, const char *path);
 enum phipfs_status phipfs_rmdir(enum phipfs_volume volume, const char *path);
 enum phipfs_status phipfs_link(
     enum phipfs_volume volume,

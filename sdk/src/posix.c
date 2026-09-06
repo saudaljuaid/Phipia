@@ -146,7 +146,7 @@ static int path_operation(const char *path, uint64_t number, uint64_t value)
     result = phipia_syscall2(number, (uint64_t)(uintptr_t)&request, value);
     return phipia_result(result);
 }
-int unlink(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, 0U); }
+int unlink(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, PHIPIA_UNLINK_FILE); }
 int chmod(const char *path, mode_t mode) { return path_operation(path, PHIPIA_SYS_PATH_CHMOD, mode); }
 int symlink(const char *target, const char *path)
 {
@@ -169,7 +169,7 @@ ssize_t readlink(const char *path, char *output, size_t capacity)
     if (phipia_runtime_path(path, &parsed) != 0) return -1;
     return (ssize_t)phipia_result(phipia_path_readlink(parsed.volume, parsed.text, output, capacity));
 }
-int rmdir(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, 0U); }
+int rmdir(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, PHIPIA_UNLINK_DIRECTORY); }
 int mkdir(const char *path, mode_t mode)
 { (void)mode; return path_operation(path, PHIPIA_SYS_PATH_MKDIR, 0U); }
 int ftruncate(int number, int64_t length)

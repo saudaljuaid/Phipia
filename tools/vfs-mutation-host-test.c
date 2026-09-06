@@ -49,6 +49,7 @@ int main(void)
         .mkdir = mutation, .unlink = mutation, .rmdir = mutation,
         .link = pair, .rename = pair, .rename_replace = pair,
         .case_sensitive = true, .validates_mutation_paths = true,
+        .remove = mutation,
     };
     mounts[PHIPFS_VOLUME_DATA].active = true;
     mounts[PHIPFS_VOLUME_DATA].backend = &backend;
@@ -58,22 +59,23 @@ int main(void)
         assert(phipfs_truncate(PHIPFS_VOLUME_DATA, "parent/file", 7U) == mutation_result);
         assert(phipfs_mkdir(PHIPFS_VOLUME_DATA, "parent/file") == mutation_result);
         assert(phipfs_unlink(PHIPFS_VOLUME_DATA, "parent/file") == mutation_result);
+        assert(phipfs_remove(PHIPFS_VOLUME_DATA, "parent/file") == mutation_result);
         assert(phipfs_rmdir(PHIPFS_VOLUME_DATA, "parent/file") == mutation_result);
         assert(phipfs_link(PHIPFS_VOLUME_DATA, "parent/file", "other/target") == mutation_result);
         assert(phipfs_rename(PHIPFS_VOLUME_DATA, "parent/file", "other/target") == mutation_result);
         assert(phipfs_rename_replace(PHIPFS_VOLUME_DATA, "parent/file", "other/target") == mutation_result);
     }
-    assert(calls == 16U && stats == 0U);
+    assert(calls == 18U && stats == 0U);
     assert(phipfs_unlink(PHIPFS_VOLUME_DATA, "../parent/file") == PHIPFS_STATUS_PATH);
     assert(phipfs_unlink(PHIPFS_VOLUME_DATA, ".") == PHIPFS_STATUS_ACCESS);
-    assert(calls == 16U);
+    assert(calls == 18U);
     mutation_result = PHIPFS_STATUS_NOT_DIRECTORY;
     assert(phipfs_create(PHIPFS_VOLUME_DATA, "parent/file") == PHIPFS_STATUS_NOT_DIRECTORY);
     mutation_result = PHIPFS_STATUS_NOT_FOUND;
     assert(phipfs_link(PHIPFS_VOLUME_DATA, "parent/file", "other/target") == PHIPFS_STATUS_NOT_FOUND);
     backend.validates_mutation_paths = false;
     assert(phipfs_create(PHIPFS_VOLUME_DATA, "parent/file") == PHIPFS_STATUS_IO);
-    assert(calls == 18U && stats == 1U);
+    assert(calls == 20U && stats == 1U);
     assert(mounts[PHIPFS_VOLUME_DATA].references == 0U);
     for (size_t index = 0U; index < VFS_MAX_VNODES; ++index) assert(!vnodes[index].active);
     puts("VFS journal mutation retries, backend errors, path bounds and vnode census: PASS");
