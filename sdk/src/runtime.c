@@ -255,6 +255,22 @@ long phipia_path_unlink(uint16_t volume, const char *path)
     return single_path(PHIPIA_SYS_PATH_UNLINK, volume, path, 0U);
 }
 
+long phipia_path_symlink(uint16_t volume, const char *path, const char *target)
+{
+    if (path == NULL || target == NULL) return -PHIPIA_EFAULT;
+    struct phipia_path request = make_path(volume, path);
+    return phipia_syscall3(PHIPIA_SYS_PATH_SYMLINK, (uint64_t)(uintptr_t)&request,
+        (uint64_t)(uintptr_t)target, strlen(target));
+}
+
+long phipia_path_readlink(uint16_t volume, const char *path, void *output, size_t capacity)
+{
+    if (path == NULL || output == NULL) return -PHIPIA_EFAULT;
+    struct phipia_path request = make_path(volume, path);
+    return phipia_syscall3(PHIPIA_SYS_PATH_READLINK, (uint64_t)(uintptr_t)&request,
+        (uint64_t)(uintptr_t)output, capacity);
+}
+
 long phipia_path_truncate(uint16_t volume, const char *path, uint64_t length)
 {
     return single_path(PHIPIA_SYS_PATH_TRUNCATE, volume, path, length);

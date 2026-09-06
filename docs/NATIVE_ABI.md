@@ -90,6 +90,8 @@ is immutable; writable Data paths are rooted below the application namespace.
 | `0x020b PATH_TRUNCATE(*path, length)` | `0` | K | Resizes one Data file subject to FAT32 and manifest limits; no handle or buffer ownership changes. |
 | `0x020c VOLUME_SYNC(volume)` | `0` | K | Completes pending FAT32 and device synchronization for the authorized volume; owns no object after return. |
 | `0x020d VOLUME_SPACE(volume, *space)` | `0` | K | Writes one all-or-nothing free-space record and retains no pointer or resource. |
+| `0x020e PATH_SYMLINK(*path, target, length)` | `0` | K | Creates an ext4 Data link with a nonempty literal target shorter than 128 bytes; requires Data write capability. Target bytes are copied before mutation and no pointer is retained. |
+| `0x020f PATH_READLINK(*path, output, capacity)` | Bytes copied | K | Copies literal target bytes without a NUL, including dangling/looping final links. A nonzero output buffer may truncate the target; at most 4096 bytes are copied. No handle is allocated. |
 
 ### Time, waiting, and entropy
 

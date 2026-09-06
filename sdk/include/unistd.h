@@ -21,6 +21,8 @@ off_t lseek(int descriptor, off_t offset, int origin);
 int close(int descriptor);
 int access(const char *path, int mode);
 int unlink(const char *path);
+int symlink(const char *target, const char *path);
+ssize_t readlink(const char *path, char *output, size_t capacity);
 int rmdir(const char *path);
 int fsync(int descriptor);
 unsigned int sleep(unsigned int seconds);

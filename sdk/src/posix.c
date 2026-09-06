@@ -146,6 +146,18 @@ static int path_operation(const char *path, uint64_t number, uint64_t value)
     return phipia_result(result);
 }
 int unlink(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, 0U); }
+int symlink(const char *target, const char *path)
+{
+    struct phipia_runtime_path parsed;
+    if (phipia_runtime_path(path, &parsed) != 0) return -1;
+    return phipia_result(phipia_path_symlink(parsed.volume, parsed.text, target));
+}
+ssize_t readlink(const char *path, char *output, size_t capacity)
+{
+    struct phipia_runtime_path parsed;
+    if (phipia_runtime_path(path, &parsed) != 0) return -1;
+    return (ssize_t)phipia_result(phipia_path_readlink(parsed.volume, parsed.text, output, capacity));
+}
 int rmdir(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, 0U); }
 int mkdir(const char *path, mode_t mode)
 { (void)mode; return path_operation(path, PHIPIA_SYS_PATH_MKDIR, 0U); }

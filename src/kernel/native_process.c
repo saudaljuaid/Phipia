@@ -3556,7 +3556,6 @@ static int64_t syscall_single_path_mutation(
 )
 {
     struct phipia_path path_request;
-    struct phipfs_stat stat;
     char path[PHIPFS_MAX_PATH];
     enum phipfs_volume volume;
     enum phipfs_status status;
@@ -3578,14 +3577,62 @@ static int64_t syscall_single_path_mutation(
     } else if (number == PHIPIA_SYS_PATH_TRUNCATE) {
         status = phipfs_truncate(volume, path, value);
     } else {
-        status = phipfs_stat_path(volume, path, &stat);
-        if (status == PHIPFS_STATUS_OK) {
-            status = stat.directory ? phipfs_rmdir(volume, path) :
-                phipfs_unlink(volume, path);
+        status = phipfs_unlink(volume, path);
+        if (status == PHIPFS_STATUS_IS_DIRECTORY) {
+            status = phipfs_rmdir(volume, path);
         }
     }
     cpu_interrupt_disable();
     return filesystem_error(status);
+}
+
+static int64_t syscall_symlink(
+    struct native_process *process, uint64_t path_address,
+    uint64_t bytes_address, uint64_t length, bool create)
+{
+    struct phipia_path request;
+    char path[PHIPFS_MAX_PATH];
+    uint8_t bytes[4096];
+    enum phipfs_volume volume;
+    enum phipfs_status status;
+    size_t count = 0U;
+
+    if (length == 0U || (create && length >= PHIPFS_MAX_PATH)) {
+        return -PHIPIA_EINVAL;
+    }
+    const size_t capacity = length < sizeof(bytes) ? (size_t)length : sizeof(bytes);
+    if (!copy_from_user(process, &request, path_address, sizeof(request))) {
+        return -PHIPIA_EFAULT;
+    }
+    if (!path_from_user(process, &request, path, &volume)) {
+        return -PHIPIA_EINVAL;
+    }
+    if (create) {
+        if (volume != PHIPFS_VOLUME_DATA ||
+            (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) {
+            return -PHIPIA_EACCES;
+        }
+        if (!copy_from_user(process, bytes, bytes_address, capacity)) {
+            return -PHIPIA_EFAULT;
+        }
+        if (bounded_length(bytes, capacity) != capacity) {
+            return -PHIPIA_EINVAL;
+        }
+        bytes[capacity] = 0U;
+    } else if (!validate_user_range(process, bytes_address, capacity, true)) {
+        return -PHIPIA_EFAULT;
+    }
+    cpu_interrupt_enable();
+    status = create ? phipfs_symlink(volume, path, (const char *)bytes) :
+        phipfs_readlink(volume, path, bytes, capacity, &count);
+    cpu_interrupt_disable();
+    if (status != PHIPFS_STATUS_OK) {
+        return filesystem_error(status);
+    }
+    if (!create && (count > capacity || !copy_to_user(process, bytes_address, bytes, count))) {
+        return -PHIPIA_EFAULT;
+    }
+    return (int64_t)count;
 }
 
 static bool replacement_backup_path(
@@ -5769,6 +5816,10 @@ static int64_t dispatch_syscall(
         return syscall_volume_sync(process, frame->rdi);
     case PHIPIA_SYS_VOLUME_SPACE:
         return syscall_volume_space(process, frame->rdi, frame->rsi);
+    case PHIPIA_SYS_PATH_SYMLINK:
+        return syscall_symlink(process, frame->rdi, frame->rsi, frame->rdx, true);
+    case PHIPIA_SYS_PATH_READLINK:
+        return syscall_symlink(process, frame->rdi, frame->rsi, frame->rdx, false);
     case PHIPIA_SYS_TIME_MONOTONIC:
         return (process->manifest.capabilities & PHIPIA_CAP_TIME) != 0U ?
             (int64_t)clock_monotonic_ns() : -PHIPIA_EACCES;

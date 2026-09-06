@@ -33,7 +33,9 @@ trailing NUL and supports short output buffers. The Rust coordinator accepts
 targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
 unlink/rename inspect the final link itself. Those mutations require a
 quiescent volume for symlinks while open handles still re-resolve paths.
-These kernel VFS entry points do not yet add user-process syscall bindings.
+Native `PATH_SYMLINK`/`PATH_READLINK` and SDK `symlink()`/`readlink()` expose
+these operations to applications. Native unlink examines the entry itself
+before trying empty-directory removal, so dangling links can be removed.
 `phipfs_rename` retains no-replace behavior; `phipfs_rename_replace` publishes
 replacement in one transaction, preserving same-inode no-ops and refusing
 nonempty directory destinations or incompatible file/directory types. The
