@@ -165,6 +165,38 @@ int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     return PHIPIA_EXT4_STATUS_OK;
 }
 
+int32_t phipia_ext4_stat_inode(uintptr_t mounted, uint64_t inode, struct phipia_ext4_metadata *metadata)
+{
+    assert(inode == 42U);
+    return phipia_ext4_stat(mounted, (const uint8_t *)"file", 4U, metadata);
+}
+
+int32_t phipia_ext4_append_inode(uintptr_t mounted, uint64_t inode,
+    const uint8_t *source, size_t length, uint64_t maximum_size, uint64_t *start, size_t *count)
+{
+    assert(inode == 42U);
+    return phipia_ext4_append(mounted, (const uint8_t *)"file", 4U, source, length, maximum_size, start, count);
+}
+
+int32_t phipia_ext4_pread_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
+    uint8_t *output, size_t capacity, size_t *count)
+{
+    assert(mounted == 1U && inode == 42U && !ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    *count = offset >= disk_size ? 0U : (size_t)(disk_size - offset);
+    if (*count > capacity) *count = capacity;
+    memset(output, 0x55, *count);
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_write_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
+    const uint8_t *source, size_t length, size_t *count)
+{
+    assert(mounted == 1U && inode == 42U && source != NULL && ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    *count = length;
+    if (offset + length > disk_size) disk_size = offset + length;
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
 int32_t phipia_ext4_sync(uintptr_t mounted)
 {
     assert(mounted == 1U && ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
@@ -277,6 +309,16 @@ int main(void)
     assert(written == 2U && state->offset == 65542U);
     assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 65542U);
     assert(state->offset == 0U);
+    assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
+    uint8_t read_value = 0U;
+    size_t read_count = 0U;
+    stat_refusals = 1U;
+    assert(ext4_backend_read(first, &read_value, 1U, &read_count) == PHIPFS_STATUS_OK);
+    assert(read_count == 1U && read_value == 0x55);
+    assert(ext4_backend_write(second, (const uint8_t *)"x", 1U, &written) == PHIPFS_STATUS_OK);
+    assert(written == 1U && stat_refusals == 1U);
+    stat_refusals = 0U;
+    renames = 0U;
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);
@@ -284,14 +326,14 @@ int main(void)
     /* An unrelated spelling can alias a descendant of the directory. */
     assert(allocate_handle(PHIPFS_VOLUME_DATA, "alias/child", 43U, 9U,
         PHIPFS_ACCESS_READ, false, 0U, &first) == PHIPFS_STATUS_OK);
-    assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_BUSY);
-    assert(renames == 0U);
+    assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
+    assert(renames == 1U);
     assert(ext4_backend_rename_replace(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_BUSY);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
-    assert(renames == 1U);
-    assert(ext4_backend_rename_replace(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
     assert(renames == 2U);
+    assert(ext4_backend_rename_replace(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_OK);
+    assert(renames == 3U);
     permanent_status = PHIPIA_EXT4_STATUS_IO;
     assert(ext4_backend_symlink(PHIPFS_VOLUME_DATA, "file", "../missing") == PHIPFS_STATUS_IO);
     permanent_status = PHIPIA_EXT4_STATUS_OK;

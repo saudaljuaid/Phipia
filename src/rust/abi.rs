@@ -626,6 +626,76 @@ pub(crate) unsafe extern "C" fn phipia_ext4_link_file_probe(
     }
 }
 
+/// Refresh metadata through a C-owned inode identity.
+///
+/// # Safety
+/// The mount is live and leased, and metadata names a complete disjoint output.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_stat_inode(mounted: usize, inode: u64,
+    metadata: *mut ext4::Metadata) -> i32 {
+    if mounted == 0 || metadata.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: caller owns the mount lease and output storage.
+    match ext4::stat_inode(unsafe { &*(mounted as *const ext4::Mounted) }, inode) {
+        Ok(value) => { unsafe { *metadata = value; } ext4::Status::Ok as i32 }
+        Err(status) => status as i32,
+    }
+}
+
+/// Read through a C-owned inode identity.
+///
+/// # Safety
+/// Mount and output ranges are live/disjoint and C holds the read lease.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_pread_inode(mounted: usize, inode: u64,
+    offset: u64, output: *mut u8, capacity: usize, count: *mut usize) -> i32 {
+    if mounted == 0 || output.is_null() || count.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: the complete disjoint ranges and lease are the caller's contract.
+    let (mounted, output, count) = unsafe { (&*(mounted as *const ext4::Mounted),
+        core::slice::from_raw_parts_mut(output, capacity), &mut *count) };
+    *count = 0;
+    match ext4::pread_inode(mounted, inode, offset, output) {
+        Ok(length) => { *count = length; ext4::Status::Ok as i32 }
+        Err(status) => status as i32,
+    }
+}
+
+/// Write through a C-owned inode identity with the same transaction coordinator.
+///
+/// # Safety
+/// C holds an exclusive writable lease and supplies disjoint live ranges.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_write_inode(mounted: usize, inode: u64,
+    offset: u64, source: *const u8, length: usize, count: *mut usize) -> i32 {
+    if mounted == 0 || source.is_null() || count.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: caller owns the writable lease and complete input/output ranges.
+    let (mounted, source, count) = unsafe { (&mut *(mounted as *mut ext4::Mounted),
+        core::slice::from_raw_parts(source, length), &mut *count) };
+    *count = 0;
+    match ext4::write_inode(mounted, inode, offset, source) {
+        Ok(length) => { *count = length; ext4::Status::Ok as i32 }
+        Err(status) => status as i32,
+    }
+}
+
+/// Append through an inode identity, retaining its original EOF on retry.
+///
+/// # Safety
+/// C owns the writable lease and all ranges are complete, live and disjoint.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_append_inode(mounted: usize, inode: u64,
+    source: *const u8, length: usize, maximum_size: u64, start: *mut u64, count: *mut usize) -> i32 {
+    if mounted == 0 || source.is_null() || start.is_null() || count.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: caller owns the writable lease and complete input/output ranges.
+    let (mounted, source, start, count) = unsafe { (&mut *(mounted as *mut ext4::Mounted),
+        core::slice::from_raw_parts(source, length), &mut *start, &mut *count) };
+    *start = 0;
+    *count = 0;
+    match ext4::append_inode(mounted, inode, source, maximum_size) {
+        Ok((offset, length)) => { *start = offset; *count = length; ext4::Status::Ok as i32 }
+        Err(status) => status as i32,
+    }
+}
+
 /// Append under an exclusive volume lease and return its chosen offset.
 ///
 /// # Safety

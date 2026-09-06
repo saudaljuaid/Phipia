@@ -124,6 +124,13 @@ extern int32_t phipia_ext4_directory_snapshot(uintptr_t mounted, const uint8_t *
 extern int32_t phipia_ext4_snapshot_entry(uintptr_t snapshot, uint64_t index,
     struct phipia_ext4_directory_entry *entry, bool *present);
 extern void phipia_ext4_snapshot_free(uintptr_t snapshot);
+extern int32_t phipia_ext4_stat_inode(uintptr_t mounted, uint64_t inode, struct phipia_ext4_metadata *metadata);
+extern int32_t phipia_ext4_pread_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
+    uint8_t *output, size_t capacity, size_t *count);
+extern int32_t phipia_ext4_write_inode(uintptr_t mounted, uint64_t inode, uint64_t offset,
+    const uint8_t *source, size_t length, size_t *count);
+extern int32_t phipia_ext4_append_inode(uintptr_t mounted, uint64_t inode,
+    const uint8_t *source, size_t length, uint64_t maximum_size, uint64_t *start, size_t *count);
 
 _Static_assert(sizeof(struct phipia_ext4_metadata) == 40U,
     "ext4 metadata C/Rust ABI drift");
@@ -892,13 +899,12 @@ enum phipfs_status ext4_backend_sync(enum phipfs_volume volume)
             struct ext4_handle_state *state = &ext4_handles[index];
             struct phipia_ext4_metadata metadata;
 
-            if (!state->active || state->volume != volume ||
+            if (!state->active || state->directory || state->volume != volume ||
                 state->mount_generation != mount->generation) {
                 continue;
             }
             zero_bytes(&metadata, sizeof(metadata));
-            status = map_status(phipia_ext4_stat(mount->rust_mount,
-                (const uint8_t *)state->path, path_length(state->path), &metadata));
+            status = map_status(phipia_ext4_stat_inode(mount->rust_mount, state->inode, &metadata));
             if (status != PHIPFS_STATUS_OK) {
                 break;
             }
@@ -1029,8 +1035,7 @@ enum phipfs_status ext4_backend_pread(phipfs_handle handle,
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(phipia_ext4_pread(mount->rust_mount,
-        (const uint8_t *)state->path, path_length(state->path), offset,
+    status = map_status(phipia_ext4_pread_inode(mount->rust_mount, state->inode, offset,
         destination, capacity, read_bytes));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
@@ -1282,8 +1287,7 @@ enum phipfs_status ext4_backend_write(phipfs_handle handle,
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
-    status = map_status(phipia_ext4_transaction_probe(mount->rust_mount,
-        (const uint8_t *)state->path, path_length(state->path), state->offset,
+    status = map_status(phipia_ext4_write_inode(mount->rust_mount, state->inode, state->offset,
         source, source_bytes, written_bytes));
     close_status = end_operation(mount, NULL);
     if (status != PHIPFS_STATUS_OK) {
@@ -1326,8 +1330,7 @@ enum phipfs_status ext4_backend_append(phipfs_handle handle,
     mount = &ext4_mounts[state->volume];
     status = begin_operation(mount, true);
     if (status != PHIPFS_STATUS_OK) return status;
-    status = map_status(phipia_ext4_append(mount->rust_mount,
-        (const uint8_t *)state->path, path_length(state->path), source,
+    status = map_status(phipia_ext4_append_inode(mount->rust_mount, state->inode, source,
         source_bytes, PHIPFS_MAX_FILE_BYTES, &start, written_bytes));
     close_status = end_operation(mount, NULL);
     if (status != PHIPFS_STATUS_OK) return status;
@@ -1568,24 +1571,8 @@ enum phipfs_status ext4_backend_mkdir(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
     const char *source, const char *destination)
 {
-    struct phipia_ext4_metadata metadata;
-    enum phipfs_status status;
-
-    if (!valid_volume(volume)) {
-        return PHIPFS_STATUS_INVALID_ARGUMENT;
-    }
-    status = checked_metadata(&ext4_mounts[volume], source, &metadata, false);
-    if (status != PHIPFS_STATUS_OK) {
-        return status;
-    }
-    /* Handles currently re-resolve paths. A directory move can invalidate a
-     * descendant reached through an alias, so require a quiescent volume until
-     * handles retain inode identity independently of their original path. */
-    if (inode_is_open(volume, metadata.inode) ||
-        (metadata.file_type != PHIPIA_EXT4_FILE_REGULAR &&
-            volume_has_open_handles(volume))) {
-        return PHIPFS_STATUS_BUSY;
-    }
+    /* File handles retain inode identity; directory handles own snapshots.
+     * Avoid pre-stat so a retained journal rename can retry after I/O refusal. */
     return ext4_backend_rename_probe(volume, source, destination);
 }
 

@@ -893,11 +893,37 @@ pub(crate) fn transaction_probe(
     offset: u64,
     source: &[u8],
 ) -> Result<usize, Status> {
+    write_target(mounted, absolute_path(path)?, offset, source)
+}
+
+fn inode_key(inode: u64) -> Result<Vec<u8>, Status> {
+    inode_index(inode)?;
+    let mut key = Vec::from([0]);
+    key.extend_from_slice(&inode.to_le_bytes());
+    Ok(key)
+}
+
+fn inode_index(inode: u64) -> Result<core::num::NonZeroU32, Status> {
+    u32::try_from(inode).ok().and_then(core::num::NonZeroU32::new).ok_or(Status::Invalid)
+}
+
+fn open_io_target(filesystem: &Ext4, key: &[u8]) -> Result<ext4plus::file::File, Status> {
+    if key.first() != Some(&0) { return filesystem.open(key).map_err(map_error); }
+    let number = u64::from_le_bytes(key.get(1..).ok_or(Status::Invalid)?.try_into().map_err(|_| Status::Invalid)?);
+    let inode = Inode::read(filesystem, inode_index(number)?).map_err(map_error)?;
+    if !inode.file_type().is_regular_file() { return Err(Status::Special); }
+    ext4plus::file::File::open_inode(filesystem, inode).map_err(map_error)
+}
+
+pub(crate) fn write_inode(mounted: &mut Mounted, inode: u64, offset: u64, source: &[u8]) -> Result<usize, Status> {
+    write_target(mounted, inode_key(inode)?, offset, source)
+}
+
+fn write_target(mounted: &mut Mounted, absolute: Vec<u8>, offset: u64, source: &[u8]) -> Result<usize, Status> {
     if source.is_empty() || source.len() > MAX_PROBE_WRITE_BYTES {
         return Err(Status::Range);
     }
     offset.checked_add(source.len() as u64).ok_or(Status::Range)?;
-    let absolute = absolute_path(path)?;
     if let Some(pending) = &mounted.pending_write {
         if pending.path != absolute || pending.source != source || pending.offset != offset {
             return Err(Status::Invalid);
@@ -925,7 +951,7 @@ fn resume_write_request(mounted: &mut Mounted) -> Result<usize, Status> {
         let capacity = TRANSACTION_WRITE_BYTES - (offset % BLOCK_BYTES) as usize;
         let length = capacity.min(request.source.len() - request.completed);
         let end = request.completed + length;
-        match write_transaction(mounted, &request.path[1..], offset,
+        match write_transaction(mounted, &request.path, offset,
             &request.source[request.completed..end])
         {
             Ok(written) if written != 0 && written <= length => request.completed += written,
@@ -952,18 +978,26 @@ fn resume_write_request(mounted: &mut Mounted) -> Result<usize, Status> {
 pub(crate) fn append_probe(
     mounted: &mut Mounted, path: &[u8], source: &[u8], maximum_size: u64,
 ) -> Result<(u64, usize), Status> {
+    append_target(mounted, absolute_path(path)?, source, maximum_size)
+}
+
+pub(crate) fn append_inode(mounted: &mut Mounted, inode: u64, source: &[u8], maximum_size: u64) -> Result<(u64, usize), Status> {
+    append_target(mounted, inode_key(inode)?, source, maximum_size)
+}
+
+fn append_target(mounted: &mut Mounted, key: Vec<u8>, source: &[u8], maximum_size: u64) -> Result<(u64, usize), Status> {
     let offset = if let Some(pending) = &mounted.pending_write {
-        if pending.path != absolute_path(path)? || pending.source != source {
+        if pending.path != key || pending.source != source {
             return Err(Status::Invalid);
         }
         pending.offset
     } else {
-        stat(mounted, path)?.size
+        open_io_target(mounted.readable_filesystem()?, &key)?.inode().size_in_bytes()
     };
     if offset.checked_add(source.len() as u64).is_none_or(|end| end > maximum_size) {
         return Err(Status::Range);
     }
-    transaction_probe(mounted, path, offset, source).map(|written| (offset, written))
+    write_target(mounted, key, offset, source).map(|written| (offset, written))
 }
 
 fn write_transaction(
@@ -975,7 +1009,7 @@ fn write_transaction(
     if source.is_empty() || source.len() > MAX_PROBE_WRITE_BYTES {
         return Err(Status::Range);
     }
-    let absolute = absolute_path(path)?;
+    let absolute = Vec::from(path);
     if mounted.pending_mutation.is_some() {
         return resume_pending_mutation(
             mounted,
@@ -999,10 +1033,7 @@ fn write_transaction(
     source_copy.extend_from_slice(source);
     arm_recovery_marker(mounted)?;
 
-    let mut file = match mounted.filesystem()?.open(absolute.as_slice()) {
-        Ok(file) => file,
-        Err(error) => return Err(map_error(error)),
-    };
+    let mut file = open_io_target(mounted.filesystem()?, &absolute)?;
     let written = match file.write_bytes_at(source, offset) {
         Ok(0) => {
             discard_uncommitted_stage(mounted, true)?;
@@ -1861,6 +1892,17 @@ fn metadata_at(mounted: &Mounted, path: &[u8], follow: FollowSymlinks) -> Result
         .path_to_inode(checked, follow)
         .map_err(map_error)?;
     inode_metadata(&inode)
+}
+
+/// Read bytes at a 64-bit offset without changing any shared cursor.
+pub(crate) fn stat_inode(mounted: &Mounted, number: u64) -> Result<Metadata, Status> {
+    let inode = Inode::read(mounted.readable_filesystem()?, inode_index(number)?).map_err(map_error)?;
+    inode_metadata(&inode)
+}
+
+pub(crate) fn pread_inode(mounted: &Mounted, number: u64, offset: u64, destination: &mut [u8]) -> Result<usize, Status> {
+    let mut file = open_io_target(mounted.readable_filesystem()?, &inode_key(number)?)?;
+    file.read_bytes_at(destination, offset).map_err(map_error)
 }
 
 /// Read bytes at a 64-bit offset without changing any shared cursor.

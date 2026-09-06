@@ -23,16 +23,17 @@ and non-indexed directory rename across parents. Directory moves journal the
 `..` entry and both parent link counts with the namespace changes; ancestry is
 checked by inode identity, including symlink aliases, with a 1,024-ancestor
 refusal bound. Moving an indexed directory across parents remains refused.
-The C backend currently requires no open handles on the volume for directory
-rename because handles still re-resolve paths; supporting rename while open
-requires further handle work. Hard-linked
+File handles perform reads, writes, append and sync refresh by inode identity.
+No-replace file/directory rename can therefore preserve open handles, including
+descendants of moved directories; directory iterators own their snapshots. Hard-linked
 paths report the same inode identity to the vnode table. Symlinks are resolved
 by ext4plus for lookup and open. VFS `phipfs_symlink` journals literal targets
 shorter than 128 bytes; `phipfs_readlink` copies the literal target without a
 trailing NUL and supports short output buffers. The Rust coordinator accepts
 targets up to 4,095 bytes. Dangling and looping links remain valid on remount;
-unlink/rename inspect the final link itself. Those mutations require a
-quiescent volume for symlinks while open handles still re-resolve paths.
+unlink/rename inspect the final link itself. Symlink unlink still requires a
+quiescent volume; unlinking an open regular file remains refused until orphan
+tracking is implemented. Path-based SDK ftruncate still needs handle routing.
 Native `PATH_SYMLINK`/`PATH_READLINK` and SDK `symlink()`/`readlink()` expose
 these operations to applications. Native unlink examines the entry itself
 before trying empty-directory removal, so dangling links can be removed.
