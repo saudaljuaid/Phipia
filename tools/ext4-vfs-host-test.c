@@ -22,6 +22,7 @@ static unsigned appends;
 static uint16_t changed_mode;
 static unsigned live_snapshots;
 static unsigned freed_snapshots;
+static size_t expected_open_inodes;
 
 int32_t phipia_ext4_set_times(uintptr_t mounted, const uint8_t *path, size_t path_bytes,
     uint64_t atime_seconds, uint32_t atime_nanos, uint64_t mtime_seconds, uint32_t mtime_nanos)
@@ -251,6 +252,16 @@ int32_t phipia_ext4_link_file_probe(uintptr_t mounted, const uint8_t *source,
     return permanent_status;
 }
 
+int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, const uint64_t *open_inodes, size_t open_count)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    assert(open_count == expected_open_inodes);
+    for (size_t index = 0U; index < open_count; ++index) assert(open_inodes[index] == 42U);
+    return permanent_status;
+}
+
 int32_t phipia_ext4_readlink(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, uint8_t *output, size_t capacity, size_t *read_bytes)
 {
@@ -342,6 +353,14 @@ int main(void)
     assert(read_count == 1U && read_value == 0x55);
     assert(ext4_backend_write(second, (const uint8_t *)"x", 1U, &written) == PHIPFS_STATUS_OK);
     assert(written == 1U && stat_refusals == 1U);
+    expected_open_inodes = 2U;
+    permanent_status = PHIPIA_EXT4_STATUS_BUSY;
+    assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_BUSY);
+    permanent_status = PHIPIA_EXT4_STATUS_IO;
+    assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_IO);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_OK);
+    assert(stat_refusals == 1U);
     stat_refusals = 0U;
     renames = 0U;
     assert(ext4_backend_ftruncate(first, 5U) == PHIPFS_STATUS_ACCESS);
@@ -351,6 +370,8 @@ int main(void)
     assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 5U && state->offset == 1U);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
+    expected_open_inodes = 0U;
+    assert(ext4_backend_unlink(PHIPFS_VOLUME_DATA, "file") == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);
     file_type = PHIPIA_EXT4_FILE_DIRECTORY;
     /* An unrelated spelling can alias a descendant of the directory. */

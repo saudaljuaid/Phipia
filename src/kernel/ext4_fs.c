@@ -87,7 +87,7 @@ extern int32_t phipia_ext4_truncate_probe(uintptr_t mounted,
 extern int32_t phipia_ext4_create_file_probe(uintptr_t mounted,
     const uint8_t *path, size_t path_length, uint16_t mode);
 extern int32_t phipia_ext4_unlink_file_probe(uintptr_t mounted,
-    const uint8_t *path, size_t path_length);
+    const uint8_t *path, size_t path_length, const uint64_t *open_inodes, size_t open_count);
 extern int32_t phipia_ext4_link_file_probe(uintptr_t mounted,
     const uint8_t *source, size_t source_length, const uint8_t *destination,
     size_t destination_length);
@@ -383,6 +383,8 @@ static enum phipfs_status map_status(int32_t status)
         return PHIPFS_STATUS_FULL;
     case PHIPIA_EXT4_STATUS_READ_ONLY:
         return PHIPFS_STATUS_READ_ONLY;
+    case PHIPIA_EXT4_STATUS_BUSY:
+        return PHIPFS_STATUS_BUSY;
     default:
         return PHIPFS_STATUS_CORRUPT;
     }
@@ -717,18 +719,19 @@ static void update_open_sizes(enum phipfs_volume volume, uint64_t inode,
     }
 }
 
-static bool inode_is_open(enum phipfs_volume volume, uint64_t inode)
+static size_t collect_open_inodes(enum phipfs_volume volume, uint64_t *inodes)
 {
+    size_t count = 0U;
     for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
         if (ext4_handles[index].active &&
             ext4_handles[index].volume == volume &&
             ext4_handles[index].mount_generation ==
                 ext4_mounts[volume].generation &&
-            ext4_handles[index].inode == inode) {
-            return true;
+            !ext4_handles[index].directory) {
+            inodes[count++] = ext4_handles[index].inode;
         }
     }
-    return false;
+    return count;
 }
 
 static bool volume_has_open_handles(enum phipfs_volume volume)
@@ -1152,8 +1155,10 @@ enum phipfs_status ext4_backend_unlink_file_probe(enum phipfs_volume volume,
     if (status != PHIPFS_STATUS_OK) {
         return status;
     }
+    uint64_t open_inodes[EXT4_MAX_HANDLES];
+    const size_t open_count = collect_open_inodes(volume, open_inodes);
     status = map_status(phipia_ext4_unlink_file_probe(mount->rust_mount,
-        (const uint8_t *)path, length));
+        (const uint8_t *)path, length, open_inodes, open_count));
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
 }
@@ -1582,21 +1587,6 @@ enum phipfs_status ext4_backend_rename(enum phipfs_volume volume,
 enum phipfs_status ext4_backend_unlink(enum phipfs_volume volume,
     const char *path)
 {
-    struct phipia_ext4_metadata metadata;
-    enum phipfs_status status;
-
-    if (!valid_volume(volume)) {
-        return PHIPFS_STATUS_INVALID_ARGUMENT;
-    }
-    status = checked_metadata(&ext4_mounts[volume], path, &metadata, false);
-    if (status != PHIPFS_STATUS_OK) {
-        return status;
-    }
-    if (inode_is_open(volume, metadata.inode) ||
-        (metadata.file_type == PHIPIA_EXT4_FILE_SYMLINK &&
-            volume_has_open_handles(volume))) {
-        return PHIPFS_STATUS_BUSY;
-    }
     return ext4_backend_unlink_file_probe(volume, path);
 }
 

@@ -250,7 +250,7 @@ fn commit_reload_failure_hides_view_and_retry_does_not_rewrite_storage() {
 #[test]
 fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
     let Some(path) = fixture() else { return };
-    for case in 0..18 {
+    for case in 0..19 {
         let mut mounted = mount_fixture(&path);
         if case != 0 && case < 5 {
             if case == 4 {
@@ -287,6 +287,9 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             if case == 14 {
                 ext4::transaction_probe(&mut mounted, b"system/retry-test", 0, &vec![0x37; 8192]).unwrap();
             }
+            if case == 18 {
+                ext4::link_file_probe(&mut mounted, b"system/retry-test", b"system/retained-alias").unwrap();
+            }
             ext4::sync(&mut mounted).unwrap();
         }
         let initial = DEVICE.with_borrow_mut(|device| {
@@ -314,6 +317,7 @@ fn pending_commit_is_hidden_and_every_storage_refusal_retries_exact_bytes() {
             14 => ext4::truncate_inode(mounted, inode, 101),
             15 => ext4::set_times(mounted, b"system/retry-test", 2_200_000_000, 123, 2_300_000_000, 456),
             16 | 17 => ext4::link_file_probe(mounted, b"system/retry-test", b"data/user/retry-test"),
+            18 => ext4::unlink_file_guarded(mounted, b"system/retry-test", &[inode]),
             _ => ext4::symlink_probe(mounted, b"system/retry-test", &target),
         };
         mutate(&mut mounted).unwrap();
@@ -854,6 +858,33 @@ fn external_xattr_checksums_shared_release_and_final_free() {
     DEVICE.with_borrow_mut(|device| *device = Device { bytes: initial, ..Device::default() });
     assert!(ext4::mount(1, length).is_err(), "corrupt external xattr admitted");
     DEVICE.with_borrow(|device| assert!(device.events.is_empty()));
+}
+
+#[test]
+fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    let name = b"system/unlink-handle";
+    let alias = b"data/user/retained-link";
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    let inode = ext4::stat(&mounted, name).unwrap().inode;
+    ext4::write_inode(&mut mounted, inode, 0, b"original").unwrap();
+    assert_eq!(ext4::unlink_file_guarded(&mut mounted, name, &[inode]), Err(Status::Busy));
+    ext4::link_file_probe(&mut mounted, name, alias).unwrap();
+    ext4::unlink_file_guarded(&mut mounted, name, &[inode, inode]).unwrap();
+    assert_eq!(ext4::stat(&mounted, name), Err(Status::NotFound));
+    assert_eq!(ext4::stat_inode(&mounted, inode).unwrap().links, 1);
+    ext4::append_inode(&mut mounted, inode, b"-open", 16384).unwrap();
+    let mut bytes = [0; 13];
+    read_exact(&mounted, alias, &mut bytes);
+    assert_eq!(&bytes, b"original-open");
+    ext4::symlink_probe(&mut mounted, b"system/open-symlink", b"../data/user/retained-link").unwrap();
+    ext4::unlink_file_guarded(&mut mounted, b"system/open-symlink", &[inode]).unwrap();
+    assert_eq!(ext4::unlink_file_guarded(&mut mounted, alias, &[inode]), Err(Status::Busy));
+    ext4::unlink_file_guarded(&mut mounted, alias, &[]).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-unlink-open-alias");
 }
 
 #[test]

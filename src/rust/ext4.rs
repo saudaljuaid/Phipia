@@ -1465,6 +1465,16 @@ pub(crate) fn unlink_file_probe(
     mounted: &mut Mounted,
     path: &[u8],
 ) -> Result<(), Status> {
+    unlink_file_guarded(mounted, path, &[])
+}
+
+/// Until durable orphan handling is admitted, retain an open inode's final
+/// namespace link. Non-final links and symlinks do not invalidate file handles.
+pub(crate) fn unlink_file_guarded(
+    mounted: &mut Mounted,
+    path: &[u8],
+    open_inodes: &[u64],
+) -> Result<(), Status> {
     let absolute = absolute_path(path)?;
     if mounted.pending_mutation.is_some() {
         return resume_namespace_mutation(mounted, PendingMutationKind::UnlinkFile, &absolute);
@@ -1481,20 +1491,23 @@ pub(crate) fn unlink_file_probe(
     let filesystem = mounted.filesystem()?;
     let mutation = (|| {
         let path = Path::try_from(absolute.as_slice())
-            .map_err(|_| Ext4Error::MalformedPath)?;
+            .map_err(|_| Status::Invalid)?;
         let inode = filesystem
-            .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent)?;
+            .path_to_inode(path, FollowSymlinks::ExcludeFinalComponent).map_err(map_error)?;
         if !inode.file_type().is_regular_file() && !inode.file_type().is_symlink() {
-            return Err(Ext4Error::IsADirectory);
+            return Err(Status::IsDirectory);
+        }
+        if inode.links_count() == 1 && open_inodes.contains(&u64::from(inode.index.get())) {
+            return Err(Status::Busy);
         }
         let parent_inode = filesystem
-            .path_to_inode(parent, FollowSymlinks::All)?;
-        let mut directory = Dir::open_inode(filesystem, parent_inode)?;
-        directory.unlink(name, inode).map(|_| ())
+            .path_to_inode(parent, FollowSymlinks::All).map_err(map_error)?;
+        let mut directory = Dir::open_inode(filesystem, parent_inode).map_err(map_error)?;
+        directory.unlink(name, inode).map(|_| ()).map_err(map_error)
     })();
     if let Err(error) = mutation {
         discard_uncommitted_stage(mounted, true)?;
-        return Err(map_error(error));
+        return Err(error);
     }
     /*
      * Dropping the final link legitimately frees every data/extent block in
@@ -2045,6 +2058,8 @@ pub(crate) enum Status {
     Full = 12,
     /// The filesystem or inode refuses mutation.
     ReadOnly = 13,
+    /// An open inode requires unsupported orphan handling before deletion.
+    Busy = 14,
 }
 
 const _: i32 = Status::Volume as i32;
