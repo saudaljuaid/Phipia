@@ -15,6 +15,9 @@ static uint64_t disk_size = 8192U;
 static int32_t permanent_status = PHIPIA_EXT4_STATUS_OK;
 static uint8_t file_type = PHIPIA_EXT4_FILE_REGULAR;
 static unsigned renames;
+static uint64_t pending_size;
+static unsigned sync_refusals;
+static unsigned stat_refusals;
 
 enum nvme_status nvme_volume_open(struct nvme_volume_session *session,
     uint32_t controller_index, bool writable)
@@ -50,6 +53,7 @@ int32_t phipia_ext4_truncate_probe(uintptr_t mounted, const uint8_t *path,
     if (refusals != 0U) {
         --refusals;
         pending = true;
+        pending_size = size;
         return PHIPIA_EXT4_STATUS_IO;
     }
     pending = false;
@@ -61,8 +65,11 @@ int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, struct phipia_ext4_metadata *metadata)
 {
     assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
-    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
     ++stats;
+    if (stat_refusals != 0U) {
+        --stat_refusals;
+        return PHIPIA_EXT4_STATUS_IO;
+    }
     if (pending) {
         return PHIPIA_EXT4_STATUS_IO;
     }
@@ -70,6 +77,20 @@ int32_t phipia_ext4_stat(uintptr_t mounted, const uint8_t *path,
     metadata->inode = 42U;
     metadata->size = disk_size;
     metadata->file_type = file_type;
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_sync(uintptr_t mounted)
+{
+    assert(mounted == 1U && ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    if (sync_refusals != 0U) {
+        --sync_refusals;
+        return PHIPIA_EXT4_STATUS_IO;
+    }
+    if (pending) {
+        disk_size = pending_size;
+        pending = false;
+    }
     return PHIPIA_EXT4_STATUS_OK;
 }
 
@@ -112,6 +133,19 @@ int main(void)
     permanent_status = PHIPIA_EXT4_STATUS_READ_ONLY;
     assert(ext4_backend_truncate(PHIPFS_VOLUME_DATA, "file", 100U) == PHIPFS_STATUS_READ_ONLY);
     assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 101U);
+    permanent_status = PHIPIA_EXT4_STATUS_OK;
+    refusals = 1U;
+    assert(ext4_backend_truncate(PHIPFS_VOLUME_DATA, "file", 65537U) == PHIPFS_STATUS_IO);
+    sync_refusals = 1U;
+    assert(ext4_backend_sync(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+    assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 101U);
+    stat_refusals = 1U;
+    assert(ext4_backend_sync(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+    assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 101U);
+    assert(ext4_backend_sync(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+    assert(handle_state(first, &state) == PHIPFS_STATUS_OK && state->size == 65537U);
+    assert(handle_state(second, &state) == PHIPFS_STATUS_OK && state->size == 65537U);
+    assert(state->offset == 0U);
     assert(ext4_backend_close(first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_close(second) == PHIPFS_STATUS_OK);
     assert(handle_state(first, &state) == PHIPFS_STATUS_STALE_HANDLE);

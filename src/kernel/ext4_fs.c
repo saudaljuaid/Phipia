@@ -837,6 +837,31 @@ enum phipfs_status ext4_backend_sync(enum phipfs_volume volume)
         return status;
     }
     status = map_status(phipia_ext4_sync(mount->rust_mount));
+    if (status == PHIPFS_STATUS_OK) {
+        /* Sync may finish a previously refused write or truncate. Refresh
+         * cached EOFs while the same lease excludes another mutation; keep
+         * each file position unchanged. A failed refresh remains retryable. */
+        for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+            struct ext4_handle_state *state = &ext4_handles[index];
+            struct phipia_ext4_metadata metadata;
+
+            if (!state->active || state->volume != volume ||
+                state->mount_generation != mount->generation) {
+                continue;
+            }
+            zero_bytes(&metadata, sizeof(metadata));
+            status = map_status(phipia_ext4_stat(mount->rust_mount,
+                (const uint8_t *)state->path, path_length(state->path), &metadata));
+            if (status != PHIPFS_STATUS_OK) {
+                break;
+            }
+            if (metadata.inode != state->inode) {
+                status = PHIPFS_STATUS_STALE_HANDLE;
+                break;
+            }
+            state->size = metadata.size;
+        }
+    }
     close_status = end_operation(mount, NULL);
     return status != PHIPFS_STATUS_OK ? status : close_status;
 }
