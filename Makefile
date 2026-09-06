@@ -1205,8 +1205,16 @@ $(BUILD_DIR)/ext4-vfs-host-test: tools/ext4-vfs-host-test.c \
 		-Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion -Iinclude \
 		tools/ext4-vfs-host-test.c -Wl,--gc-sections -o $@
 
-ext4-tests: tools/ext4_image.py tools/ext4_host_test.py $(BUILD_DIR)/ext4-vfs-host-test
+$(BUILD_DIR)/vfs-mutation-host-test: tools/vfs-mutation-host-test.c \
+		src/kernel/vfs.c include/phipia/vfs_backend.h include/phipia/fat32_fs.h
+	mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -flto -ffunction-sections -fdata-sections \
+		-Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion -Iinclude \
+		tools/vfs-mutation-host-test.c -Wl,--gc-sections -o $@
+
+ext4-tests: tools/ext4_image.py tools/ext4_host_test.py $(BUILD_DIR)/ext4-vfs-host-test $(BUILD_DIR)/vfs-mutation-host-test
 	$(BUILD_DIR)/ext4-vfs-host-test
+	$(BUILD_DIR)/vfs-mutation-host-test
 	PHIPIA_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \
 		$(PYTHON) -u tools/ext4_host_test.py
 	PHIPIA_EXT4_RUST_FIXTURE='$(CURDIR)/$(BUILD_DIR)/ext4-rust-fixture.img' \

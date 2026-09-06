@@ -48,6 +48,9 @@ struct vfs_backend_ops {
     enum phipfs_status (*link)(enum phipfs_volume volume, const char *source,
         const char *destination);
     bool case_sensitive;
+    /* Mutations validate all path components under their transaction lock.
+     * A retained transaction must be retried without pre-reading its hidden view. */
+    bool validates_mutation_paths;
     enum phipfs_status (*append)(phipfs_handle handle, const uint8_t *source,
         size_t source_bytes, size_t *written_bytes);
     enum phipfs_status (*rename_replace)(enum phipfs_volume volume,

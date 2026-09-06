@@ -123,6 +123,7 @@ static const struct vfs_backend_ops ext4_backend_ops = {
     .rmdir = ext4_backend_rmdir,
     .link = ext4_backend_link,
     .case_sensitive = true,
+    .validates_mutation_paths = true,
     .append = ext4_backend_append,
     .chmod = ext4_backend_chmod,
     .ftruncate = ext4_backend_ftruncate,
@@ -476,6 +477,9 @@ static enum phipfs_status resolve_parent(
     }
     if (canonical[0] == '.' && canonical[1] == '\0') {
         return PHIPFS_STATUS_ACCESS;
+    }
+    if (mounts[volume].backend->validates_mutation_paths) {
+        return PHIPFS_STATUS_OK;
     }
     for (size_t index = 0U; canonical[index] != '\0'; ++index) {
         if (canonical[index] == '/') {
@@ -1028,6 +1032,12 @@ enum phipfs_status phipfs_truncate(
 )
 {
     char canonical[PHIPFS_MAX_PATH];
+    if (valid_volume(volume) && mounts[volume].active &&
+        mounts[volume].backend->validates_mutation_paths) {
+        enum phipfs_status result = resolve_parent(volume, path, canonical);
+        return result == PHIPFS_STATUS_OK ?
+            mounts[volume].backend->truncate(volume, canonical, size) : result;
+    }
     size_t vnode_index;
     enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
@@ -1105,6 +1115,12 @@ bool phipfs_has_atomic_replace(enum phipfs_volume volume)
 enum phipfs_status phipfs_rmdir(enum phipfs_volume volume, const char *path)
 {
     char canonical[PHIPFS_MAX_PATH];
+    if (valid_volume(volume) && mounts[volume].active &&
+        mounts[volume].backend->validates_mutation_paths) {
+        enum phipfs_status result = resolve_parent(volume, path, canonical);
+        return result == PHIPFS_STATUS_OK ?
+            mounts[volume].backend->rmdir(volume, canonical) : result;
+    }
     size_t vnode_index;
     enum phipfs_status status = resolve_path(
         volume, path, canonical, &vnode_index);
