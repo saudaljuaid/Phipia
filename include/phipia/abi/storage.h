@@ -105,6 +105,26 @@ struct phipia_volume_space {
     uint32_t reserved;
 } __attribute__((packed));
 
+enum phipia_xattr_operation {
+    PHIPIA_XATTR_GET = 0,
+    PHIPIA_XATTR_SET = 1,
+    PHIPIA_XATTR_REMOVE = 2
+};
+
+struct phipia_xattr_request {
+    uint32_t size;
+    uint32_t version;
+    struct phipia_path path;
+    uint64_t name;
+    uint32_t name_length;
+    uint32_t operation;
+    uint64_t value;
+    uint32_t value_length;
+    uint32_t reserved;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct phipia_xattr_request) == 56U, "Phipia xattr ABI changed");
+
 _Static_assert(sizeof(struct phipia_path) == 16U,
     "Phipia path ABI changed");
 _Static_assert(sizeof(struct phipia_file_open_request) == 32U,

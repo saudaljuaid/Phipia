@@ -419,5 +419,6 @@ inodes with access ACLs are refused. The admitted xattr mutation namespace is
 any released external attribute block. The complete resulting attribute set
 must fit in the inode body; larger sets return FULL with the old attributes
 and allocation counters preserved. Reads support size queries and refuse
-undersized buffers. These VFS operations do not yet have native syscall/SDK
-bindings, and automatic timestamp updates remain incomplete.
+undersized buffers. Native PATH_CHMOD/PATH_XATTR and SDK wrappers expose these
+operations with Data write capability checks; POSIX chmod uses PATH_CHMOD.
+Automatic timestamp updates remain incomplete.

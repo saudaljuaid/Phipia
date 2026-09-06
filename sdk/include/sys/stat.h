@@ -13,5 +13,6 @@ struct stat { uint64_t st_size; mode_t st_mode; };
 #define S_ISDIR(mode) (((mode) & S_IFDIR) != 0U)
 int stat(const char *path, struct stat *result);
 int mkdir(const char *path, mode_t mode);
+int chmod(const char *path, mode_t mode);
 int ftruncate(int descriptor, int64_t length);
 #endif

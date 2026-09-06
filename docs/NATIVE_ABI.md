@@ -92,6 +92,8 @@ is immutable; writable Data paths are rooted below the application namespace.
 | `0x020d VOLUME_SPACE(volume, *space)` | `0` | K | Writes one all-or-nothing free-space record and retains no pointer or resource. |
 | `0x020e PATH_SYMLINK(*path, target, length)` | `0` | K | Creates an ext4 Data link with a nonempty literal target shorter than 128 bytes; requires Data write capability. Target bytes are copied before mutation and no pointer is retained. |
 | `0x020f PATH_READLINK(*path, output, capacity)` | Bytes copied | K | Copies literal target bytes without a NUL, including dangling/looping final links. A nonzero output buffer may truncate the target; at most 4096 bytes are copied. No handle is allocated. |
+| `0x0210 PATH_CHMOD(*path, mode)` | `0` | K | Journals ordinary mode bits (0000–0777) on ext4 Data with write capability. Immutable inodes and access ACLs are refused. |
+| `0x0211 PATH_XATTR(*request)` | Value length for get, otherwise `0` | K | Versioned 56-byte request selects get/set/remove of admitted user attributes. Name length is 1–255, value/capacity at most 4096; get with zero capacity queries size. Inputs are copied before mutation. Set/remove require Data write capability and resulting attributes must fit inline. |
 
 ### Time, waiting, and entropy
 

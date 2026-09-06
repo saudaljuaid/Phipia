@@ -3642,6 +3642,62 @@ static int64_t syscall_symlink(
     return (int64_t)count;
 }
 
+static int64_t syscall_chmod(struct native_process *process, uint64_t path_address, uint64_t mode)
+{
+    struct phipia_path request;
+    char path[PHIPFS_MAX_PATH];
+    enum phipfs_volume volume;
+    if (mode > 0777U) return -PHIPIA_EINVAL;
+    if (!copy_from_user(process, &request, path_address, sizeof(request))) return -PHIPIA_EFAULT;
+    if (!path_from_user(process, &request, path, &volume)) return -PHIPIA_EINVAL;
+    if (volume != PHIPFS_VOLUME_DATA ||
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U) return -PHIPIA_EACCES;
+    cpu_interrupt_enable();
+    enum phipfs_status status = phipfs_chmod(volume, path, (uint16_t)mode);
+    cpu_interrupt_disable();
+    return filesystem_error(status);
+}
+
+static int64_t syscall_xattr(struct native_process *process, uint64_t address)
+{
+    struct phipia_xattr_request request;
+    char path[PHIPFS_MAX_PATH];
+    char name[256];
+    uint8_t bytes[4096];
+    enum phipfs_volume volume;
+    enum phipfs_status status;
+    size_t length = 0U;
+    if (!copy_from_user(process, &request, address, sizeof(request))) return -PHIPIA_EFAULT;
+    if (request.size != sizeof(request) || request.version != PHIPIA_ABI_VERSION ||
+        request.reserved != 0U || request.operation > PHIPIA_XATTR_REMOVE ||
+        request.name_length == 0U || request.name_length >= sizeof(name) ||
+        request.value_length > sizeof(bytes) ||
+        (request.operation == PHIPIA_XATTR_REMOVE && request.value_length != 0U)) return -PHIPIA_EINVAL;
+    if (!path_from_user(process, &request.path, path, &volume)) return -PHIPIA_EINVAL;
+    if (request.operation != PHIPIA_XATTR_GET && (volume != PHIPFS_VOLUME_DATA ||
+        (process->manifest.capabilities & PHIPIA_CAP_DATA_WRITE) == 0U)) return -PHIPIA_EACCES;
+    if (!copy_from_user(process, name, request.name, request.name_length)) return -PHIPIA_EFAULT;
+    if (bounded_length((const uint8_t *)name, request.name_length) != request.name_length) return -PHIPIA_EINVAL;
+    name[request.name_length] = '\0';
+    if (request.value_length != 0U) {
+        if (request.operation == PHIPIA_XATTR_GET) {
+            if (!validate_user_range(process, request.value, request.value_length, true)) return -PHIPIA_EFAULT;
+        } else if (!copy_from_user(process, bytes, request.value, request.value_length)) return -PHIPIA_EFAULT;
+    }
+    cpu_interrupt_enable();
+    if (request.operation == PHIPIA_XATTR_GET) {
+        status = phipfs_get_xattr(volume, path, name, bytes, request.value_length, &length);
+    } else {
+        status = phipfs_set_xattr(volume, path, name, bytes, request.value_length,
+            request.operation == PHIPIA_XATTR_REMOVE);
+    }
+    cpu_interrupt_disable();
+    if (status != PHIPFS_STATUS_OK) return filesystem_error(status);
+    if (request.operation == PHIPIA_XATTR_GET && request.value_length != 0U &&
+        (length > request.value_length || !copy_to_user(process, request.value, bytes, length))) return -PHIPIA_EFAULT;
+    return (int64_t)length;
+}
+
 static bool replacement_backup_path(
     const char *destination,
     char backup[PHIPFS_MAX_PATH]
@@ -5827,6 +5883,10 @@ static int64_t dispatch_syscall(
         return syscall_symlink(process, frame->rdi, frame->rsi, frame->rdx, true);
     case PHIPIA_SYS_PATH_READLINK:
         return syscall_symlink(process, frame->rdi, frame->rsi, frame->rdx, false);
+    case PHIPIA_SYS_PATH_CHMOD:
+        return syscall_chmod(process, frame->rdi, frame->rsi);
+    case PHIPIA_SYS_PATH_XATTR:
+        return syscall_xattr(process, frame->rdi);
     case PHIPIA_SYS_TIME_MONOTONIC:
         return (process->manifest.capabilities & PHIPIA_CAP_TIME) != 0U ?
             (int64_t)clock_monotonic_ns() : -PHIPIA_EACCES;

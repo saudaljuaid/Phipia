@@ -255,6 +255,42 @@ long phipia_path_unlink(uint16_t volume, const char *path)
     return single_path(PHIPIA_SYS_PATH_UNLINK, volume, path, 0U);
 }
 
+long phipia_path_chmod(uint16_t volume, const char *path, uint16_t mode)
+{
+    return single_path(PHIPIA_SYS_PATH_CHMOD, volume, path, mode);
+}
+
+static long path_xattr(uint16_t volume, const char *path, const char *name,
+    uint64_t value, size_t length, uint32_t operation)
+{
+    if (path == NULL || name == NULL || (length != 0U && value == 0U)) return -PHIPIA_EFAULT;
+    const size_t name_length = strlen(name);
+    if (name_length == 0U || name_length > 255U || length > 4096U) return -PHIPIA_EINVAL;
+    struct phipia_xattr_request request = {
+        sizeof(request), PHIPIA_ABI_VERSION, make_path(volume, path),
+        (uint64_t)(uintptr_t)name, (uint32_t)name_length, operation,
+        value, (uint32_t)length, 0U
+    };
+    return phipia_syscall1(PHIPIA_SYS_PATH_XATTR, (uint64_t)(uintptr_t)&request);
+}
+
+long phipia_path_set_xattr(uint16_t volume, const char *path, const char *name,
+    const void *value, size_t length)
+{
+    return path_xattr(volume, path, name, (uint64_t)(uintptr_t)value, length, PHIPIA_XATTR_SET);
+}
+
+long phipia_path_remove_xattr(uint16_t volume, const char *path, const char *name)
+{
+    return path_xattr(volume, path, name, 0U, 0U, PHIPIA_XATTR_REMOVE);
+}
+
+long phipia_path_get_xattr(uint16_t volume, const char *path, const char *name,
+    void *output, size_t capacity)
+{
+    return path_xattr(volume, path, name, (uint64_t)(uintptr_t)output, capacity, PHIPIA_XATTR_GET);
+}
+
 long phipia_path_symlink(uint16_t volume, const char *path, const char *target)
 {
     if (path == NULL || target == NULL) return -PHIPIA_EFAULT;

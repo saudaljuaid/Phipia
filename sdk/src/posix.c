@@ -147,6 +147,7 @@ static int path_operation(const char *path, uint64_t number, uint64_t value)
     return phipia_result(result);
 }
 int unlink(const char *path) { return path_operation(path, PHIPIA_SYS_PATH_UNLINK, 0U); }
+int chmod(const char *path, mode_t mode) { return path_operation(path, PHIPIA_SYS_PATH_CHMOD, mode); }
 int symlink(const char *target, const char *path)
 {
     struct phipia_runtime_path parsed;
