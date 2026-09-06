@@ -106,8 +106,10 @@ are test locations, not a claim that this audit head has passed them.
   casefold, external journal, fast-commit or arbitrary ext4 profile support.
 - Stage has **64 total images**, shared by file data and metadata, and 64 revokes.
   The transaction format separately bounds ordered data and metadata to 64 each;
-  that does not double stage capacity. A 256 KiB request can still exhaust the
-  stage because of metadata or unaligned extra blocks. No adaptive chunking.
+  that does not double stage capacity. Requests now split into transactions
+  touching at most 32 data blocks, with unaligned first/last blocks included.
+  Metadata can still exhaust the remaining stage capacity on complex extent
+  changes; adaptive chunk sizing is not yet implemented.
 - Public C write and truncate cap resulting files at **16 MiB**
   (`PHIPFS_MAX_FILE_BYTES`). Reads/stat/seek use 64-bit values; those do not prove
   writable 64-bit file scale. Rust and C request limits are 256 KiB.

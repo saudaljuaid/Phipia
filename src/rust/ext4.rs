@@ -31,6 +31,7 @@ const READ_ONLY_FEATURES: u32 = 0x046b;
 const MAX_VALIDATED_ENTRIES: usize = 8_192;
 const MAX_PENDING_DIRECTORIES: usize = 512;
 const MAX_PROBE_WRITE_BYTES: usize = 64 * JOURNAL_BLOCK_BYTES;
+const TRANSACTION_WRITE_BYTES: usize = 32 * JOURNAL_BLOCK_BYTES;
 
 /// A pointer-free identity copied from a validated ext4 superblock.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +88,7 @@ pub(crate) struct Mounted {
     journal: JournalRing,
     stage: Rc<JournalMutationStage>,
     pending_mutation: Option<PendingMutation>,
+    pending_write: Option<PendingWrite>,
     context: usize,
     image_bytes: u64,
 }
@@ -99,7 +101,8 @@ impl Mounted {
     fn readable_filesystem(&self) -> Result<&Ext4, Status> {
         // A retained transaction may contain uncommitted namespace and allocator
         // updates. Only the reloaded checkpointed view is public.
-        if self.pending_mutation.is_some() || !self.stage.is_empty() || self.stage.is_sealed() {
+        if self.pending_write.is_some() || self.pending_mutation.is_some()
+            || !self.stage.is_empty() || self.stage.is_sealed() {
             return Err(Status::Io);
         }
         self.filesystem()
@@ -145,6 +148,13 @@ struct PendingMutation {
     written: usize,
     checkpointed_superblock: Option<FilesystemSuperblockCheckpoint>,
     phase: PendingMutationPhase,
+}
+
+struct PendingWrite {
+    path: Vec<u8>,
+    source: Vec<u8>,
+    offset: u64,
+    completed: usize,
 }
 
 #[derive(Debug)]
@@ -624,6 +634,7 @@ pub(crate) fn mount(context: usize, media_bytes: u64) -> Result<(Box<Mounted>, I
             journal: clean_ring,
             stage,
             pending_mutation: None,
+            pending_write: None,
             context,
             image_bytes,
         }),
@@ -853,11 +864,73 @@ fn commit_staged_mutation(
     resume_pending_mutation_inner(mounted)
 }
 
-/// Execute one controlled staged write through the native journal executor.
+/// Execute a bounded write request as checkpointed journal transactions.
 ///
 /// The same request retries a retained commit/checkpoint plan after storage I/O
 /// refusal; different input is rejected while a request remains pending.
+/// Completed chunks can survive a crash independently. A later precommit
+/// refusal returns their byte count as a short write, never whole-write atomicity.
 pub(crate) fn transaction_probe(
+    mounted: &mut Mounted,
+    path: &[u8],
+    offset: u64,
+    source: &[u8],
+) -> Result<usize, Status> {
+    if source.is_empty() || source.len() > MAX_PROBE_WRITE_BYTES {
+        return Err(Status::Range);
+    }
+    offset.checked_add(source.len() as u64).ok_or(Status::Range)?;
+    let absolute = absolute_path(path)?;
+    if let Some(pending) = &mounted.pending_write {
+        if pending.path != absolute || pending.source != source || pending.offset != offset {
+            return Err(Status::Invalid);
+        }
+    } else {
+        if mounted.pending_mutation.is_some() {
+            return Err(Status::Invalid);
+        }
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(source.len()).map_err(|_| Status::Range)?;
+        copy.extend_from_slice(source);
+        mounted.pending_write = Some(PendingWrite {
+            path: absolute, source: copy, offset, completed: 0,
+        });
+    }
+    resume_write_request(mounted)
+}
+
+fn resume_write_request(mounted: &mut Mounted) -> Result<usize, Status> {
+    let mut request = mounted.pending_write.take().ok_or(Status::Invalid)?;
+    while request.completed < request.source.len() {
+        let offset = request.offset + request.completed as u64;
+        // At most 32 touched data blocks, including an unaligned first block,
+        // leave stage capacity for allocation, extents and inode metadata.
+        let capacity = TRANSACTION_WRITE_BYTES - (offset % BLOCK_BYTES) as usize;
+        let length = capacity.min(request.source.len() - request.completed);
+        let end = request.completed + length;
+        match write_transaction(mounted, &request.path[1..], offset,
+            &request.source[request.completed..end])
+        {
+            Ok(written) if written != 0 && written <= length => request.completed += written,
+            Ok(_) => return Err(Status::Invalid),
+            Err(error) => {
+                if mounted.pending_mutation.is_some() {
+                    // An unknown durable prefix owns this exact chunk. Keep the
+                    // whole request and its already checkpointed byte count so
+                    // retry/sync never allocates or replays earlier chunks twice.
+                    mounted.pending_write = Some(request);
+                    return Err(error);
+                }
+                // Setup/ENOSPC rolled back this chunk before storage started.
+                // A completed prefix is a normal short write; it stays durable.
+                return if request.completed != 0 { Ok(request.completed) } else { Err(error) };
+            }
+        }
+    }
+    Ok(request.completed)
+}
+
+fn write_transaction(
     mounted: &mut Mounted,
     path: &[u8],
     offset: u64,
@@ -1464,7 +1537,9 @@ pub(crate) fn rename_probe(
 
 /// Retry and durably execute the final clean plan while C holds a write lease.
 pub(crate) fn prepare_unmount(mounted: &mut Mounted) -> Result<(), Status> {
-    if mounted.pending_mutation.is_some() {
+    if mounted.pending_write.is_some() {
+        let _ = resume_write_request(mounted)?;
+    } else if mounted.pending_mutation.is_some() {
         let _ = resume_pending_mutation_inner(mounted)?;
     }
     ensure_staged_view(mounted)?;
@@ -1517,6 +1592,7 @@ pub(crate) fn sync(mounted: &mut Mounted) -> Result<(), Status> {
 /// Refuse to release a mount unless its retained journal state is idle and clean.
 pub(crate) fn unmount(mounted: &Mounted) -> Result<(), Status> {
     if mounted.filesystem.is_none()
+        || mounted.pending_write.is_some()
         || mounted.pending_mutation.is_some()
         || !mounted.stage.is_empty()
         || mounted.stage.is_sealed()

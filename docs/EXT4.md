@@ -276,7 +276,15 @@ pending phase and request bytes for an identical retry; a different request is
 refused. The QEMU recovery scenario injects a refusal at the live-journal
 superblock write after an allocation-bearing upstream mutation, then at the
 ordered-data flush while retrying that same pending request. Only the third,
-byte-identical attempt is allowed to complete. Writable namespace methods use
+byte-identical attempt is allowed to complete. Requests up to the existing
+256 KiB limit now split into transactions touching at most 32 file-data blocks
+each, leaving stage space for metadata. The coordinator retains the full
+request and its checkpointed byte count across a storage refusal; the identical
+request or sync resumes only the unfinished chunk and remaining suffix. A
+precommit refusal such as ENOSPC after completed chunks returns their durable
+byte count as a short write. A power cut can preserve a prefix of a split write;
+this is not whole-request atomicity, and the public 16 MiB file-mutation limit
+remains. Writable namespace methods use
 the same retained planner through the public VFS table.
 A bounded `JournalMutationStage`
 now gives synchronous ext4plus mutations an immutable backing reader and a

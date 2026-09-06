@@ -162,8 +162,11 @@ fn read_exact(mounted: &ext4::Mounted, path: &[u8], output: &mut [u8]) {
 fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
-    // Establish a durable recovery marker and a checkpointed, readable view.
-    ext4::create_file_probe(&mut mounted, b"system/rollback-test", 0o640).unwrap();
+    // Allocate 65 blocks using split writes, then exceed the still-bounded
+    // single-transaction revoke capacity to force truncate rollback.
+    let size = ext4::stat(&mounted, b"system/README.TXT").unwrap().size;
+    ext4::transaction_probe(&mut mounted, b"system/README.TXT",
+        size.div_ceil(4096) * 4096, &vec![0x52; 64 * 4096]).unwrap();
     let free = ext4::free_bytes(&mounted).unwrap();
     let original = ext4::stat(&mounted, b"system/README.TXT").unwrap();
     let before = DEVICE.with_borrow(|device| device.bytes.clone());
@@ -171,16 +174,8 @@ fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
         device.events.clear();
         device.fail_superblock_read = true;
     });
-    // 64 data blocks plus allocation metadata cannot fit the 64-image stage.
-    // The write allocates in memory, then fails and attempts rollback/reload.
-    let offset = original.size.div_ceil(4096) * 4096;
     assert_eq!(
-        ext4::transaction_probe(
-            &mut mounted,
-            b"system/README.TXT",
-            offset,
-            &vec![0x52; 64 * 4096]
-        ),
+        ext4::truncate_probe(&mut mounted, b"system/README.TXT", 0),
         Err(Status::Io)
     );
     DEVICE.with_borrow(|device| {
@@ -198,8 +193,6 @@ fn rollback_reload_failure_drops_allocator_view_and_sync_retries() {
     ext4::sync(&mut mounted).unwrap();
     assert_eq!(ext4::free_bytes(&mounted), Ok(free));
     assert_eq!(ext4::stat(&mounted, b"system/README.TXT"), Ok(original));
-    ext4::unlink_file_probe(&mut mounted, b"system/rollback-test").unwrap();
-    ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-rollback");
 }
@@ -456,15 +449,31 @@ fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
     let filler = path.with_extension("coordinator-filler.bin");
     // Leave a few blocks so the failing request allocates before ENOSPC. The
     // reserve also covers debugfs's own extent metadata, checked after mounting.
-    std::fs::write(&filler, vec![0x5a; (free_blocks as usize - 16) * 4096]).unwrap();
+    std::fs::write(&filler, vec![0x5a; (free_blocks as usize - 48) * 4096]).unwrap();
     debugfs(&image, &format!("write \"{}\" /system/filler", filler.display()));
     debugfs(&image, "set_inode_field /system/immutable-test flags 0x80010");
     let mut mounted = mount_fixture(&image);
+    let available = ext4::free_bytes(&mounted).unwrap();
+    assert!(available > 32 * 4096 && available < 64 * 4096);
+    // One chunk fits, the second must roll back and return a durable short write.
+    let written = ext4::transaction_probe(&mut mounted, name, 0, &vec![0x52; 64 * 4096]).unwrap();
+    assert_eq!(written, 32 * 4096);
+    assert_eq!(ext4::stat(&mounted, name).unwrap().size, written as u64);
+    let mut tail = [0xa5; 1];
+    assert_eq!(ext4::pread(&mounted, name, written as u64, &mut tail), Ok(0));
     let free = ext4::free_bytes(&mounted).unwrap();
     assert!(free > 0 && free < 32 * 4096, "fixture did not reach low space: {free}");
     let original = ext4::stat(&mounted, name).unwrap();
-    assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, &vec![0x52; 32 * 4096]),
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, written as u64, &vec![0x52; 32 * 4096]),
         Err(Status::Full));
+    assert_eq!(ext4::free_bytes(&mounted), Ok(free));
+    assert_eq!(ext4::stat(&mounted, name), Ok(original));
+    DEVICE.with_borrow_mut(|device| device.fail_superblock_read = true);
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, written as u64, &vec![0x52; 32 * 4096]),
+        Err(Status::Io));
+    assert_public_reads_refused(&mounted);
+    DEVICE.with_borrow_mut(|device| device.fail_superblock_read = false);
+    ext4::sync(&mut mounted).unwrap();
     assert_eq!(ext4::free_bytes(&mounted), Ok(free));
     assert_eq!(ext4::stat(&mounted, name), Ok(original));
     assert_eq!(ext4::truncate_probe(&mut mounted, b"system/immutable-test", 2),
@@ -473,7 +482,7 @@ fn real_enospc_rolls_back_allocations_and_immutable_truncate_is_readonly() {
     assert_eq!(ext4::pread(&mounted, b"system/immutable-test", 0, &mut content), Ok(9));
     assert_eq!(&content, b"protected");
     // A fresh, fitting allocation must still work after rolling back ENOSPC.
-    assert_eq!(ext4::transaction_probe(&mut mounted, name, 0, b"fits"), Ok(4));
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, written as u64, b"fits"), Ok(4));
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-full");
@@ -557,4 +566,139 @@ fn cross_directory_file_rename_preserves_identity_and_refuses_replacement() {
     ext4::sync(&mut mounted).unwrap();
     ext4::unmount(&mounted).unwrap();
     fsck(&path, "coordinator-move-alias");
+}
+
+#[test]
+fn repeated_mount_recovery_refusals_converge_to_the_same_clean_disk() {
+    let Some(path) = fixture() else { return };
+    let name = b"system/recovery-refusal";
+    let mut mounted = mount_fixture(&path);
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::transaction_probe(&mut mounted, name, 0, &vec![0x5a; 8192]).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let mut crashed = DEVICE.with_borrow_mut(|device| {
+        device.events.clear();
+        device.bytes.clone()
+    });
+    ext4::truncate_probe(&mut mounted, name, 101).unwrap();
+    let committed = DEVICE.with_borrow(|device| device.events.clone());
+    let mut saw_commit = false;
+    for event in committed {
+        match event {
+            Event::Write(start, bytes) => {
+                let start = start as usize;
+                crashed[start..start + bytes.len()].copy_from_slice(&bytes);
+            }
+            Event::Flush(3) => { saw_commit = true; break; }
+            Event::Flush(_) => {}
+        }
+    }
+    assert!(saw_commit);
+    drop(mounted);
+    let recovered = mount_bytes(crashed.clone());
+    assert_eq!(ext4::stat(&recovered, name).unwrap().size, 101);
+    ext4::unmount(&recovered).unwrap();
+    let (expected_events, expected_disk) = DEVICE.with_borrow(|device|
+        (device.events.clone(), device.bytes.clone()));
+    assert!(expected_events.contains(&Event::Flush(4)));
+    assert!(expected_events.contains(&Event::Flush(5)));
+    assert_eq!(expected_events.last(), Some(&Event::Flush(0)));
+    drop(recovered);
+    let mut repeated_failures = 0;
+    for accept in [false, true] {
+        for fail_at in 0..expected_events.len() {
+            DEVICE.with_borrow_mut(|device| *device = Device {
+                bytes: crashed.clone(), fail_event: Some(fail_at),
+                accept_failed_write: accept, ..Device::default()
+            });
+            assert!(matches!(ext4::mount(1, crashed.len() as u64), Err(Status::Io)));
+            DEVICE.with_borrow_mut(|device| {
+                assert_eq!(device.events, expected_events[..=fail_at]);
+                device.events.clear();
+                device.fail_event = Some(0);
+            });
+            // Crash/refuse again using the first attempt's partly checkpointed
+            // bytes, without retaining any failed mount object or replay plan.
+            let second = ext4::mount(1, crashed.len() as u64);
+            let recovered = match second {
+                Ok((mounted, _)) => mounted, // the first clear may have reached disk
+                Err(Status::Io) => {
+                    repeated_failures += 1;
+                    DEVICE.with_borrow_mut(|device| device.fail_event = None);
+                    ext4::mount(1, crashed.len() as u64).unwrap().0
+                }
+                Err(error) => panic!("recovery became unrecoverable: {error:?}"),
+            };
+            assert_eq!(ext4::stat(&recovered, name).unwrap().size, 101);
+            let mut prefix = [0; 101];
+            read_exact(&recovered, name, &mut prefix);
+            assert_eq!(prefix, [0x5a; 101]);
+            ext4::unmount(&recovered).unwrap();
+            DEVICE.with_borrow(|device| assert_eq!(device.bytes, expected_disk,
+                "recovery event {fail_at}, accepted {accept}"));
+        }
+    }
+    assert!(repeated_failures > 0);
+    fsck(&path, "coordinator-recovery-refusals");
+}
+
+#[test]
+fn unaligned_write_spans_transactions_and_retries_only_the_unfinished_suffix() {
+    let Some(path) = fixture() else { return };
+    let name = b"system/split-write";
+    let mut mounted = mount_fixture(&path);
+    ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    ext4::sync(&mut mounted).unwrap();
+    let initial = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let source: Vec<u8> = (0..64 * 4096).map(|index| (index % 251) as u8).collect();
+    let mut mounted = mount_bytes(initial.clone());
+    assert_eq!(ext4::transaction_probe(&mut mounted, name, 7, &source), Ok(source.len()));
+    let expected = DEVICE.with_borrow(|device| device.events.clone());
+    assert_eq!(expected.iter().filter(|event| **event == Event::Flush(3)).count(), 3);
+    let mut result = vec![0xa5; source.len() + 7];
+    read_exact(&mounted, name, &mut result);
+    assert_eq!(&result[..7], &[0; 7]);
+    assert_eq!(&result[7..], &source);
+    ext4::sync(&mut mounted).unwrap();
+    let expected_disk = DEVICE.with_borrow(|device| device.bytes.clone());
+    drop(mounted);
+    let second_start = expected.iter().position(|event| *event == Event::Flush(5)).unwrap() + 1;
+    let ordered_flush = second_start + expected[second_start..].iter()
+        .position(|event| *event == Event::Flush(1)).unwrap();
+    let commit_flush = second_start + expected[second_start..].iter()
+        .position(|event| *event == Event::Flush(3)).unwrap();
+    for fail_at in [second_start, ordered_flush, commit_flush] {
+        for accept in [false, true] {
+            for through_sync in [false, true] {
+                let mut mounted = mount_bytes(initial.clone());
+                DEVICE.with_borrow_mut(|device| {
+                    device.fail_event = Some(fail_at);
+                    device.accept_failed_write = accept;
+                });
+                assert_eq!(ext4::transaction_probe(&mut mounted, name, 7, &source), Err(Status::Io));
+                assert_public_reads_refused(&mounted);
+                assert_eq!(ext4::transaction_probe(&mut mounted, name, 8, &source), Err(Status::Invalid));
+                DEVICE.with_borrow_mut(|device| {
+                    assert_eq!(device.events, expected[..=fail_at]);
+                    device.events.clear();
+                    device.fail_event = None;
+                });
+                if through_sync {
+                    ext4::sync(&mut mounted).unwrap();
+                } else {
+                    assert_eq!(ext4::transaction_probe(&mut mounted, name, 7, &source), Ok(source.len()));
+                    ext4::sync(&mut mounted).unwrap();
+                }
+                DEVICE.with_borrow(|device| {
+                    assert!(device.events.starts_with(&expected[second_start..]),
+                        "earlier checkpointed chunks were repeated");
+                    assert_eq!(device.events.len(), expected.len() - second_start + 2);
+                    assert_eq!(device.bytes, expected_disk);
+                });
+                ext4::unmount(&mounted).unwrap();
+            }
+        }
+    }
+    fsck(&path, "coordinator-split-write");
 }
