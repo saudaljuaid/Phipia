@@ -683,6 +683,65 @@ pub(crate) unsafe extern "C" fn phipia_ext4_symlink(
     }
 }
 
+/// Capture a stable directory snapshot and its directory inode metadata.
+///
+/// # Safety
+/// C holds a read lease and supplies disjoint live input/output ranges. The
+/// returned snapshot must be released exactly once with snapshot_free.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_directory_snapshot(
+    mounted: usize, path: *const u8, path_length: usize,
+    metadata: *mut ext4::Metadata, snapshot: *mut usize,
+) -> i32 {
+    if mounted == 0 || path.is_null() || metadata.is_null() || snapshot.is_null() {
+        return ext4::Status::NullArgument as i32;
+    }
+    // SAFETY: the caller guarantees complete disjoint ranges and read exclusion.
+    let (mounted, path, metadata, snapshot) = unsafe {
+        (&*(mounted as *const ext4::Mounted), core::slice::from_raw_parts(path, path_length),
+            &mut *metadata, &mut *snapshot)
+    };
+    *snapshot = 0;
+    match ext4::directory_snapshot(mounted, path) {
+        Ok(value) => {
+            *metadata = value.metadata;
+            *snapshot = Box::into_raw(value) as usize;
+            ext4::Status::Ok as i32
+        }
+        Err(status) => status as i32,
+    }
+}
+
+/// Read a snapshot without acquiring storage or borrowing its mount.
+///
+/// # Safety
+/// The live snapshot and writable output ranges are disjoint.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_snapshot_entry(
+    snapshot: usize, index: u64, output: *mut ext4::DirectoryEntry, present: *mut bool,
+) -> i32 {
+    if snapshot == 0 || output.is_null() || present.is_null() { return ext4::Status::NullArgument as i32; }
+    // SAFETY: the caller retains this snapshot until after the call.
+    unsafe {
+        let entry = (&*(snapshot as *const ext4::DirectorySnapshot)).entry(index);
+        *present = entry.is_some();
+        *output = entry.unwrap_or_default();
+    }
+    ext4::Status::Ok as i32
+}
+
+/// Release an owned directory snapshot.
+///
+/// # Safety
+/// The pointer is live, uniquely owned and was returned by directory_snapshot.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn phipia_ext4_snapshot_free(snapshot: usize) {
+    if snapshot != 0 {
+        // SAFETY: C relinquishes its sole ownership exactly once.
+        unsafe { drop(Box::from_raw(snapshot as *mut ext4::DirectorySnapshot)); }
+    }
+}
+
 /// Change ordinary permission bits through the journal coordinator.
 ///
 /// # Safety

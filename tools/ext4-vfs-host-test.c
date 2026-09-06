@@ -20,6 +20,42 @@ static unsigned sync_refusals;
 static unsigned stat_refusals;
 static unsigned appends;
 static uint16_t changed_mode;
+static unsigned live_snapshots;
+static unsigned freed_snapshots;
+
+int32_t phipia_ext4_directory_snapshot(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, struct phipia_ext4_metadata *metadata, uintptr_t *snapshot)
+{
+    assert(mounted == 1U && path_bytes == 4U && memcmp(path, "file", 4U) == 0);
+    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].session.writable && live_snapshots == 0U);
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->inode = 42U;
+    metadata->file_type = PHIPIA_EXT4_FILE_DIRECTORY;
+    *snapshot = 2U;
+    ++live_snapshots;
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_snapshot_entry(uintptr_t snapshot, uint64_t index,
+    struct phipia_ext4_directory_entry *entry, bool *present)
+{
+    assert(snapshot == 2U && live_snapshots == 1U);
+    memset(entry, 0, sizeof(*entry));
+    *present = index == 0U;
+    if (*present) {
+        entry->name_length = 255U;
+        memset(entry->name, 'q', 255U);
+        entry->metadata.file_type = PHIPIA_EXT4_FILE_REGULAR;
+    }
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+void phipia_ext4_snapshot_free(uintptr_t snapshot)
+{
+    assert(snapshot == 2U && live_snapshots == 1U);
+    --live_snapshots;
+    ++freed_snapshots;
+}
 
 int32_t phipia_ext4_chmod(uintptr_t mounted, const uint8_t *path, size_t path_bytes, uint16_t mode)
 {
@@ -195,9 +231,9 @@ int main(void)
     ext4_mounts[PHIPFS_VOLUME_DATA].generation = 1U;
     ext4_mounts[PHIPFS_VOLUME_DATA].rust_mount = 1U;
     assert(allocate_handle(PHIPFS_VOLUME_DATA, "file", 42U, disk_size,
-        PHIPFS_ACCESS_READ, false, &first) == PHIPFS_STATUS_OK);
+        PHIPFS_ACCESS_READ, false, 0U, &first) == PHIPFS_STATUS_OK);
     assert(allocate_handle(PHIPFS_VOLUME_DATA, "file", 42U, disk_size,
-        PHIPFS_ACCESS_WRITE, false, &second) == PHIPFS_STATUS_OK);
+        PHIPFS_ACCESS_WRITE, false, 0U, &second) == PHIPFS_STATUS_OK);
     refusals = 2U;
     for (unsigned attempt = 0U; attempt < 2U; ++attempt) {
         assert(ext4_backend_truncate(PHIPFS_VOLUME_DATA, "file", 101U) == PHIPFS_STATUS_IO);
@@ -247,7 +283,7 @@ int main(void)
     file_type = PHIPIA_EXT4_FILE_DIRECTORY;
     /* An unrelated spelling can alias a descendant of the directory. */
     assert(allocate_handle(PHIPFS_VOLUME_DATA, "alias/child", 43U, 9U,
-        PHIPFS_ACCESS_READ, false, &first) == PHIPFS_STATUS_OK);
+        PHIPFS_ACCESS_READ, false, 0U, &first) == PHIPFS_STATUS_OK);
     assert(ext4_backend_rename(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_BUSY);
     assert(renames == 0U);
     assert(ext4_backend_rename_replace(PHIPFS_VOLUME_DATA, "file", "moved") == PHIPFS_STATUS_BUSY);
@@ -281,6 +317,27 @@ int main(void)
     assert(read_bytes == 0U);
     assert(ext4_backend_get_xattr(PHIPFS_VOLUME_DATA, "file", "user.note", literal, sizeof(literal), &read_bytes) == PHIPFS_STATUS_OK);
     assert(read_bytes == 5U && memcmp(literal, "value", 5U) == 0);
+    assert(ext4_backend_directory_open(PHIPFS_VOLUME_DATA, "file", &first) == PHIPFS_STATUS_OK);
+    const unsigned snapshot_opens = opens;
+    struct phipfs_list_entry entry;
+    bool present;
+    assert(ext4_backend_directory_read(first, &entry, &present) == PHIPFS_STATUS_OK);
+    assert(present && strlen(entry.name) == 255U);
+    assert(ext4_backend_directory_read(first, &entry, &present) == PHIPFS_STATUS_OK && !present);
+    assert(opens == snapshot_opens);
+    assert(ext4_backend_directory_close(first) == PHIPFS_STATUS_OK);
+    assert(live_snapshots == 0U && freed_snapshots == 1U);
+    assert(ext4_backend_directory_close(first) == PHIPFS_STATUS_STALE_HANDLE);
+    phipfs_handle held[EXT4_MAX_HANDLES];
+    for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+        assert(allocate_handle(PHIPFS_VOLUME_DATA, "file", 42U, 0U,
+            PHIPFS_ACCESS_READ, false, 0U, &held[index]) == PHIPFS_STATUS_OK);
+    }
+    assert(ext4_backend_directory_open(PHIPFS_VOLUME_DATA, "file", &first) == PHIPFS_STATUS_NO_HANDLES);
+    assert(first == 0U && live_snapshots == 0U && freed_snapshots == 2U);
+    for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
+        assert(ext4_backend_close(held[index]) == PHIPFS_STATUS_OK);
+    }
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
     puts("ext4 VFS append, truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;

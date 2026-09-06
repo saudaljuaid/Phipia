@@ -1878,6 +1878,44 @@ pub(crate) fn pread(
     file.read_bytes_at(destination, offset).map_err(map_error)
 }
 
+/// Owned point-in-time directory entries, released with their VFS handle.
+pub(crate) struct DirectorySnapshot {
+    pub(crate) metadata: Metadata,
+    entries: Vec<DirectoryEntry>,
+}
+
+impl DirectorySnapshot {
+    pub(crate) fn entry(&self, index: u64) -> Option<DirectoryEntry> {
+        usize::try_from(index).ok().and_then(|index| self.entries.get(index)).copied()
+    }
+}
+
+/// Capture a bounded, owned directory view under one read lease. Later
+/// namespace mutations cannot reorder, duplicate or skip this iterator's names.
+pub(crate) fn directory_snapshot(mounted: &Mounted, path: &[u8]) -> Result<Box<DirectorySnapshot>, Status> {
+    let metadata = stat(mounted, path)?;
+    let filesystem = mounted.readable_filesystem()?;
+    let absolute = absolute_path(path)?;
+    let mut entries = Vec::new();
+    for result in filesystem.read_dir(absolute.as_slice()).map_err(map_error)? {
+        let entry = result.map_err(map_error)?;
+        let name = entry.file_name();
+        if name == "." || name == ".." { continue; }
+        if entries.len() == MAX_VALIDATED_ENTRIES { return Err(Status::Range); }
+        let bytes = name.as_ref();
+        let inode = Inode::read(filesystem, entry.inode).map_err(map_error)?;
+        let mut output = DirectoryEntry {
+            metadata: inode_metadata(&inode)?,
+            name_length: u16::try_from(bytes.len()).map_err(|_| Status::Range)?,
+            ..DirectoryEntry::default()
+        };
+        output.name[..bytes.len()].copy_from_slice(bytes);
+        entries.try_reserve(1).map_err(|_| Status::Range)?;
+        entries.push(output);
+    }
+    Ok(Box::new(DirectorySnapshot { metadata, entries }))
+}
+
 /// Return the visible directory entry at `wanted_index`.
 pub(crate) fn directory_entry(
     mounted: &Mounted,

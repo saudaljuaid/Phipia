@@ -36,6 +36,7 @@ struct ext4_mount_state {
 };
 
 struct ext4_handle_state {
+    uintptr_t directory_snapshot;
     uint64_t generation;
     uint64_t mount_generation;
     uint64_t inode;
@@ -118,6 +119,11 @@ extern int32_t phipia_ext4_set_xattr(uintptr_t mounted, const uint8_t *path,
 extern int32_t phipia_ext4_get_xattr(uintptr_t mounted, const uint8_t *path,
     size_t path_bytes, const uint8_t *name, size_t name_bytes,
     uint8_t *output, size_t capacity, size_t *length);
+extern int32_t phipia_ext4_directory_snapshot(uintptr_t mounted, const uint8_t *path,
+    size_t path_bytes, struct phipia_ext4_metadata *metadata, uintptr_t *snapshot);
+extern int32_t phipia_ext4_snapshot_entry(uintptr_t snapshot, uint64_t index,
+    struct phipia_ext4_directory_entry *entry, bool *present);
+extern void phipia_ext4_snapshot_free(uintptr_t snapshot);
 
 _Static_assert(sizeof(struct phipia_ext4_metadata) == 40U,
     "ext4 metadata C/Rust ABI drift");
@@ -655,7 +661,7 @@ static enum phipfs_status handle_state(
 
 static enum phipfs_status allocate_handle(enum phipfs_volume volume,
     const char *path, uint64_t inode, uint64_t size,
-    enum phipfs_access access, bool directory, phipfs_handle *handle)
+    enum phipfs_access access, bool directory, uintptr_t snapshot, phipfs_handle *handle)
 {
     const size_t length = path_length(path);
     size_t slot = EXT4_MAX_HANDLES;
@@ -680,6 +686,7 @@ static enum phipfs_status allocate_handle(enum phipfs_volume volume,
     ext4_handles[slot].volume = volume;
     ext4_handles[slot].access = access;
     ext4_handles[slot].directory = directory;
+    ext4_handles[slot].directory_snapshot = snapshot;
     copy_bytes(ext4_handles[slot].path, path, length + 1U);
     ext4_handles[slot].active = true;
     *handle = ext4_handles[slot].generation << 8U | (uint64_t)(slot + 1U);
@@ -976,7 +983,7 @@ enum phipfs_status ext4_backend_open(enum phipfs_volume volume,
         return PHIPFS_STATUS_IS_DIRECTORY;
     }
     return allocate_handle(volume, path, metadata.inode, metadata.size, access,
-        false, handle);
+        false, 0U, handle);
 }
 
 enum phipfs_status ext4_backend_close(phipfs_handle handle)
@@ -985,6 +992,7 @@ enum phipfs_status ext4_backend_close(phipfs_handle handle)
     enum phipfs_status status = handle_state(handle, &state);
 
     if (status == PHIPFS_STATUS_OK) {
+        if (state->directory_snapshot != 0U) phipia_ext4_snapshot_free(state->directory_snapshot);
         zero_bytes(state, sizeof(*state));
     }
     return status;
@@ -1404,18 +1412,9 @@ static enum phipfs_status indexed_entry(struct ext4_handle_state *state,
     uint64_t index, struct phipfs_list_entry *entry, bool *present)
 {
     struct phipia_ext4_directory_entry raw;
-    struct ext4_mount_state *mount = &ext4_mounts[state->volume];
-    enum phipfs_status status = begin_operation(mount, false);
-    enum phipfs_status close_status;
-
-    if (status != PHIPFS_STATUS_OK) {
-        return status;
-    }
+    enum phipfs_status status;
     zero_bytes(&raw, sizeof(raw));
-    status = map_status(phipia_ext4_directory_entry(mount->rust_mount,
-        (const uint8_t *)state->path, path_length(state->path), index, &raw,
-        present));
-    close_status = end_operation(mount, NULL);
+    status = map_status(phipia_ext4_snapshot_entry(state->directory_snapshot, index, &raw, present));
     if (status == PHIPFS_STATUS_OK && *present) {
         if (raw.name_length == 0U || raw.name_length >=
                 PHIPFS_MAX_COMPONENT_BYTES) {
@@ -1424,28 +1423,37 @@ static enum phipfs_status indexed_entry(struct ext4_handle_state *state,
             fill_entry(&raw, entry);
         }
     }
-    return status != PHIPFS_STATUS_OK ? status : close_status;
+    return status;
 }
 
 enum phipfs_status ext4_backend_directory_open(enum phipfs_volume volume,
     const char *path, phipfs_handle *handle)
 {
     struct phipia_ext4_metadata metadata;
+    uintptr_t snapshot = 0U;
+    const size_t length = path_length(path);
     enum phipfs_status status;
 
-    if (!valid_volume(volume) || handle == NULL) {
+    if (!valid_volume(volume) || handle == NULL || length == 0U || length >= PHIPFS_MAX_PATH) {
         return PHIPFS_STATUS_INVALID_ARGUMENT;
     }
     *handle = 0U;
-    status = checked_stat(&ext4_mounts[volume], path, &metadata);
-    if (status != PHIPFS_STATUS_OK) {
-        return status;
+    struct ext4_mount_state *mount = &ext4_mounts[volume];
+    status = begin_operation(mount, false);
+    if (status != PHIPFS_STATUS_OK) return status;
+    status = map_status(phipia_ext4_directory_snapshot(mount->rust_mount,
+        (const uint8_t *)path, length, &metadata, &snapshot));
+    enum phipfs_status close_status = end_operation(mount, NULL);
+    if (status == PHIPFS_STATUS_OK) status = close_status;
+    if (status == PHIPFS_STATUS_OK && (metadata.file_type != PHIPIA_EXT4_FILE_DIRECTORY || snapshot == 0U)) {
+        status = PHIPFS_STATUS_CORRUPT;
     }
-    if (metadata.file_type != PHIPIA_EXT4_FILE_DIRECTORY) {
-        return PHIPFS_STATUS_NOT_DIRECTORY;
+    if (status == PHIPFS_STATUS_OK) {
+        status = allocate_handle(volume, path, metadata.inode, metadata.size,
+            PHIPFS_ACCESS_READ, true, snapshot, handle);
     }
-    return allocate_handle(volume, path, metadata.inode, metadata.size,
-        PHIPFS_ACCESS_READ, true, handle);
+    if (status != PHIPFS_STATUS_OK && snapshot != 0U) phipia_ext4_snapshot_free(snapshot);
+    return status;
 }
 
 enum phipfs_status ext4_backend_directory_read(phipfs_handle handle,

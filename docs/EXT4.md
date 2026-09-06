@@ -417,6 +417,13 @@ writes. Direct backend requests remain bounded to 256 KiB and can checkpoint
 multiple transactions, so crash atomicity for the entire request is not claimed.
 The current C file-size cap remains 16 MiB.
 
+Directory handles own a snapshot captured under one read lease, bounded by
+8192 visible entries. Create/delete/rename after open do not change the names
+or metadata in that snapshot; reopen observes the new namespace. Close frees
+the snapshot, and handle-allocation failure frees it before returning. Native
+DIRECTORY_READ_LONG and SDK readdir carry full 255-byte ext4 names while the
+existing pathname length limit still applies to operations on those names.
+
 VFS chmod changes ordinary permission bits through JBD2; immutable inodes and
 inodes with access ACLs are refused. The admitted xattr mutation namespace is
 `user.*`, with names up to 255 bytes. Set/replace/remove journal the inode and

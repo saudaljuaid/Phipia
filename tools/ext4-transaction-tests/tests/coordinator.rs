@@ -689,6 +689,37 @@ fn large_truncate_and_unlink_revoke_multiple_records_and_recover() {
 }
 
 #[test]
+fn directory_snapshot_keeps_original_names_across_namespace_mutations() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    ext4::create_directory_probe(&mut mounted, b"system/snapshot").unwrap();
+    let long = format!("system/snapshot/{}", "n".repeat(255));
+    for name in [b"system/snapshot/alpha".as_slice(), long.as_bytes(), b"system/snapshot/omega"] {
+        ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+    }
+    let snapshot = ext4::directory_snapshot(&mounted, b"system/snapshot").unwrap();
+    let names = |snapshot: &ext4::DirectorySnapshot| {
+        (0..).map_while(|index| snapshot.entry(index))
+            .map(|entry| entry.name[..entry.name_length as usize].to_vec()).collect::<Vec<_>>()
+    };
+    let original = names(&snapshot);
+    assert_eq!(original.len(), 3);
+    assert!(original.contains(&vec![b'n'; 255]));
+    ext4::unlink_file_probe(&mut mounted, b"system/snapshot/alpha").unwrap();
+    ext4::create_file_probe(&mut mounted, b"system/snapshot/after", 0o600).unwrap();
+    ext4::rename_probe(&mut mounted, b"system/snapshot/omega", b"system/snapshot/moved").unwrap();
+    assert_eq!(names(&snapshot), original);
+    let fresh = ext4::directory_snapshot(&mounted, b"system/snapshot").unwrap();
+    assert!(!names(&fresh).contains(&b"alpha".to_vec()));
+    assert!(names(&fresh).contains(&b"after".to_vec()));
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    fsck(&path, "coordinator-directory-snapshot");
+    drop(mounted);
+    assert_eq!(names(&snapshot), original);
+}
+
+#[test]
 fn external_xattr_checksums_shared_release_and_final_free() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);
