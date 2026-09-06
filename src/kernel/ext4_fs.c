@@ -32,6 +32,7 @@ struct ext4_mount_state {
     bool active;
     bool mounting;
     bool operation_active;
+    bool close_failed;
     bool healthy;
 };
 
@@ -391,6 +392,9 @@ static enum phipfs_status map_status(int32_t status)
     }
 }
 
+static enum phipfs_status end_operation(struct ext4_mount_state *mount,
+    struct phipia_ext4_mount_diagnostic *diagnostic);
+
 static enum phipfs_status begin_operation(
     struct ext4_mount_state *mount,
     bool writable
@@ -401,7 +405,7 @@ static enum phipfs_status begin_operation(
     if (mount == NULL || (!mount->active && !mount->mounting)) {
         return PHIPFS_STATUS_NOT_MOUNTED;
     }
-    if (mount->active && !mount->healthy) {
+    if (mount->active && (!mount->healthy || mount->close_failed)) {
         return PHIPFS_STATUS_IO;
     }
     if (mount->operation_active) {
@@ -410,22 +414,22 @@ static enum phipfs_status begin_operation(
     status = nvme_volume_open(&mount->session, mount->controller_index,
         writable);
     if (status != NVME_STATUS_OK) {
+        if (mount->session.active) mount->close_failed = true;
         return PHIPFS_STATUS_IO;
     }
+    mount->operation_active = true;
     if (mount->session.logical_block_bytes == 0U ||
         mount->session.namespace_blocks >
             UINT64_MAX / mount->session.logical_block_bytes) {
-        (void)nvme_volume_close(&mount->session);
-        zero_bytes(&mount->session, sizeof(mount->session));
-        return PHIPFS_STATUS_RANGE;
+        return end_operation(mount, NULL) == PHIPFS_STATUS_OK ?
+            PHIPFS_STATUS_RANGE : PHIPFS_STATUS_IO;
     }
     mount->media_bytes = mount->session.namespace_blocks *
         mount->session.logical_block_bytes;
     if (mount->active && mount->admitted_media_bytes != 0U &&
         mount->media_bytes != mount->admitted_media_bytes) {
-        (void)nvme_volume_close(&mount->session);
-        zero_bytes(&mount->session, sizeof(mount->session));
         mount->healthy = false;
+        (void)end_operation(mount, NULL);
         return PHIPFS_STATUS_IO;
     }
     mount->operation_active = true;
@@ -451,11 +455,15 @@ static enum phipfs_status end_operation(
             mount->session.close_resource_mismatches;
     }
     mount->operation_active = false;
-    zero_bytes(&mount->session, sizeof(mount->session));
     if (status != NVME_STATUS_OK) {
-        mount->healthy = false;
+        // Keep the generation/ownership cookie for explicit teardown retry.
+        // Freeze new operations: the filesystem mutation may already be durable,
+        // so automatically repeating an append here could apply it twice.
+        mount->close_failed = true;
         return PHIPFS_STATUS_IO;
     }
+    zero_bytes(&mount->session, sizeof(mount->session));
+    mount->close_failed = false;
     ++mount->completion_count;
     return PHIPFS_STATUS_OK;
 }
@@ -769,6 +777,35 @@ void ext4_backend_initialize(void)
     }
 }
 
+static enum phipfs_status retry_session_close(struct ext4_mount_state *mount)
+{
+    if (mount->operation_active) return PHIPFS_STATUS_BUSY;
+    if (mount->session.active && nvme_volume_close(&mount->session) != NVME_STATUS_OK) {
+        return PHIPFS_STATUS_IO;
+    }
+    zero_bytes(&mount->session, sizeof(mount->session));
+    mount->close_failed = false;
+    return PHIPFS_STATUS_OK;
+}
+
+static enum phipfs_status release_failed_mount(struct ext4_mount_state *mount)
+{
+    enum phipfs_status status = retry_session_close(mount);
+    if (status != PHIPFS_STATUS_OK) return status;
+    if (mount->rust_mount != 0U) {
+        status = begin_operation(mount, true);
+        if (status != PHIPFS_STATUS_OK) return status;
+        status = map_status(phipia_ext4_prepare_unmount(mount->rust_mount));
+        const enum phipfs_status close_status = end_operation(mount, NULL);
+        if (status != PHIPFS_STATUS_OK) return status;
+        if (close_status != PHIPFS_STATUS_OK) return close_status;
+        status = map_status(phipia_ext4_unmount(mount->rust_mount));
+        if (status != PHIPFS_STATUS_OK) return status;
+    }
+    zero_bytes(mount, sizeof(*mount));
+    return PHIPFS_STATUS_OK;
+}
+
 enum phipfs_status ext4_backend_mount(enum phipfs_volume volume)
 {
     struct ext4_mount_state *mount;
@@ -784,6 +821,13 @@ enum phipfs_status ext4_backend_mount(enum phipfs_volume volume)
         ext4_last_mount_status[volume] = PHIPFS_STATUS_ALREADY_MOUNTED;
         return PHIPFS_STATUS_ALREADY_MOUNTED;
     }
+    if (mount->mounting) {
+        status = release_failed_mount(mount);
+        if (status != PHIPFS_STATUS_OK) {
+            ext4_last_mount_status[volume] = status;
+            return status;
+        }
+    }
     zero_bytes(mount, sizeof(*mount));
     mount->controller_index = volume == PHIPFS_VOLUME_SYSTEM ?
         EXT4_CONTROLLER_SYSTEM : EXT4_CONTROLLER_DATA;
@@ -798,7 +842,7 @@ enum phipfs_status ext4_backend_mount(enum phipfs_volume volume)
     status = begin_operation(mount, true);
     ext4_mount_diagnostics[volume].begin_status = status;
     if (status != PHIPFS_STATUS_OK) {
-        zero_bytes(mount, sizeof(*mount));
+        if (!mount->close_failed && !mount->session.active) zero_bytes(mount, sizeof(*mount));
         ext4_last_mount_status[volume] = status;
         return status;
     }
@@ -812,10 +856,11 @@ enum phipfs_status ext4_backend_mount(enum phipfs_volume volume)
         const enum phipfs_status result = status != PHIPFS_STATUS_OK ?
             status : close_status;
 
-        if (mount->rust_mount != 0U) {
-            (void)phipia_ext4_unmount(mount->rust_mount);
+        // The next mount attempt explicitly retires the retained Rust object
+        // and NVMe lease. Neither owner may be discarded on a cleanup error.
+        if (mount->rust_mount == 0U && !mount->close_failed && !mount->session.active) {
+            zero_bytes(mount, sizeof(*mount));
         }
-        zero_bytes(mount, sizeof(*mount));
         ext4_last_mount_status[volume] = result;
         return result;
     }
@@ -855,6 +900,7 @@ enum phipfs_status ext4_backend_unmount(enum phipfs_volume volume)
     }
     mount = &ext4_mounts[volume];
     if (!mount->active) {
+        if (mount->mounting) return release_failed_mount(mount);
         return PHIPFS_STATUS_NOT_MOUNTED;
     }
     for (size_t index = 0U; index < EXT4_MAX_HANDLES; ++index) {
@@ -863,17 +909,25 @@ enum phipfs_status ext4_backend_unmount(enum phipfs_volume volume)
             return PHIPFS_STATUS_BUSY;
         }
     }
+    const bool was_frozen = mount->close_failed;
+    if (was_frozen) {
+        status = retry_session_close(mount);
+        if (status != PHIPFS_STATUS_OK) return status;
+    }
     status = begin_operation(mount, true);
     if (status != PHIPFS_STATUS_OK) {
+        if (was_frozen) mount->close_failed = true;
         return status;
     }
     rust_status = phipia_ext4_prepare_unmount(mount->rust_mount);
     close_status = end_operation(mount, NULL);
     status = map_status(rust_status);
     if (status != PHIPFS_STATUS_OK || close_status != PHIPFS_STATUS_OK) {
+        if (was_frozen) mount->close_failed = true;
         return status != PHIPFS_STATUS_OK ? status : close_status;
     }
     if (phipia_ext4_unmount(mount->rust_mount) != PHIPIA_EXT4_STATUS_OK) {
+        if (was_frozen) mount->close_failed = true;
         return PHIPFS_STATUS_CORRUPT;
     }
     zero_bytes(mount, sizeof(*mount));

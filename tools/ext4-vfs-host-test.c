@@ -26,6 +26,35 @@ static size_t expected_open_inodes;
 static bool expected_remove_directory;
 static bool expect_registered_before_close;
 static bool close_reports_failure;
+static unsigned live_mounts = 1U;
+static uint32_t logical_block_bytes = 4096U;
+
+int32_t phipia_ext4_mount(uintptr_t context, uint64_t media_bytes,
+    struct phipia_ext4_identity *identity, uintptr_t *mounted)
+{
+    assert(context == (uintptr_t)&ext4_mounts[PHIPFS_VOLUME_DATA]);
+    assert(media_bytes == 32768U * 4096U && live_mounts == 0U);
+    memset(identity, 0, sizeof(*identity));
+    *mounted = 1U;
+    ++live_mounts;
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_prepare_unmount(uintptr_t mounted)
+{
+    assert(mounted == 1U && live_mounts == 1U);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
+    assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.writable);
+    return PHIPIA_EXT4_STATUS_OK;
+}
+
+int32_t phipia_ext4_unmount(uintptr_t mounted)
+{
+    assert(mounted == 1U && live_mounts == 1U);
+    assert(!ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
+    --live_mounts;
+    return PHIPIA_EXT4_STATUS_OK;
+}
 
 int32_t phipia_ext4_set_times(uintptr_t mounted, const uint8_t *path, size_t path_bytes,
     uint64_t atime_seconds, uint32_t atime_nanos, uint64_t mtime_seconds, uint32_t mtime_nanos)
@@ -124,10 +153,11 @@ enum nvme_status nvme_volume_open(struct nvme_volume_session *session,
     assert(!session->active);
     memset(session, 0, sizeof(*session));
     session->namespace_blocks = 32768U;
-    session->logical_block_bytes = 4096U;
+    session->logical_block_bytes = logical_block_bytes;
     session->controller_index = controller_index;
     session->writable = writable;
     session->active = true;
+    session->generation = (uint64_t)opens + 1U;
     ++opens;
     return NVME_STATUS_OK;
 }
@@ -140,9 +170,13 @@ enum nvme_status nvme_volume_close(struct nvme_volume_session *session)
         assert(volume_has_open_handles(PHIPFS_VOLUME_DATA));
         expect_registered_before_close = false;
     }
+    if (close_reports_failure) {
+        session->state = NVME_FILESYSTEM_SESSION_STOPPING;
+        return NVME_STATUS_TEARDOWN_FAILURE;
+    }
     session->active = false;
     ++closes;
-    return close_reports_failure ? NVME_STATUS_TEARDOWN_FAILURE : NVME_STATUS_OK;
+    return NVME_STATUS_OK;
 }
 
 int32_t phipia_ext4_truncate_probe(uintptr_t mounted, const uint8_t *path,
@@ -469,9 +503,33 @@ int main(void)
         assert(status == PHIPFS_STATUS_IO && first == 0U);
         assert(!expect_registered_before_close && !volume_has_open_handles(PHIPFS_VOLUME_DATA));
         assert(live_snapshots == 0U);
+        const uint64_t retained_generation = ext4_mounts[PHIPFS_VOLUME_DATA].session.generation;
+        const unsigned before_retry = opens;
+        assert(retained_generation != 0U && ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
+        assert(ext4_backend_open(PHIPFS_VOLUME_DATA, "file", PHIPFS_ACCESS_READ, &first) == PHIPFS_STATUS_IO);
+        assert(ext4_backend_unmount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+        assert(opens == before_retry && live_mounts == 1U);
+        assert(ext4_mounts[PHIPFS_VOLUME_DATA].session.generation == retained_generation);
         close_reports_failure = false;
-        ext4_mounts[PHIPFS_VOLUME_DATA].healthy = true;
+        assert(ext4_backend_unmount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+        assert(live_mounts == 0U);
+        assert(ext4_backend_mount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
     }
+    assert(ext4_backend_unmount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+    close_reports_failure = true;
+    assert(ext4_backend_mount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+    assert(live_mounts == 1U && ext4_mounts[PHIPFS_VOLUME_DATA].mounting);
+    assert(ext4_backend_mount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+    assert(live_mounts == 1U);
+    close_reports_failure = false;
+    assert(ext4_backend_mount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+    assert(ext4_backend_unmount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
+    logical_block_bytes = 0U;
+    close_reports_failure = true;
+    assert(ext4_backend_mount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_IO);
+    assert(live_mounts == 0U && ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
+    close_reports_failure = false;
+    assert(ext4_backend_unmount(PHIPFS_VOLUME_DATA) == PHIPFS_STATUS_OK);
     assert(opens == closes && !ext4_mounts[PHIPFS_VOLUME_DATA].session.active);
     puts("ext4 VFS append, truncate retries, shared sizes, rename guards, errors and leases: PASS");
     return 0;

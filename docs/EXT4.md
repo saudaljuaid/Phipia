@@ -418,6 +418,15 @@ mount live. The QEMU proof arms the marker, syncs it clean, and then unmounts
 without another write. Its public truncate and namespace round trip are removed
 before unmount, and the clean remount revalidates both bytes and resources.
 
+If NVMe lease teardown fails, the backend retains its ownership cookie and
+freezes new filesystem operations. The operation that encountered the failure
+can already be durable; it must not be blindly repeated. Close application
+handles and explicitly unmount to retry controller teardown and finish the
+journal before releasing the mount. Failed mount attempts likewise retain
+their owners until a mount retry or explicit unmount cleans them up. Host
+fault tests cover repeated DMA-release and lease-close failures; bare-metal
+teardown failure injection remains a separate required gate.
+
 The append backend selects the live inode's EOF under the exclusive writable
 volume lease, ignoring the handle's seek position. Retained journal retries
 reuse the original append offset and payload. Native `PHIPIA_OPEN_APPEND`,
