@@ -1698,6 +1698,117 @@ fn deterministic_ext4_fixture_discovers_its_real_journal_inode_map() {
     );
 }
 
+/// Replay exactly the committed journal prefix on a simulated reboot.
+fn orphan_replay_plan(storage: &VectorStorage) -> Vec<JournalCommitOperation> {
+    let filesystem = Ext4::load(Box::new(storage.bytes.clone())).unwrap();
+    let journal = load_journal_inode_map(&filesystem).unwrap();
+    if !journal.filesystem_needs_recovery() { return Vec::new(); }
+    let blocks: Vec<&[u8]> = journal.physical_blocks()[1..].iter().map(|block| {
+        let start = *block as usize * JOURNAL_BLOCK_BYTES;
+        &storage.bytes[start..start + JOURNAL_BLOCK_BYTES]
+    }).collect();
+    let recovery = recover_committed_ring(journal.superblock(), true,
+        journal.maximum_block(), &blocks).unwrap();
+    recovery.checkpoint_plan(journal.physical_blocks()[0], journal.filesystem_superblock()).unwrap()
+}
+
+fn orphan_commit_plan(ring: &mut JournalRing, stage: &JournalMutationStage)
+    -> Vec<JournalCommitOperation> {
+    let transaction = stage.build_transaction(&ring.begin_transaction().unwrap(), &[]).unwrap();
+    let prepared = ring.prepare(&transaction).unwrap();
+    let superblock = stage.staged_images().into_iter().find(|image| image.block_index() == 0).unwrap();
+    let successor = ring.admit_checkpointed_filesystem_superblock(&prepared, &superblock).unwrap();
+    let mut plan = ring.prepare_commit_plan(&prepared).unwrap();
+    assert_eq!(plan, ring.prepare_commit_plan(&prepared).unwrap());
+    // This test builds the complete sequence up front; only its executor
+    // applies bytes. Production acknowledges each boundary after its flush.
+    ring.mark_commit_durable(prepared.ticket()).unwrap();
+    plan.extend(ring.prepare_checkpoint_plan(prepared.ticket()).unwrap());
+    ring.checkpoint_durable_with_filesystem_superblock(&successor).unwrap();
+    plan
+}
+
+fn orphan_cleanup_plan(storage: &VectorStorage) -> Vec<JournalCommitOperation> {
+    let stage = Rc::new(JournalMutationStage::new(Box::new(storage.bytes.clone()),
+        storage.bytes.len() as u64).unwrap());
+    let filesystem = Ext4::load_with_recovery_writer(Box::new(stage.clone()),
+        Some(Box::new(stage.clone()))).unwrap();
+    let journal = load_journal_inode_map(&filesystem).unwrap();
+    let orphans = filesystem.orphan_inodes().unwrap();
+    if orphans.is_empty() { return Vec::new(); }
+    assert!(journal.clone().into_clean_ring().is_err());
+    let mut ring = journal.into_orphan_cleanup_ring().unwrap();
+    assert_eq!(ring.prepare_filesystem_clean_plan(), Err(JournalTransactionError::JournalNotClean));
+    assert_eq!(orphans.len(), 1);
+    filesystem.release_orphan(orphans[0]).unwrap();
+    assert!(stage.revoked_block_count() > 0);
+    let mut plan = orphan_commit_plan(&mut ring, &stage);
+    plan.extend(ring.prepare_filesystem_clean_plan().unwrap());
+    plan
+}
+
+#[test]
+fn real_orphan_unlink_and_cleanup_survive_every_plan_cut_and_repeated_recovery() {
+    let Ok(path) = std::env::var("PHIPIA_EXT4_RUST_FIXTURE") else { return };
+    let baseline = std::fs::read(&path).unwrap();
+    let original = Ext4::load(Box::new(baseline.clone())).unwrap();
+    let original_inode = original.open(b"/system/README.TXT").unwrap().inode().index;
+    let mut ring = load_journal_inode_map(&original).unwrap().into_clean_ring().unwrap();
+    let mut armed = VectorStorage { bytes: baseline, flushes: Vec::new() };
+    execute_commit_operations(&mut armed, &ring.prepare_recovery_marker_plan().unwrap()).unwrap();
+    ring.mark_recovery_marker_durable().unwrap();
+    let stage = Rc::new(JournalMutationStage::new(Box::new(armed.bytes.clone()),
+        armed.bytes.len() as u64).unwrap());
+    let filesystem = Ext4::load_with_recovery_writer(Box::new(stage.clone()),
+        Some(Box::new(stage.clone()))).unwrap();
+    let parent = filesystem.path_to_inode(ext4plus::path::Path::try_from("/system").unwrap(),
+        ext4plus::FollowSymlinks::All).unwrap();
+    let mut directory = ext4plus::dir::Dir::open_inode(&filesystem, parent).unwrap();
+    let name = ext4plus::DirEntryName::try_from("README.TXT").unwrap();
+    let inode = directory.get_entry(name).unwrap();
+    directory.unlink_open(name, inode).unwrap();
+    let unlink_plan = orphan_commit_plan(&mut ring, &stage);
+    assert_eq!(ring.prepare_filesystem_clean_plan(), Err(JournalTransactionError::JournalNotClean));
+    let mut orphaned = VectorStorage { bytes: armed.bytes.clone(), flushes: Vec::new() };
+    execute_commit_operations(&mut orphaned, &unlink_plan).unwrap();
+    assert_eq!(u32::from_le_bytes(orphaned.bytes[1024 + 0xe8..1024 + 0xec].try_into().unwrap()),
+        original_inode.get());
+    let release_plan = orphan_cleanup_plan(&orphaned);
+    let report_path = std::path::Path::new(&path).with_extension("orphan-cuts.img");
+    for (operation, before, plan) in [("unlink-open", &armed.bytes, &unlink_plan),
+        ("final-close", &orphaned.bytes, &release_plan)] {
+        for cut in 0..=plan.len() {
+            let mut crashed = VectorStorage { bytes: before.clone(), flushes: Vec::new() };
+            execute_commit_operations(&mut crashed, &plan[..cut]).unwrap();
+            let replay = orphan_replay_plan(&crashed);
+            // Cut recovery again at every write/flush boundary. Its replay
+            // must remain restartable even after journal cleanup persisted.
+            for recovery_cut in 0..=replay.len() {
+                let mut recovered = VectorStorage { bytes: crashed.bytes.clone(), flushes: Vec::new() };
+                execute_commit_operations(&mut recovered, &replay[..recovery_cut]).unwrap();
+                let retry = orphan_replay_plan(&recovered);
+                execute_commit_operations(&mut recovered, &retry).unwrap();
+                let cleanup = orphan_cleanup_plan(&recovered);
+                execute_commit_operations(&mut recovered, &cleanup).unwrap();
+                let loaded = Ext4::load(Box::new(recovered.bytes.clone())).unwrap();
+                assert!(loaded.orphan_inodes().unwrap().is_empty());
+                assert!(load_journal_inode_map(&loaded).unwrap().into_clean_ring().is_ok());
+                // Before unlink commits the old name remains; afterward it
+                // is absent and its data/inode allocation must be reclaimed.
+                match loaded.open(b"/system/README.TXT") {
+                    Ok(file) => { assert_eq!(operation, "unlink-open"); assert_eq!(file.inode().index, original_inode); }
+                    Err(error) => assert!(matches!(error, Ext4Error::NotFound)),
+                }
+                std::fs::write(&report_path, &recovered.bytes).unwrap();
+                let fsck = std::process::Command::new("e2fsck").arg("-fn").arg(&report_path).output().unwrap();
+                assert!(fsck.status.success(), "{operation} cut {cut} recovery {recovery_cut}:\n{}\n{}",
+                    String::from_utf8_lossy(&fsck.stdout), String::from_utf8_lossy(&fsck.stderr));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(report_path);
+}
+
 #[test]
 fn dirty_ring_recovery_wraps_replays_revokes_and_discards_an_uncommitted_tail() {
     let physical = [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008];

@@ -441,6 +441,12 @@ impl FilesystemSuperblockImage {
         self.needs_recovery
     }
 
+    /// Legacy orphan-chain head; these inodes still require journaled cleanup.
+    #[must_use]
+    pub fn last_orphan(&self) -> u32 {
+        read_u32le(&self.bytes, 0xe8)
+    }
+
     /// Produce the requested recovery state while preserving every other byte.
     #[must_use]
     pub fn with_recovery_state(&self, needs_recovery: bool) -> Self {
@@ -508,7 +514,7 @@ impl FilesystemSuperblockImage {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
 
-        // ext4plus mutations currently change only the allocation counters.
+        // ext4plus mutations change allocation counters and the orphan head.
         // Require every other byte to match the admitted, recovery-marked
         // image so a staged metadata block cannot silently replace filesystem
         // identity, geometry, features, or policy fields.
@@ -519,9 +525,10 @@ impl FilesystemSuperblockImage {
             .enumerate()
         {
             let mutable_counter = (0x0c..0x14).contains(&index) || (0x158..0x15c).contains(&index);
+            let orphan_head = (0xe8..0xec).contains(&index);
             let checksum = (FILESYSTEM_CHECKSUM_OFFSET..FILESYSTEM_SUPERBLOCK_BYTES)
                 .contains(&index);
-            if !mutable_counter && !checksum && before != after {
+            if !mutable_counter && !orphan_head && !checksum && before != after {
                 return Err(JournalTransactionError::RecoveryStateMismatch);
             }
         }
@@ -541,7 +548,9 @@ impl FilesystemSuperblockImage {
             | (u64::from(read_u32le(&candidate.bytes, 0x158)) << 32);
         let inodes = read_u32le(&candidate.bytes, 0x00);
         let free_inodes = read_u32le(&candidate.bytes, 0x10);
-        if free_blocks > blocks || free_inodes > inodes {
+        let orphan = candidate.last_orphan();
+        if free_blocks > blocks || free_inodes > inodes
+            || (orphan != 0 && (orphan < 11 || orphan > inodes)) {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
         Ok(())
@@ -640,7 +649,8 @@ impl JournalRecovery {
     ///
     /// Home metadata is flushed before the clean journal state is written.
     /// The journal state is then flushed before ext4's recovery marker is
-    /// cleared and independently flushed. When replay updates the primary
+    /// cleared and independently flushed, unless orphan cleanup remains.
+    /// When replay updates the primary
     /// ext4 superblock, the clean marker is derived from that validated replay
     /// image rather than the stale mount-time image. This mirrors the
     /// separation Linux keeps between recovery replay, journal cleanup, and
@@ -691,7 +701,8 @@ impl JournalRecovery {
             .unwrap_or_else(|| filesystem_superblock.clone());
         operations.push(JournalCommitOperation::WriteFilesystemSuperblock {
             start_byte: FILESYSTEM_SUPERBLOCK_START_BYTE,
-            image: checkpointed_filesystem_superblock.with_recovery_state(false),
+            image: checkpointed_filesystem_superblock.with_recovery_state(
+                checkpointed_filesystem_superblock.last_orphan() != 0),
         });
         operations.push(JournalCommitOperation::Flush(JournalFlush::FilesystemState));
         Ok(operations)
@@ -731,7 +742,7 @@ impl JournalInodeMap {
 
     /// Admit the discovered map only when ext4 and JBD2 both prove it clean.
     pub fn into_clean_ring(self) -> Result<JournalRing, JournalTransactionError> {
-        if self.filesystem_needs_recovery {
+        if self.filesystem_needs_recovery || self.filesystem_superblock.last_orphan() != 0 {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
         let mut ring = self
@@ -739,6 +750,21 @@ impl JournalInodeMap {
             .map_clean_ring(self.maximum_block, &self.physical_blocks)?;
         ring.filesystem_superblock = Some(self.filesystem_superblock);
         ring.filesystem_recovery_state = Some(FilesystemRecoveryState::Clean);
+        Ok(ring)
+    }
+
+    /// Admit an empty, durably checkpointed journal for orphan cleanup only.
+    /// The caller must validate the complete orphan chain before mutating it.
+    /// A nonempty journal must first go through ordinary replay/checkpoint.
+    pub fn into_orphan_cleanup_ring(self) -> Result<JournalRing, JournalTransactionError> {
+        let orphan = self.filesystem_superblock.last_orphan();
+        if !self.filesystem_needs_recovery || !self.filesystem_superblock.needs_recovery()
+            || orphan < 11 || orphan > read_u32le(&self.filesystem_superblock.bytes, 0) {
+            return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        let mut ring = self.superblock.map_clean_ring(self.maximum_block, &self.physical_blocks)?;
+        ring.filesystem_superblock = Some(self.filesystem_superblock);
+        ring.filesystem_recovery_state = Some(FilesystemRecoveryState::Durable);
         Ok(ring)
     }
 }
@@ -1502,6 +1528,7 @@ impl JournalRing {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
         Ok(state == FilesystemRecoveryState::Clean
+            && filesystem.last_orphan() == 0
             && self.active.is_empty()
             && self.used == 0
             && self.head == self.tail
@@ -1656,6 +1683,9 @@ impl JournalRing {
         if !marker.needs_recovery() {
             return Err(JournalTransactionError::RecoveryStateMismatch);
         }
+        if marker.last_orphan() != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
+        }
         let clean = marker.with_recovery_state(false);
         self.filesystem_recovery_state = Some(FilesystemRecoveryState::CleanPlanPrepared);
         Ok(vec![
@@ -1688,6 +1718,9 @@ impl JournalRing {
             .ok_or(JournalTransactionError::FilesystemStateUnavailable)?;
         if !marker.needs_recovery() {
             return Err(JournalTransactionError::RecoveryStateMismatch);
+        }
+        if marker.last_orphan() != 0 {
+            return Err(JournalTransactionError::JournalNotClean);
         }
         self.filesystem_superblock = Some(marker.with_recovery_state(false));
         self.filesystem_recovery_state = Some(FilesystemRecoveryState::Clean);
@@ -2567,6 +2600,83 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn orphan_filesystem_image(head: u32) -> FilesystemSuperblockImage {
+        let mut image = FilesystemSuperblockImage {
+            bytes: [0; FILESYSTEM_SUPERBLOCK_BYTES], needs_recovery: false,
+        };
+        write_u32le(&mut image.bytes, 0, 1024);
+        write_u32le(&mut image.bytes, 0xe8, head);
+        write_u32le(&mut image.bytes, FILESYSTEM_READ_ONLY_FEATURES_OFFSET,
+            FILESYSTEM_METADATA_CHECKSUM_FEATURE);
+        image.with_recovery_state(true)
+    }
+
+    #[test]
+    fn orphan_head_is_checksummed_bounded_and_preserves_filesystem_identity() {
+        let original = orphan_filesystem_image(0);
+        for head in [0, 11, 1024] {
+            assert_eq!(original.validate_checkpointed_successor(&orphan_filesystem_image(head)), Ok(()));
+        }
+        for head in [1, 10, 1025, u32::MAX] {
+            assert_eq!(original.validate_checkpointed_successor(&orphan_filesystem_image(head)),
+                Err(JournalTransactionError::RecoveryStateMismatch));
+        }
+        let mut damaged = orphan_filesystem_image(11);
+        damaged.bytes[0xe8] ^= 1;
+        assert!(original.validate_checkpointed_successor(&damaged).is_err());
+        let mut foreign = orphan_filesystem_image(11);
+        foreign.bytes[0x68] ^= 1; // UUID changes remain forbidden, even with a valid CRC.
+        foreign = foreign.with_recovery_state(true);
+        assert!(original.validate_checkpointed_successor(&foreign).is_err());
+    }
+
+    #[test]
+    fn orphan_recovery_keeps_marker_and_refuses_clean_until_final_release() {
+        let ring = mapped_ring(17, &JOURNAL_SLOTS);
+        let journal = ring.superblock.clone().unwrap();
+        let original = orphan_filesystem_image(0);
+        for (before, after) in [(0, 11), (11, 12), (12, 0)] {
+            let mut home = vec![0; JOURNAL_BLOCK_BYTES];
+            let successor = orphan_filesystem_image(after);
+            home[1024..2048].copy_from_slice(successor.bytes());
+            let recovery = JournalRecovery {
+                committed_transactions: 1, consumed_slots: 3,
+                replay_images: vec![JournalBlockImage { block_index: 0, bytes: home }],
+                clean_superblock: journal.clone(), maximum_block: MAXIMUM_BLOCK,
+            };
+            let prior = orphan_filesystem_image(before);
+            let plan = recovery.checkpoint_plan(MAXIMUM_BLOCK, &prior).unwrap();
+            assert_eq!(plan, recovery.checkpoint_plan(MAXIMUM_BLOCK, &prior).unwrap());
+            assert!(matches!(&plan[0], JournalCommitOperation::WriteHomeMetadata(_)));
+            assert_eq!(plan[1], JournalCommitOperation::Flush(JournalFlush::Checkpoint));
+            assert!(matches!(&plan[2], JournalCommitOperation::WriteJournalSuperblock { image, .. }
+                if image.start_block() == 0));
+            assert_eq!(plan[3], JournalCommitOperation::Flush(JournalFlush::JournalState));
+            assert!(matches!(&plan[4], JournalCommitOperation::WriteFilesystemSuperblock { image, .. }
+                if image.last_orphan() == after && image.needs_recovery() == (after != 0)));
+            assert_eq!(plan[5], JournalCommitOperation::Flush(JournalFlush::FilesystemState));
+        }
+        let mut physical = vec![MAXIMUM_BLOCK];
+        physical.extend_from_slice(&JOURNAL_SLOTS);
+        let map = JournalInodeMap { superblock: journal.clone(),
+            filesystem_superblock: orphan_filesystem_image(11), maximum_block: MAXIMUM_BLOCK,
+            physical_blocks: physical, filesystem_needs_recovery: true };
+        assert!(map.clone().into_clean_ring().is_err());
+        let mut dirty = map.clone();
+        dirty.superblock = journal.with_state(17, 1).unwrap();
+        assert!(dirty.into_orphan_cleanup_ring().is_err());
+        let mut cleanup = map.into_orphan_cleanup_ring().unwrap();
+        assert_eq!(cleanup.filesystem_is_clean(), Ok(false));
+        assert_eq!(cleanup.filesystem_recovery_marker_is_durable(), Ok(true));
+        assert_eq!(cleanup.prepare_filesystem_clean_plan(), Err(JournalTransactionError::JournalNotClean));
+        // Model the already-checkpointed final deletion: only then may sync clear.
+        cleanup.filesystem_superblock = Some(original);
+        let clean = cleanup.prepare_filesystem_clean_plan().unwrap();
+        assert_eq!(clean, cleanup.prepare_filesystem_clean_plan().unwrap());
+        cleanup.mark_filesystem_clean_durable().unwrap();
+        assert_eq!(cleanup.filesystem_is_clean(), Ok(true));
     }
 
     #[test]
