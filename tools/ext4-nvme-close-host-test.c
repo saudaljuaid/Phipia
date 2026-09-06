@@ -50,7 +50,9 @@ enum dma_status dma_release(struct dma_allocation *allocation)
 
 int main(void)
 {
-    for (unsigned failure = 1U; failure <= 3U; ++failure) {
+    for (unsigned scenario = 0U; scenario < 6U; ++scenario) {
+        const bool failed_open = scenario >= 3U;
+        const unsigned failure = scenario % 3U + 1U;
         memset(&filesystem_runtime, 0, sizeof(filesystem_runtime));
         frames = (struct frame_allocator_stats){.addressable_frames = 100U,
             .allocatable_frames = 80U, .free_frames = 70U, .allocated_frames = 10U,
@@ -73,11 +75,23 @@ int main(void)
         releases = 0U;
         fail_release = failure;
         // The filesystem client retains unrelated heap frames across close.
-        frames.allocated_frames += 2U;
-        frames.free_frames -= 2U;
+        if (!failed_open) {
+            frames.allocated_frames += 2U;
+            frames.free_frames -= 2U;
+        }
         struct nvme_volume_session session = {.active = true, .generation = 42U,
             .state = NVME_FILESYSTEM_SESSION_READY};
-        assert(nvme_volume_close(&session) == NVME_STATUS_TEARDOWN_FAILURE);
+        if (failed_open) {
+            filesystem_runtime.controller.claim.discovery.generation = 0U;
+            interrupts = false;
+            assert(finish_volume_open(&session, 1U, true, NVME_STATUS_DMA_ALLOCATION) == NVME_STATUS_TEARDOWN_FAILURE);
+            interrupts = true;
+            assert(session.generation != 0U && volume_session_matches(&session));
+            frames.allocated_frames += 2U;
+            frames.free_frames -= 2U;
+        } else {
+            assert(nvme_volume_close(&session) == NVME_STATUS_TEARDOWN_FAILURE);
+        }
         assert(interrupts && session.active && filesystem_runtime.active);
         assert(session.state == NVME_FILESYSTEM_SESSION_STOPPING);
         assert(allocations == 4U - failure);
@@ -94,6 +108,13 @@ int main(void)
         assert(session.close_resource_mismatches == 0U);
         assert(nvme_volume_close(&session) == NVME_STATUS_TRANSITION_REPEATED);
     }
+    filesystem_runtime.active = true;
+    filesystem_runtime.frames_before = frames;
+    struct nvme_volume_session absent = {0};
+    interrupts = false;
+    assert(finish_volume_open(&absent, 1U, false, NVME_STATUS_ABSENT) == NVME_STATUS_ABSENT);
+    interrupts = true;
+    assert(!absent.active && !filesystem_runtime.active);
     // Matching the original global snapshot alone cannot prove an owned frame
     // was released during this attempt (another client may have freed it).
     filesystem_runtime.frames_before = frames;
@@ -102,6 +123,6 @@ int main(void)
     --filesystem_runtime.frames_ready.free_frames;
     assert((volume_resource_state_mismatches(&filesystem_runtime, frames) &
         NVME_VOLUME_RESOURCE_MISMATCH_FRAMES) != 0U);
-    puts("ext4 NVMe partial teardown, repeated close failure and client frame isolation: PASS");
+    puts("ext4 NVMe failed-open retention, partial teardown, close retry and client frame isolation: PASS");
     return 0;
 }

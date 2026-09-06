@@ -3006,6 +3006,34 @@ static uint16_t volume_command_identifier(struct nvme_volume_session *session)
     return (uint16_t)session->command_ordinal;
 }
 
+static enum nvme_status volume_close_interrupts_disabled(struct nvme_volume_session *session);
+
+static enum nvme_status finish_volume_open(struct nvme_volume_session *session,
+    uint32_t controller_index, bool writable, enum nvme_status result)
+{
+    // Publish an ownership cookie before attempting any fallible teardown.
+    // Even partial bring-up must remain reachable if resource release fails.
+    if (filesystem_runtime.controller.claim.discovery.generation == 0U) {
+        if (++controller_generation == 0U) ++controller_generation;
+        filesystem_runtime.controller.claim.discovery.generation = controller_generation;
+    }
+    filesystem_runtime.generation = filesystem_runtime.controller.claim.discovery.generation;
+    filesystem_runtime.frames_ready = frame_allocator_get_stats();
+    zero_bytes(session, sizeof(*session));
+    session->generation = filesystem_runtime.generation;
+    session->namespace_blocks = filesystem_runtime.controller.namespace_data.logical_blocks;
+    session->logical_block_bytes = filesystem_runtime.controller.namespace_data.logical_block_bytes;
+    session->controller_index = controller_index;
+    session->state = NVME_FILESYSTEM_SESSION_READY;
+    session->writable = writable;
+    session->active = true;
+    if (result != NVME_STATUS_OK) {
+        const enum nvme_status cleanup = volume_close_interrupts_disabled(session);
+        if (cleanup != NVME_STATUS_OK) return cleanup;
+    }
+    return result;
+}
+
 static enum nvme_status volume_open_interrupts_disabled(
     struct nvme_volume_session *session,
     uint32_t controller_index,
@@ -3013,7 +3041,6 @@ static enum nvme_status volume_open_interrupts_disabled(
 )
 {
     enum nvme_status result;
-    enum nvme_status teardown_status;
 
     if (session == NULL) {
         return NVME_STATUS_NULL_ARGUMENT;
@@ -3033,34 +3060,7 @@ static enum nvme_status volume_open_interrupts_disabled(
     filesystem_runtime.active = true;
     result = initialize_runtime_at(&filesystem_runtime.controller,
         controller_index);
-    if (result != NVME_STATUS_OK) {
-        teardown_status = teardown_controller(&filesystem_runtime.controller);
-        if (teardown_status != NVME_STATUS_OK ||
-            !resource_state_matches(filesystem_runtime.pci_before,
-                filesystem_runtime.dma_before,
-                filesystem_runtime.vectors_before,
-                filesystem_runtime.msix_before,
-                filesystem_runtime.frames_before)) {
-            result = teardown_status != NVME_STATUS_OK ? teardown_status :
-                NVME_STATUS_TEARDOWN_FAILURE;
-        }
-        zero_bytes(&filesystem_runtime, sizeof(filesystem_runtime));
-        return result;
-    }
-    filesystem_runtime.generation =
-        filesystem_runtime.controller.claim.discovery.generation;
-    filesystem_runtime.frames_ready = frame_allocator_get_stats();
-    zero_bytes(session, sizeof(*session));
-    session->generation = filesystem_runtime.generation;
-    session->namespace_blocks =
-        filesystem_runtime.controller.namespace_data.logical_blocks;
-    session->logical_block_bytes =
-        filesystem_runtime.controller.namespace_data.logical_block_bytes;
-    session->controller_index = controller_index;
-    session->state = NVME_FILESYSTEM_SESSION_READY;
-    session->writable = writable;
-    session->active = true;
-    return NVME_STATUS_OK;
+    return finish_volume_open(session, controller_index, writable, result);
 }
 
 enum nvme_status nvme_volume_open(
