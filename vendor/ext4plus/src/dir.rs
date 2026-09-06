@@ -921,8 +921,23 @@ impl Dir {
     pub async fn unlink(
         &mut self,
         name: DirEntryName<'_>,
-        mut inode: Inode,
+        inode: Inode,
     ) -> Result<Option<Inode>, Ext4Error> {
+        self.unlink_inner(name, inode, false).await
+    }
+
+    /// Unlink a regular file while retaining its final inode on the legacy
+    /// orphan chain. The caller owns the live handle and journal transaction.
+    #[maybe_async::maybe_async]
+    pub async fn unlink_open(&mut self, name: DirEntryName<'_>, inode: Inode)
+        -> Result<Option<Inode>, Ext4Error> {
+        if !inode.file_type().is_regular_file() { return Err(Ext4Error::IsASpecialFile); }
+        self.unlink_inner(name, inode, true).await
+    }
+
+    #[maybe_async::maybe_async]
+    async fn unlink_inner(&mut self, name: DirEntryName<'_>, mut inode: Inode, retain_open: bool)
+        -> Result<Option<Inode>, Ext4Error> {
         if self.inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY)
             || inode.flags().intersects(InodeFlags::IMMUTABLE | InodeFlags::APPEND_ONLY) {
             return Err(Ext4Error::Readonly);
@@ -933,16 +948,17 @@ impl Dir {
 
         let linked_inode =
             get_dir_entry_inode_by_name(&self.fs, &self.inode, name).await?;
-        assert_eq!(
-            linked_inode.index, inode.index,
-            "unlink called with inode that does not match directory entry"
-        );
+        if linked_inode.index != inode.index { return Err(dir_entry_error(self.inode.index)); }
 
         let old = inode.links_count();
-        inode.set_links_count(old.saturating_sub(1));
-        inode.write(&self.fs).await?;
+        inode.set_links_count(old.checked_sub(1).ok_or_else(|| dir_entry_error(inode.index))?);
+        if retain_open && inode.links_count() == 0 {
+            self.fs.defer_unlinked_inode(&mut inode).await?;
+        } else {
+            inode.write(&self.fs).await?;
+        }
         remove_dir_entry(&self.fs, &mut self.inode, name).await?;
-        if inode.links_count() == 0 {
+        if inode.links_count() == 0 && !retain_open {
             self.fs.delete_file(inode).await?;
             Ok(None)
         } else {

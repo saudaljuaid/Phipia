@@ -329,6 +329,9 @@ pub(crate) enum CorruptKind {
     /// An inode's checksum is invalid.
     InodeChecksum(InodeIndex),
 
+    /// Invalid, cyclic, or unallocated legacy orphan inode.
+    OrphanInode(u32),
+
     /// An inode is too small.
     InodeTruncated { inode: InodeIndex, size: usize },
 
@@ -533,6 +536,7 @@ impl Display for CorruptKind {
             Self::InodeChecksum(inode) => {
                 write!(f, "invalid checksum for inode {inode}")
             }
+            Self::OrphanInode(inode) => write!(f, "invalid orphan inode {inode}"),
             Self::InodeTruncated { inode, size } => {
                 write!(f, "inode {inode} is truncated: size={size}")
             }

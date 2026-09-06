@@ -1172,6 +1172,80 @@ fn unlink_of_open_nonfinal_link_preserves_inode_io_and_final_link_guard() {
 }
 
 #[test]
+fn staged_orphan_chain_retains_open_data_and_releases_out_of_order() {
+    let Some(path) = fixture() else { return };
+    let mut mounted = mount_fixture(&path);
+    for name in [b"system/orphan-a".as_slice(), b"system/orphan-b", b"system/orphan-c"] {
+        ext4::create_file_probe(&mut mounted, name, 0o600).unwrap();
+        ext4::transaction_probe(&mut mounted, name, 0, b"held").unwrap();
+    }
+    ext4::sync(&mut mounted).unwrap();
+    ext4::unmount(&mounted).unwrap();
+    drop(mounted);
+    let backing = DEVICE.with_borrow(|device| device.bytes.clone());
+    for rollback in [true, false] {
+        let stage = std::rc::Rc::new(ext4plus::JournalMutationStage::new(
+            Box::new(backing.clone()), backing.len() as u64).unwrap());
+        let raw = ext4plus::Ext4::load_with_writer(Box::new(stage.clone()), Some(Box::new(stage.clone()))).unwrap();
+        let parent = raw.path_to_inode(ext4plus::path::Path::try_from("/system").unwrap(),
+            ext4plus::FollowSymlinks::All).unwrap();
+        let mut directory = ext4plus::dir::Dir::open_inode(&raw, parent).unwrap();
+        let mut indices = Vec::new();
+        for name in ["orphan-a", "orphan-b", "orphan-c"] {
+            let entry = ext4plus::DirEntryName::try_from(name).unwrap();
+            let inode = directory.get_entry(entry).unwrap();
+            indices.push(inode.index);
+            let retained = directory.unlink_open(entry, inode).unwrap().unwrap();
+            assert_eq!(retained.links_count(), 0);
+        }
+        assert_eq!(raw.orphan_inodes().unwrap(), indices.iter().rev().copied().collect::<Vec<_>>());
+        assert_eq!(raw.superblock().last_orphan(), indices[2].get());
+        DEVICE.with_borrow(|device| assert!(device.bytes == backing, "upstream orphan mutation reached home storage"));
+        if rollback {
+            drop(directory);
+            drop(raw);
+            stage.rollback();
+            let restored = ext4plus::Ext4::load(Box::new(stage.clone())).unwrap();
+            assert!(restored.orphan_inodes().unwrap().is_empty());
+            assert!(restored.open(b"/system/orphan-a").is_ok());
+            continue;
+        }
+        // A valid inode CRC must not make a cyclic chain admissible.
+        let mut head = ext4plus::inode::Inode::read(&raw, indices[2]).unwrap();
+        let next = head.dtime_val();
+        head.set_dtime_val(indices[2].get());
+        head.write(&raw).unwrap();
+        assert!(raw.orphan_inodes().is_err());
+        head.set_dtime_val(next);
+        head.write(&raw).unwrap();
+        let mut held = ext4plus::file::File::open_inode(&raw,
+            ext4plus::inode::Inode::read(&raw, indices[0]).unwrap()).unwrap();
+        held.write_bytes_at(b"+open", 4).unwrap();
+        let mut data = [0; 9];
+        assert_eq!(held.read_bytes_at(&mut data, 0).unwrap(), 9);
+        assert_eq!(&data, b"held+open");
+        drop(held);
+        raw.release_orphan(indices[1]).unwrap();
+        assert_eq!(raw.orphan_inodes().unwrap(), vec![indices[2], indices[0]]);
+        raw.release_orphan(indices[0]).unwrap();
+        assert_eq!(raw.orphan_inodes().unwrap(), vec![indices[2]]);
+        raw.release_orphan(indices[2]).unwrap();
+        assert_eq!(raw.superblock().last_orphan(), 0);
+        assert!(raw.orphan_inodes().unwrap().is_empty());
+        assert!(stage.revoked_block_count() >= 3);
+        // This is an upstream staged-state fixture, not a durability proof.
+        // Coordinator admission remains guarded until orphan replay is wired.
+        let mut projected = backing.clone();
+        for image in stage.staged_images() {
+            let start = image.block_index() as usize * 4096;
+            projected[start..start + 4096].copy_from_slice(image.bytes());
+        }
+        DEVICE.with_borrow_mut(|device| device.bytes = projected);
+        fsck(&path, "coordinator-staged-orphan-release");
+    }
+}
+
+#[test]
 fn dot_components_walk_symlink_targets_and_preserve_lookup_errors() {
     let Some(path) = fixture() else { return };
     let mut mounted = mount_fixture(&path);

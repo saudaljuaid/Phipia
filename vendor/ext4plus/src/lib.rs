@@ -135,6 +135,7 @@ mod label;
 mod mem_io_error;
 mod metadata;
 mod mmp;
+mod orphan;
 pub mod path;
 pub mod prelude;
 mod reader;

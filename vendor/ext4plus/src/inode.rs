@@ -388,6 +388,11 @@ impl Inode {
         if let Some(time) = ext4.mutation_time() {
             self.set_ctime(time);
         }
+        self.write_preserving_times(ext4).await
+    }
+
+    #[maybe_async::maybe_async]
+    pub(crate) async fn write_preserving_times(&mut self, ext4: &Ext4) -> Result<(), Ext4Error> {
         let (block_index, offset_within_block) =
             get_inode_location(ext4, self.index)?;
         let block_size = ext4.0.superblock.block_size().to_u64();

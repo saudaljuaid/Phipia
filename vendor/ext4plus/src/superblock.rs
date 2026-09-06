@@ -61,6 +61,7 @@ pub struct Superblock {
     first_data_block: u32,
     free_blocks_count: AtomicU64,
     free_inodes_count: AtomicU32,
+    last_orphan: AtomicU32,
     inode_size: u16,
     inodes_per_block_group: NonZeroU32,
     block_group_descriptor_size: u16,
@@ -246,6 +247,7 @@ impl Superblock {
             first_data_block: s_first_data_block,
             free_blocks_count: AtomicU64::new(free_blocks_count),
             free_inodes_count: AtomicU32::new(s_free_inodes_count),
+            last_orphan: AtomicU32::new(read_u32le(bytes, 0xe8)),
             inode_size: s_inode_size,
             inodes_per_block_group,
             block_group_descriptor_size,
@@ -282,6 +284,7 @@ impl Superblock {
 
     fn to_bytes(&self) -> [u8; Self::SIZE_IN_BYTES_ON_DISK] {
         let mut data = self.data;
+        write_u32le(&mut data, 0xe8, self.last_orphan.load(Ordering::Relaxed));
         // Update necessary fields in `data` that may have changed since superblock creation
         write_u32le(
             &mut data,
@@ -443,6 +446,16 @@ impl Superblock {
         self.free_inodes_count.load(Ordering::Relaxed)
     }
 
+    /// Number of inodes in the filesystem, including reserved inodes.
+    pub fn inodes_count(&self) -> u32 { read_u32le(&self.data, 0) }
+
+    /// Head of ext4's legacy on-disk orphan chain (zero means empty).
+    pub fn last_orphan(&self) -> u32 { self.last_orphan.load(Ordering::Relaxed) }
+
+    pub(crate) fn set_last_orphan(&self, inode: u32) {
+        self.last_orphan.store(inode, Ordering::Relaxed);
+    }
+
     pub(crate) fn set_free_inodes_count(&self, count: u32) {
         self.free_inodes_count.store(count, Ordering::Relaxed);
     }
@@ -586,6 +599,7 @@ mod tests {
                 first_data_block: 1,
                 free_blocks_count: AtomicU64::new(105),
                 free_inodes_count: AtomicU32::new(0), // TODO: not checked
+                last_orphan: AtomicU32::new(0),
                 inode_size: 256,
                 inodes_per_block_group: NonZero::new(16).unwrap(),
                 block_group_descriptor_size: 64,
