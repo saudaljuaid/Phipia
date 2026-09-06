@@ -2110,7 +2110,8 @@ static enum nvme_status teardown_controller(
             NVME_STATUS_OK) {
         result = NVME_STATUS_TEARDOWN_FAILURE;
     }
-    if (controller->mmio != NULL &&
+    if (controller->mmio != NULL && controller->registers.mapping != NULL &&
+        controller->registers.mapping->active &&
         (controller->controller_enabled ||
          (mmio_read32(controller->mmio, NVME_REG_CSTS) &
             NVME_CSTS_RDY) != 0U)) {
@@ -2143,21 +2144,25 @@ static enum nvme_status teardown_controller(
             controller->interrupt.handler_ready = false;
         }
     }
-    if (dma_stopped) {
+    if (dma_stopped && !controller->interrupt.active) {
         if (reclaim_all(controller) != NVME_STATUS_OK ||
             controller->handler_saw_freed_state ||
             release_all(controller) != NVME_STATUS_OK) {
             result = controller->handler_saw_freed_state ?
                 NVME_STATUS_TEARDOWN_RACE :
                 NVME_STATUS_TEARDOWN_FAILURE;
-        }
-        if (controller->claim.pci.active &&
-            pci_release_device(&controller->claim.pci) !=
-                PCI_RESOURCE_STATUS_OK) {
-            result = NVME_STATUS_TEARDOWN_FAILURE;
+        } else if (controller->claim.pci.active) {
+            if (pci_release_device(&controller->claim.pci) != PCI_RESOURCE_STATUS_OK) {
+                result = NVME_STATUS_TEARDOWN_FAILURE;
+            }
+            // PCI release can unmap the BAR before a later config-restore
+            // failure. A retry must not dereference the old MMIO address.
+            if (controller->registers.mapping == NULL || !controller->registers.mapping->active) {
+                controller->mmio = NULL;
+            }
         }
     }
-    if (controller->claim.state != NVME_CONTROLLER_UNINITIALIZED &&
+    if (result == NVME_STATUS_OK && controller->claim.state != NVME_CONTROLLER_UNINITIALIZED &&
         controller->claim.state != NVME_CONTROLLER_RELEASED &&
         transition(&controller->claim, NVME_CONTROLLER_RELEASED) !=
             NVME_STATUS_OK) {

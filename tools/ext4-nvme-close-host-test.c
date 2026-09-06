@@ -10,6 +10,7 @@ static size_t allocations;
 static unsigned releases;
 static unsigned fail_release;
 static bool interrupts = true;
+static bool pci_live;
 
 bool cpu_interrupts_enabled(void) { return interrupts; }
 void cpu_interrupt_disable(void) { interrupts = false; }
@@ -18,13 +19,19 @@ uint64_t clock_monotonic_ns(void) { assert(false); return 0U; }
 enum pci_resource_status pci_claim_disable_bus_master(struct pci_device_claim *claim)
 { (void)claim; assert(false); return PCI_RESOURCE_STATUS_OK; }
 enum pci_resource_status pci_release_device(struct pci_device_claim *claim)
-{ (void)claim; assert(false); return PCI_RESOURCE_STATUS_OK; }
+{
+    assert(!interrupts && pci_live && claim->active && allocations == 0U);
+    claim->active = false;
+    pci_live = false;
+    return PCI_RESOURCE_STATUS_OK;
+}
 enum msix_status msix_unbind(struct msix_binding *binding)
 { (void)binding; assert(false); return MSIX_STATUS_OK; }
 enum msix_status msix_set_masked(struct msix_binding *binding, bool masked)
 { (void)binding; (void)masked; assert(false); return MSIX_STATUS_OK; }
 struct frame_allocator_stats frame_allocator_get_stats(void) { return frames; }
-struct pci_resource_state pci_resource_get_state(void) { return (struct pci_resource_state){0}; }
+struct pci_resource_state pci_resource_get_state(void)
+{ return (struct pci_resource_state){.active_claims = pci_live ? 1U : 0U}; }
 struct interrupt_vector_state interrupt_vector_get_state(void) { return (struct interrupt_vector_state){0}; }
 struct msix_state msix_get_state(void) { return (struct msix_state){0}; }
 struct dma_state dma_get_state(void)
@@ -71,6 +78,8 @@ int main(void)
         filesystem_runtime.active = true;
         filesystem_runtime.generation = 42U;
         filesystem_runtime.controller.claim.discovery.generation = 42U;
+        filesystem_runtime.controller.claim.pci.active = true;
+        pci_live = true;
         allocations = 3U;
         releases = 0U;
         fail_release = failure;
@@ -95,6 +104,7 @@ int main(void)
         assert(interrupts && session.active && filesystem_runtime.active);
         assert(session.state == NVME_FILESYSTEM_SESSION_STOPPING);
         assert(allocations == 4U - failure);
+        assert(pci_live && filesystem_runtime.controller.claim.pci.active);
         // Another client changes its frame ownership between retry attempts.
         frames.allocated_frames += 3U;
         frames.free_frames -= 3U;
@@ -105,6 +115,7 @@ int main(void)
         assert(nvme_volume_close(&session) == NVME_STATUS_OK);
         assert(interrupts && !session.active && !filesystem_runtime.active);
         assert(allocations == 0U && frames.allocated_frames == 15U && frames.free_frames == 65U);
+        assert(!pci_live);
         assert(session.close_resource_mismatches == 0U);
         assert(nvme_volume_close(&session) == NVME_STATUS_TRANSITION_REPEATED);
     }
